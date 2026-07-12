@@ -1,0 +1,42 @@
+export * from "./ai";
+export * from "./dashboard";
+export * from "./delivery";
+export * from "./governance";
+export * from "./knowledge";
+export * from "./projects";
+export * from "./requirements";
+
+export { mockActionItems as actionItems } from "./delivery";
+export { mockActionItems as actions } from "./delivery";
+export { mockRisks as risks } from "./delivery";
+export { mockScopeChanges as scopeChanges } from "./delivery";
+export { mockScopeVersions as scopeVersions } from "./delivery";
+export { mockScopeVersions as scopes } from "./delivery";
+export { mockDecisions as decisions } from "./governance";
+export { mockMeetings as meetings } from "./governance";
+export { mockReviewTasks as reviewTasks } from "./governance";
+export { mockReviewTasks as reviews } from "./governance";
+export { mockWorkflows as workflows } from "./governance";
+export { mockWorkflowExecutions as workflowExecutions } from "./governance";
+export { mockKnowledgeChunks as knowledgeChunks } from "./knowledge";
+export { mockProjectDocuments as projectDocuments } from "./knowledge";
+export { mockProjectDocuments as documents } from "./knowledge";
+export { mockSourceCitations as sourceCitations } from "./knowledge";
+export { mockSourceCitations as citations } from "./knowledge";
+export { mockProjects as projects } from "./projects";
+export { mockProjectActivities as activities } from "./projects";
+export { mockRequirements as requirements } from "./requirements";
+export { mockAIExecutions as aiExecutionLogs } from "./ai";
+export { mockAIModelProfiles as modelProfiles } from "./ai";
+export { mockAIModels as models } from "./ai";
+export { mockAIProviders as providers } from "./ai";
+export { mockSkills as skills } from "./ai";
+
+// Compatibility aliases used by page modules while preserving one data source.
+export { mockAIExecutions as mockAIExecutionLogs } from "./ai";
+export { mockAIModelProfiles as mockModelProfiles } from "./ai";
+export { mockAIModels as mockModels } from "./ai";
+export { mockAIProviders as mockProviders } from "./ai";
+export { mockReviewTasks as mockReviews } from "./governance";
+export { mockScopeVersions as mockScopes } from "./delivery";
+export { mockActionItems as mockActions } from "./delivery";

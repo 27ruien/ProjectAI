@@ -1,0 +1,156 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7f9;
+  --foreground: #20212b;
+  --card: #ffffff;
+  --card-foreground: #20212b;
+  --muted: #f0f1f4;
+  --muted-foreground: #696b78;
+  --border: #e4e5e9;
+  --input: #dfe0e5;
+  --primary: #6257c7;
+  --primary-hover: #554ab8;
+  --primary-foreground: #ffffff;
+  --success: #2f7d5c;
+  --success-soft: #eaf5ef;
+  --warning: #a86524;
+  --warning-soft: #fcf1e4;
+  --destructive: #b84b55;
+  --destructive-soft: #fbecee;
+  --info: #4668a7;
+  --info-soft: #edf2fb;
+  --sidebar: #171822;
+  --sidebar-foreground: #f1f1f6;
+  --sidebar-muted: #8f91a2;
+  --sidebar-accent: #292a38;
+  --surface: #fafafb;
+  --overlay: rgb(23 24 34 / 45%);
+  --radius: 10px;
+  --radius-sm: 7px;
+  --radius-lg: 14px;
+  --spacing-page: clamp(20px, 3vw, 40px);
+  --shadow-sm: 0 1px 2px rgb(24 25 34 / 5%);
+  --shadow-float: 0 18px 50px rgb(24 25 34 / 14%);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-destructive: var(--destructive);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-surface: var(--surface);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  border-color: var(--border);
+}
+
+html {
+  background: var(--background);
+  color-scheme: light;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), "PingFang SC", "Microsoft YaHei", sans-serif;
+  margin: 0;
+  min-width: 320px;
+  text-rendering: optimizeLegibility;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:not(:disabled),
+a[href],
+select:not(:disabled),
+input[type="checkbox"]:not(:disabled) {
+  cursor: pointer;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 70%, white);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 22%, white);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cfd0d6;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.app-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+.page-enter {
+  animation: page-enter 240ms ease-out both;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--muted) 25%, #f8f8fa 45%, var(--muted) 65%);
+  background-size: 220% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  to { background-position-x: -220%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}
