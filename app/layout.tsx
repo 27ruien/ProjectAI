@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
+import { APP_RUNTIME } from "@/config/app-runtime";
 import { withBasePath } from "@/lib/base-path";
 import "./globals.css";
 
@@ -29,7 +30,7 @@ export async function generateMetadata(): Promise<Metadata> {
       description: "项目交付的 AI 工作系统",
       type: "website",
       locale: "zh_CN",
-      images: [{ url: ogImage, width: 1731, height: 909, alt: "Project AI OS 项目交付工作台" }],
+      images: [{ url: ogImage, width: 1672, height: 941, alt: "Project AI OS 项目交付工作台" }],
     },
     twitter: {
       card: "summary_large_image",
@@ -37,6 +38,19 @@ export async function generateMetadata(): Promise<Metadata> {
       description: "项目交付的 AI 工作系统",
       images: [ogImage],
     },
+    robots: APP_RUNTIME.isStaging
+      ? {
+          index: false,
+          follow: false,
+          noarchive: true,
+          nocache: true,
+          googleBot: {
+            index: false,
+            follow: false,
+            noimageindex: true,
+          },
+        }
+      : undefined,
   };
 }
 

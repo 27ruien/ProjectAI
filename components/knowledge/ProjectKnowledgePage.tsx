@@ -132,7 +132,7 @@ export function ProjectKnowledgePage({ projectId }: ProjectKnowledgePageProps) {
     pageNumber: numberValue(citation, "pageNumber", [6, 4, 2][index] ?? 1),
     sourceDate: textValue(citation, "sourceDate", ["2026-06-28", "2026-07-08", "2026-06-28"][index] ?? "2026-07-08"),
     status: textValue(citation, "status", "confirmed"),
-    isEffectiveVersion: Boolean(citation.isEffectiveVersion ?? true),
+    isEffectiveVersion: Boolean(citation.isEffectiveVersion ?? citation.isEffective ?? true),
     citationText: textValue(citation, ["citationText", "text"], ["首发范围包括移动端 AI 图片生成、结果编辑及分享页面。", "客户确认首发阶段以移动端体验为主，桌面端高级编辑后续评估。", "支付接口联调完成后，于 9 月 15 日进入正式发布窗口。"][index] ?? "项目已确认内容。"),
     trustLevel: textValue(citation, "trustLevel", "high"),
   }));
