@@ -1,0 +1,28 @@
+services:
+  projectai:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_BASE_PATH: /tool/projectai
+    container_name: project-ai-os
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      NEXT_PUBLIC_BASE_PATH: /tool/projectai
+      AI_PROVIDER: mock
+    ports:
+      - "127.0.0.1:3100:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/tool/projectai/dashboard').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s

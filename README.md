@@ -109,3 +109,105 @@ npm test
 4. 接入 PostgreSQL FTS/OpenSearch + pgvector 的 Hybrid Search，再增加 Reranker。
 5. 保持 `ProjectKnowledgeService` 和 `AIGateway` 接口不变，逐步替换 Mock 实现。
 6. 第二阶段可在现有 Skill/Workflow/Review 契约上扩展原型生成、页面生成与自动化测试。
+
+## 生产部署
+
+生产地址：<https://gridworks.cn/tool/projectai>
+
+应用以 `/tool/projectai` 作为 Next.js `basePath`。`NEXT_PUBLIC_BASE_PATH` 是构建时配置，修改后必须重新构建镜像；应用内的 `next/link` 和 Router 继续使用 `/dashboard` 等逻辑路径，不要手工重复前缀。
+
+本地生成生产构建：
+
+```bash
+NEXT_PUBLIC_BASE_PATH=/tool/projectai npm run build
+```
+
+生产环境变量参考 [.env.example](./.env.example)：
+
+```env
+NODE_ENV=production
+PORT=3000
+NEXT_PUBLIC_BASE_PATH=/tool/projectai
+AI_PROVIDER=mock
+```
+
+### Docker Compose
+
+```bash
+docker compose -f docker-compose.prod.yml build --pull
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=200
+```
+
+容器内监听 `0.0.0.0:3000`，宿主机只暴露 `127.0.0.1:3100`。健康检查地址为：
+
+```text
+http://127.0.0.1:3100/tool/projectai/dashboard
+```
+
+### Nginx
+
+将 [deploy/nginx-projectai.conf](./deploy/nginx-projectai.conf) 中的两个 `location` 加入现有 `gridworks.cn` HTTPS server block。不要覆盖完整 server block，也不要在 `proxy_pass http://127.0.0.1:3100` 后添加 `/`，否则会错误剥离 basePath。
+
+每次修改后必须先验证，再重载：
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### 可重复部署脚本
+
+首次代码已同步到服务器时：
+
+```bash
+sudo PROJECT_DIR=/srv/projectai \
+  CHECK_NGINX=1 \
+  RELOAD_NGINX=0 \
+  /srv/projectai/scripts/deploy-production.sh
+```
+
+确认 Nginx 配置已准备好后，可将 `RELOAD_NGINX=1`。如果服务器配置了安全的 GitHub 只读 Deploy Key，可额外设置 `DEPLOY_FROM_GIT=1`；否则继续使用 rsync 发布，不要在服务器保存个人 GitHub Token。
+
+### 生产验证
+
+```bash
+curl -I https://gridworks.cn/tool/projectai
+curl -I https://gridworks.cn/tool/projectai/
+curl -I https://gridworks.cn/tool/projectai/dashboard
+curl -I https://gridworks.cn/tool/projectai/projects
+curl -I https://gridworks.cn/tool/projectai/reviews
+curl -I https://gridworks.cn/tool/projectai/settings/ai-models
+```
+
+vinext 的静态资源位于 `/tool/projectai/assets/`，不是 `/_next/static`。可以从 HTML 提取资源路径后逐一确认返回 200。
+
+### 日志
+
+```bash
+sudo tail -n 200 /var/log/nginx/access.log
+sudo tail -n 200 /var/log/nginx/error.log
+sudo docker compose -f /srv/projectai/docker-compose.prod.yml logs --tail=200
+```
+
+### 回滚
+
+每次 rsync 发布前保留上一部署目录：
+
+```bash
+sudo mv /srv/projectai /srv/projectai.failed.$(date +%Y%m%d%H%M%S)
+sudo mv /srv/projectai.backup.<timestamp> /srv/projectai
+cd /srv/projectai
+sudo docker compose -f docker-compose.prod.yml up -d --build
+curl -I https://gridworks.cn/tool/projectai/
+```
+
+若只需回滚容器代码且上一目录仍在，可先停止当前容器，再从备份目录重新构建。回滚不需要修改 DNS 或替换现有 HTTPS 证书。
+
+### 常见问题
+
+- 静态资源 404：确认构建时 `NEXT_PUBLIC_BASE_PATH=/tool/projectai`，并确认 Nginx `proxy_pass` 没有尾部 `/`。
+- 深层路由 404：确认请求完整转发到应用，没有在 Nginx 中剥离 `/tool/projectai`。
+- 修改 basePath 后页面仍旧：重新构建镜像，单独修改运行时环境变量不会更新客户端资源路径。
+- 容器不健康：先查看 Compose 日志并修复应用，不要在上游未通过健康检查前修改或 reload Nginx。
