@@ -7,9 +7,9 @@
 | 当前版本 | `0.2.0-staging`（验证基础迭代） |
 | 当前 main Commit | `e09663c16cd186703d6a7e565d75bfbdfdec7db7` |
 | 当前开发分支 | `agent/mvp-validation-foundation` |
-| 当前 Draft PR | 创建后更新 |
+| 当前 Draft PR | [#1 Add MVP validation and staging foundation](https://github.com/27ruien/ProjectAI/pull/1)（Draft） |
 | 生产地址 | https://gridworks.cn/tool/projectai/ |
-| Staging 地址 | https://gridworks.cn/tool/projectai-staging/（部署后验收） |
+| Staging 地址 | https://gridworks.cn/tool/projectai-staging/（已验收） |
 
 ## 已完成
 
@@ -51,7 +51,7 @@
 ## 当前阻塞
 
 - 真实试点被认证、权限、数据存储和文件安全能力阻塞。
-- 本轮 Staging/PR 状态以对应部署和 Draft PR 验收结果为准。
+- 真实业务能力的 P0/P1 阻塞不影响 Mock MVP 验证环境，但在进入真实试点前必须关闭。
 
 ## 本轮目标
 
@@ -66,4 +66,7 @@
 - 时间：2026-07-13（Asia/Shanghai）。
 - 本地结果：`npm ci`、typecheck、lint、4 条 SSR/架构测试、3 条 Playwright 主流程和 `npm run qa:mvp` 全部通过。
 - 本地 Staging 容器预检：独立 3101 健康，STAGING/Commit/noindex 可见，CSS/JS/font/favicon/OG MIME 正确；验证后已清理本地临时容器。
-- 公网 Staging、Production 回归与 Draft PR CI：部署和 PR 创建后更新。
+- 公网 Staging：候选代码基线 `b72b423e` 已通过根路由、深层路由、重定向、noindex、静态资源 MIME 和公网 3 条 Playwright 主流程；最终状态文档提交按相同门禁再次部署，页面横幅与容器镜像标签必须等于 Draft PR HEAD。
+- Nginx：新增 Staging 专用 location 前已备份为 `/etc/nginx/sites-available/timeline-maker.backup.20260713030110`；`nginx -t` 成功后才 reload，服务保持 active。
+- Production 回归：容器 ID `c5f98b491e67668139e3b84ccf2c7dbee75556135826eddabf0267382078b0d1`、healthy、restart 0；Production 及既有站点均为 200，本轮未重建或重启 Production。
+- Draft PR CI：最终 HEAD 的 typecheck、lint、SSR/路由测试、3 条 Playwright 主流程和 Production build 必须全部成功；PR 保持 Draft，不在本轮合并。

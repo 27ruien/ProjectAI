@@ -30,7 +30,7 @@
 | MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 部分 | 契约与页面审查 | Workflow E2E | Product/Backend | Mock 分离，真实数据未实现 |
 | MVP-017 | P1 | 有审计记录 | 部分 | execution/review 日志 | 后续集成测试 | AI/Backend | 当前为 Mock execution log |
 | MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 可恢复失败演示 | Workflow E2E | Frontend/AI | 本轮自动验证 |
-| MVP-019 | P1 | Staging 可访问并 noindex | 本轮交付 | HTTP/页面/Nginx 检查 | 部署脚本 | DevOps | 独立目录、容器、端口、basePath |
+| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | HTTP/页面/Nginx 检查 | 部署脚本 | DevOps | 独立目录、容器、端口、basePath；公网已验收 |
 | MVP-020 | P1 | Playwright 三条主流程通过 | 通过 | `npm run test:e2e` | Playwright | QA | 3/3 通过，捕获 console/page/network/500 |
 | MVP-021 | P1 | Production build 通过 | 通过 | `npm run build` | CI | Frontend | vinext standalone |
 | OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 已有基础过滤 |
@@ -45,7 +45,7 @@
 ## 统计
 
 - P0：8 条；通过 3，部分 2，未完成 2，不适用 1。
-- P1：21 条；通过 5，部分 13，未完成 2，本轮交付 1。
+- P1：21 条；通过 6，部分 13，未完成 2。
 - P2：8 条；部分 5，未完成 3。
 
 P0 未完成项在真实试点前必须关闭；Mock 演示通过不代表真实能力通过。
