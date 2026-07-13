@@ -38,6 +38,7 @@ import {
   statusLabel,
   textValue,
 } from "@/components/project/mock-view";
+import { storageKey } from "@/lib/storage-key";
 
 type ShowcaseState = "ready" | "loading" | "empty" | "error";
 
@@ -58,7 +59,7 @@ export function DashboardPage() {
       const next = current.includes(id)
         ? current.filter((item) => item !== id)
         : [...current, id];
-      window.localStorage.setItem("project-ai-os:dashboard-todos", JSON.stringify(next));
+      window.localStorage.setItem(storageKey("dashboard-todos"), JSON.stringify(next));
       return next;
     });
   };

@@ -61,10 +61,6 @@ export function CreateProjectPage() {
 
   const submit = async (values: ProjectFormValues) => {
     await new Promise((resolve) => window.setTimeout(resolve, 650));
-    const drafts = window.localStorage.getItem("project-ai-os:created-projects");
-    const current = drafts ? (JSON.parse(drafts) as unknown) : [];
-    const list = Array.isArray(current) ? current : [];
-    window.localStorage.setItem("project-ai-os:created-projects", JSON.stringify([...list, { ...values, id: `local-${Date.now()}`, createdAt: new Date().toISOString() }]));
     setSubmittedName(values.name);
   };
 

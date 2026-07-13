@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { mockActionItems, mockProjects } from "@/data/mock";
+import { storageKey } from "@/lib/storage-key";
 import {
   AlertTriangle,
   CalendarRange,
@@ -34,10 +35,35 @@ interface ActionsPageProps {
   projectId?: string;
 }
 
+const SOURCE_ACTIONS = mockActionItems as unknown as ActionItemView[];
+
+function restoreActionStatuses(source: ActionItemView[]): ActionItemView[] {
+  if (typeof window === "undefined") return source;
+  try {
+    const raw = window.localStorage.getItem(storageKey("action-statuses"));
+    if (!raw) return source;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return source;
+    const statuses = parsed as Record<string, unknown>;
+    return source.map((item) => {
+      const storedStatus = statuses[item.id];
+      return typeof storedStatus === "string" ? { ...item, status: storedStatus } : item;
+    });
+  } catch {
+    return source;
+  }
+}
+
+function persistActionStatuses(items: ActionItemView[]) {
+  window.localStorage.setItem(
+    storageKey("action-statuses"),
+    JSON.stringify(Object.fromEntries(items.map((item) => [item.id, item.status]))),
+  );
+}
+
 export function ActionsPage({ projectId }: ActionsPageProps) {
-  const sourceActions = mockActionItems as unknown as ActionItemView[];
   const projects = mockProjects as unknown as ProjectRecord[];
-  const [items, setItems] = useState(sourceActions);
+  const [items, setItems] = useState(SOURCE_ACTIONS);
   const [view, setView] = useState<ViewMode>("table");
   const [search, setSearch] = useState("");
   const [projectFilter, setProjectFilter] = useState("all");
@@ -47,6 +73,12 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
   const [overdueOnly, setOverdueOnly] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Restore after hydration so server and client initial markup stay identical.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setItems(restoreActionStatuses(SOURCE_ACTIONS));
+  }, []);
 
   const projectName = (id: string) => projects.find((project) => project.id === id)?.name ?? "未命名项目";
   const scopedItems = projectId ? items.filter((item) => item.projectId === projectId) : items;
@@ -69,7 +101,7 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
     setItems((current) => {
       const next = current.map((item) => (item.id === id ? { ...item, status, updatedAt: new Date().toISOString() } : item));
       try {
-        window.localStorage.setItem("project-ai-os:action-statuses", JSON.stringify(Object.fromEntries(next.map((item) => [item.id, item.status]))));
+        persistActionStatuses(next);
       } catch {
         // Local persistence is optional in restricted browser contexts.
       }
@@ -79,7 +111,15 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
   };
 
   const bulkUpdate = (status: string) => {
-    setItems((current) => current.map((item) => (selectedIds.includes(item.id) ? { ...item, status } : item)));
+    setItems((current) => {
+      const next = current.map((item) => (selectedIds.includes(item.id) ? { ...item, status } : item));
+      try {
+        persistActionStatuses(next);
+      } catch {
+        // Local persistence is optional in restricted browser contexts.
+      }
+      return next;
+    });
     setFeedback(`已更新 ${selectedIds.length} 条 Action`);
     setSelectedIds([]);
   };

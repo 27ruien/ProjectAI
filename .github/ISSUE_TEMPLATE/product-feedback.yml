@@ -1,0 +1,54 @@
+name: Product feedback
+description: 提交产品、交互、内容、视觉、AI 结果或数据反馈
+title: "[Feedback] "
+labels:
+  - product-feedback
+body:
+  - type: markdown
+    attributes:
+      value: |
+        当前版本为 Mock 演示。请勿附加真实客户项目资料、上传文件内容或密钥。
+  - type: dropdown
+    id: feedback_type
+    attributes:
+      label: 反馈类型
+      options:
+        - 功能问题
+        - 内容问题
+        - 交互问题
+        - 视觉问题
+        - AI 结果问题
+        - 数据问题
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重级别
+      options:
+        - P0
+        - P1
+        - P2
+        - 建议
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: 当前页面
+      placeholder: /dashboard
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述与建议
+      description: 描述目标、当前体验与期望，不要粘贴业务资料。
+    validations:
+      required: true
+  - type: input
+    id: build
+    attributes:
+      label: 环境、版本与 Commit
+      placeholder: staging / 0.2.0-staging / abc1234

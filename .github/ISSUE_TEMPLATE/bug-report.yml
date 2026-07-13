@@ -1,0 +1,67 @@
+name: Bug report
+description: 报告可复现的功能或稳定性问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿提交真实客户资料、密钥、密码或上传文件内容。
+  - type: dropdown
+    id: environment
+    attributes:
+      label: 环境
+      options:
+        - Staging
+        - Production
+        - Local
+    validations:
+      required: true
+  - type: input
+    id: page
+    attributes:
+      label: 页面路径
+      placeholder: /projects/project-001/knowledge
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 使用 Mock 数据描述最短复现路径。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期结果
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际结果
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: 严重级别
+      options:
+        - P0
+        - P1
+        - P2
+        - 建议
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本与 Commit
+      placeholder: 0.2.0-staging / abc1234
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏证据
+      description: 可提供截图、trace 或日志链接；先移除客户数据和密钥。

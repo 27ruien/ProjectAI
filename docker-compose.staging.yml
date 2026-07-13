@@ -1,34 +1,35 @@
 services:
-  projectai:
+  projectai-staging:
+    image: project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}
     build:
       context: .
       args:
-        NEXT_PUBLIC_BASE_PATH: /tool/projectai
-        NEXT_PUBLIC_APP_ENV: production
-        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.1.0}
+        NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
+        NEXT_PUBLIC_APP_ENV: staging
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.2.0-staging}
         NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
-    container_name: project-ai-os
+    container_name: project-ai-os-staging
     restart: unless-stopped
     environment:
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
-      NEXT_PUBLIC_BASE_PATH: /tool/projectai
-      NEXT_PUBLIC_APP_ENV: production
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.1.0}
+      NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
+      NEXT_PUBLIC_APP_ENV: staging
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.2.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
       AI_PROVIDER: mock
     ports:
-      - "127.0.0.1:3100:3000"
+      - "127.0.0.1:3101:3000"
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/tool/projectai/dashboard').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+          "fetch('http://127.0.0.1:3000/tool/projectai-staging/dashboard').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
         ]
       interval: 30s
       timeout: 10s

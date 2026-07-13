@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { Bell, ChevronDown, Command, FileText, FolderKanban, Menu, Search, Sparkles, X } from "lucide-react";
+import { Bell, ChevronDown, Command, FileText, FolderKanban, Menu, MessageSquarePlus, Search, Sparkles, X } from "lucide-react";
 import { useToast } from "@/components/common/toast";
+import { EnvironmentBadge } from "./environment-banner";
 
 const labels: Record<string, string> = {
   dashboard: "工作台", projects: "项目", new: "创建项目", overview: "项目概览", documents: "项目资料",
@@ -13,7 +14,7 @@ const labels: Record<string, string> = {
   analytics: "数据看板", settings: "系统设置", "ai-models": "AI 模型管理",
 };
 
-export function Topbar({ onMenuOpen }: { onMenuOpen: () => void }) {
+export function Topbar({ onMenuOpen, onFeedbackOpen }: { onMenuOpen: () => void; onFeedbackOpen: () => void }) {
   const pathname = usePathname();
   const { toast } = useToast();
   const [searchOpen, setSearchOpen] = useState(false);
@@ -38,8 +39,10 @@ export function Topbar({ onMenuOpen }: { onMenuOpen: () => void }) {
     <button className="mr-3 rounded-lg p-2 text-muted-foreground hover:bg-muted lg:hidden" onClick={onMenuOpen} aria-label="打开导航"><Menu className="size-5" /></button>
     <nav className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground" aria-label="面包屑"><Link href="/dashboard" className="hidden hover:text-foreground sm:inline">Project AI OS</Link>{crumbs.map((crumb, index) => <span key={`${crumb}-${index}`} className="flex min-w-0 items-center gap-1"><span className="hidden text-border sm:inline">/</span><span className={index === crumbs.length - 1 ? "truncate font-medium text-foreground" : "hidden truncate sm:inline"}>{crumb}</span></span>)}</nav>
     <div className="ml-auto flex items-center gap-1.5">
+      <EnvironmentBadge />
       <button onClick={() => setSearchOpen(true)} className="hidden h-8 w-56 items-center gap-2 rounded-lg border bg-surface px-2.5 text-left text-xs text-muted-foreground transition-colors hover:border-input sm:flex" aria-label="全局搜索"><Search className="size-3.5" /><span className="flex-1">搜索项目、需求或资料</span><span className="inline-flex items-center gap-0.5 rounded border bg-card px-1 py-0.5 font-mono text-[9px]"><Command className="size-2.5" />K</span></button>
       <button onClick={() => setSearchOpen(true)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground sm:hidden" aria-label="全局搜索"><Search className="size-[18px]" /></button>
+      <button onClick={onFeedbackOpen} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:text-primary" aria-label="提交试用反馈"><MessageSquarePlus className="size-3.5" /><span className="hidden xl:inline">反馈</span></button>
       <button onClick={() => toast("你有 3 条待审核提醒和 1 条风险预警", "info")} className="relative rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label="通知"><Bell className="size-[18px]" /><span className="absolute right-1.5 top-1.5 size-1.5 rounded-full bg-destructive ring-2 ring-white" /></button>
       <button onClick={() => toast("账户与团队设置将在后续阶段开放", "info")} className="ml-1 flex items-center gap-2 rounded-lg p-1 hover:bg-muted" aria-label="账户菜单"><span className="grid size-7 place-items-center rounded-full bg-primary/12 text-xs font-semibold text-primary">林</span><span className="hidden text-left lg:block"><span className="block text-xs font-medium leading-3.5">林知行</span><span className="block text-[10px] text-muted-foreground">项目经理</span></span><ChevronDown className="hidden size-3 text-muted-foreground lg:block" /></button>
     </div>
