@@ -148,7 +148,7 @@ http://127.0.0.1:3100/tool/projectai/dashboard
 
 ### Nginx
 
-将 [deploy/nginx-projectai.conf](./deploy/nginx-projectai.conf) 中的两个 `location` 加入现有 `gridworks.cn` HTTPS server block。不要覆盖完整 server block，也不要在 `proxy_pass http://127.0.0.1:3100` 后添加 `/`，否则会错误剥离 basePath。
+将 [deploy/nginx-projectai.conf](./deploy/nginx-projectai.conf) 中的 `location` 加入现有 `gridworks.cn` HTTPS server block。通用应用代理的 `proxy_pass http://127.0.0.1:3100` 不带尾部 `/`，以保留 basePath。两个静态资源代理是 vinext standalone 的兼容层：只对 `/tool/projectai/assets/` 去掉 basePath，并将 vinext 专用的 `/assets/_vinext_fonts/` 命名空间映射到上游；不要把整个根路径 `/assets/` 代理给本应用。
 
 每次修改后必须先验证，再重载：
 
@@ -181,7 +181,7 @@ curl -I https://gridworks.cn/tool/projectai/reviews
 curl -I https://gridworks.cn/tool/projectai/settings/ai-models
 ```
 
-vinext 的静态资源位于 `/tool/projectai/assets/`，不是 `/_next/static`。可以从 HTML 提取资源路径后逐一确认返回 200。
+vinext 的浏览器静态资源 URL 位于 `/tool/projectai/assets/`，不是 `/_next/static`；standalone 上游实际从 `/assets/` 提供这些文件，因此 Nginx 使用窄范围静态代理适配。验证时不仅要确认状态为 200，还要确认 CSS、JavaScript 和字体的 `Content-Type` 分别正确，避免把路由回退 HTML 误判为有效资源。
 
 ### 日志
 
