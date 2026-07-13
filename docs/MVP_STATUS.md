@@ -66,7 +66,7 @@
 - 时间：2026-07-13（Asia/Shanghai）。
 - 本地结果：`npm ci`、typecheck、lint、4 条 SSR/架构测试、3 条 Playwright 主流程和 `npm run qa:mvp` 全部通过。
 - 本地 Staging 容器预检：独立 3101 健康，STAGING/Commit/noindex 可见，CSS/JS/font/favicon/OG MIME 正确；验证后已清理本地临时容器。
-- 公网 Staging：候选代码基线 `b72b423e` 已通过根路由、深层路由、重定向、noindex、静态资源 MIME 和公网 3 条 Playwright 主流程；最终状态文档提交按相同门禁再次部署，页面横幅与容器镜像标签必须等于 Draft PR HEAD。
+- 公网 Staging：PR HEAD 已通过根路由、深层路由、重定向、noindex、静态资源 MIME 和公网 3 条 Playwright 主流程；交付审计已确认页面横幅、容器镜像标签、远程分支与 Draft PR HEAD 一致。
 - Nginx：新增 Staging 专用 location 前已备份为 `/etc/nginx/sites-available/timeline-maker.backup.20260713030110`；`nginx -t` 成功后才 reload，服务保持 active。
 - Production 回归：容器 ID `c5f98b491e67668139e3b84ccf2c7dbee75556135826eddabf0267382078b0d1`、healthy、restart 0；Production 及既有站点均为 200，本轮未重建或重启 Production。
-- Draft PR CI：最终 HEAD 的 typecheck、lint、SSR/路由测试、3 条 Playwright 主流程和 Production build 必须全部成功；PR 保持 Draft，不在本轮合并。
+- Draft PR CI：交付审计已确认 HEAD 的 typecheck、lint、SSR/路由测试、3 条 Playwright 主流程和 Production build 全部成功；PR 保持 Draft，不在本轮合并。
