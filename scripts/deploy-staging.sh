@@ -160,18 +160,25 @@ trap '${compose[@]} logs --tail=200 >&2 || true' ERR
 "${compose[@]}" build --pull
 "${compose[@]}" up --detach --remove-orphans
 
-healthy=0
-for _ in $(seq 1 45); do
-  if curl --fail --silent --show-error --max-time 5 "${origin}${base_path}/dashboard" >/dev/null; then
-    healthy=1
+ready=0
+container_health="starting"
+for _ in $(seq 1 60); do
+  container_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name")"
+  if [[ "$container_health" == "unhealthy" || "$container_health" == "exited" || "$container_health" == "dead" ]]; then
+    printf 'Staging container entered terminal state: %s\n' "$container_health" >&2
+    exit 1
+  fi
+  if [[ "$container_health" == "healthy" ]] \
+    && curl --fail --silent --max-time 5 "${origin}${base_path}/dashboard" >/dev/null; then
+    ready=1
     break
   fi
   sleep 2
 done
-[[ "$healthy" == "1" ]]
-
-container_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name")"
-[[ "$container_health" == "healthy" ]]
+[[ "$ready" == "1" ]] || {
+  printf 'Staging readiness timed out; final container health: %s\n' "$container_health" >&2
+  exit 1
+}
 
 for route in / /dashboard /projects /reviews /settings/ai-models; do
   curl --fail --silent --show-error --max-time 10 "${origin}${base_path}${route}" >/dev/null
