@@ -154,7 +154,15 @@ export NEXT_PUBLIC_COMMIT_SHA="$commit_sha"
 export NEXT_PUBLIC_APP_VERSION="$app_version"
 export NEXT_PUBLIC_BUILD_TIME="$build_time"
 
-compose=(sudo docker compose --project-name "$compose_project" --file "$compose_file")
+compose=(
+  sudo env
+  "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
+  "NEXT_PUBLIC_APP_VERSION=$app_version"
+  "NEXT_PUBLIC_BUILD_TIME=$build_time"
+  docker compose
+  --project-name "$compose_project"
+  --file "$compose_file"
+)
 trap '${compose[@]} logs --tail=200 >&2 || true' ERR
 
 "${compose[@]}" build --pull
