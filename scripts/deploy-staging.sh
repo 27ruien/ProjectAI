@@ -33,7 +33,7 @@ http_code() {
 content_type() {
   curl --fail --silent --show-error --head --max-time 20 "$1" \
     | tr -d '\r' \
-    | awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }'
+    | awk 'tolower($0) ~ /^content-type:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }'
 }
 
 assert_public_mime() {
@@ -204,7 +204,7 @@ js_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.js" <<<"$html" | sed
 content_type() {
   curl --fail --silent --show-error --head --max-time 10 "$1" \
     | tr -d '\r' \
-    | awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }'
+    | awk 'tolower($0) ~ /^content-type:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }'
 }
 
 assert_mime() {
