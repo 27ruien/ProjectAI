@@ -207,7 +207,7 @@ curl -I https://gridworks.cn/tool/projectai/
 
 ### 常见问题
 
-- 静态资源 404：确认构建时 `NEXT_PUBLIC_BASE_PATH=/tool/projectai`，并确认 Nginx `proxy_pass` 没有尾部 `/`。
+- 静态资源 404 或 MIME 错误：确认构建时 `NEXT_PUBLIC_BASE_PATH=/tool/projectai`；通用应用代理不带尾部 `/`，而 `/tool/projectai/assets/` 窄范围代理按示例映射到上游 `/assets/`。
 - 深层路由 404：确认请求完整转发到应用，没有在 Nginx 中剥离 `/tool/projectai`。
 - 修改 basePath 后页面仍旧：重新构建镜像，单独修改运行时环境变量不会更新客户端资源路径。
 - 容器不健康：先查看 Compose 日志并修复应用，不要在上游未通过健康检查前修改或 reload Nginx。
