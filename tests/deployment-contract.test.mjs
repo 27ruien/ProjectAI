@@ -3,6 +3,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { promisify } from "node:util";
+import { normalizeApplicationCookieName } from "../scripts/lib/cookie-name.mjs";
 
 const execFileAsync = promisify(execFile);
 const deployScript = new URL("../scripts/deploy-staging.sh", import.meta.url);
@@ -77,6 +78,21 @@ test("rollback preserves the previous image health contract", async () => {
     "Bash 3.2 misparses case blocks inside this heredoc command substitution",
   );
   assert.match(script, /rollback_health_path="\$previous_health_path"/);
+});
+
+test("Staging verification preserves the environment name inside secure cookie prefixes", () => {
+  assert.equal(
+    normalizeApplicationCookieName(
+      "__Secure-projectai_staging.session_token=opaque; Path=/tool/projectai-staging",
+    ),
+    "projectai_staging.session_token",
+  );
+  assert.equal(
+    normalizeApplicationCookieName(
+      "projectai_local.session_token=opaque; Path=/tool/projectai",
+    ),
+    "projectai_local.session_token",
+  );
 });
 
 test("Staging deployment shell is syntactically valid", async () => {

@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { normalizeApplicationCookieName } from "./lib/cookie-name.mjs";
+
 const baseUrl = process.env.APP_BASE_URL?.trim().replace(/\/+$/, "");
 
 if (!baseUrl) {
@@ -108,7 +110,9 @@ async function signIn(name) {
   );
   if (expectedCookiePrefix) {
     assert(
-      setCookies.some((value) => value.split("=", 1)[0]?.startsWith(`${expectedCookiePrefix}.`)),
+      setCookies.some((value) =>
+        normalizeApplicationCookieName(value).startsWith(`${expectedCookiePrefix}.`),
+      ),
       `${name} session cookie does not use the expected environment prefix`,
     );
   }
