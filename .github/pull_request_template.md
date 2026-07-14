@@ -27,8 +27,8 @@
 - Lint：
 - SSR/单元测试：
 - Production build：
-- PostgreSQL/授权集成测试（当前 20 条）：
-- Artifact sanitizer 测试（当前 10 条）：
+- PostgreSQL/授权集成测试（当前 27 条）：
+- Artifact sanitizer + Manifest 合同测试（当前 32 条）：
 
 ## Playwright 结果
 
@@ -41,20 +41,35 @@
 ## Staging
 
 - 地址：https://gridworks.cn/tool/projectai-staging/
-- Commit：
+- 实际运行 Commit（公网 `/api/health` 的 `x-projectai-commit-sha`）：
+- Manifest `stagingSha`（不可观测时必须为 `null` 并说明原因）：
 - PostgreSQL / 应用 Healthy：
 - Migration / Seed / 备份验证：
 - Cookie Prefix / Path / Secure / HttpOnly：
 - Manager / Member / Viewer / Admin 与 404 防枚举：
+- 最后一名 Manager PATCH/DELETE 409、拒绝审计与零 Manager 项目检查：
 - noindex：
 - Production 回归：
 
 ## 截图或证据
 
 - GitHub Actions run：
-- `product-review-evidence-*` artifact：
+- Payload A `product-review-evidence-*` artifact（name / ID / SHA-256 digest）：
+- Provenance B `product-review-manifest-*` artifact：
 - `sanitization-report.json`：
-- 成功 CI 的 6 张必需产品审查截图与 `manifest.json`（失败 CI 需列出缺失项）：
+- Payload A 的 `review-artifacts/evidence-index.json` 与成功 CI 的 6 张必需产品审查截图（失败 CI 需列出缺失项）：
+- Provenance B 权威 `manifest.json`：
+
+### Provenance 核对
+
+- [ ] `headSha` 等于 PR 分支实际 Head，不是 GitHub 临时 merge Commit
+- [ ] `testedMergeSha` 等于该 Run 实际 checkout 并测试的 PR 临时 merge Commit
+- [ ] `stagingSha` 等于健康响应头实际观测的运行 Commit，或明确为 `null`；未用 Head/Merge 回填
+- [ ] `branch` 等于 PR head ref
+- [ ] `workflowRunId` 等于上述 GitHub Actions Run
+- [ ] `artifactId` 等于 Payload A 的真实 GitHub 数字 ID，不是 Provenance B 自身 ID
+- [ ] `version` 与 `buildTime` 等于注入受测 build 的值，`buildTime` 不是 PR 更新时间或 Commit 时间
+- [ ] Payload A 不含权威 `manifest.json`、`artifactId` 或 legacy 单一 `commit`
 
 <!-- 只能使用已通过 sanitizer 最终复核的截图、report 或 trace 链接，不得上传原始 Secret/Session 数据。 -->
 

@@ -75,4 +75,6 @@ v0.3 只把主流程的可信入口和项目数据边界真实化：账号预创
 
 本轮只建设 `Project AI OS v0.3 — Identity and Project Isolation`：正式认证、PostgreSQL、数据库 Session、项目成员关系、项目级服务端授权、跨项目测试、Staging 数据库和 CI 产品审查 artifacts。
 
+项目成员关系必须始终保留至少一名 `project_manager`；普通 Manager 与 `system_admin` 都不能降级或删除最后一名 Manager，并发成员变更必须由 PostgreSQL 事务锁防止 Manager 数量归零。
+
 本轮不得接入真实上传、对象存储、解析/OCR、Embedding、pgvector、检索/RAG、Reranker、真实模型、Provider Key、公开注册、找回密码或社交登录。Production 不在本轮部署范围。

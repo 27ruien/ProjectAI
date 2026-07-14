@@ -4,7 +4,7 @@
 
 | ID | 优先级 | 描述 | 当前状态 | 验证方式 | 自动化覆盖 | 负责人 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SEC-001 | P0 | 不同项目数据不得互相访问 | 通过 | 20 条 PostgreSQL/权限集成测试 + E2E + Staging 角色矩阵 | Manager A/B 列表、统一 404、防 URL/body/memberId tamper、viewer 写入、混合角色逐项目审核权限 | Backend | CI 集成 20/20、E2E 11/11 与 Staging 内外网验证均通过 |
+| SEC-001 | P0 | 不同项目数据不得互相访问 | 通过 | 27 条 PostgreSQL/权限集成测试 + E2E + Staging 角色矩阵 | Manager A/B 列表、统一 404、防 URL/body/memberId tamper、viewer 写入、混合角色逐项目审核权限 | Backend | CI 集成 27/27、E2E 11/11 与 Staging 内外网验证均通过 |
 | SEC-002 | P0 | 未认证用户不能访问真实项目数据 | 通过 | 未登录 SSR/页面/API 与 Staging 深层路由测试 | SSR 4/4、代理边界 3/3 与 E2E 未登录深层路由 | Backend | production build、浏览器 Session 守卫和 Staging 绝对 HTTPS 登录重定向均通过 |
 | SEC-003 | P0 | API Key 不进入浏览器 | 通过 | Bundle/源码扫描 | CI 密钥扫描建议 | AI Platform | 当前无真实 Key |
 | SEC-004 | P0 | API Key 不进入 Git | 通过 | Git 与工作区扫描 | CI 可扩展 | DevOps | `.env*` 已忽略，示例无密钥 |
@@ -28,10 +28,10 @@
 | MVP-014 | P1 | 可以通过、修改后通过、驳回 | 通过 | 三类按钮状态 | Workflow E2E 覆盖修改后通过 | Frontend | Mock 状态 |
 | MVP-015 | P1 | 审核通过后写入正式需求 | 未完成 | 数据层集成测试 | 待正式数据层 | Backend | UI 仅显示写入队列反馈 |
 | MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 部分 | 契约与页面审查 | Workflow E2E | Product/Backend | Mock 分离，真实数据未实现 |
-| MVP-017 | P1 | 有审计记录 | 部分 | 身份/项目审计集成测试 | 拒绝访问审计已通过集成测试 | AI/Backend | 登录、退出、项目/成员审计为 PostgreSQL；AI execution/review 仍为 Mock |
+| MVP-017 | P1 | 有审计记录 | 部分 | 身份/项目审计集成测试 | 拒绝访问及最后 Manager 变更拒绝审计已通过 | AI/Backend | 登录、退出、项目/成员审计为 PostgreSQL；AI execution/review 仍为 Mock |
 | MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 可恢复失败演示 | Workflow E2E | Frontend/AI | 本轮自动验证 |
-| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | v0.3 HTTP/页面/DB/Nginx 独立检查 | 部署脚本与公网 Host 注入验收 | DevOps | Commit `40ebf651...` 已部署；独立 PostgreSQL、身份边界、资源 MIME、noindex 与 Production 回归通过 |
-| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | `npm run test:e2e` | 身份/隔离及原三条流程 11/11 | QA | CI 11/11，6/6 截图、manifest 与脱敏 artifact 完整 |
+| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | v0.3 HTTP/页面/DB/Nginx 独立检查 | 部署脚本与公网 Host 注入验收 | DevOps | Commit `ff19049...` 已部署；独立 PostgreSQL、最后 Manager 保护、资源 MIME、noindex 与 Production 回归通过 |
+| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | `npm run test:e2e` | 身份/隔离及原三条流程 11/11 | QA | CI 11/11，6/6 截图、脱敏 Evidence A 与权威 Provenance B 完整 |
 | MVP-021 | P1 | Production build 通过 | 通过 | `npm run build`（由 `npm test` 执行） | CI | Frontend | CI production build、SSR 4/4 与反向代理边界 3/3 通过 |
 | OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 已有基础过滤 |
 | OPT-002 | P2 | 更完整统计指标 | 部分 | 数据看板检查 | SSR | Product | Mock 指标 |
@@ -48,13 +48,14 @@
 
 | ID | 描述 | 当前状态 | 已有证据 | 关闭条件 |
 | --- | --- | --- | --- | --- |
-| V03-IDENT-001 | Better Auth 登录/退出、端点白名单、无公共注册、disabled 拒绝/撤销、token 最小响应、通用错误、数据库限流与写请求 Origin/JSON 边界 | 通过 | CI 集成 20/20、build/SSR、E2E 11/11 与 Staging 登录矩阵通过 | 已关闭 |
+| V03-IDENT-001 | Better Auth 登录/退出、端点白名单、无公共注册、disabled 拒绝/撤销、token 最小响应、通用错误、数据库限流与写请求 Origin/JSON 边界 | 通过 | CI 集成 27/27、build/SSR、E2E 11/11 与 Staging 登录矩阵通过 | 已关闭 |
 | V03-SESSION-001 | PostgreSQL Session、刷新保持、退出撤销、HttpOnly/SameSite/Secure/Path Cookie | 通过 | DB/Cookie、token/no-store、浏览器刷新/退出和 Staging Secure/Path 验证通过；发布后 sessions=0 | 已关闭 |
-| V03-DATA-001 | PostgreSQL Schema、提交 Migration、幂等 Seed、受保护测试 Reset | 通过 | CI 空 PostgreSQL Migration/Seed、约束与幂等测试通过；Staging Migration 当前且 Seed 未覆盖既有值 | 已关闭 |
-| V03-AUTHZ-001 | 系统/项目角色、集中授权、404 防枚举、viewer 服务端只读、混合角色逐项目审核权限 | 通过 | CI 集成 20/20、跨项目/Viewer E2E、6 张审查截图与 Staging 角色矩阵通过 | 已关闭 |
-| V03-AUDIT-001 | 身份/项目审计、mutation 同事务与敏感 metadata 清理 | 通过 | 20/20 集成套件与 Staging 管理员只读查询通过；发布后 audits=77 | 已关闭 |
-| V03-CI-001 | CI PostgreSQL 及成功/失败产品审查 artifacts | 通过 | Run `29306124670` 全绿；artifact `8300308345` 含 6 张截图、manifest、测试日志和 passed 脱敏报告 | 已关闭 |
-| V03-STAGING-001 | 独立私网 PostgreSQL、受控 Migration/Seed、应用/数据库 Healthy 与 Production 不变 | 通过 | Commit `40ebf651...` 已部署；App/DB Healthy、备份可解析、Host 注入关闭、Production 精确未变 | 已关闭 |
+| V03-DATA-001 | PostgreSQL Schema、提交 Migration、幂等 Seed、受保护测试 Reset | 通过 | CI 空 PostgreSQL Migration/Seed、约束与幂等测试通过；Seed 对零 Manager 数据失败关闭且不覆盖既有角色 | 已关闭 |
+| V03-AUTHZ-001 | 系统/项目角色、集中授权、404 防枚举、viewer 服务端只读、混合角色逐项目审核权限 | 通过 | CI 集成 27/27、跨项目/Viewer E2E、6 张审查截图与 Staging 角色矩阵通过 | 已关闭 |
+| V03-MANAGER-001 | 每个项目至少保留一名 project_manager；system_admin 不绕过；并发降级/删除不能归零 | 通过 | project 行事务锁、精确 409 合同、并发降级/删除测试；Staging PATCH/DELETE 409、角色不变、拒绝审计 2 条、零 Manager 项目 0 | 已关闭 |
+| V03-AUDIT-001 | 身份/项目审计、mutation 同事务与敏感 metadata 清理 | 通过 | 27/27 集成套件与 Staging 拒绝审计核验通过；发布后 audits=120 | 已关闭 |
+| V03-CI-001 | CI PostgreSQL 及成功/失败产品审查 artifacts | 通过 | Run `29313984989` 全绿；Evidence `8303225084` + Provenance `8303225479`，6/6 截图、32/32 合同与 passed 脱敏报告 | 已关闭 |
+| V03-STAGING-001 | 独立私网 PostgreSQL、受控 Migration/Seed、应用/数据库 Healthy 与 Production 不变 | 通过 | Commit `ff19049...` 已部署；App/DB Healthy、5 份备份可解析、Host 注入关闭、Production 精确未变 | 已关闭 |
 
 ## 统计
 
@@ -62,4 +63,4 @@
 - P1：21 条；通过 6，部分 13，未完成 2。
 - P2：8 条；部分 5，未完成 3。
 
-以上 P0/P1/P2 统计只计算第一张长期 MVP 表，不计算 v0.3 交付门禁。当前 CI 证据为 PostgreSQL/权限集成 20/20、build + SSR/代理 7/7、E2E 11/11、部署契约 8/8、sanitizer 10/10 和 6/6 审查截图；Staging 运行与 Production 不变证据见 `MVP_STATUS.md`。P0 部分项在真实资料试点前必须关闭；Mock 演示通过不代表真实能力通过。
+以上 P0/P1/P2 统计只计算第一张长期 MVP 表，不计算 v0.3 交付门禁。当前 CI 证据为 PostgreSQL/权限集成 27/27、build + SSR/代理 7/7、E2E 11/11、部署契约 8/8、artifact/provenance 32/32 和 6/6 审查截图；Staging 运行与 Production 不变证据见 `MVP_STATUS.md`。P0 部分项在真实资料试点前必须关闭；Mock 演示通过不代表真实能力通过。

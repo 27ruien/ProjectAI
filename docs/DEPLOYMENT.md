@@ -47,7 +47,7 @@ Compose 使用内部网络 `projectai-staging-internal`。PostgreSQL 17 必须 H
 1. 验证 SSH、无交互 sudo 和固定 canonical 目录后，以每次唯一 token 原子 `mkdir` 取得 `/srv/projectai-staging/.staging-deploy-lock`；同一时间只允许一个发布。发布目录、环境文件和备份目录不得是 symlink；环境文件必须由 root 持有、权限 `600`，每个必需 key 恰好一次，并拒绝应用/`db-tools` 镜像、健康路径、Compose 与公开构建元数据覆盖项。随后验证 Compose project、3101 端口所有者和远端 Docker 平台，并记录 Production 容器 ID、运行状态、restart count 与 health。
 2. 从当前完整 Commit 的 `git archive` 构造临时发布根，只使用 Git 已跟踪文件在本地按远端 Linux 平台构建应用与 `db-tools` 镜像；不得在共享 Production 主机执行应用构建。发布内容拒绝真实 `.env`、私钥类路径，远端 `.env.auth-staging`、`backups/`、部署锁和事务标记均受保护。
 3. 本地通过 `docker save` 将两个镜像流式传输给远端 `docker load`，逐一核对 image ID 与 OS/architecture；事务标记在首次远端 release 变更前创建。远端 Compose 只允许 `--no-build` 使用预加载镜像。已有 PostgreSQL 必须严格使用 `volume|projectai-staging-postgres|/var/lib/postgresql/data`，否则在任何 `compose up` 前失败关闭；随后启动独立 PostgreSQL 并等待 Healthy。
-4. 在任何 Migration 前查询数据库大小并检查文件系统余量，将 custom-format `pg_dump` 直接流式写入 root-only `.partial` 文件；必须通过非空检查和同版本 `pg_restore --list` 完整性解析后才原子改名。脚本自动清理严格命名的遗留 partial 并保留最近 10 份。随后由短生命周期 operations 容器以预加载镜像执行已提交 Migration 和 insert-only 幂等 Seed，不 reset、复活身份、覆盖已有业务字段或清空 Volume。
+4. 在任何 Migration 前查询数据库大小并检查文件系统余量，将 custom-format `pg_dump` 直接流式写入 root-only `.partial` 文件；必须通过非空检查和同版本 `pg_restore --list` 完整性解析后才原子改名。脚本自动清理严格命名的遗留 partial 并保留最近 10 份。随后由短生命周期 operations 容器以预加载镜像执行已提交 Migration 和 insert-only 幂等 Seed，不 reset、复活身份、覆盖已有业务字段或清空 Volume；Seed 与独立发布后置检查都会拒绝任何零 `project_manager` 项目。
 5. 记录上一 Staging 容器实际使用的 immutable image ID 并启动新应用；`/api/health` 必须证明 PostgreSQL 可连接且 `users`、`sessions`、`projects`、`project_members` 可查询。上游先验证匿名重定向、登录、Session 刷新/退出、Manager A 跨项目拒绝、Viewer 只读、Admin 全项目与 Cookie 属性；`PUBLIC_VALIDATION=1` 时还必须通过公开 Staging URL 再执行同一套完整身份、Session、角色和项目隔离验证，并检查 canonical HTTPS Location、恶意 Host 拒绝、静态资源 MIME 与 noindex。
 6. 脚本只执行 `nginx -t`，不编辑或 reload Nginx；公网验证后、清除事务标记前再次精确比对 Production 容器状态并检查 Production URL。事务标记建立后的任一步失败都会使用上一 immutable image ID 自动回滚 Staging 应用并核对实际镜像；没有上一镜像时必须确认失败应用已停止。发布前 dump 和数据库卷保留，成功/回滚后才清除事务标记并释放部署锁。
 
@@ -96,7 +96,7 @@ http://127.0.0.1:3101/tool/projectai-staging/api/health
 http://127.0.0.1:3101/tool/projectai-staging/login
 ```
 
-健康端点只在数据库连接成功且四张身份/项目核心表可查询时返回 `{"status":"ok"}`，异常时返回不含内部细节的 `503`。匿名访问 dashboard/projects/项目深层路由必须跳转登录。还要检查登录、刷新 Session、退出撤销、Manager A 只见项目 A/访问项目 B 404、Viewer 只读、Admin 见 3 个项目、Cookie Secure/Path、数据库和应用 Healthy、CSS/JS/font/favicon/OG、noindex、STAGING 元数据与 Nginx 无新增错误。恶意 Host 的无尾斜杠入口只能返回 canonical 绝对 HTTPS，带尾斜杠应用路由必须 404 且无 Location。同时验证 Production 首页和 dashboard，并比对 Production 容器 ID/状态/restart count/health。
+健康端点只在数据库连接成功且四张身份/项目核心表可查询时返回 `{"status":"ok"}`，异常时返回不含内部细节的 `503`；成功响应以 `x-projectai-commit-sha` 暴露经 40 位格式校验的非敏感运行 revision，供 CI 记录真实 `stagingSha`。匿名访问 dashboard/projects/项目深层路由必须跳转登录。还要检查登录、刷新 Session、退出撤销、Manager A 只见项目 A/访问项目 B 404、Viewer 只读、Admin 见 3 个项目、最后 Manager 的 PATCH/DELETE 均为 409 且写拒绝审计、Cookie Secure/Path、数据库和应用 Healthy、CSS/JS/font/favicon/OG、noindex、STAGING 元数据与 Nginx 无新增错误。恶意 Host 的无尾斜杠入口只能返回 canonical 绝对 HTTPS，带尾斜杠应用路由必须 404 且无 Location。同时验证 Production 首页和 dashboard，并比对 Production 容器 ID/状态/restart count/health。
 
 ## 回滚
 
@@ -118,4 +118,4 @@ http://127.0.0.1:3101/tool/projectai-staging/login
 
 ## 当前发布状态
 
-v0.3 Commit `40ebf651b83856120b53496c96b23fc207e20b1f` 已于 2026-07-14 部署到 Staging。独立公网与基础设施复核确认：身份/Session/角色/跨项目隔离、canonical HTTPS 与 Host 注入边界、noindex、资源 MIME、私网 PostgreSQL、备份可解析和 Production 精确不变均通过。运行证据、CI 与 artifact 标识见 `MVP_STATUS.md`。后续文档-only Commit 不要求重建运行镜像；任何应用代码、Migration、Compose、Nginx snippet 或运行脚本变化仍必须重新执行完整发布流程。
+v0.3 Commit `ff19049deca065b3dbc4698c3a219980dcd2f47b` 已于 2026-07-14 部署到 Staging。独立公网与基础设施复核确认：身份/Session/角色/跨项目隔离、最后 Manager 409/审计约束、零 Manager 项目检查、canonical HTTPS 与 Host 注入边界、noindex、资源 MIME、私网 PostgreSQL、备份可解析和 Production 精确不变均通过。运行证据、CI 与 artifact 标识见 `MVP_STATUS.md`。后续文档-only Commit 不要求重建运行镜像；任何应用代码、Migration、Compose、Nginx snippet 或运行脚本变化仍必须重新执行完整发布流程。

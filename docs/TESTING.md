@@ -20,7 +20,7 @@
 
 ## 身份与项目隔离集成测试
 
-当前 `tests/integration/identity-project-isolation.test.ts` 共 19 条，覆盖：
+当前 `tests/integration/identity-project-isolation.test.ts` 共 26 条，覆盖：
 
 - Manager A/B 只得到自己的项目，system admin 得到 3 个项目。
 - 跨项目 ID 和不存在 ID 使用相同 404，并写入脱敏拒绝审计。
@@ -32,12 +32,15 @@
 - 基于受信客户端 IP 的登录频率限制。
 - URL/body `projectId` 与跨项目 `memberId` 篡改、viewer 写入和普通用户创建项目均被服务端拒绝。
 - Seed 重跑保持已有身份状态、项目编辑、成员角色和 credential hash。
+- Seed 保证每个项目至少一名 Manager；已有零 Manager 数据会失败关闭且不覆盖既有角色。
 - 成员 CRUD 与管理员项目创建把业务写入和审计放在同一数据库事务。
+- 唯一 Manager 不能降级为 member/viewer 或删除，system admin 不绕过；添加第二 Manager 后允许变更；两个不同 Manager 并发降级或删除最终严格保留一名。
+- 健康端点只在完整 40 位运行 SHA 存在时设置 provenance header，响应体不泄露数据库细节。
 - credential hash 只存在于 `accounts.password_hash`，不等于明文，`users` 无重复 hash 列。
 
-`tests/integration/review-project-permissions.test.ts` 另有 1 条混合角色边界：同一用户在项目 A 可编辑、项目 B 仅 viewer 时，每条审核任务必须按自身 `projectId` 获得可审核或只读标记，未授权项目记录不会序列化。因此完整 integration suite 当前为 20 条。
+`tests/integration/review-project-permissions.test.ts` 另有 1 条混合角色边界：同一用户在项目 A 可编辑、项目 B 仅 viewer 时，每条审核任务必须按自身 `projectId` 获得可审核或只读标记，未授权项目记录不会序列化。因此完整 integration suite 当前为 27 条。
 
-2026-07-14 本地已从空测试库连续执行两次受保护 Reset/Migration/Seed，再执行第三次 insert-only Seed，并验证 Seed 对已有修改为非破坏性；当前 20/20 集成测试通过。GitHub Run `29306124670` 已在空 PostgreSQL Service 重复通过，Staging Commit `40ebf651...` 的公网角色与隔离矩阵也已独立验证。
+2026-07-14 本地已从空测试库执行受保护 Reset/Migration/Seed，并验证 Seed 非破坏性和零 Manager 失败关闭；当前 27/27 集成测试通过。GitHub Run `29313984989` 已在空 PostgreSQL Service 重复通过，Staging Commit `ff19049...` 的公网角色、隔离和最后 Manager 409/拒绝审计矩阵也已独立验证。
 
 ## Playwright 环境
 
@@ -107,13 +110,13 @@ npm run qa:mvp
 
 ## CI 与产品审查 artifacts
 
-PR 与 main push 运行 Node 22、npm cache、Chromium、PostgreSQL 17、Migration、Seed、typecheck、lint、一次 production build + SSR/反向代理边界、当前 20 条授权/审计/逐项目审核权限集成测试、8 条部署契约和 Playwright；新提交取消同分支旧任务，不进行部署。
+PR 与 main push 运行 Node 22、npm cache、Chromium、PostgreSQL 17、Migration、Seed、typecheck、lint、一次 production build + SSR/反向代理边界、当前 27 条授权/审计/最后 Manager/逐项目审核权限集成测试、8 条部署契约和 Playwright；新提交取消同分支旧任务，不进行部署。
 
 `PLAYWRIGHT_REVIEW_ARTIFACTS=1` 时生成：
 
 ```text
 review-artifacts/
-  manifest.json
+  evidence-index.json
   screenshots/
     login.png
     dashboard-admin.png
@@ -123,19 +126,34 @@ review-artifacts/
     viewer-readonly.png
 ```
 
-`manifest.json` 记录 commit、branch、environment、version、buildTime、运行状态、viewport、测试角色、路由、实际/必需/缺失截图和完整性，不得记录密码、Cookie、Session Token 或数据库连接。
+`evidence-index.json` 是 Payload A 的预上传索引，不是权威发布 Manifest。它记录运行身份、截图合同和审查状态，但不得包含 `artifactId`、旧的单一 `commit` 字段、密码、Cookie、Session Token 或数据库连接。CI 缺少必需的 Head、PR merge、branch、workflow、version 或 build 时间元数据时失败关闭；本地运行以明确的 `null` / `local` 语义表示未进入 GitHub 发布链路。
+
+产品审查 revision 字段不得混用：
+
+- `headSha`：PR 分支实际 Head；main push 为被推送 Commit；普通本地索引为 `null`。
+- `testedMergeSha`：PR runner 实际 checkout 并执行测试的 GitHub 临时 merge Commit，来自 `git rev-parse HEAD` 且必须等于该 PR run 的 `github.sha`；main push 和本地索引为 `null`。
+- `stagingSha`：本次 CI 通过公网 Staging `/api/health` 的 `x-projectai-commit-sha` 响应头实际观测到的运行 Commit。只有 body 为 `status: ok` 且响应头是完整合法 SHA 时记录；网络失败、缺失或非法值均为 `null`，绝不能回填 `headSha` 或 `testedMergeSha`。
+- `branch`：PR head ref 或 push ref name。
+- `workflowRunId`：生成并上传该证据的 GitHub Actions Run ID，以十进制字符串保存；本地为 `null`。
+- `artifactId`：GitHub 为已上传的 Payload A 分配的数字 Artifact ID，以十进制字符串保存。该值只存在于上传后生成的权威 Manifest。
+- `version`：通过 `NEXT_PUBLIC_APP_VERSION` 注入受测 build 的应用版本。
+- `buildTime`：通过 `NEXT_PUBLIC_BUILD_TIME` 注入受测 build 的 ISO-8601 时间；不是 PR 更新时间、Commit 时间或 Manifest 生成时间。
 
 CI 的 `if: always()` 收尾在成功或失败时都执行，但原始目录不直接上传：
 
-1. 把 `playwright-report/`、`review-artifacts/`、`test-results/`、`test-logs/` 复制到 `product-review-evidence/`。
+1. 写入 `review-artifacts/evidence-index.json`，并把 `playwright-report/`、`review-artifacts/`、`test-results/`、`test-logs/` 复制到 `product-review-evidence/`。
 2. 从当前 CI 数据库读取 Session Token，并把它们与 `DATABASE_URL`、从 URL 单独解析的数据库密码、Better Auth Secret、数据库密码和 Seed 密码的精确值及组合编码变体加入敏感值集合；配置了数据库但无法完成查询时整个 sanitizer 失败关闭，不上传无法证明安全的证据。
 3. 对 Cookie、Set-Cookie、Authorization、Session、password 和数据库连接字段做结构化脱敏；文件扩展名不作为信任边界，改名/嵌套 ZIP、gzip、归档 entry 名，以及任意文本内大小写、空白、Base64 或原始 percent-encoding 变体的 ZIP Data URI 都必须递归处理、复核并重建。无法安全处理的二进制/普通归档会先删除或以 omission 文件替代，并让整个脱敏步骤失败关闭，绝不发布不完整副本。
-4. 对最终目录再次执行精确 Secret、折行编码和未脱敏 Session Cookie 扫描，并验证 manifest 一致性。运行状态为 success/local 时强制 6 张必需截图均存在且非空；failure/cancelled 可缺图，但 manifest 与 `sanitization-report.json` 必须明确列出缺失项。通过后才写脱敏报告。
-5. GitHub Actions 只上传 `product-review-evidence/`，保留 14 天；脱敏失败会让 CI 失败，并跳过 artifact 上传，未经确认的原始证据不会离开 runner。
+4. 对最终目录再次执行精确 Secret、折行编码和未脱敏 Session Cookie 扫描，并验证 evidence index 一致性。运行状态为 success/local 时强制 6 张必需截图均存在且非空；failure/cancelled 可缺图，但 `evidence-index.json` 与 `sanitization-report.json` 必须明确列出缺失项。通过后才写脱敏报告。
+5. 上传不可变 Payload A：`product-review-evidence-${workflowRunId}-${runAttempt}`。脱敏失败会使 CI 失败并跳过上传，未经确认的原始证据不会离开 runner。
+6. Payload A 上传成功后，读取 `actions/upload-artifact` 返回的真实 `artifact-id` 和 SHA-256 digest，生成唯一权威 `product-review-manifest/manifest.json`；Manifest 的 `artifactId` 明确指向 Payload A，而不是承载 Manifest 的 Artifact 自身。
+7. 将权威 Manifest 作为独立 Provenance B：`product-review-manifest-${workflowRunId}-${runAttempt}` 上传。GitHub Artifact 在上传前没有 ID 且上传后不可变，因此不得把占位 ID 写入 Payload A，也不得覆盖上传制造新的不匹配 ID。A/B 均保留 14 天。
+
+`npm run test:artifacts` 当前合并运行 sanitizer 与 Manifest 合同共 32 条测试，覆盖归档/编码/Session 脱敏、截图完整性、legacy `commit` 拒绝、CI 字段失败关闭、local/null 语义，以及 Artifact ID/name/digest/Run 的上传后绑定。
 
 ## 当前验证状态
 
-- 本地与 CI 已通过：typecheck、lint、PostgreSQL/权限集成 20/20、production build + SSR/代理 7/7、部署契约 8/8 和 Playwright 11/11。
-- GitHub Run `29306124670` 的 artifact `product-review-evidence-29306124670-1`（ID `8300308345`）已下载复核：6/6 必需截图、manifest、测试日志和 `passed` sanitization report 完整；sanitizer fixture 为 10/10。
-- Staging Commit `40ebf651...` 已通过内部与公网登录、Session、角色、跨项目隔离、Secure/Path Cookie、Host 注入、资源 MIME、noindex、数据库/应用 Healthy、备份解析和 Production 精确不变验证。
+- 本地与 CI 已通过：typecheck、lint、PostgreSQL/权限集成 27/27、production build + SSR/代理 7/7、部署契约 8/8、artifact/provenance 32/32 和 Playwright 11/11。
+- Run `29313984989` 已同时产出并下载复核 Payload A `product-review-evidence-29313984989-1`（ID `8303225084`）与 Provenance B `product-review-manifest-29313984989-1`（ID `8303225479`）；A 含 6/6 截图和 `passed` 脱敏报告，B 正确区分 Head `ff19049...` 与 tested merge `b1961b49...`。
+- Staging Commit `ff19049...` 已通过内部与公网登录、Session、角色、跨项目隔离、最后 Manager 409/审计约束、Secure/Path Cookie、Host 注入、资源 MIME、noindex、数据库/应用 Healthy、备份解析和 Production 精确不变验证；健康响应 header 返回完整运行 SHA。
 - 详细运行证据见 `MVP_STATUS.md`。后续任何应用代码、Migration、Compose、Nginx snippet 或运行脚本变化都必须重新执行完整门禁，不能复用本次 Staging 结论。

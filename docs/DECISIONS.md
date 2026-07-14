@@ -100,7 +100,7 @@
 ## ADR-016：Seed 幂等，测试 Reset fail-closed
 
 - 状态：Accepted。
-- 决策：Seed 凭据只来自环境变量并规范化 email；5 个身份、3 个项目和预定成员关系均采用 insert-only 初始化。已有身份状态/系统角色、项目字段、成员角色和 credential hash 在部署重跑时保持不变。需要刷新 fixture 时只能使用受保护的测试 Reset；`db:reset:test` 必须同时满足 `NODE_ENV=test`、`ALLOW_TEST_DATABASE_RESET=true`、本地/CI 主机和数据库名包含 `test` / `ci`。
+- 决策：Seed 凭据只来自环境变量并规范化 email；5 个身份、3 个项目和预定成员关系均采用 insert-only 初始化。已有身份状态/系统角色、项目字段、成员角色和 credential hash 在部署重跑时保持不变；Seed 完成前必须查询零 Manager 项目，发现任何一项即失败，不自动提升或覆盖已有角色。需要刷新 fixture 时只能使用受保护的测试 Reset；`db:reset:test` 必须同时满足 `NODE_ENV=test`、`ALLOW_TEST_DATABASE_RESET=true`、本地/CI 主机和数据库名包含 `test` / `ci`。
 - 原因：Staging 发布不得复活停用账号、覆盖已编辑项目/成员角色或清空 Volume；测试需要可重复状态，但 fixture 刷新必须拒绝远程或非测试数据库。
 
 ## ADR-017：Staging PostgreSQL 私网持久化并受控迁移
@@ -119,6 +119,14 @@
 ## ADR-019：CI 只上传经过独立脱敏与复核的产品证据副本
 
 - 状态：Accepted。
-- 决策：Playwright Report、review screenshots、test results 和 logs 先作为 CI 工作区原始输入，再复制到 `product-review-evidence/`。脱敏器结合运行时 Secret 与必须可查询的数据库 Session Token 做精确值清除，并结构化处理 Cookie、Authorization、password、Session 与数据库连接信息；按文件 magic 处理改名/嵌套/SFX ZIP 与 gzip，清理归档 entry 路径，并在任意文本中识别 MIME、大小写、空白、Base64 或原始 percent-encoding 变体的 ZIP Data URI 和折行编码 Secret。归档必须递归处理、复核并重建；Session 无法核验或 manifest 自相矛盾则失败关闭。成功运行必须具备 6 张必需截图；失败/取消运行可缺图，但 manifest 和脱敏报告必须精确列出缺失项，仍可上传安全日志供审查。GitHub Actions 只在脱敏成功时上传 `product-review-evidence/`，同时保留 `sanitization-report.json`。
-- 原因：trace、network、HAR 和失败日志可能携带 HttpOnly Session 或临时凭据；“测试密码是临时值”不能替代证据发布边界。
-- 失败策略：无法安全处理的二进制/归档必须删除或留下 omission 说明，并立即使 sanitizer 失败；任何最终内容、成功运行的截图完整性或 manifest 一致性复核失败都会使 CI 失败。测试失败本身不隐藏已安全清洗的日志，但未经确认的目录不得作为 artifact 上传。
+- 决策：Playwright Report、review screenshots、test results 和 logs 先作为 CI 工作区原始输入；`review-artifacts/evidence-index.json` 记录 Head、实际受测 PR merge、观测到的 Staging revision、branch、workflow、build 元数据和截图合同，但它不是权威发布 Manifest，禁止出现 `artifactId` 或 legacy 单一 `commit`。脱敏器把输入复制到 `product-review-evidence/`，结合运行时 Secret 与必须可查询的数据库 Session Token 做精确值清除，并结构化处理 Cookie、Authorization、password、Session 与数据库连接信息；按文件 magic 递归处理改名/嵌套/SFX ZIP 与 gzip、归档 entry 路径，以及任意文本中的 ZIP Data URI 与折行编码 Secret。Session 无法核验、索引自相矛盾或 legacy provenance 存在时失败关闭。
+- 两阶段发布：只有最终树和 `sanitization-report.json` 复核通过后，才上传不可变 Payload A `product-review-evidence-*`；成功运行还必须具备 6 张必需截图，失败/取消运行则由 index 精确列出缺失项。GitHub 返回 A 的真实数字 Artifact ID 与 SHA-256 digest 后，CI 才生成唯一权威 `product-review-manifest/manifest.json`，再作为独立 Provenance B `product-review-manifest-*` 上传。Manifest 的 `artifactId` 指向 A；B 不自指自身 ID。`headSha`、`testedMergeSha` 和 `stagingSha` 分别表示 PR Head、runner 实际 checkout 的临时 merge Commit、从健康端点合法响应头实际观测的 Staging Commit，不得相互回填。
+- 原因：trace、network、HAR 和失败日志可能携带 HttpOnly Session 或临时凭据；“测试密码是临时值”不能替代证据发布边界。同时 GitHub Artifact ID 在上传前不存在，v4 Artifact 上传后不可变；把占位或自指 ID 写进同一个 Artifact 无法形成真实、自洽的 provenance。
+- 失败策略：无法安全处理的二进制/归档必须删除或留下 omission 说明，并立即使 sanitizer 失败；任何最终内容、成功运行的截图完整性、evidence index 合同、CI 必需字段或上传后 ID/name/digest/Run 绑定失败都会使 CI 失败。测试失败本身不隐藏已安全清洗的日志，但未经确认的目录不得作为 Payload A 上传；A 未成功发布时不得生成或上传 B。Staging 不可观测、响应体非 `status: ok` 或 `x-projectai-commit-sha` 非完整合法 SHA 时，只能记录 `stagingSha: null`。
+
+## ADR-020：项目成员变更以项目行为互斥锁并保留最后一名 Manager
+
+- 状态：Accepted。
+- 决策：所有成员 POST/PATCH/DELETE 在 PostgreSQL 事务内先对对应 `projects` 行执行 `FOR UPDATE`，锁后重新读取操作者成员关系，再锁目标成员。目标是 `project_manager` 且将被降级或删除时，必须在同一事务检查另一名 Manager；不存在时不修改成员，提交 `project_member_change_denied / denied / last_project_manager` 审计并由 API 返回 `409 LAST_PROJECT_MANAGER`。`system_admin` 只绕过项目成员授权，不绕过该领域约束；原始 update/delete 不对路由公开。
+- 原因：只锁操作者或目标 membership 会让两个 Manager 在 `READ COMMITTED` 下发生 write skew，分别看到另一名 Manager 后同时提交，最终归零。统一的 project row mutex 把同项目成员变更串行化，并固定 `project → 锁后授权 → target → guard → mutation/audit` 锁序以避免反序死锁与陈旧授权快照。
+- 验证：集成测试覆盖唯一 Manager 降级为 member/viewer、Manager 与 system_admin 删除、添加第二 Manager 后允许降级/删除、拒绝状态/审计/API 合同，以及两名不同 Manager 的并发降级与并发删除；Seed 和 Staging 发布独立断言零 Manager 项目数为 0。
