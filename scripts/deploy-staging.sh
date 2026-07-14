@@ -945,8 +945,37 @@ if [[ "$PUBLIC_VALIDATION" != "1" ]]; then
 fi
 
 log "Validating public Staging login, protected-route redirects, noindex, and assets"
-redirect_code="$(http_code "$PUBLIC_STAGING_URL")"
+redirect_headers="$(curl --silent --show-error --head --max-time 20 "$PUBLIC_STAGING_URL" | tr -d '\r')"
+redirect_code="$(awk 'NR == 1 { print $2 }' <<<"$redirect_headers")"
+redirect_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }' <<<"$redirect_headers")"
 [[ "$redirect_code" == "308" || "$redirect_code" == "301" ]] || fail "Unexpected Staging redirect status: ${redirect_code}"
+[[ "$redirect_location" == "${PUBLIC_STAGING_URL}/" ]] \
+  || fail "Staging base path did not redirect to the canonical HTTPS URL"
+
+hostile_base_headers="$(curl --silent --show-error --head --max-time 20 \
+  --header 'Host: attacker.invalid' "$PUBLIC_STAGING_URL" | tr -d '\r')"
+hostile_base_code="$(awk 'NR == 1 { print $2 }' <<<"$hostile_base_headers")"
+hostile_base_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }' <<<"$hostile_base_headers")"
+[[ "$hostile_base_code" == "308" || "$hostile_base_code" == "301" ]] \
+  || fail "Hostile-Host Staging base path returned ${hostile_base_code}"
+[[ "$hostile_base_location" == "${PUBLIC_STAGING_URL}/" ]] \
+  || fail "Staging base redirect trusted an unvalidated Host header"
+
+app_root_headers="$(curl --silent --show-error --head --max-time 20 "${PUBLIC_STAGING_URL}/" | tr -d '\r')"
+app_root_code="$(awk 'NR == 1 { print $2 }' <<<"$app_root_headers")"
+app_root_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }' <<<"$app_root_headers")"
+[[ "$app_root_code" =~ ^30[2378]$ ]] || fail "Staging application root did not redirect to the dashboard"
+[[ "$app_root_location" == "${PUBLIC_STAGING_URL}/dashboard" ]] \
+  || fail "Staging application root did not use the canonical HTTPS dashboard URL"
+
+hostile_app_headers="$(curl --silent --show-error --head --max-time 20 \
+  --header 'Host: attacker.invalid' "${PUBLIC_STAGING_URL}/" | tr -d '\r')"
+hostile_app_code="$(awk 'NR == 1 { print $2 }' <<<"$hostile_app_headers")"
+hostile_app_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }' <<<"$hostile_app_headers")"
+[[ "$hostile_app_code" == "404" ]] \
+  || fail "Staging application accepted an unvalidated Host header"
+[[ -z "$hostile_app_location" ]] \
+  || fail "Host-rejected Staging request emitted an unsafe redirect"
 
 login_code="$(http_code "${PUBLIC_STAGING_URL}/login")"
 [[ "$login_code" == "200" ]] || fail "Staging login returned ${login_code}"
@@ -957,7 +986,8 @@ for route in /dashboard /projects /projects/project-002/overview /reviews /setti
   location="$(curl --silent --show-error --head --max-time 20 "${PUBLIC_STAGING_URL}${route}" \
     | tr -d '\r' \
     | awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }')"
-  [[ "$location" == *"${BASE_PATH}/login"* ]] || fail "Staging route ${route} did not redirect to the scoped login page"
+  [[ "$location" == "${PUBLIC_STAGING_URL}/login" || "$location" == "${PUBLIC_STAGING_URL}/login?"* ]] \
+    || fail "Staging route ${route} did not redirect to the canonical HTTPS login page"
 done
 
 staging_headers="$(curl --fail --silent --show-error --head --max-time 20 "${PUBLIC_STAGING_URL}/login" | tr -d '\r')"

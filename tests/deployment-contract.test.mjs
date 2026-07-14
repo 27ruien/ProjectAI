@@ -8,6 +8,15 @@ import { normalizeApplicationCookieName } from "../scripts/lib/cookie-name.mjs";
 const execFileAsync = promisify(execFile);
 const deployScript = new URL("../scripts/deploy-staging.sh", import.meta.url);
 const stagingCompose = new URL("../docker-compose.staging.yml", import.meta.url);
+const stagingNginx = new URL(
+  "../deploy/nginx-projectai-staging.conf",
+  import.meta.url,
+);
+const authBoundaryVerifier = new URL(
+  "../scripts/verify-auth-boundaries.mjs",
+  import.meta.url,
+);
+const requestProxy = new URL("../proxy.ts", import.meta.url);
 
 test("Staging PostgreSQL readiness checks the final TCP listener", async () => {
   const [script, compose] = await Promise.all([
@@ -93,6 +102,48 @@ test("Staging verification preserves the environment name inside secure cookie p
     ),
     "projectai_local.session_token",
   );
+});
+
+test("public Staging redirects are required to stay on the canonical HTTPS URL", async () => {
+  const [script, compose, nginx, proxy] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(stagingCompose, "utf8"),
+    readFile(stagingNginx, "utf8"),
+    readFile(requestProxy, "utf8"),
+  ]);
+  assert.match(compose, /VINEXT_TRUSTED_HOSTS: gridworks\.cn/);
+  assert.match(
+    nginx,
+    /return 308 https:\/\/gridworks\.cn\/tool\/projectai-staging\/;/,
+  );
+  assert.doesNotMatch(nginx, /return 30[18] \/tool\/projectai-staging\//);
+  assert.match(proxy, /host !== expectedHost/);
+  assert.match(proxy, /forwardedHost !== expectedHost/);
+  assert.match(proxy, /forwardedProto !== "https"/);
+  assert.match(proxy, /status: 404/);
+  assert.match(
+    script,
+    /app_root_location" == "\$\{PUBLIC_STAGING_URL\}\/dashboard"/,
+  );
+  assert.match(
+    script,
+    /location" == "\$\{PUBLIC_STAGING_URL\}\/login"/,
+  );
+  assert.match(script, /--header 'Host: attacker\.invalid'/);
+  assert.match(script, /hostile_base_location/);
+  assert.match(script, /hostile_app_code" == "404"/);
+});
+
+test("authentication boundary verification revokes sessions on failure paths", async () => {
+  const verifier = await readFile(authBoundaryVerifier, "utf8");
+  assert.match(verifier, /projectai-staging-boundary-verifier\/0\.3/);
+  assert.match(verifier, /randomUUID\(\)/);
+  assert.match(verifier, /async function withSession/);
+  assert.match(verifier, /function errorSummary/);
+  assert.match(verifier, /error\.errors\.map\(errorSummary\)/);
+  assert.match(verifier, /delete from sessions where user_agent = \$1/);
+  assert.match(verifier, /leakedSessionCount > 0/);
+  assert.doesNotMatch(verifier, /signOut\([^\n]+\.catch/);
 });
 
 test("Staging deployment shell is syntactically valid", async () => {
