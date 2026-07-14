@@ -1,82 +1,101 @@
 # MVP Status
 
-## 版本信息
+## 版本与发布信息
 
 | 项目 | 当前值 |
 | --- | --- |
 | 当前版本 | `0.3.0-staging`（Identity and Project Isolation） |
-| 当前 main Commit | `821bdf8d85a009256b04780c725ef2eb5bd2c8cc`（PR #1 Squash Merge） |
-| 当前开发分支 | `agent/auth-project-isolation` |
-| 当前 Draft PR | 尚未创建；计划标题 `Add authentication and project isolation` |
-| 生产地址 | https://gridworks.cn/tool/projectai/ |
-| Staging 地址 | https://gridworks.cn/tool/projectai-staging/（0.2 基线在线；v0.3 尚未部署验收） |
+| `main` 基线 | `821bdf8d85a009256b04780c725ef2eb5bd2c8cc`（PR #1 Squash Merge） |
+| 开发分支 | `agent/auth-project-isolation` |
+| Draft PR | [#2 Add authentication and project isolation](https://github.com/27ruien/ProjectAI/pull/2) |
+| Staging | https://gridworks.cn/tool/projectai-staging/ |
+| Staging 运行 Commit | `40ebf651b83856120b53496c96b23fc207e20b1f` |
+| Production | https://gridworks.cn/tool/projectai/（本轮未部署、未重启、未迁移） |
+| CI | [Run 29306124670](https://github.com/27ruien/ProjectAI/actions/runs/29306124670)，全部通过 |
+| 产品审查 Artifact | `product-review-evidence-29306124670-1`（ID `8300308345`，保留 14 天） |
 
-## 已完成
+## v0.3 交付结论
 
-- 完整 Mock 项目业务体验：知识、需求提取、审核、Scope、Action、会议、风险、Skills 与模型配置；项目身份、列表、创建、基础信息和成员关系已改为 PostgreSQL 真实数据。
-- `AIGateway`、`ProjectKnowledgeService` Mock 契约与来源引用展示。
-- Better Auth `1.6.23` + Drizzle PostgreSQL 认证配置：邮箱密码登录、禁用公共注册、数据库 Session、HttpOnly/SameSite Cookie、token 最小化/no-store Auth 响应、停用 Session 撤销、Staging/Production Secure 与 basePath/Cookie 前缀隔离、数据库登录限流。
-- PostgreSQL Schema、Migration 和 Repository：`users`、`accounts`、`sessions`、`verifications`、`rate_limits`、`projects`、`project_members`、`audit_events`。
-- 服务端身份和项目授权：集中式管理员绕过、项目角色校验、无权/不存在统一 404、防枚举拒绝审计、普通写权限 403，以及所有状态变更在数据库操作前执行精确可信 Origin/JSON 校验。
-- 数据库项目列表、项目创建、项目基础信息、项目成员管理与身份/项目审计 API。
-- 授权后的 Mock 映射：项目详情先查询数据库成员关系，再按精确 `projectId` 在服务端过滤；全局项目业务数组只保留当前用户可访问项目。
-- 5 个环境变量 Seed 用户、3 个项目和 insert-only 幂等 Seed；重跑保持已有身份状态、角色、项目编辑与 credential，测试 Reset 同时限制环境、显式开关、主机和数据库名称。
-- CI PostgreSQL 17 Service、临时凭据、Migration/Seed、当前 20 条授权/审计/逐项目审核权限集成用例和身份/隔离 E2E；成功/失败均尝试生成 `product-review-evidence/` 脱敏副本，只有数据库 Session 可核验且最终复核通过才上传，失败关闭。
-- Staging Compose 已定义独立 PostgreSQL 容器、私有网络、命名卷、最小化 Secret 注入、受控 Migration/Seed 操作容器，以及查询数据库和四张身份/项目核心表的 `/api/health` 健康检查。
-- Staging 部署脚本以唯一 token 原子锁串行发布，只从当前 Commit tracked files 在本地按远端平台构建应用/`db-tools` 镜像并流式传输，远端所有 Compose 操作显式 `--no-build`；脚本拒绝目录 symlink、重复/保留环境覆盖并严格校验数据库命名卷。每次 Migration 前检查空间并流式、原子生成且解析验证 root-only `pg_dump`（保留最近 10 份），替换应用后如验收失败按 immutable image ID 恢复并核对。数据库卷保持不动，Production baseline 后的所有退出路径必须不变；运行容器设有 CPU/内存/PID/日志上限。
-- Production Docker Compose、standalone、Nginx 子路径部署与健康检查。
-- Production 地址已上线；本轮不重新部署生产。
+`Project AI OS v0.3 — Identity and Project Isolation` 的代码、CI、产品审查 evidence 和 Staging 验证已经闭环。Draft PR 仍等待产品与安全审查，未经审查不得合并。
 
-## 待运行确认
+- Better Auth 邮箱密码登录、受控预创建账号、PostgreSQL credential 与数据库 Session 已真实化；无公共注册、找回密码或社交登录。
+- Session 通过 HttpOnly、SameSite、Secure、独立 Cookie 前缀与 `/tool/projectai-staging` Path 传递，不进入 localStorage、URL、日志或 artifact。
+- 用户、credential、项目、项目成员、项目基础信息与身份/项目审计已使用 PostgreSQL；Migration 已提交，Seed 为 insert-only 幂等。
+- 集中式服务端授权覆盖管理员、Manager、Member、Viewer、统一 404 防枚举、viewer 写拒绝和跨项目 URL/body/memberId 篡改。
+- Mock 项目业务数据只在服务端确认项目成员关系后按精确 `projectId` 过滤并序列化。
+- 反向代理只信任规范 HTTPS Host；Nginx exact basePath 使用固定绝对 URL，应用 `proxy.ts` 对不匹配的 Host、X-Forwarded-Host 或协议返回 404。
+- 验证器为每次运行生成唯一 User-Agent，HTTP logout 失败时按该值参数化删除本次 Session；发现泄漏或无法证明清理均失败关闭。
 
-- 本地 `typecheck`、`lint`、PostgreSQL/权限集成测试 20/20、v0.3 production build、SSR 路由 4/4 和 Playwright E2E 11/11 已通过。
-- 本地已生成并目检 6/6 产品审查截图，`manifest.json` 完整，真实附件的脱敏副本与内容识别归档重建/复核已在本地验证；SFX/MIME/原始 percent Data URI/折行 Base64/超长 Session JSON/二进制结构化数据/缺失证据/数据库失败关闭在内的 sanitizer fixture 为 10/10。CI 中的实际生成、脱敏报告与上传仍需 Draft PR Workflow 证明。
-- v0.3 尚未部署 Staging，因此数据库容器 Healthy、Secure/Path Cookie、刷新/退出、Manager/Viewer/Admin 公网边界和 Production 不变证据均待采集。
-- Draft PR 和 GitHub Actions 结果尚未创建。
+## 自动化与产品审查证据
 
-## 不在 v0.3 范围 / 未完成
+| 验证 | 结果 |
+| --- | --- |
+| TypeScript | 通过 |
+| ESLint | 通过 |
+| Production build + SSR/代理边界 | `7/7` |
+| PostgreSQL 身份、授权、审计与隔离集成测试 | `20/20` |
+| Artifact sanitizer | `10/10` |
+| Staging 部署安全契约 | `8/8` |
+| Playwright 身份、隔离与 MVP 流程 | `11/11` |
+| 产品审查截图 | `6/6` |
+| Evidence 脱敏 | `passed`；review `success`；数据库 Session token 已加载核验 `8` 条 |
 
-- 对象存储、真实文件上传和解析/OCR。
-- Embedding、Hybrid RAG、Reranker、真实模型调用。
-- 正式需求/Scope/Action/会议/风险持久化和完整业务审计。
-- 公开注册、找回密码、社交登录和多租户计费。
+Artifact 共 16 个已发布文件，包含 HTML report、6 张截图、manifest、sanitization report 和各测试日志。Manifest Commit `d93aa20577b111bdf6721eb9cac7a8b8dc40ae4f` 是 GitHub 对 PR head `40ebf651...` 生成的合并验证 Commit，不是额外的本地或 Staging 发布 Commit。
 
-## Mock 能力
+## Staging 验证
 
-文件处理、知识检索、AI 回答、需求提取、审核写入、Scope、Action Plan、风险、会议处理和 AI execution。Mock 业务内容只能在服务端授权后按项目过滤。
+- App 与 PostgreSQL 均 `running=true`、`healthy`、restart count `0`；App image 为 `sha256:78831a931f29879ec426b73e519c254ed5a7a68f6e29d37310e8df680da18c42`（linux/amd64）。
+- Compose project 为 `projectai-staging`；PostgreSQL 不发布宿主机端口，专属网络仅连接 App/DB，数据使用命名卷 `projectai-staging-postgres`。
+- App/DB 均限制为 1 CPU、768 MiB、PID 256、json-file `10m × 3`；环境文件为 `root:root 600`，18 个 key 且全部唯一。
+- 数据库纯计数：users `5`、accounts `5`、sessions `0`、projects `3`、memberships `4`、audits `77`。
+- 备份目录为 `root:root 700`；共 4 份 root-only dump，最新 28,554 bytes，`pg_restore --list` 通过，无 partial 文件。
+- 无部署 marker 或 lock 残留；Migration 当前，Seed 未覆盖既有身份、credential、角色、成员或项目字段。
+- 正常入口为绝对 HTTPS：basePath → 尾斜杠 → dashboard → login；login/health、CSS、JS、font、SVG、PNG MIME 与 noindex 均通过。
+- 恶意 `Host` 无尾斜杠只能得到 canonical HTTPS；带尾斜杠、login 和 dashboard 均为 404 且无 `Location`。
+- Nginx 修改前备份为 `/etc/nginx/sites-available/timeline-maker.projectai-staging.20260714T043512Z.bak`，只有 `nginx -t` 通过后才 reload。
 
-## 真实能力
+## Production 保护结果
 
-用户、只存于 `accounts.password_hash` 的 credential hash（`users` 无重复列）、数据库 Session、登录限流、项目、项目成员关系、项目基础信息、身份/项目审计、服务端项目授权和 404 防枚举；前端交互、路由与 basePath；AI/知识服务接口边界；CI/Staging 配置。
+Production 容器状态在 Nginx 最小化修改和 Staging 发布前后均精确为：
 
-## 当前风险
+```text
+c5f98b491e67668139e3b84ccf2c7dbee75556135826eddabf0267382078b0d1 true 0 healthy
+```
 
-- P0：`SEC-008` 的本轮服务端 Mock 项目过滤已通过本地 build/E2E，但真实知识索引/RAG 仍未实现；禁止真实客户资料。
-- P0：GitHub CI 与 v0.3 Staging 公网身份/项目边界尚未形成外部运行证据。
-- P0：知识内容仍为 Mock，没有真实文件/索引/RAG；服务端过滤不能被解释为真实知识检索已完成。
-- P1：Mock 流程通过不代表持久化和真实 AI 能力通过。
-- Staging 与 Production 同域，必须保持独立 Cookie 前缀、Cookie Path、认证 URL 和 localStorage key；反向代理必须覆盖可信 `x-real-ip`。
-- Better Auth 与 vinext 的本地 production build/E2E 兼容性已验证；Staging 结果仍是外部关闭条件。
-- P2：`npm audit --omit=dev` 当前报告 4 个 moderate，来源是 Better Auth/Drizzle Kit 的旧 `@esbuild-kit` 开发服务器链；无 high/critical，且该链未进入 `dist/standalone` 应用运行镜像，只存在于短生命周期数据库工具依赖。待上游提供兼容升级后移除，禁止用破坏性 `audit fix --force` 降级 Drizzle Kit。
-- P2：当前 vinext 字体 URL 使用同源 `/assets/_vinext_fonts/`；本次与 Production 字体 hash 相同，未来升级字体依赖时需解除该共享映射。
+Production 根路径和 dashboard 均为 200。本轮未在 Production 主机上构建、重启、迁移、修改应用目录或重新部署本应用。
 
-## 当前阻塞
+## 能力边界
 
-- 本轮交付仍被 Draft PR、GitHub CI artifact 和 v0.3 Staging 部署证据阻塞；本地 build、SSR/E2E 与产品截图已闭环。
-- 真实资料试点仍被文件上传、对象存储、解析、知识权限索引和真实 RAG 的安全设计阻塞；不得因为身份层完成而提前上传资料。
+### 真实能力
 
-## 本轮目标
+用户、`accounts.password_hash` credential、数据库 Session、登录限流、项目、项目成员关系、项目基础信息、身份/项目审计、服务端项目授权和 404 防枚举；前端交互、路由与 basePath；CI/Staging 配置。
 
-完成 `Project AI OS v0.3 — Identity and Project Isolation` 的 build/E2E/CI/Staging 验证、产品审查 artifacts 和 Draft PR；Production 保持不变。
+### 仍为 Mock
 
-## 下一优先级
+项目资料、知识检索与问答、需求、Scope、Action、会议、风险、审核业务写入和 AI execution。Mock 内容只能在服务端授权后按项目过滤。
 
-先完成 v0.3 产品与安全审查，再单独设计真实上传、对象存储、解析和 Project RAG；不得把下一轮能力并入本 PR。
+### 明确不在 v0.3 范围
+
+- 文件上传、对象存储、解析和 OCR。
+- Embedding、pgvector、Hybrid RAG、Reranker、真实模型或 Provider Key。
+- 正式需求/Scope/Action/会议/风险持久化和完整 AI 审计。
+- 公开注册、密码找回、社交登录与多租户计费。
+
+## 当前风险与待审事项
+
+- P0：真实知识索引/RAG 未实现，禁止上传或导入真实客户资料；当前服务端 Mock 过滤不能解释为真实知识检索已完成。
+- P1：Mock Workflow 通过不代表正式业务持久化或真实 AI 能力通过。
+- P2：`npm audit --omit=dev` 报告 4 个 moderate，来自 Drizzle Kit 旧 `@esbuild-kit`/esbuild 开发工具链；无 high/critical，不进入 standalone 应用运行镜像。禁止使用破坏性 `audit fix --force` 降级 Drizzle Kit。
+- P2：GitHub Actions 提示 `actions/checkout@v4`、`setup-node@v4`、`upload-artifact@v4` 的 Node 20 runtime 已弃用，当前由 runner 强制使用 Node 24；后续应升级到官方兼容版本。
+- P2：`nginx -t` 仍显示既有 HTTP `gridworks.cn` server_name 冲突 warning；配置测试成功且 HTTPS/Staging/Production 均通过，本轮未扩大范围修改其他站点。
+- P2：vinext 字体仍使用同源 `/assets/_vinext_fonts/` 窄映射；升级字体或 vinext 后必须重新验证 hash，不能增加宽泛 `/assets/` 代理。
+
+当前没有 v0.3 技术阻塞。剩余动作是 PR #2 的产品/安全审查；PR 保持 Draft，不得自动合并。下一轮真实上传、对象存储、解析和 Project RAG 必须单独设计与审查，不得并入本 PR。
 
 ## 最近验证
 
 - 时间：2026-07-14（Asia/Shanghai）。
-- v0.3 本地已确认：两次空库 Reset/Migration/Seed、第三次 insert-only Seed、PostgreSQL 授权/审计/逐项目审核权限集成 20/20、`npm run typecheck`、`npm run lint`、`npm test`（production build + SSR 4/4）和 Playwright 11/11 全部通过；Action 持久化/水合并发压力 5/5 通过。
-- v0.3 本地 artifacts：6/6 review screenshots 与完整 manifest 已生成并目检，客户端构建 Seed 业务内容扫描通过；真实失败附件的 `product-review-evidence/` 脱敏与 ZIP 复核已通过本地验证。
-- v0.3 当前待确认：Draft PR GitHub Actions、CI artifact 内容、Staging 数据库/应用健康与公网身份边界。
-- 历史 0.2 基线：PR #1 已以 Squash 方式合并为 `821bdf8`；当时的 Staging/noindex/静态资源与 Production 回归证据不能作为 v0.3 运行结果复用。
+- CI：Run `29306124670` 全绿，artifact ID `8300308345` 内容与脱敏报告已下载复核。
+- Staging：Commit `40ebf651...` 已部署，内部和公网登录、Session、角色、跨项目隔离、Host 注入、资源与 noindex 全部通过。
+- 基础设施：数据库私网、命名卷、资源限制、备份可读、Session 清零、marker/lock 清理均通过独立只读审计。
+- Production：容器 ID、运行状态、restart count 与 health 精确未变。

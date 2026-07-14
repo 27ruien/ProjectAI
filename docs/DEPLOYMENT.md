@@ -48,7 +48,7 @@ Compose 使用内部网络 `projectai-staging-internal`。PostgreSQL 17 必须 H
 2. 从当前完整 Commit 的 `git archive` 构造临时发布根，只使用 Git 已跟踪文件在本地按远端 Linux 平台构建应用与 `db-tools` 镜像；不得在共享 Production 主机执行应用构建。发布内容拒绝真实 `.env`、私钥类路径，远端 `.env.auth-staging`、`backups/`、部署锁和事务标记均受保护。
 3. 本地通过 `docker save` 将两个镜像流式传输给远端 `docker load`，逐一核对 image ID 与 OS/architecture；事务标记在首次远端 release 变更前创建。远端 Compose 只允许 `--no-build` 使用预加载镜像。已有 PostgreSQL 必须严格使用 `volume|projectai-staging-postgres|/var/lib/postgresql/data`，否则在任何 `compose up` 前失败关闭；随后启动独立 PostgreSQL 并等待 Healthy。
 4. 在任何 Migration 前查询数据库大小并检查文件系统余量，将 custom-format `pg_dump` 直接流式写入 root-only `.partial` 文件；必须通过非空检查和同版本 `pg_restore --list` 完整性解析后才原子改名。脚本自动清理严格命名的遗留 partial 并保留最近 10 份。随后由短生命周期 operations 容器以预加载镜像执行已提交 Migration 和 insert-only 幂等 Seed，不 reset、复活身份、覆盖已有业务字段或清空 Volume。
-5. 记录上一 Staging 容器实际使用的 immutable image ID 并启动新应用；`/api/health` 必须证明 PostgreSQL 可连接且 `users`、`sessions`、`projects`、`project_members` 可查询。上游先验证匿名重定向、登录、Session 刷新/退出、Manager A 跨项目拒绝、Viewer 只读、Admin 全项目与 Cookie 属性；`PUBLIC_VALIDATION=1` 时还必须通过公开 Staging URL 再执行同一套完整身份、Session、角色和项目隔离验证，并检查静态资源 MIME 与 noindex。
+5. 记录上一 Staging 容器实际使用的 immutable image ID 并启动新应用；`/api/health` 必须证明 PostgreSQL 可连接且 `users`、`sessions`、`projects`、`project_members` 可查询。上游先验证匿名重定向、登录、Session 刷新/退出、Manager A 跨项目拒绝、Viewer 只读、Admin 全项目与 Cookie 属性；`PUBLIC_VALIDATION=1` 时还必须通过公开 Staging URL 再执行同一套完整身份、Session、角色和项目隔离验证，并检查 canonical HTTPS Location、恶意 Host 拒绝、静态资源 MIME 与 noindex。
 6. 脚本只执行 `nginx -t`，不编辑或 reload Nginx；公网验证后、清除事务标记前再次精确比对 Production 容器状态并检查 Production URL。事务标记建立后的任一步失败都会使用上一 immutable image ID 自动回滚 Staging 应用并核对实际镜像；没有上一镜像时必须确认失败应用已停止。发布前 dump 和数据库卷保留，成功/回滚后才清除事务标记并释放部署锁。
 
 首次 Nginx 尚未接入时可用 `PUBLIC_VALIDATION=0` 只完成上游验收；Nginx 安全接入后必须按默认 `PUBLIC_VALIDATION=1` 再执行完整公网验证。
@@ -82,7 +82,9 @@ sudo cat /srv/projectai-staging/backups/projectai-staging-<UTC>-<commit>.dump \
 - 实际站点文件必须先通过服务器检查确认。
 - 每次修改前创建时间戳备份。
 - 只向现有 HTTPS server block 增加 staging exact/assets/general locations。
+- exact `/tool/projectai-staging` location 必须返回固定绝对地址 `https://gridworks.cn/tool/projectai-staging/`，不得使用会继承未验证 Host 的相对 Location。
 - 通用 proxy 保留完整 basePath；静态 assets location 只剥离已知 `/tool/projectai-staging/assets/` 前缀。
+- 应用 `proxy.ts` 从 `BETTER_AUTH_URL` 取得唯一 HTTPS Host；外部请求的 Host、X-Forwarded-Host 或 X-Forwarded-Proto 不匹配时统一 404 且不得返回 Location。内部健康检查和 operations 验证只允许显式列出的直连 Host。
 - 当前 vinext `next/font` 仍生成同源 `/assets/_vinext_fonts/` URL，本次复用已有 Production 窄映射；升级字体或 vinext 后必须先验证 hash，不能增加宽泛 `/assets/` 代理。
 - `nginx -t` 失败时恢复备份并禁止 reload。
 - 不修改 DNS、证书、Production location、gridproject 或 timeline。
@@ -94,7 +96,7 @@ http://127.0.0.1:3101/tool/projectai-staging/api/health
 http://127.0.0.1:3101/tool/projectai-staging/login
 ```
 
-健康端点只在数据库连接成功且四张身份/项目核心表可查询时返回 `{"status":"ok"}`，异常时返回不含内部细节的 `503`。匿名访问 dashboard/projects/项目深层路由必须跳转登录。还要检查登录、刷新 Session、退出撤销、Manager A 只见项目 A/访问项目 B 404、Viewer 只读、Admin 见 3 个项目、Cookie Secure/Path、数据库和应用 Healthy、CSS/JS/font/favicon/OG、noindex、STAGING 元数据与 Nginx 无新增错误。同时验证 Production 首页和 dashboard，并比对 Production 容器 ID/状态/restart count/health。
+健康端点只在数据库连接成功且四张身份/项目核心表可查询时返回 `{"status":"ok"}`，异常时返回不含内部细节的 `503`。匿名访问 dashboard/projects/项目深层路由必须跳转登录。还要检查登录、刷新 Session、退出撤销、Manager A 只见项目 A/访问项目 B 404、Viewer 只读、Admin 见 3 个项目、Cookie Secure/Path、数据库和应用 Healthy、CSS/JS/font/favicon/OG、noindex、STAGING 元数据与 Nginx 无新增错误。恶意 Host 的无尾斜杠入口只能返回 canonical 绝对 HTTPS，带尾斜杠应用路由必须 404 且无 Location。同时验证 Production 首页和 dashboard，并比对 Production 容器 ID/状态/restart count/health。
 
 ## 回滚
 
@@ -116,4 +118,4 @@ http://127.0.0.1:3101/tool/projectai-staging/login
 
 ## 当前发布状态
 
-v0.3 Compose、Migration/Seed 和部署验证脚本已经实现，但截至 2026-07-14 尚未执行本分支 Staging 部署。0.2 的在线 Staging、容器或 Nginx 证据不能标记 v0.3 通过；以 `MVP_STATUS.md` 最近验证为准。
+v0.3 Commit `40ebf651b83856120b53496c96b23fc207e20b1f` 已于 2026-07-14 部署到 Staging。独立公网与基础设施复核确认：身份/Session/角色/跨项目隔离、canonical HTTPS 与 Host 注入边界、noindex、资源 MIME、私网 PostgreSQL、备份可解析和 Production 精确不变均通过。运行证据、CI 与 artifact 标识见 `MVP_STATUS.md`。后续文档-only Commit 不要求重建运行镜像；任何应用代码、Migration、Compose、Nginx snippet 或运行脚本变化仍必须重新执行完整发布流程。
