@@ -25,6 +25,7 @@ export default defineConfig({
   ],
   use: {
     baseURL: target.origin,
+    viewport: { width: 1440, height: 1000 },
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
     video: "retain-on-failure",
@@ -40,13 +41,19 @@ export default defineConfig({
   webServer: configuredTarget
     ? undefined
     : {
-        command: `npm run dev -- --hostname 127.0.0.1 --port ${port}`,
-        url: `${localOrigin}${basePath}/dashboard`,
+        // Authentication uses Node PostgreSQL connections and the deployed
+        // application runs the vinext standalone Node server. E2E therefore
+        // exercises the exact production runtime built by the preceding
+        // `npm test` step instead of the Cloudflare-flavoured dev worker.
+        command: "node scripts/start-e2e-server.mjs",
+        url: `${localOrigin}${basePath}/login`,
         env: {
           ...process.env,
+          PORT: String(port),
+          HOST: "127.0.0.1",
           NEXT_PUBLIC_BASE_PATH: basePath,
         },
-        reuseExistingServer: !process.env.CI,
+        reuseExistingServer: false,
         timeout: 120_000,
         stdout: "pipe",
         stderr: "pipe",

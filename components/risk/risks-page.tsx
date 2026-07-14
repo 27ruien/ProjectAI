@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { mockActionItems, mockProjects, mockRisks } from "@/data/mock";
+import type { AuthorizedProjectSummary, ProjectMockPayload } from "@/lib/auth/ui-types";
 import {
   Activity,
   AlertOctagon,
@@ -44,7 +44,6 @@ type RiskRecord = {
   updatedAt: string;
 };
 
-type ProjectRecord = { id: string; name: string };
 type ActionRecord = { id: string; riskIds: string[]; status: string };
 
 const riskStatusConfig: Record<string, { label: string; style: string }> = {
@@ -56,35 +55,35 @@ const riskStatusConfig: Record<string, { label: string; style: string }> = {
 };
 
 interface RisksPageProps {
-  projectId?: string;
+  project: AuthorizedProjectSummary;
+  data: ProjectMockPayload;
 }
 
-export function RisksPage({ projectId }: RisksPageProps) {
-  const sourceRisks = mockRisks as unknown as RiskRecord[];
-  const projects = mockProjects as unknown as ProjectRecord[];
-  const actions = mockActionItems as unknown as ActionRecord[];
+export function RisksPage({ project, data }: RisksPageProps) {
+  const sourceRisks = data.risks as unknown as RiskRecord[];
+  const actions = data.actions as unknown as ActionRecord[];
+  const canEdit = project.permissions.canEditProject;
   const [risks, setRisks] = useState(sourceRisks);
   const [selectedId, setSelectedId] = useState(sourceRisks[0]?.id ?? "");
   const [search, setSearch] = useState("");
-  const [projectFilter, setProjectFilter] = useState("all");
   const [levelFilter, setLevelFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("active");
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const scopedRisks = projectId ? risks.filter((risk) => risk.projectId === projectId) : risks;
+  const scopedRisks = risks;
   const filtered = useMemo(
     () => scopedRisks.filter((risk) => {
       const active = !["resolved", "closed"].includes(risk.status);
-      return `${risk.riskId} ${risk.name} ${risk.owner}`.toLowerCase().includes(search.toLowerCase()) && (projectFilter === "all" || risk.projectId === projectFilter) && (levelFilter === "all" || risk.level === levelFilter) && (statusFilter === "all" || statusFilter === "active" && active || risk.status === statusFilter);
+      return `${risk.riskId} ${risk.name} ${risk.owner}`.toLowerCase().includes(search.toLowerCase()) && (levelFilter === "all" || risk.level === levelFilter) && (statusFilter === "all" || statusFilter === "active" && active || risk.status === statusFilter);
     }),
-    [levelFilter, projectFilter, scopedRisks, search, statusFilter],
+    [levelFilter, scopedRisks, search, statusFilter],
   );
   const selected = scopedRisks.find((risk) => risk.id === selectedId) ?? filtered[0] ?? scopedRisks[0];
   const activeRisks = scopedRisks.filter((risk) => !["resolved", "closed"].includes(risk.status));
   const healthScore = Math.max(35, 100 - activeRisks.reduce((score, risk) => score + ({ low: 3, medium: 7, high: 14, critical: 25 }[risk.level] ?? 5), 0));
   const criticalCount = activeRisks.filter((risk) => ["high", "critical"].includes(risk.level)).length;
   const blockedActions = actions.filter((action) => action.status === "blocked" || action.riskIds?.some((id) => activeRisks.some((risk) => risk.id === id || risk.riskId === id))).length;
-  const projectName = (id: string) => projects.find((project) => project.id === id)?.name ?? "未命名项目";
+  const projectName = () => project.name;
 
   useEffect(() => {
     if (!feedback) return;
@@ -105,7 +104,7 @@ export function RisksPage({ projectId }: RisksPageProps) {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">风险与状态</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">从项目证据中识别风险，由项目经理确认处置建议与责任人。</p>
         </div>
-        <button type="button" onClick={() => setFeedback("AI 风险分析已刷新，未直接修改正式风险记录")} className="inline-flex h-9 items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3.5 text-sm font-medium text-primary hover:bg-primary/10"><Sparkles className="size-4" /> 刷新 AI 风险分析</button>
+        {canEdit ? <button type="button" onClick={() => setFeedback("AI 风险分析已刷新，未直接修改正式风险记录")} className="inline-flex h-9 items-center gap-2 rounded-lg border border-primary/25 bg-primary/5 px-3.5 text-sm font-medium text-primary hover:bg-primary/10"><Sparkles className="size-4" /> 刷新 AI 风险分析</button> : null}
       </div>
 
       <section className="grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr_1fr]">
@@ -129,7 +128,6 @@ export function RisksPage({ projectId }: RisksPageProps) {
         <section className="overflow-hidden rounded-xl border border-border bg-card">
           <div className="flex flex-wrap items-center gap-2 border-b border-border p-3">
             <div className="relative min-w-52 flex-1"><Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索风险、ID 或负责人" className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary" /></div>
-            <RiskSelect label="项目" value={projectFilter} onChange={setProjectFilter}><option value="all">全部项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</RiskSelect>
             <RiskSelect label="等级" value={levelFilter} onChange={setLevelFilter}><option value="all">全部等级</option>{Object.entries(riskLevelConfig).map(([level, config]) => <option key={level} value={level}>{config.label}风险</option>)}</RiskSelect>
             <RiskSelect label="状态" value={statusFilter} onChange={setStatusFilter}><option value="active">处理中</option><option value="all">全部状态</option>{Object.entries(riskStatusConfig).map(([status, config]) => <option key={status} value={status}>{config.label}</option>)}</RiskSelect>
           </div>
@@ -137,14 +135,14 @@ export function RisksPage({ projectId }: RisksPageProps) {
             <table className="w-full text-left">
               <thead className="bg-muted/35 text-[9px] uppercase tracking-wide text-muted-foreground"><tr><th className="px-4 py-2.5">风险</th><th className="px-3 py-2.5">等级</th><th className="px-3 py-2.5">项目</th><th className="px-3 py-2.5">负责人</th><th className="px-3 py-2.5">截止时间</th><th className="px-3 py-2.5">状态</th></tr></thead>
               <tbody>
-                {filtered.map((risk) => <tr key={risk.id} onClick={() => setSelectedId(risk.id)} className={`cursor-pointer border-b border-border transition hover:bg-muted/30 ${selected?.id === risk.id ? "bg-primary/[0.045]" : ""}`}><td className="min-w-64 px-4 py-3"><p className="line-clamp-1 text-xs font-medium text-foreground">{risk.name}</p><p className="mt-1 font-mono text-[9px] text-muted-foreground">{risk.riskId} · {riskType(risk.type)}</p></td><td className="px-3 py-3"><RiskBadge level={risk.level} /></td><td className="whitespace-nowrap px-3 py-3 text-[10px] text-muted-foreground">{projectName(risk.projectId)}</td><td className="whitespace-nowrap px-3 py-3 text-[10px] text-foreground">{risk.owner}</td><td className="whitespace-nowrap px-3 py-3 text-[10px] text-muted-foreground">{formatDate(risk.dueDate)}</td><td className="px-3 py-3"><select aria-label={`${risk.riskId} 状态`} onClick={(event) => event.stopPropagation()} value={risk.status} onChange={(event) => updateStatus(risk.id, event.target.value)} className={`h-7 rounded-full border-0 px-2 text-[9px] font-medium outline-none ${riskStatusConfig[risk.status]?.style ?? "bg-muted text-muted-foreground"}`}>{Object.entries(riskStatusConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}</select></td></tr>)}
+                {filtered.map((risk) => <tr key={risk.id} onClick={() => setSelectedId(risk.id)} className={`cursor-pointer border-b border-border transition hover:bg-muted/30 ${selected?.id === risk.id ? "bg-primary/[0.045]" : ""}`}><td className="min-w-64 px-4 py-3"><p className="line-clamp-1 text-xs font-medium text-foreground">{risk.name}</p><p className="mt-1 font-mono text-[9px] text-muted-foreground">{risk.riskId} · {riskType(risk.type)}</p></td><td className="px-3 py-3"><RiskBadge level={risk.level} /></td><td className="whitespace-nowrap px-3 py-3 text-[10px] text-muted-foreground">{projectName()}</td><td className="whitespace-nowrap px-3 py-3 text-[10px] text-foreground">{risk.owner}</td><td className="whitespace-nowrap px-3 py-3 text-[10px] text-muted-foreground">{formatDate(risk.dueDate)}</td><td className="px-3 py-3">{canEdit ? <select aria-label={`${risk.riskId} 状态`} onClick={(event) => event.stopPropagation()} value={risk.status} onChange={(event) => updateStatus(risk.id, event.target.value)} className={`h-7 rounded-full border-0 px-2 text-[9px] font-medium outline-none ${riskStatusConfig[risk.status]?.style ?? "bg-muted text-muted-foreground"}`}>{Object.entries(riskStatusConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}</select> : <span className={`inline-flex h-7 items-center rounded-full px-2 text-[9px] font-medium ${riskStatusConfig[risk.status]?.style ?? "bg-muted text-muted-foreground"}`}>{riskStatusConfig[risk.status]?.label ?? risk.status}</span>}</td></tr>)}
               </tbody>
             </table>
             {!filtered.length ? <div className="p-12 text-center text-xs text-muted-foreground">当前筛选下没有风险。</div> : null}
           </div>
         </section>
 
-        {selected ? <RiskDetail risk={selected} projectName={projectName(selected.projectId)} relatedActions={actions.filter((action) => action.riskIds?.includes(selected.id) || action.riskIds?.includes(selected.riskId)).length} onStatusChange={(status) => updateStatus(selected.id, status)} /> : null}
+        {selected ? <RiskDetail risk={selected} projectName={projectName()} relatedActions={actions.filter((action) => action.riskIds?.includes(selected.id) || action.riskIds?.includes(selected.riskId)).length} readOnly={!canEdit} onStatusChange={(status) => updateStatus(selected.id, status)} /> : null}
       </div>
 
       <section className="rounded-xl border border-border bg-card p-5">
@@ -157,8 +155,8 @@ export function RisksPage({ projectId }: RisksPageProps) {
   );
 }
 
-function RiskDetail({ risk, projectName, relatedActions, onStatusChange }: { risk: RiskRecord; projectName: string; relatedActions: number; onStatusChange: (status: string) => void }) {
-  return <aside className="self-start rounded-xl border border-border bg-card"><div className="border-b border-border p-4"><div className="flex items-start justify-between gap-3"><RiskBadge level={risk.level} /><span className="font-mono text-[9px] text-muted-foreground">{risk.riskId}</span></div><h2 className="mt-3 text-sm font-semibold leading-6 text-foreground">{risk.name}</h2><p className="mt-1 text-[10px] text-muted-foreground">{projectName} · {riskType(risk.type)}</p></div><div className="space-y-4 p-4"><DetailBlock icon={AlertTriangle} label="影响范围" content={risk.impact} /><DetailBlock icon={Link2} label="证据" content={risk.evidence} /><div className="rounded-lg border border-primary/15 bg-primary/[0.035] p-3"><p className="flex items-center gap-1.5 text-[10px] font-semibold text-primary"><Lightbulb className="size-3" /> 建议动作</p><p className="mt-2 text-[11px] leading-5 text-foreground/80">{risk.recommendedAction}</p></div><div className="grid grid-cols-2 gap-2"><DetailMeta icon={UserRound} label="负责人" value={risk.owner} /><DetailMeta icon={CalendarClock} label="截止时间" value={formatDate(risk.dueDate)} /><DetailMeta icon={ExternalLink} label="关联来源" value={`${risk.sourceIds.length} 项`} /><DetailMeta icon={ClipboardCheck} label="关联 Action" value={`${relatedActions} 项`} /></div><label><span className="mb-1.5 block text-[10px] font-medium text-muted-foreground">处置状态</span><select value={risk.status} onChange={(event) => onStatusChange(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-xs text-foreground outline-none">{Object.entries(riskStatusConfig).map(([status, config]) => <option key={status} value={status}>{config.label}</option>)}</select></label></div></aside>;
+function RiskDetail({ risk, projectName, relatedActions, readOnly, onStatusChange }: { risk: RiskRecord; projectName: string; relatedActions: number; readOnly: boolean; onStatusChange: (status: string) => void }) {
+  return <aside className="self-start rounded-xl border border-border bg-card"><div className="border-b border-border p-4"><div className="flex items-start justify-between gap-3"><RiskBadge level={risk.level} /><span className="font-mono text-[9px] text-muted-foreground">{risk.riskId}</span></div><h2 className="mt-3 text-sm font-semibold leading-6 text-foreground">{risk.name}</h2><p className="mt-1 text-[10px] text-muted-foreground">{projectName} · {riskType(risk.type)}</p></div><div className="space-y-4 p-4"><DetailBlock icon={AlertTriangle} label="影响范围" content={risk.impact} /><DetailBlock icon={Link2} label="证据" content={risk.evidence} /><div className="rounded-lg border border-primary/15 bg-primary/[0.035] p-3"><p className="flex items-center gap-1.5 text-[10px] font-semibold text-primary"><Lightbulb className="size-3" /> 建议动作</p><p className="mt-2 text-[11px] leading-5 text-foreground/80">{risk.recommendedAction}</p></div><div className="grid grid-cols-2 gap-2"><DetailMeta icon={UserRound} label="负责人" value={risk.owner} /><DetailMeta icon={CalendarClock} label="截止时间" value={formatDate(risk.dueDate)} /><DetailMeta icon={ExternalLink} label="关联来源" value={`${risk.sourceIds.length} 项`} /><DetailMeta icon={ClipboardCheck} label="关联 Action" value={`${relatedActions} 项`} /></div><label><span className="mb-1.5 block text-[10px] font-medium text-muted-foreground">处置状态</span>{readOnly ? <span className={`inline-flex h-9 w-full items-center rounded-lg px-3 text-xs font-medium ${riskStatusConfig[risk.status]?.style ?? "bg-muted text-muted-foreground"}`}>{riskStatusConfig[risk.status]?.label ?? risk.status}</span> : <select value={risk.status} onChange={(event) => onStatusChange(event.target.value)} className="h-9 w-full rounded-lg border border-border bg-background px-3 text-xs text-foreground outline-none">{Object.entries(riskStatusConfig).map(([status, config]) => <option key={status} value={status}>{config.label}</option>)}</select>}</label></div></aside>;
 }
 
 function HealthRing({ score }: { score: number }) { return <div className="relative flex size-16 shrink-0 items-center justify-center rounded-full" style={{ background: `conic-gradient(var(--primary) ${score * 3.6}deg, var(--muted) 0deg)` }}><div className="absolute inset-1.5 rounded-full bg-card" /><div className="relative text-center"><span className="text-lg font-semibold text-foreground">{score}</span><span className="block text-[7px] text-muted-foreground">/ 100</span></div></div>; }

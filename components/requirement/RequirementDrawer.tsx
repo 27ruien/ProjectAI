@@ -18,9 +18,17 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { citations } from "@/data/mock";
 import { SourceCitation } from "@/components/common/source-citation";
 import { asRecords, numberValue, statusClasses, statusLabel, textValue } from "@/components/project/mock-view";
+import type { SerializableRecord } from "@/lib/auth/ui-types";
+
+export interface RequirementHistoryView {
+  id: string;
+  title: string;
+  user: string;
+  time: string;
+  detail: string;
+}
 
 export interface RequirementView {
   id: string;
@@ -44,13 +52,17 @@ export interface RequirementView {
   acceptanceStatus: string;
   updatedAt: string;
   citationCount: number;
+  citationIds: string[];
   confidence: number;
   flags: string[];
+  history: RequirementHistoryView[];
 }
 
 export interface RequirementDrawerProps {
   open: boolean;
   requirement: RequirementView | null;
+  citations: SerializableRecord[];
+  readOnly?: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (requirement: RequirementView) => void;
   onSubmitReview?: (requirement: RequirementView) => void;
@@ -69,9 +81,9 @@ const typeLabels: Record<string, string> = {
   integration: "集成需求",
 };
 
-export function RequirementDrawer({ open, requirement, onOpenChange, onSave, onSubmitReview }: RequirementDrawerProps) {
+export function RequirementDrawer({ open, requirement, citations, readOnly = false, onOpenChange, onSave, onSubmitReview }: RequirementDrawerProps) {
   const [draft, setDraft] = useState<RequirementView | null>(requirement);
-  const [editing, setEditing] = useState(requirement?.id.startsWith("new-") ?? false);
+  const [editing, setEditing] = useState(!readOnly && (requirement?.id.startsWith("new-") ?? false));
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState<DrawerTab>("detail");
   const [notice, setNotice] = useState("");
@@ -93,20 +105,25 @@ export function RequirementDrawer({ open, requirement, onOpenChange, onSave, onS
   }, [onOpenChange, open]);
 
   const evidence = useMemo(() => {
-    const rows = asRecords(citations).slice(0, 3);
+    const citationIds = new Set(draft?.citationIds ?? []);
+    const rows = asRecords(citations).filter((citation) => {
+      const citationId = textValue(citation, "id", "");
+      const requirementId = textValue(citation, ["requirementId", "relatedRequirementId"], "");
+      return citationIds.has(citationId) || (Boolean(draft?.id) && requirementId === draft?.id);
+    });
     return rows.map((citation, index) => ({
       id: textValue(citation, "id", `req-citation-${index}`),
-      documentId: textValue(citation, "documentId", `doc-${index + 1}`),
-      documentName: textValue(citation, ["documentName", "sourceName"], ["客户需求确认纪要 0708.docx", "北美互动活动 Scope v2.2.pdf", "产品体验评审记录.pdf"][index] ?? "项目资料"),
-      section: textValue(citation, "section", ["3.2 新增需求", "2.1 功能范围", "交互确认"][index] ?? "需求来源"),
-      pageNumber: numberValue(citation, "pageNumber", index + 3),
-      sourceDate: textValue(citation, "sourceDate", "2026-07-08"),
-      status: textValue(citation, "status", "confirmed"),
-      isEffectiveVersion: Boolean(citation.isEffectiveVersion ?? true),
-      citationText: textValue(citation, ["citationText", "text"], draft?.originalQuote || "客户希望该能力在北美首发版本中可用。"),
-      trustLevel: textValue(citation, "trustLevel", "high"),
+      documentId: textValue(citation, "documentId", "未提供"),
+      documentName: textValue(citation, ["documentName", "sourceName"], "未命名来源"),
+      section: textValue(citation, "section", "未提供章节"),
+      pageNumber: numberValue(citation, "pageNumber", 0) || undefined,
+      sourceDate: textValue(citation, "sourceDate", ""),
+      status: textValue(citation, ["status", "sourceStatus"], "未提供"),
+      isEffectiveVersion: Boolean(citation.isEffectiveVersion ?? citation.isEffective ?? false),
+      citationText: textValue(citation, ["citationText", "text"], "引用内容未提供。"),
+      trustLevel: textValue(citation, "trustLevel", "未提供"),
     }));
-  }, [draft?.originalQuote]);
+  }, [citations, draft?.citationIds, draft?.id]);
 
   if (!open || !draft) return null;
 
@@ -117,7 +134,7 @@ export function RequirementDrawer({ open, requirement, onOpenChange, onSave, onS
     onSave({ ...draft, updatedAt: new Date().toISOString() });
     setSaving(false);
     setEditing(false);
-    setNotice("需求修改已保存为正式字段草稿");
+    setNotice("浏览器演示：修改仅保存在当前页面状态");
   };
   const setWorkflowStatus = (status: string, message: string) => {
     const next = { ...draft, status, updatedAt: new Date().toISOString() };
@@ -130,8 +147,14 @@ export function RequirementDrawer({ open, requirement, onOpenChange, onSave, onS
     setDraft(next);
     onSave(next);
     onSubmitReview?.(next);
-    setNotice("已提交审核，AI 草稿不会直接覆盖正式需求");
+    setNotice("浏览器演示：已标记为待审核，未写入正式需求");
   };
+
+  const relatedItems = [
+    ...draft.relatedPages.map((item) => `页面 · ${item}`),
+    ...draft.relatedTasks.map((item) => `任务 · ${item}`),
+    ...(draft.relatedScope && draft.relatedScope !== "未关联" ? [`Scope · ${draft.relatedScope}`] : []),
+  ];
 
   return (
     <div className="fixed inset-0 z-50" role="presentation">
@@ -156,7 +179,7 @@ export function RequirementDrawer({ open, requirement, onOpenChange, onSave, onS
               <DrawerField label="需求类型">{editing ? <select value={draft.type} onChange={(event) => update("type", event.target.value)} className={editorClasses}>{Object.entries(typeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select> : <ValueText>{typeLabels[draft.type] ?? draft.type}</ValueText>}</DrawerField>
               <DrawerField label="来源"><ValueText>{draft.source}</ValueText></DrawerField>
               <DrawerField label="优先级">{editing ? <select value={draft.priority} onChange={(event) => update("priority", event.target.value)} className={editorClasses}>{["P0", "P1", "P2", "P3"].map((item) => <option key={item}>{item}</option>)}</select> : <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${statusClasses(draft.priority)}`}>{draft.priority}</span>}</DrawerField>
-              <DrawerField label="负责人">{editing ? <select value={draft.assignee} onChange={(event) => update("assignee", event.target.value)} className={editorClasses}>{["林可", "周霖", "陈舟", "吴桐", "Mia"].map((item) => <option key={item}>{item}</option>)}</select> : <ValueText>{draft.assignee}</ValueText>}</DrawerField>
+              <DrawerField label="负责人">{editing ? <input value={draft.assignee} onChange={(event) => update("assignee", event.target.value)} placeholder="输入负责人" className={editorClasses} /> : <ValueText>{draft.assignee}</ValueText>}</DrawerField>
               <DrawerField label="是否属于原 Scope">{editing ? <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-background px-3 text-xs text-foreground"><input type="checkbox" checked={draft.inOriginalScope} onChange={(event) => update("inOriginalScope", event.target.checked)} className="accent-primary" />属于原 Scope</label> : <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${draft.inOriginalScope ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}`}>{draft.inOriginalScope ? "原 Scope 内" : "Scope 外新增"}</span>}</DrawerField>
               <DrawerField label="关联 Scope"><ValueText>{draft.relatedScope}</ValueText></DrawerField>
             </div>
@@ -164,18 +187,18 @@ export function RequirementDrawer({ open, requirement, onOpenChange, onSave, onS
             <section><SectionLabel icon={FileText} label="原文引用" />{editing ? <textarea rows={3} value={draft.originalQuote} onChange={(event) => update("originalQuote", event.target.value)} className={editorClasses} /> : <blockquote className="border-l-2 border-primary/40 bg-muted/30 py-2 pl-3 text-sm italic leading-6 text-muted-foreground">“{draft.originalQuote}”</blockquote>}</section>
             <section><SectionLabel icon={CheckCircle2} label="验收标准" />{editing ? <textarea rows={5} value={draft.acceptanceCriteria} onChange={(event) => update("acceptanceCriteria", event.target.value)} className={editorClasses} /> : <div className="space-y-2">{draft.acceptanceCriteria.split("\n").filter(Boolean).map((criterion, index) => <div key={`${criterion}-${index}`} className="flex gap-2 text-sm leading-5 text-foreground"><Check className="mt-0.5 size-4 shrink-0 text-success" /><span>{criterion.replace(/^[-\d.、\s]+/, "")}</span></div>)}</div>}</section>
             <div className="grid gap-4 sm:grid-cols-2"><DrawerField label="异常状态">{editing ? <textarea rows={3} value={draft.exceptionStates} onChange={(event) => update("exceptionStates", event.target.value)} className={editorClasses} /> : <ValueText>{draft.exceptionStates}</ValueText>}</DrawerField><DrawerField label="非功能要求">{editing ? <textarea rows={3} value={draft.nonFunctional} onChange={(event) => update("nonFunctional", event.target.value)} className={editorClasses} /> : <ValueText>{draft.nonFunctional}</ValueText>}</DrawerField></div>
-            <section><SectionLabel icon={Link2} label="关联对象" /><div className="flex flex-wrap gap-2">{[...draft.relatedPages.map((item) => `页面 · ${item}`), ...draft.relatedTasks.map((item) => `任务 · ${item}`), `Scope · ${draft.relatedScope}`].map((item) => <button key={item} type="button" className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/30 hover:text-primary"><Link2 className="size-3" />{item}</button>)}<button type="button" onClick={() => setNotice("已打开关联来源选择器（Mock）")} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-primary/40 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/5">+ 关联来源</button></div></section>
+            <section><SectionLabel icon={Link2} label="关联对象" /><div className="flex flex-wrap gap-2">{relatedItems.map((item) => <button key={item} type="button" className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted-foreground hover:border-primary/30 hover:text-primary"><Link2 className="size-3" />{item}</button>)}{relatedItems.length === 0 ? <span className="text-xs text-muted-foreground">暂无关联对象。</span> : null}{readOnly ? null : <button type="button" onClick={() => setNotice("浏览器演示：关联来源选择器未接入服务端")} className="inline-flex items-center gap-1 rounded-lg border border-dashed border-primary/40 px-2.5 py-1.5 text-xs font-medium text-primary hover:bg-primary/5">+ 关联来源</button>}</div></section>
           </div>}
 
-          {activeTab === "evidence" && <div className="space-y-4"><div className="rounded-xl border border-success/20 bg-success/5 p-4"><div className="flex items-center gap-2"><ShieldCheck className="size-4 text-success" /><div><p className="text-sm font-medium text-foreground">证据链完整</p><p className="mt-1 text-xs text-muted-foreground">3 条引用来自 2 份当前有效资料，权限范围均允许项目成员查看。</p></div></div></div><div className="space-y-3">{evidence.map((citation) => <SourceCitation key={citation.id} citation={citation} />)}</div><button type="button" onClick={() => setNotice("已打开关联来源选择器（Mock）")} className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 text-xs font-medium text-primary hover:bg-primary/5"><Link2 className="size-3.5" />关联新的来源证据</button></div>}
+          {activeTab === "evidence" && <div className="space-y-4"><div className={`rounded-xl border p-4 ${evidence.length ? "border-success/20 bg-success/5" : "border-border bg-muted/20"}`}><div className="flex items-center gap-2"><ShieldCheck className={`size-4 ${evidence.length ? "text-success" : "text-muted-foreground"}`} /><div><p className="text-sm font-medium text-foreground">{evidence.length ? "来源证据" : "暂无来源证据"}</p><p className="mt-1 text-xs text-muted-foreground">{evidence.length ? `${evidence.length} 条引用来自父级传入的当前项目授权数据。` : "父级 payload 未提供与该需求精确关联的引用。"}</p></div></div></div>{evidence.length ? <div className="space-y-3">{evidence.map((citation) => <SourceCitation key={citation.id} citation={citation} />)}</div> : null}{readOnly ? null : <button type="button" onClick={() => setNotice("浏览器演示：关联来源选择器未接入服务端")} className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-dashed border-primary/40 text-xs font-medium text-primary hover:bg-primary/5"><Link2 className="size-3.5" />关联新的来源证据</button>}</div>}
 
-          {activeTab === "history" && <div className="space-y-0">{[{ title: "AI 提取需求草稿", user: "requirement-extraction", time: "2026/07/09 10:18", detail: "从客户需求确认纪要中识别需求，置信度 92%。" }, { title: "补充验收标准", user: "林可", time: "2026/07/09 14:32", detail: "新增失败提示与重试场景的验收条件。" }, { title: "标记为 Scope 外新增", user: "周霖", time: "2026/07/10 09:05", detail: "对照 Scope v2.2 后确认不属于原交付范围。" }, { title: "来源引用更新", user: "Project Knowledge Index", time: "2026/07/10 16:40", detail: "关联当前有效的客户会议纪要与 Scope 版本。" }].map((history, index) => <div key={history.title} className="relative flex gap-3 pb-6 before:absolute before:left-[7px] before:top-5 before:h-full before:w-px before:bg-border last:before:hidden"><span className={`relative z-10 mt-1 size-4 shrink-0 rounded-full border-2 border-card ${index === 0 ? "bg-primary" : "bg-muted-foreground/35"}`} /><div className="min-w-0 flex-1 rounded-lg border border-border p-3"><div className="flex items-start justify-between gap-3"><p className="text-xs font-semibold text-foreground">{history.title}</p><span className="shrink-0 text-[10px] text-muted-foreground">{history.time}</span></div><p className="mt-1 text-[10px] text-muted-foreground">{history.user}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{history.detail}</p>{index === 1 && <button type="button" onClick={() => setNotice("已打开该版本与当前需求的差异视图")} className="mt-2 inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"><GitCompareArrows className="size-3" />查看版本差异</button>}</div></div>)}</div>}
+          {activeTab === "history" && (draft.history.length ? <div className="space-y-0">{draft.history.map((history, index) => <div key={history.id} className="relative flex gap-3 pb-6 before:absolute before:left-[7px] before:top-5 before:h-full before:w-px before:bg-border last:before:hidden"><span className={`relative z-10 mt-1 size-4 shrink-0 rounded-full border-2 border-card ${index === 0 ? "bg-primary" : "bg-muted-foreground/35"}`} /><div className="min-w-0 flex-1 rounded-lg border border-border p-3"><div className="flex items-start justify-between gap-3"><p className="text-xs font-semibold text-foreground">{history.title}</p><span className="shrink-0 text-[10px] text-muted-foreground">{history.time || "未提供时间"}</span></div><p className="mt-1 text-[10px] text-muted-foreground">{history.user}</p><p className="mt-2 text-xs leading-5 text-muted-foreground">{history.detail}</p>{index === 1 && <button type="button" onClick={() => setNotice("浏览器演示：已打开差异视图占位")} className="mt-2 inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"><GitCompareArrows className="size-3" />查看版本差异</button>}</div></div>)}</div> : <div className="rounded-xl border border-dashed border-border p-5 text-sm text-muted-foreground">父级 payload 未提供该需求的修改历史。</div>)}
         </div>
 
-        <div className="shrink-0 border-t border-border bg-card px-5 py-3">
-          <div className="mb-3 flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setWorkflowStatus("confirmed", "需求已确认并写入正式需求中心")} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-medium text-success hover:bg-success/10"><CheckCircle2 className="size-3.5" />确认需求</button><button type="button" onClick={() => setWorkflowStatus("rejected", "需求已驳回，保留在历史记录中")} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-medium text-destructive hover:bg-destructive/10"><XCircle className="size-3.5" />驳回</button><button type="button" onClick={() => { update("flags", draft.flags.includes("duplicate") ? draft.flags : [...draft.flags, "duplicate"]); setNotice("已标记为疑似重复"); }} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"><Copy className="size-3.5" />标记重复</button><button type="button" onClick={() => { update("flags", draft.flags.includes("conflict") ? draft.flags : [...draft.flags, "conflict"]); setNotice("已标记为存在冲突"); }} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"><AlertTriangle className="size-3.5" />标记冲突</button><button type="button" onClick={() => setActiveTab("history")} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"><History className="size-3.5" />历史版本</button></div>
+        {readOnly ? <div className="shrink-0 border-t border-border bg-info-soft px-5 py-3 text-xs text-info">只读访问：修改、确认和审核操作已关闭。</div> : <div className="shrink-0 border-t border-border bg-card px-5 py-3">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5"><button type="button" onClick={() => setWorkflowStatus("confirmed", "浏览器演示：已标记为确认，未写入正式需求")} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-medium text-success hover:bg-success/10"><CheckCircle2 className="size-3.5" />确认需求</button><button type="button" onClick={() => setWorkflowStatus("rejected", "浏览器演示：已标记为驳回，未写入服务端")} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] font-medium text-destructive hover:bg-destructive/10"><XCircle className="size-3.5" />驳回</button><button type="button" onClick={() => { update("flags", draft.flags.includes("duplicate") ? draft.flags : [...draft.flags, "duplicate"]); setNotice("浏览器演示：已标记为疑似重复"); }} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"><Copy className="size-3.5" />标记重复</button><button type="button" onClick={() => { update("flags", draft.flags.includes("conflict") ? draft.flags : [...draft.flags, "conflict"]); setNotice("浏览器演示：已标记为存在冲突"); }} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"><AlertTriangle className="size-3.5" />标记冲突</button><button type="button" onClick={() => setActiveTab("history")} className="inline-flex h-7 items-center gap-1 rounded-md px-2 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"><History className="size-3.5" />历史版本</button></div>
           <div className="flex items-center justify-between gap-3"><p className="hidden text-[10px] text-muted-foreground sm:block">最后更新：{draft.updatedAt || "刚刚"}</p><div className="ml-auto flex items-center gap-2">{editing ? <><button type="button" onClick={() => { setDraft(requirement); setEditing(false); }} className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-xs font-medium text-foreground hover:bg-muted">取消编辑</button><button type="button" onClick={save} disabled={saving || !draft.title.trim()} className="inline-flex h-9 min-w-24 items-center justify-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">{saving ? <LoaderCircle className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}保存</button></> : <><button type="button" onClick={() => setEditing(true)} className="inline-flex h-9 items-center rounded-lg border border-border px-3 text-xs font-medium text-foreground hover:bg-muted">编辑需求</button><button type="button" onClick={submitReview} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90"><Send className="size-3.5" />提交审核</button></>}</div></div>
-        </div>
+        </div>}
       </section>
     </div>
   );

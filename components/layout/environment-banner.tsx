@@ -28,12 +28,14 @@ export function EnvironmentBanner() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-5">
         <strong className="inline-flex items-center gap-1.5 text-xs">
           <AlertTriangle aria-hidden="true" className="size-3.5" />
-          STAGING · Mock 演示环境
+          STAGING · v0.3 身份与项目隔离
         </strong>
         <span>版本 {APP_RUNTIME.version}</span>
         <span title={APP_RUNTIME.commitSha}>Commit {APP_RUNTIME.shortCommitSha}</span>
         <span>构建时间 {APP_RUNTIME.buildTime}</span>
-        <span className="font-semibold">尚无正式身份认证与权限隔离，禁止上传真实客户项目资料。</span>
+        <span className="font-semibold">
+          身份与项目授权已数据库化；业务资料与 AI 内容仍为 Mock，禁止上传真实客户项目资料。
+        </span>
       </div>
     </aside>
   );

@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { mockAIExecutions, mockProjects, mockReviewTasks, mockSourceCitations } from "@/data/mock";
 import { mockAIGateway } from "@/lib/ai";
+import type {
+  AuthorizedProjectSummary,
+  WorkspaceMockPayload,
+} from "@/lib/auth/ui-types";
 import {
   AlertTriangle,
   Check,
@@ -24,6 +27,7 @@ import { ReviewPanel, reviewTypeLabel, stringifyContent, type ReviewPanelTask } 
 
 type ReviewRecord = ReviewPanelTask & {
   projectId: string;
+  canReview: boolean;
   status: string;
   citationIds: string[];
   sourceIds: string[];
@@ -51,11 +55,16 @@ type ProjectRecord = { id: string; name: string };
 
 type ReviewAction = "approved" | "approvedWithChanges" | "rejected" | "draft";
 
-export function ReviewsPage() {
-  const sourceReviews = mockReviewTasks as unknown as ReviewRecord[];
-  const projects = mockProjects as unknown as ProjectRecord[];
-  const citations = mockSourceCitations as unknown as CitationRecord[];
-  const executions = mockAIExecutions as unknown as ExecutionInfoRecord[];
+interface ReviewsPageProps {
+  data: WorkspaceMockPayload;
+  projects: AuthorizedProjectSummary[];
+}
+
+export function ReviewsPage({ data, projects: authorizedProjects }: ReviewsPageProps) {
+  const sourceReviews = data.reviews as unknown as ReviewRecord[];
+  const projects = authorizedProjects as ProjectRecord[];
+  const citations = data.citations as unknown as CitationRecord[];
+  const executions = data.aiExecutions as unknown as ExecutionInfoRecord[];
   const [records, setRecords] = useState(sourceReviews);
   const [selectedId, setSelectedId] = useState(sourceReviews[0]?.id ?? "");
   const [search, setSearch] = useState("");
@@ -91,7 +100,10 @@ export function ReviewsPage() {
   const projectName = (projectId: string) => projects.find((project) => project.id === projectId)?.name ?? "未命名项目";
 
   const act = (action: ReviewAction) => {
-    if (!selected) return;
+    if (!selected?.canReview) {
+      setFeedback("当前项目为只读权限，不能执行审核操作");
+      return;
+    }
     const status = action === "draft" ? selected.status : action;
     setRecords((current) => current.map((item) => (item.id === selected.id ? { ...item, status } : item)));
     const labels: Record<ReviewAction, string> = {
@@ -104,7 +116,10 @@ export function ReviewsPage() {
   };
 
   const regenerate = async () => {
-    if (!selected) return;
+    if (!selected?.canReview) {
+      setFeedback("当前项目为只读权限，不能重新生成草稿");
+      return;
+    }
     setRegenerating(true);
     try {
       const result = await mockAIGateway.generateText({
@@ -173,7 +188,10 @@ export function ReviewsPage() {
                 className={`w-full border-b border-border px-4 py-3.5 text-left transition ${selectedId === item.id ? "bg-primary/[0.06] shadow-[inset_3px_0_var(--primary)]" : "hover:bg-muted/40"}`}
               >
                 <div className="flex items-start justify-between gap-2">
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">{reviewTypeLabel(item.type)}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">{reviewTypeLabel(item.type)}</span>
+                    {!item.canReview ? <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">只读</span> : null}
+                  </span>
                   <ReviewStatus status={item.status} />
                 </div>
                 <p className="mt-2 line-clamp-2 text-xs font-medium leading-5 text-foreground">{item.title}</p>
@@ -191,10 +209,11 @@ export function ReviewsPage() {
           <ReviewPanel
             task={selected}
             value={contentDrafts[selected.id] ?? stringifyContent(selected.editableContent)}
-            onChange={(value) => setContentDrafts((current) => ({ ...current, [selected.id]: value }))}
+            onChange={(value) => selected.canReview && setContentDrafts((current) => ({ ...current, [selected.id]: value }))}
             reviewNote={noteDrafts[selected.id] ?? selected.reviewNote ?? ""}
-            onReviewNoteChange={(value) => setNoteDrafts((current) => ({ ...current, [selected.id]: value }))}
+            onReviewNoteChange={(value) => selected.canReview && setNoteDrafts((current) => ({ ...current, [selected.id]: value }))}
             regenerating={regenerating}
+            readOnly={!selected.canReview}
           />
         ) : (
           <div className="flex min-h-96 items-center justify-center bg-card text-sm text-muted-foreground">请选择一个审核任务</div>
@@ -231,14 +250,21 @@ export function ReviewsPage() {
 
       {selected ? (
         <footer className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-card/95 px-4 py-3 shadow-[0_-8px_24px_rgba(15,23,42,0.05)] backdrop-blur lg:px-6">
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground"><Clock3 className="size-3.5" /> 草稿修改将自动记录为新审核版本</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button type="button" onClick={regenerate} disabled={regenerating} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"><RefreshCw className={`size-3.5 ${regenerating ? "animate-spin" : ""}`} /> 重新生成</button>
-            <button type="button" onClick={() => act("draft")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted"><Save className="size-3.5" /> 保存草稿</button>
-            <button type="button" onClick={() => act("rejected")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-destructive/30 px-3 text-xs font-medium text-destructive hover:bg-destructive/5"><X className="size-3.5" /> 驳回</button>
-            <button type="button" onClick={() => act("approvedWithChanges")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 text-xs font-medium text-primary hover:bg-primary/10"><CheckCircle2 className="size-3.5" /> 修改后通过</button>
-            <button type="button" onClick={() => act("approved")} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-xs font-medium text-primary-foreground hover:opacity-90"><Check className="size-3.5" /> 通过</button>
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <Clock3 className="size-3.5" />
+            {selected.canReview
+              ? "草稿修改将自动记录为新审核版本"
+              : "当前项目为只读权限，不能修改、重新生成或审核"}
           </div>
+          {selected.canReview ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" onClick={regenerate} disabled={regenerating} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"><RefreshCw className={`size-3.5 ${regenerating ? "animate-spin" : ""}`} /> 重新生成</button>
+              <button type="button" onClick={() => act("draft")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted"><Save className="size-3.5" /> 保存草稿</button>
+              <button type="button" onClick={() => act("rejected")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-destructive/30 px-3 text-xs font-medium text-destructive hover:bg-destructive/5"><X className="size-3.5" /> 驳回</button>
+              <button type="button" onClick={() => act("approvedWithChanges")} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary/30 bg-primary/5 px-3 text-xs font-medium text-primary hover:bg-primary/10"><CheckCircle2 className="size-3.5" /> 修改后通过</button>
+              <button type="button" onClick={() => act("approved")} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3.5 text-xs font-medium text-primary-foreground hover:opacity-90"><Check className="size-3.5" /> 通过</button>
+            </div>
+          ) : null}
         </footer>
       ) : null}
 

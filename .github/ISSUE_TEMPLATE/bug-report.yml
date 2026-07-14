@@ -59,7 +59,7 @@ body:
     id: version
     attributes:
       label: 版本与 Commit
-      placeholder: 0.2.0-staging / abc1234
+      placeholder: 0.3.0-staging / abc1234
   - type: textarea
     id: evidence
     attributes:

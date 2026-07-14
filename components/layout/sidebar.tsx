@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import {
   BarChart3,
   Blocks,
@@ -17,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { systemRoleLabel, type ViewerContext } from "@/lib/auth/ui-types";
 
 const navigation = [
   { label: "工作台", href: "/dashboard", icon: LayoutDashboard },
@@ -28,9 +28,21 @@ const navigation = [
   { label: "数据看板", href: "/analytics", icon: BarChart3 },
 ];
 
-export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClose }: { collapsed: boolean; onCollapsedChange: (value: boolean) => void; mobileOpen: boolean; onMobileClose: () => void }) {
-  const pathname = usePathname();
-  const active = (href: string) => pathname === href || (href !== "/dashboard" && pathname.startsWith(`${href}/`));
+interface SidebarProps {
+  viewer: ViewerContext;
+  currentPath: string;
+  collapsed: boolean;
+  onCollapsedChange: (value: boolean) => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
+}
+
+export function Sidebar({ viewer, currentPath, collapsed, onCollapsedChange, mobileOpen, onMobileClose }: SidebarProps) {
+  const active = (href: string) => currentPath === href || (href !== "/dashboard" && currentPath.startsWith(`${href}/`));
+  const canUseWriteWorkflows = viewer.projects.some((project) => project.permissions.canEditProject);
+  const visibleNavigation = navigation.filter((item) =>
+    canUseWriteWorkflows || !["/workflows", "/reviews"].includes(item.href),
+  );
   return <>
     {mobileOpen ? <button className="fixed inset-0 z-40 bg-[var(--overlay)] lg:hidden" aria-label="关闭导航" onClick={onMobileClose} /> : null}
     <aside className={cn("fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar text-sidebar-foreground transition-[width,transform] duration-200 lg:translate-x-0", collapsed ? "w-[72px]" : "w-[232px]", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
@@ -44,7 +56,7 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClos
 
       <nav className="flex-1 overflow-y-auto px-2.5 py-4" aria-label="主导航">
         <p className={cn("mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted", collapsed && "sr-only")}>Workspace</p>
-        <div className="space-y-1">{navigation.map((item) => {
+        <div className="space-y-1">{visibleNavigation.map((item) => {
           const Icon = item.icon;
           const selected = active(item.href);
           return <Link key={item.href} href={item.href} title={collapsed ? item.label : undefined} onClick={onMobileClose} className={cn("group flex h-10 items-center gap-3 rounded-lg text-[13px] font-medium transition-colors", collapsed ? "justify-center px-0" : "px-2.5", selected ? "bg-sidebar-accent text-white" : "text-sidebar-muted hover:bg-white/6 hover:text-white")}>
@@ -54,11 +66,11 @@ export function Sidebar({ collapsed, onCollapsedChange, mobileOpen, onMobileClos
         })}</div>
 
         <div className="my-4 border-t border-white/8" />
-        <Link href="/settings" title={collapsed ? "系统设置" : undefined} onClick={onMobileClose} className={cn("flex h-10 items-center gap-3 rounded-lg text-[13px] font-medium transition-colors", collapsed ? "justify-center" : "px-2.5", active("/settings") ? "bg-sidebar-accent text-white" : "text-sidebar-muted hover:bg-white/6 hover:text-white")}><Settings className="size-[17px]" />{!collapsed ? <span>系统设置</span> : null}</Link>
+        {viewer.user.systemRole === "system_admin" ? <Link href="/settings" title={collapsed ? "系统设置" : undefined} onClick={onMobileClose} className={cn("flex h-10 items-center gap-3 rounded-lg text-[13px] font-medium transition-colors", collapsed ? "justify-center" : "px-2.5", active("/settings") ? "bg-sidebar-accent text-white" : "text-sidebar-muted hover:bg-white/6 hover:text-white")}><Settings className="size-[17px]" />{!collapsed ? <span>系统设置</span> : null}</Link> : null}
       </nav>
 
       <div className="border-t border-white/8 p-2.5">
-        {!collapsed ? <div className="mb-2 rounded-lg bg-white/[0.04] p-3"><div className="flex items-center gap-2 text-xs text-sidebar-foreground"><span className="size-1.5 rounded-full bg-emerald-400" />Mock AI Gateway</div><p className="mt-1 text-[10px] text-sidebar-muted">所有模型调用统一路由</p></div> : null}
+        {!collapsed ? <div className="mb-2 rounded-lg bg-white/[0.04] p-3"><div className="flex items-center gap-2 text-xs text-sidebar-foreground"><span className="size-1.5 rounded-full bg-emerald-400" />{systemRoleLabel(viewer.user.systemRole)}</div><p className="mt-1 text-[10px] text-sidebar-muted">{canUseWriteWorkflows ? "当前业务内容仍为 Mock" : "已启用项目只读模式"}</p></div> : null}
         <button onClick={() => onCollapsedChange(!collapsed)} className="hidden h-9 w-full items-center justify-center rounded-lg text-sidebar-muted hover:bg-white/6 hover:text-white lg:flex" aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>{collapsed ? <ChevronRight className="size-4" /> : <><ChevronLeft className="size-4" /><span className="ml-2 text-xs">收起导航</span></>}</button>
       </div>
     </aside>

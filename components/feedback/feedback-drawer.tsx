@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { usePathname } from "next/navigation";
 import { Check, Clipboard, MessageSquareText, ShieldAlert } from "lucide-react";
 import { APP_RUNTIME } from "@/config/app-runtime";
 import { Button } from "@/components/common/button";
@@ -89,8 +88,7 @@ async function copyToClipboard(text: string): Promise<void> {
   if (!copied) throw new Error("Clipboard is unavailable");
 }
 
-export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const pathname = usePathname();
+export function FeedbackDrawer({ currentPath, open, onClose }: { currentPath: string; open: boolean; onClose: () => void }) {
   const { toast } = useToast();
   const [type, setType] = useState<FeedbackType>("功能问题");
   const [severity, setSeverity] = useState<SeverityLevel>("P1");
@@ -107,7 +105,7 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
     const createdAt = new Date().toISOString();
     const record: FeedbackRecord = {
       id: globalThis.crypto?.randomUUID?.() ?? `feedback-${Date.now()}`,
-      page: pathname,
+      page: currentPath,
       type,
       description: normalizedDescription,
       severity,
@@ -179,7 +177,7 @@ export function FeedbackDrawer({ open, onClose }: { open: boolean; onClose: () =
 
         <label className="block text-xs font-medium text-foreground">
           当前页面
-          <input className={`${fieldClasses} text-muted-foreground`} value={pathname} readOnly />
+          <input className={`${fieldClasses} text-muted-foreground`} value={currentPath} readOnly />
         </label>
 
         <div className="grid gap-4 sm:grid-cols-2">

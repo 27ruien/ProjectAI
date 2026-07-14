@@ -1,5 +1,13 @@
 {
   "version": "7",
-  "dialect": "sqlite",
-  "entries": []
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1783919367639,
+      "tag": "0000_lovely_mongu",
+      "breakpoints": true
+    }
+  ]
 }

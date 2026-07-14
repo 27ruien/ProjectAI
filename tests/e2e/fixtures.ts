@@ -1,4 +1,5 @@
 import { expect, test as base, type ConsoleMessage, type Request, type TestInfo } from "@playwright/test";
+import { loginByApi, type TestActor } from "./support/auth";
 
 type RuntimeIssue = {
   kind: "console.error" | "pageerror" | "requestfailed" | "http500";
@@ -10,6 +11,15 @@ type RuntimeLog = {
   type: string;
   text: string;
   url?: string;
+};
+
+type ConsoleErrorAllowance = {
+  message: string;
+  pathname: string;
+};
+
+type RuntimeMonitor = {
+  allowConsoleErrorOnce: (allowance: ConsoleErrorAllowance) => void;
 };
 
 async function attachJson(testInfo: TestInfo, name: string, value: unknown) {
@@ -33,17 +43,60 @@ function isSupersededVinextRscRequest(request: Request) {
   return failure === "net::ERR_ABORTED" && request.resourceType() === "fetch" && pathname.endsWith(".rsc");
 }
 
-export const test = base.extend<{ runtimeMonitor: void }>({
+function matchesConsoleErrorAllowance(
+  allowance: ConsoleErrorAllowance,
+  entry: RuntimeLog,
+  pageUrl: string,
+) {
+  if (entry.text !== allowance.message || !entry.url) return false;
+  try {
+    const source = new URL(entry.url);
+    const current = new URL(pageUrl);
+    return source.origin === current.origin && source.pathname === allowance.pathname;
+  } catch {
+    return false;
+  }
+}
+
+type ProjectAIFixtures = {
+  authenticatedAs: TestActor | null;
+  authentication: void;
+  runtimeMonitor: RuntimeMonitor;
+};
+
+export const test = base.extend<ProjectAIFixtures>({
+  authenticatedAs: ["managerA", { option: true }],
+  authentication: [
+    async ({ authenticatedAs, page }, use) => {
+      if (authenticatedAs) await loginByApi(page, authenticatedAs);
+      await use();
+    },
+    { auto: true },
+  ],
   runtimeMonitor: [
     async ({ page }, use, testInfo) => {
       const issues: RuntimeIssue[] = [];
       const consoleLogs: RuntimeLog[] = [];
       const networkFailures: RuntimeIssue[] = [];
+      const consoleErrorAllowances: ConsoleErrorAllowance[] = [];
+
+      const runtimeMonitor: RuntimeMonitor = {
+        allowConsoleErrorOnce: (allowance) => {
+          consoleErrorAllowances.push(allowance);
+        },
+      };
 
       page.on("console", (message) => {
         const entry = { type: message.type(), text: message.text(), url: consoleLocation(message) };
         consoleLogs.push(entry);
         if (message.type() === "error") {
+          const allowanceIndex = consoleErrorAllowances.findIndex((allowance) =>
+            matchesConsoleErrorAllowance(allowance, entry, page.url()),
+          );
+          if (allowanceIndex >= 0) {
+            consoleErrorAllowances.splice(allowanceIndex, 1);
+            return;
+          }
           issues.push({ kind: "console.error", message: message.text(), url: entry.url });
         }
       });
@@ -74,7 +127,7 @@ export const test = base.extend<{ runtimeMonitor: void }>({
         networkFailures.push(issue);
       });
 
-      await use();
+      await use(runtimeMonitor);
 
       const failed = testInfo.status !== testInfo.expectedStatus;
       if (failed || issues.length > 0) {

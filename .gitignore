@@ -15,6 +15,9 @@
 /playwright-report/
 /test-results/
 /blob-report/
+/review-artifacts/
+/product-review-evidence/
+/test-logs/
 
 # next.js
 /.next/
@@ -38,6 +41,7 @@ yarn-error.log*
 .env.*
 !.env.example
 !.env.staging.example
+!.env.auth-staging.example
 
 # vercel
 .vercel

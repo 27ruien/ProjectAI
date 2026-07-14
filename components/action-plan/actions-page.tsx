@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { mockActionItems, mockProjects } from "@/data/mock";
+import type { AuthorizedProjectSummary, ProjectMockPayload } from "@/lib/auth/ui-types";
+import {
+  setLocalStorageSnapshot,
+  useLocalStorageSnapshot,
+} from "@/lib/browser-snapshot";
 import { storageKey } from "@/lib/storage-key";
 import {
   AlertTriangle,
@@ -28,45 +32,45 @@ import {
   type ActionItemView,
 } from "./action-item-row";
 
-type ProjectRecord = { id: string; name: string };
 type ViewMode = "table" | "timeline";
 
 interface ActionsPageProps {
-  projectId?: string;
+  project: AuthorizedProjectSummary;
+  data: ProjectMockPayload;
 }
 
-const SOURCE_ACTIONS = mockActionItems as unknown as ActionItemView[];
-
-function restoreActionStatuses(source: ActionItemView[]): ActionItemView[] {
-  if (typeof window === "undefined") return source;
+function parseActionStatuses(raw: string | null): Record<string, string> {
+  if (!raw) return {};
   try {
-    const raw = window.localStorage.getItem(storageKey("action-statuses"));
-    if (!raw) return source;
     const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return source;
-    const statuses = parsed as Record<string, unknown>;
-    return source.map((item) => {
-      const storedStatus = statuses[item.id];
-      return typeof storedStatus === "string" ? { ...item, status: storedStatus } : item;
-    });
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
   } catch {
-    return source;
+    return {};
   }
 }
 
 function persistActionStatuses(items: ActionItemView[]) {
-  window.localStorage.setItem(
+  return setLocalStorageSnapshot(
     storageKey("action-statuses"),
     JSON.stringify(Object.fromEntries(items.map((item) => [item.id, item.status]))),
   );
 }
 
-export function ActionsPage({ projectId }: ActionsPageProps) {
-  const projects = mockProjects as unknown as ProjectRecord[];
-  const [items, setItems] = useState(SOURCE_ACTIONS);
+export function ActionsPage({ project, data }: ActionsPageProps) {
+  const sourceActions = data.actions as unknown as ActionItemView[];
+  const canEdit = project.permissions.canEditProject;
+  const storedStatusesRaw = useLocalStorageSnapshot(storageKey("action-statuses"));
+  const storedStatuses = useMemo(
+    () => parseActionStatuses(storedStatusesRaw),
+    [storedStatusesRaw],
+  );
   const [view, setView] = useState<ViewMode>("table");
   const [search, setSearch] = useState("");
-  const [projectFilter, setProjectFilter] = useState("all");
   const [ownerFilter, setOwnerFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState("all");
@@ -74,53 +78,49 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  useEffect(() => {
-    // Restore after hydration so server and client initial markup stay identical.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setItems(restoreActionStatuses(SOURCE_ACTIONS));
-  }, []);
-
-  const projectName = (id: string) => projects.find((project) => project.id === id)?.name ?? "未命名项目";
-  const scopedItems = projectId ? items.filter((item) => item.projectId === projectId) : items;
+  const projectName = () => project.name;
+  const scopedItems = useMemo(
+    () =>
+      sourceActions.map((item) => {
+        const status = storedStatuses[item.id];
+        return status ? { ...item, status } : item;
+      }),
+    [sourceActions, storedStatuses],
+  );
   const owners = Array.from(new Set(scopedItems.map((item) => item.owner)));
   const filtered = useMemo(() => {
     return scopedItems.filter((item) => {
       const overdue = new Date(item.dueDate).getTime() < ACTION_REFERENCE_TIME && !["completed", "cancelled"].includes(item.status);
       return (
         `${item.actionId} ${item.title} ${item.owner}`.toLowerCase().includes(search.toLowerCase()) &&
-        (projectFilter === "all" || item.projectId === projectFilter) &&
         (ownerFilter === "all" || item.owner === ownerFilter) &&
         (statusFilter === "all" || item.status === statusFilter) &&
         (priorityFilter === "all" || item.priority === priorityFilter) &&
         (!overdueOnly || overdue)
       );
     });
-  }, [overdueOnly, ownerFilter, priorityFilter, projectFilter, scopedItems, search, statusFilter]);
+  }, [overdueOnly, ownerFilter, priorityFilter, scopedItems, search, statusFilter]);
 
   const updateStatus = (id: string, status: string) => {
-    setItems((current) => {
-      const next = current.map((item) => (item.id === id ? { ...item, status, updatedAt: new Date().toISOString() } : item));
-      try {
-        persistActionStatuses(next);
-      } catch {
-        // Local persistence is optional in restricted browser contexts.
-      }
-      return next;
-    });
-    setFeedback(`Action 状态已更新为「${actionStatusConfig[status]?.label ?? status}」`);
+    const next = scopedItems.map((item) =>
+      item.id === id ? { ...item, status, updatedAt: new Date().toISOString() } : item,
+    );
+    setFeedback(
+      persistActionStatuses(next)
+        ? `Action 状态已更新为「${actionStatusConfig[status]?.label ?? status}」`
+        : "浏览器未能保存 Action 状态",
+    );
   };
 
   const bulkUpdate = (status: string) => {
-    setItems((current) => {
-      const next = current.map((item) => (selectedIds.includes(item.id) ? { ...item, status } : item));
-      try {
-        persistActionStatuses(next);
-      } catch {
-        // Local persistence is optional in restricted browser contexts.
-      }
-      return next;
-    });
-    setFeedback(`已更新 ${selectedIds.length} 条 Action`);
+    const next = scopedItems.map((item) =>
+      selectedIds.includes(item.id) ? { ...item, status } : item,
+    );
+    setFeedback(
+      persistActionStatuses(next)
+        ? `已更新 ${selectedIds.length} 条 Action`
+        : "浏览器未能保存 Action 状态",
+    );
     setSelectedIds([]);
   };
 
@@ -145,7 +145,7 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
             <ViewButton active={view === "table"} onClick={() => setView("table")} icon={Columns3}>表格</ViewButton>
             <ViewButton active={view === "timeline"} onClick={() => setView("timeline")} icon={CalendarRange}>Timeline</ViewButton>
           </div>
-          <button type="button" onClick={() => setFeedback("已打开新建 Action 表单（演示）")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground"><Plus className="size-4" /> 新建 Action</button>
+          {canEdit ? <button type="button" onClick={() => setFeedback("已打开新建 Action 表单（演示）")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground"><Plus className="size-4" /> 新建 Action</button> : null}
         </div>
       </div>
 
@@ -163,14 +163,13 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
               <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 Action、ID 或负责人" className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary" />
             </div>
-            <SmallSelect label="项目" value={projectFilter} onChange={setProjectFilter}><option value="all">全部项目</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</SmallSelect>
             <SmallSelect label="负责人" value={ownerFilter} onChange={setOwnerFilter}><option value="all">全部负责人</option>{owners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}</SmallSelect>
             <SmallSelect label="状态" value={statusFilter} onChange={setStatusFilter}><option value="all">全部状态</option>{Object.entries(actionStatusConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}</SmallSelect>
             <SmallSelect label="优先级" value={priorityFilter} onChange={setPriorityFilter}><option value="all">全部优先级</option>{Object.entries(priorityConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}</SmallSelect>
             <label className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-medium ${overdueOnly ? "border-amber-500/30 bg-amber-500/10 text-amber-800" : "border-border text-muted-foreground"}`}><input type="checkbox" checked={overdueOnly} onChange={(event) => setOverdueOnly(event.target.checked)} className="sr-only" /><AlertTriangle className="size-3" /> 仅逾期</label>
           </div>
-          {(search || projectFilter !== "all" || ownerFilter !== "all" || statusFilter !== "all" || priorityFilter !== "all" || overdueOnly) ? (
-            <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><SlidersHorizontal className="size-3" />找到 {filtered.length} 条记录<button type="button" onClick={() => { setSearch(""); setProjectFilter("all"); setOwnerFilter("all"); setStatusFilter("all"); setPriorityFilter("all"); setOverdueOnly(false); }} className="text-primary hover:underline">清除筛选</button></div>
+          {(search || ownerFilter !== "all" || statusFilter !== "all" || priorityFilter !== "all" || overdueOnly) ? (
+            <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><SlidersHorizontal className="size-3" />找到 {filtered.length} 条记录<button type="button" onClick={() => { setSearch(""); setOwnerFilter("all"); setStatusFilter("all"); setPriorityFilter("all"); setOverdueOnly(false); }} className="text-primary hover:underline">清除筛选</button></div>
           ) : null}
         </div>
 
@@ -178,22 +177,22 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead className="bg-muted/35 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr><th className="w-10 px-3 py-2.5"><input aria-label="选择全部" type="checkbox" checked={filtered.length > 0 && filtered.every((item) => selectedIds.includes(item.id))} onChange={(event) => setSelectedIds(event.target.checked ? filtered.map((item) => item.id) : [])} className="size-3.5 accent-[var(--primary)]" /></th><th className="px-2 py-2.5">Action 内容</th><th className="px-2 py-2.5">项目</th><th className="px-2 py-2.5">负责人</th><th className="px-2 py-2.5">截止日期</th><th className="px-2 py-2.5">状态</th><th className="px-2 py-2.5">优先级</th><th className="px-2 py-2.5">来源</th><th /></tr>
+                <tr><th className="w-10 px-3 py-2.5">{canEdit ? <input aria-label="选择全部" type="checkbox" checked={filtered.length > 0 && filtered.every((item) => selectedIds.includes(item.id))} onChange={(event) => setSelectedIds(event.target.checked ? filtered.map((item) => item.id) : [])} className="size-3.5 accent-[var(--primary)]" /> : null}</th><th className="px-2 py-2.5">Action 内容</th><th className="px-2 py-2.5">项目</th><th className="px-2 py-2.5">负责人</th><th className="px-2 py-2.5">截止日期</th><th className="px-2 py-2.5">状态</th><th className="px-2 py-2.5">优先级</th><th className="px-2 py-2.5">来源</th><th /></tr>
               </thead>
               <tbody>
                 {filtered.map((item) => (
-                  <ActionItemRow key={item.id} item={item} projectName={projectName(item.projectId)} selected={selectedIds.includes(item.id)} onSelectedChange={(checked) => setSelectedIds((current) => checked ? [...current, item.id] : current.filter((id) => id !== item.id))} onStatusChange={(status) => updateStatus(item.id, status)} onOpenSource={() => setFeedback(`来源：${sourceLabel(item.source)} · ${item.actionId}`)} />
+                  <ActionItemRow key={item.id} item={item} projectName={projectName()} readOnly={!canEdit} selected={selectedIds.includes(item.id)} onSelectedChange={(checked) => setSelectedIds((current) => checked ? [...current, item.id] : current.filter((id) => id !== item.id))} onStatusChange={(status) => updateStatus(item.id, status)} onOpenSource={() => setFeedback(`来源：${sourceLabel(item.source)} · ${item.actionId}`)} />
                 ))}
               </tbody>
             </table>
             {!filtered.length ? <div className="p-12 text-center text-xs text-muted-foreground">当前筛选下没有 Action Items。</div> : null}
           </div>
         ) : (
-          <TimelineView items={filtered} projectName={projectName} onStatusChange={updateStatus} />
+          <TimelineView items={filtered} projectName={projectName} readOnly={!canEdit} onStatusChange={updateStatus} />
         )}
       </section>
 
-      {selectedIds.length ? (
+      {canEdit && selectedIds.length ? (
         <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-foreground px-4 py-3 text-background shadow-xl">
           <span className="text-xs font-medium">已选 {selectedIds.length} 项</span><span className="h-4 w-px bg-background/20" />
           <button type="button" onClick={() => bulkUpdate("inProgress")} className="text-xs text-background/80 hover:text-background">标记进行中</button>
@@ -207,7 +206,7 @@ export function ActionsPage({ projectId }: ActionsPageProps) {
   );
 }
 
-function TimelineView({ items, projectName, onStatusChange }: { items: ActionItemView[]; projectName: (id: string) => string; onStatusChange: (id: string, status: string) => void }) {
+function TimelineView({ items, projectName, readOnly, onStatusChange }: { items: ActionItemView[]; projectName: (id: string) => string; readOnly: boolean; onStatusChange: (id: string, status: string) => void }) {
   const dates = items.map((item) => new Date(item.dueDate).getTime()).filter(Number.isFinite);
   const min = Math.min(...dates, ACTION_REFERENCE_TIME);
   const max = Math.max(...dates, min + 86_400_000);
@@ -222,7 +221,7 @@ function TimelineView({ items, projectName, onStatusChange }: { items: ActionIte
             <div key={item.id} className="grid min-h-14 grid-cols-[250px_1fr] items-center">
               <div className="pr-4"><p className="truncate text-xs font-medium text-foreground">{item.title}</p><p className="mt-0.5 text-[9px] text-muted-foreground">{projectName(item.projectId)} · {item.owner}</p></div>
               <div className="relative h-7 rounded bg-[repeating-linear-gradient(to_right,transparent,transparent_calc(25%-1px),var(--border)_25%)]">
-                <button type="button" onClick={() => onStatusChange(item.id, item.status === "completed" ? "todo" : "completed")} className={`absolute top-1/2 flex h-5 -translate-y-1/2 items-center rounded-full px-2 text-[9px] text-white shadow-sm ${statusStyle}`} style={{ left: `${position}%`, transform: "translate(-50%, -50%)" }}>{formatDate(item.dueDate)}</button>
+                {readOnly ? <span className={`absolute top-1/2 flex h-5 -translate-y-1/2 items-center rounded-full px-2 text-[9px] text-white shadow-sm ${statusStyle}`} style={{ left: `${position}%`, transform: "translate(-50%, -50%)" }}>{formatDate(item.dueDate)}</span> : <button type="button" onClick={() => onStatusChange(item.id, item.status === "completed" ? "todo" : "completed")} className={`absolute top-1/2 flex h-5 -translate-y-1/2 items-center rounded-full px-2 text-[9px] text-white shadow-sm ${statusStyle}`} style={{ left: `${position}%`, transform: "translate(-50%, -50%)" }}>{formatDate(item.dueDate)}</button>}
               </div>
             </div>
           );

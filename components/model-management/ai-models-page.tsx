@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { mockAIExecutions, mockAIModelProfiles, mockAIModels, mockAIProviders, mockSkills } from "@/data/mock";
+import type { WorkspaceMockPayload } from "@/lib/auth/ui-types";
 import {
   Activity,
   AlertTriangle,
@@ -36,6 +36,7 @@ import type { AIExecutionView, AIModelProfileView, AIModelView, AIProviderView, 
 type ModelsTab = "providers" | "models" | "profiles" | "relations" | "logs" | "cost";
 
 interface AIModelsPageProps {
+  data: WorkspaceMockPayload;
   initialProfileId?: string;
 }
 
@@ -48,12 +49,12 @@ const tabs: { id: ModelsTab; label: string; icon: typeof Cloud }[] = [
   { id: "cost", label: "用量与成本", icon: BarChart3 },
 ];
 
-export function AIModelsPage({ initialProfileId }: AIModelsPageProps) {
-  const providers = mockAIProviders as unknown as AIProviderView[];
-  const models = mockAIModels as unknown as AIModelView[];
-  const profiles = mockAIModelProfiles as unknown as AIModelProfileView[];
-  const skills = mockSkills as unknown as SkillRelationView[];
-  const executions = mockAIExecutions as unknown as AIExecutionView[];
+export function AIModelsPage({ data, initialProfileId }: AIModelsPageProps) {
+  const providers = data.aiProviders as unknown as AIProviderView[];
+  const models = data.aiModels as unknown as AIModelView[];
+  const profiles = data.aiModelProfiles as unknown as AIModelProfileView[];
+  const skills = data.skills as unknown as SkillRelationView[];
+  const executions = data.aiExecutions as unknown as AIExecutionView[];
   const initialProfile = profiles.find((profile) => profile.id === initialProfileId || profile.profileId === initialProfileId);
   const [tab, setTab] = useState<ModelsTab>(initialProfile ? "profiles" : "providers");
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(initialProfile?.id ?? null);

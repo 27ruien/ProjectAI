@@ -16,13 +16,35 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: projectai_ci
+          POSTGRES_USER: projectai_ci
+          POSTGRES_PASSWORD: projectai_ci_database_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U projectai_ci -d projectai_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     env:
+      CI: "true"
+      DATABASE_URL: postgresql://projectai_ci:projectai_ci_database_only@127.0.0.1:5432/projectai_ci
+      BETTER_AUTH_URL: http://127.0.0.1:3200/tool/projectai/api/auth
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
       NEXT_PUBLIC_APP_ENV: test
-      NEXT_PUBLIC_APP_VERSION: ci
       NEXT_PUBLIC_COMMIT_SHA: ${{ github.sha }}
       AI_PROVIDER: mock
+      SEED_ADMIN_EMAIL: admin.ci@projectai.invalid
+      SEED_MANAGER_A_EMAIL: manager-a.ci@projectai.invalid
+      SEED_MANAGER_B_EMAIL: manager-b.ci@projectai.invalid
+      SEED_MEMBER_A_EMAIL: member-a.ci@projectai.invalid
+      SEED_VIEWER_A_EMAIL: viewer-a.ci@projectai.invalid
+      PLAYWRIGHT_REVIEW_ARTIFACTS: "1"
 
     steps:
       - name: Checkout
@@ -34,34 +56,113 @@ jobs:
           node-version: 22
           cache: npm
 
+      - name: Create ephemeral authentication test secrets
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          password="$(openssl rand -base64 32 | tr -d '\n')Aa1!"
+          auth_secret="$(openssl rand -hex 48)"
+          echo "::add-mask::$password"
+          echo "::add-mask::$auth_secret"
+          {
+            echo "NEXT_PUBLIC_APP_VERSION=$(node -p 'require("./package.json").version')"
+            echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "BETTER_AUTH_SECRET=$auth_secret"
+            echo "SEED_ADMIN_PASSWORD=$password"
+            echo "SEED_MANAGER_A_PASSWORD=$password"
+            echo "SEED_MANAGER_B_PASSWORD=$password"
+            echo "SEED_MEMBER_A_PASSWORD=$password"
+            echo "SEED_VIEWER_A_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+
       - name: Install dependencies
         run: npm ci
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Wait for isolated PostgreSQL service
+        shell: bash
+        env:
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -Eeuo pipefail
+          for _ in {1..30}; do
+            if docker exec "$POSTGRES_CONTAINER_ID" pg_isready -U projectai_ci -d projectai_ci >/dev/null 2>&1; then
+              echo "PostgreSQL is ready."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PostgreSQL readiness timed out." >&2
+          exit 1
+
+      - name: Apply committed migrations
+        run: npm run db:migrate
+
+      - name: Apply idempotent CI seed
+        run: npm run db:seed
+
       - name: TypeScript
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run typecheck 2>&1 | tee test-logs/typecheck.log
 
       - name: ESLint
-        run: npm run lint
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run lint 2>&1 | tee test-logs/lint.log
 
-      - name: SSR and route tests
-        run: npm test
+      - name: SSR tests and production build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test-logs/build-and-ssr.log
 
-      - name: Playwright MVP flows
-        run: npm run test:e2e
+      - name: Authentication and project-isolation integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:integration 2>&1 | tee test-logs/integration.log
 
-      - name: Production build
-        run: npm run build
+      - name: Product review artifact sanitizer tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:artifacts 2>&1 | tee test-logs/artifact-sanitizer.log
 
-      - name: Upload Playwright evidence
-        if: failure()
+      - name: Playwright identity, isolation, and MVP flows
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:e2e 2>&1 | tee test-logs/playwright.log
+
+      - name: Finalize product review manifest
+        if: always()
+        env:
+          REVIEW_ARTIFACT_STATUS: ${{ job.status }}
+          REVIEW_COMMIT: ${{ github.sha }}
+          REVIEW_BRANCH: ${{ github.head_ref || github.ref_name }}
+          REVIEW_BUILD_TIME: ${{ github.event.pull_request.updated_at || github.event.head_commit.timestamp }}
+        run: node scripts/write-review-manifest.mjs
+
+      - name: Sanitize product review evidence
+        id: sanitize_evidence
+        if: always()
+        run: npm run review:sanitize
+
+      - name: Upload product review evidence
+        if: always() && steps.sanitize_evidence.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-evidence-${{ github.run_id }}
-          if-no-files-found: ignore
+          name: product-review-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
           retention-days: 14
           path: |
-            playwright-report/
-            test-results/
+            product-review-evidence/
