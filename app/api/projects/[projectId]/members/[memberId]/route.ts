@@ -7,12 +7,11 @@ import {
 import { requireProjectRole } from "@/lib/auth/authorization";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
 import { AuthorizationError, requireApiPrincipal } from "@/lib/auth/session";
-import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import {
-  findProjectMemberById,
+  changeProjectMemberRole,
+  LAST_PROJECT_MANAGER_ERROR,
   removeProjectMember,
-  updateProjectMemberRole,
-} from "@/lib/db/repositories/membership-repository";
+} from "@/lib/projects/member-management";
 import { getDb } from "@/lib/db/client";
 
 type MemberRouteContext = {
@@ -32,6 +31,13 @@ export async function PATCH(
     const { projectId, memberId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
     const requestContext = getRequestAuditContext(request.headers);
+    const parsed = roleSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return jsonResponse(
+        { error: { code: "INVALID_INPUT", message: "角色无效" } },
+        { status: 400 },
+      );
+    }
     const result = await getDb().transaction(async (tx) => {
       try {
         await requireProjectRole(
@@ -48,49 +54,22 @@ export async function PATCH(
         throw error;
       }
 
-      const parsed = roleSchema.safeParse(await request.json());
-      if (!parsed.success) return { kind: "invalid_input" } as const;
-
-      const previous = await findProjectMemberById(memberId, projectId, tx, {
-        lockForUpdate: true,
-      });
-      if (!previous) return { kind: "not_found" } as const;
-
-      const changed = await updateProjectMemberRole(
-        memberId,
-        projectId,
-        parsed.data.role,
+      return changeProjectMemberRole(
+        { memberId, projectId, role: parsed.data.role },
+        { actorUserId: principal.user.id, ...requestContext },
         tx,
       );
-      if (!changed) return { kind: "not_found" } as const;
-      await writeAuditEvent(
-        {
-          actorUserId: principal.user.id,
-          projectId,
-          eventType: "project_member_role_changed",
-          entityType: "project_member",
-          entityId: memberId,
-          result: "succeeded",
-          metadata: { fromRole: previous.role, toRole: parsed.data.role },
-          ...requestContext,
-        },
-        tx,
-      );
-      return { kind: "updated", member: changed } as const;
     });
 
     if (result.kind === "authorization_error") throw result.error;
-    if (result.kind === "invalid_input") {
-      return jsonResponse(
-        { error: { code: "INVALID_INPUT", message: "角色无效" } },
-        { status: 400 },
-      );
-    }
     if (result.kind === "not_found") {
       return jsonResponse(
         { error: { code: "NOT_FOUND", message: "成员不存在" } },
         { status: 404 },
       );
+    }
+    if (result.kind === "last_project_manager") {
+      return jsonResponse(LAST_PROJECT_MANAGER_ERROR, { status: 409 });
     }
     return jsonResponse({ member: result.member });
   } catch (error) {
@@ -129,22 +108,11 @@ export async function DELETE(
         throw error;
       }
 
-      const deleted = await removeProjectMember(memberId, projectId, tx);
-      if (!deleted) return { kind: "not_found" } as const;
-      await writeAuditEvent(
-        {
-          actorUserId: principal.user.id,
-          projectId,
-          eventType: "project_member_removed",
-          entityType: "project_member",
-          entityId: memberId,
-          result: "succeeded",
-          metadata: { role: deleted.role, userId: deleted.userId },
-          ...requestContext,
-        },
+      return removeProjectMember(
+        { memberId, projectId },
+        { actorUserId: principal.user.id, ...requestContext },
         tx,
       );
-      return { kind: "removed" } as const;
     });
 
     if (result.kind === "authorization_error") throw result.error;
@@ -153,6 +121,9 @@ export async function DELETE(
         { error: { code: "NOT_FOUND", message: "成员不存在" } },
         { status: 404 },
       );
+    }
+    if (result.kind === "last_project_manager") {
+      return jsonResponse(LAST_PROJECT_MANAGER_ERROR, { status: 409 });
     }
     return new Response(null, { status: 204 });
   } catch (error) {

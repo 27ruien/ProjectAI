@@ -49,6 +49,13 @@ export async function POST(
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
     const requestContext = getRequestAuditContext(request.headers);
+    const parsed = addMemberSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return jsonResponse(
+        { error: { code: "INVALID_INPUT", message: "请检查成员字段" } },
+        { status: 400 },
+      );
+    }
     const result = await getDb().transaction(async (tx) => {
       try {
         await requireProjectRole(
@@ -64,9 +71,6 @@ export async function POST(
         }
         throw error;
       }
-
-      const parsed = addMemberSchema.safeParse(await request.json());
-      if (!parsed.success) return { kind: "invalid_input" } as const;
 
       const memberUser = await findUserByEmail(parsed.data.email, tx);
       if (!memberUser || memberUser.status !== "active") {
@@ -100,12 +104,6 @@ export async function POST(
     });
 
     if (result.kind === "authorization_error") throw result.error;
-    if (result.kind === "invalid_input") {
-      return jsonResponse(
-        { error: { code: "INVALID_INPUT", message: "请检查成员字段" } },
-        { status: 400 },
-      );
-    }
     if (result.kind === "user_not_available") {
       return jsonResponse(
         { error: { code: "USER_NOT_AVAILABLE", message: "无法添加该用户" } },

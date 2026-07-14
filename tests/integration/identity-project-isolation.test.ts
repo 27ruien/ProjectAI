@@ -7,10 +7,12 @@ import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   account,
   auditEvent,
+  project,
   projectMember,
   rateLimit,
   session,
   user,
+  type ProjectRole,
 } from "../../lib/db/schema";
 import {
   findAuthorizedProject,
@@ -39,6 +41,7 @@ import {
   GET as authGet,
   POST as authPost,
 } from "../../app/api/auth/[...all]/route";
+import { GET as getHealth } from "../../app/api/health/route";
 import { sanitizeAuditMetadata } from "../../lib/db/repositories/audit-repository";
 
 type SeedUser = NonNullable<Awaited<ReturnType<typeof findUserByEmail>>>;
@@ -98,6 +101,93 @@ async function signIn(
     response,
     cookie: sessionCookie?.split(";", 1)[0] ?? "",
   };
+}
+
+async function patchMemberRole(
+  cookie: string,
+  projectId: string,
+  memberId: string,
+  role: ProjectRole,
+): Promise<Response> {
+  return patchProjectMemberRoute(
+    new Request(
+      `http://local.test/api/projects/${projectId}/members/${memberId}`,
+      {
+        method: "PATCH",
+        headers: {
+          cookie,
+          "content-type": "application/json",
+          origin: trustedAuthOrigin(),
+          "x-real-ip": "198.51.100.31",
+          "user-agent": "project-ai-manager-invariant-test",
+        },
+        body: JSON.stringify({ role }),
+      },
+    ),
+    { params: Promise.resolve({ projectId, memberId }) },
+  );
+}
+
+async function deleteMember(
+  cookie: string,
+  projectId: string,
+  memberId: string,
+): Promise<Response> {
+  return deleteProjectMemberRoute(
+    new Request(
+      `http://local.test/api/projects/${projectId}/members/${memberId}`,
+      {
+        method: "DELETE",
+        headers: {
+          cookie,
+          origin: trustedAuthOrigin(),
+          "x-real-ip": "198.51.100.32",
+          "user-agent": "project-ai-manager-invariant-test",
+        },
+      },
+    ),
+    { params: Promise.resolve({ projectId, memberId }) },
+  );
+}
+
+async function createInvariantTestProject(
+  members: Array<{ currentUser: SeedUser; role: ProjectRole }>,
+): Promise<{
+  projectId: string;
+  memberships: Map<string, string>;
+}> {
+  const projectId = `project-invariant-${crypto.randomUUID()}`;
+  const memberships = new Map<string, string>();
+  await getDb().transaction(async (tx) => {
+    await tx.insert(project).values({
+      id: projectId,
+      name: "项目经理约束并发测试",
+      clientName: "测试客户",
+      description: "仅用于验证项目至少保留一名项目经理",
+      createdBy: admin.id,
+    });
+    for (const { currentUser, role } of members) {
+      const memberId = `membership-${crypto.randomUUID()}`;
+      await tx.insert(projectMember).values({
+        id: memberId,
+        projectId,
+        userId: currentUser.id,
+        role,
+        createdBy: admin.id,
+      });
+      memberships.set(currentUser.id, memberId);
+    }
+  });
+  return { projectId, memberships };
+}
+
+async function projectManagerCount(projectId: string): Promise<number> {
+  const result = await getDb().execute<{ count: string }>(sql`
+    select count(*)::text as count
+    from project_members
+    where project_id = ${projectId} and role = 'project_manager'
+  `);
+  return Number(result.rows[0]?.count ?? 0);
 }
 
 before(async () => {
@@ -208,6 +298,72 @@ describe("project authorization boundary", () => {
 });
 
 describe("database constraints", () => {
+  it("exposes only a validated runtime SHA as health provenance", async () => {
+    const previousSha = process.env.NEXT_PUBLIC_COMMIT_SHA;
+    const runtimeSha = "a".repeat(40);
+    process.env.NEXT_PUBLIC_COMMIT_SHA = runtimeSha;
+    try {
+      const response = await getHealth();
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { status: "ok" });
+      assert.equal(response.headers.get("x-projectai-commit-sha"), runtimeSha);
+    } finally {
+      if (previousSha === undefined) delete process.env.NEXT_PUBLIC_COMMIT_SHA;
+      else process.env.NEXT_PUBLIC_COMMIT_SHA = previousSha;
+    }
+  });
+
+  it("seeds every project with at least one project manager", async () => {
+    const zeroManagerProjects = await getDb().execute<{ id: string }>(sql`
+      select p.id
+      from projects p
+      where not exists (
+        select 1
+        from project_members pm
+        where pm.project_id = p.id and pm.role = 'project_manager'
+      )
+    `);
+    assert.deepEqual(zeroManagerProjects.rows, []);
+  });
+
+  it("fails Seed closed instead of overwriting a zero-manager project", async () => {
+    const projectId = `project-seed-guard-${crypto.randomUUID()}`;
+    const memberId = `membership-seed-guard-${crypto.randomUUID()}`;
+    await getDb().insert(project).values({
+      id: projectId,
+      name: "Seed 后置条件测试",
+      clientName: "测试客户",
+      description: "现有角色不得被 Seed 覆盖",
+      createdBy: admin.id,
+    });
+    await getDb().insert(projectMember).values({
+      id: memberId,
+      projectId,
+      userId: admin.id,
+      role: "viewer",
+      createdBy: admin.id,
+    });
+    try {
+      await assert.rejects(
+        execFileAsync(
+          process.execPath,
+          ["--import", "tsx", "scripts/db/seed.ts"],
+          { cwd: process.cwd(), env: process.env },
+        ),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.includes("Seed refused to continue"),
+      );
+      const [unchanged] = await getDb()
+        .select()
+        .from(projectMember)
+        .where(eq(projectMember.id, memberId));
+      assert.equal(unchanged?.role, "viewer");
+    } finally {
+      await getDb().delete(project).where(eq(project.id, projectId));
+    }
+  });
+
   it("rejects duplicate memberships", async () => {
     await assert.rejects(
       getDb().insert(projectMember).values({
@@ -746,6 +902,257 @@ describe("database-backed authentication and API authorization", () => {
           .delete(projectMember)
           .where(eq(projectMember.id, createdMemberId));
       }
+    }
+  });
+
+  it("rejects every last-manager downgrade or removal with the exact 409 contract and a committed denial audit", async () => {
+    const [managerLogin, adminLogin] = await Promise.all([
+      signIn(
+        required("SEED_MANAGER_B_EMAIL"),
+        required("SEED_MANAGER_B_PASSWORD"),
+        "198.51.100.33",
+      ),
+      signIn(
+        required("SEED_ADMIN_EMAIL"),
+        required("SEED_ADMIN_PASSWORD"),
+        "198.51.100.34",
+      ),
+    ]);
+    assert.equal(managerLogin.response.status, 200);
+    assert.equal(adminLogin.response.status, 200);
+    const [onlyManager] = await getDb()
+      .select()
+      .from(projectMember)
+      .where(
+        and(
+          eq(projectMember.projectId, "project-002"),
+          eq(projectMember.userId, managerB.id),
+        ),
+      );
+    assert.equal(onlyManager?.role, "project_manager");
+
+    const beforeDenials = await getDb()
+      .select()
+      .from(auditEvent)
+      .where(
+        and(
+          eq(auditEvent.projectId, "project-002"),
+          eq(auditEvent.entityId, onlyManager.id),
+          eq(auditEvent.eventType, "project_member_change_denied"),
+        ),
+      );
+    const responses = [
+      await patchMemberRole(
+        managerLogin.cookie,
+        "project-002",
+        onlyManager.id,
+        "project_member",
+      ),
+      await patchMemberRole(
+        managerLogin.cookie,
+        "project-002",
+        onlyManager.id,
+        "viewer",
+      ),
+      await deleteMember(managerLogin.cookie, "project-002", onlyManager.id),
+      await deleteMember(adminLogin.cookie, "project-002", onlyManager.id),
+    ];
+
+    for (const response of responses) {
+      assert.equal(response.status, 409);
+      assert.deepEqual(await response.json(), {
+        error: {
+          code: "LAST_PROJECT_MANAGER",
+          message: "项目必须至少保留一名项目经理",
+        },
+      });
+    }
+    const [unchanged] = await getDb()
+      .select()
+      .from(projectMember)
+      .where(eq(projectMember.id, onlyManager.id));
+    assert.equal(unchanged?.role, "project_manager");
+
+    const afterDenials = await getDb()
+      .select()
+      .from(auditEvent)
+      .where(
+        and(
+          eq(auditEvent.projectId, "project-002"),
+          eq(auditEvent.entityId, onlyManager.id),
+          eq(auditEvent.eventType, "project_member_change_denied"),
+        ),
+      );
+    const previousAuditIds = new Set(beforeDenials.map((event) => event.id));
+    const newDenials = afterDenials.filter(
+      (event) => !previousAuditIds.has(event.id),
+    );
+    assert.equal(newDenials.length, 4);
+    assert.ok(
+      newDenials.every(
+        (event) =>
+          event.result === "denied" &&
+          event.metadata.reason === "last_project_manager" &&
+          event.metadata.password === undefined &&
+          event.metadata.sessionToken === undefined,
+      ),
+    );
+  });
+
+  it("allows a manager downgrade and deletion after another manager is added", async () => {
+    const adminLogin = await signIn(
+      required("SEED_ADMIN_EMAIL"),
+      required("SEED_ADMIN_PASSWORD"),
+      "198.51.100.35",
+    );
+    assert.equal(adminLogin.response.status, 200);
+    const fixture = await createInvariantTestProject([
+      { currentUser: admin, role: "project_manager" },
+    ]);
+    const adminMemberId = fixture.memberships.get(admin.id)!;
+    try {
+      const added = await addProjectMemberRoute(
+        new Request(
+          `http://local.test/api/projects/${fixture.projectId}/members`,
+          {
+            method: "POST",
+            headers: {
+              cookie: adminLogin.cookie,
+              "content-type": "application/json",
+              origin: trustedAuthOrigin(),
+            },
+            body: JSON.stringify({
+              email: required("SEED_MANAGER_A_EMAIL"),
+              role: "project_manager",
+            }),
+          },
+        ),
+        { params: Promise.resolve({ projectId: fixture.projectId }) },
+      );
+      assert.equal(added.status, 201);
+      assert.equal(await projectManagerCount(fixture.projectId), 2);
+
+      const downgraded = await patchMemberRole(
+        adminLogin.cookie,
+        fixture.projectId,
+        adminMemberId,
+        "viewer",
+      );
+      assert.equal(downgraded.status, 200);
+      assert.equal(await projectManagerCount(fixture.projectId), 1);
+
+      const restored = await patchMemberRole(
+        adminLogin.cookie,
+        fixture.projectId,
+        adminMemberId,
+        "project_manager",
+      );
+      assert.equal(restored.status, 200);
+      assert.equal(await projectManagerCount(fixture.projectId), 2);
+
+      const removed = await deleteMember(
+        adminLogin.cookie,
+        fixture.projectId,
+        adminMemberId,
+      );
+      assert.equal(removed.status, 204);
+      assert.equal(await projectManagerCount(fixture.projectId), 1);
+    } finally {
+      await getDb().delete(project).where(eq(project.id, fixture.projectId));
+    }
+  });
+
+  it("serializes concurrent manager downgrades so they cannot reach zero managers", async () => {
+    const [managerALogin, managerBLogin] = await Promise.all([
+      signIn(
+        required("SEED_MANAGER_A_EMAIL"),
+        required("SEED_MANAGER_A_PASSWORD"),
+        "198.51.100.36",
+      ),
+      signIn(
+        required("SEED_MANAGER_B_EMAIL"),
+        required("SEED_MANAGER_B_PASSWORD"),
+        "198.51.100.37",
+      ),
+    ]);
+    const fixture = await createInvariantTestProject([
+      { currentUser: managerA, role: "project_manager" },
+      { currentUser: managerB, role: "project_manager" },
+    ]);
+    try {
+      const responses = await Promise.all([
+        patchMemberRole(
+          managerALogin.cookie,
+          fixture.projectId,
+          fixture.memberships.get(managerA.id)!,
+          "viewer",
+        ),
+        patchMemberRole(
+          managerBLogin.cookie,
+          fixture.projectId,
+          fixture.memberships.get(managerB.id)!,
+          "project_member",
+        ),
+      ]);
+      assert.deepEqual(
+        responses.map((response) => response.status).sort(),
+        [200, 409],
+      );
+      assert.deepEqual(await responses.find((response) => response.status === 409)!.json(), {
+        error: {
+          code: "LAST_PROJECT_MANAGER",
+          message: "项目必须至少保留一名项目经理",
+        },
+      });
+      assert.equal(await projectManagerCount(fixture.projectId), 1);
+    } finally {
+      await getDb().delete(project).where(eq(project.id, fixture.projectId));
+    }
+  });
+
+  it("serializes concurrent manager removals so they cannot reach zero managers", async () => {
+    const [managerALogin, managerBLogin] = await Promise.all([
+      signIn(
+        required("SEED_MANAGER_A_EMAIL"),
+        required("SEED_MANAGER_A_PASSWORD"),
+        "198.51.100.38",
+      ),
+      signIn(
+        required("SEED_MANAGER_B_EMAIL"),
+        required("SEED_MANAGER_B_PASSWORD"),
+        "198.51.100.39",
+      ),
+    ]);
+    const fixture = await createInvariantTestProject([
+      { currentUser: managerA, role: "project_manager" },
+      { currentUser: managerB, role: "project_manager" },
+    ]);
+    try {
+      const responses = await Promise.all([
+        deleteMember(
+          managerALogin.cookie,
+          fixture.projectId,
+          fixture.memberships.get(managerA.id)!,
+        ),
+        deleteMember(
+          managerBLogin.cookie,
+          fixture.projectId,
+          fixture.memberships.get(managerB.id)!,
+        ),
+      ]);
+      assert.deepEqual(
+        responses.map((response) => response.status).sort(),
+        [204, 409],
+      );
+      assert.deepEqual(await responses.find((response) => response.status === 409)!.json(), {
+        error: {
+          code: "LAST_PROJECT_MANAGER",
+          message: "项目必须至少保留一名项目经理",
+        },
+      });
+      assert.equal(await projectManagerCount(fixture.projectId), 1);
+    } finally {
+      await getDb().delete(project).where(eq(project.id, fixture.projectId));
     }
   });
 

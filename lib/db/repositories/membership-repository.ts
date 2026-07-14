@@ -1,6 +1,11 @@
-import { and, eq } from "drizzle-orm";
-import { getDb, type DatabaseExecutor } from "../client";
+import { and, eq, ne } from "drizzle-orm";
 import {
+  getDb,
+  type DatabaseExecutor,
+  type DatabaseTransaction,
+} from "../client";
+import {
+  project,
   projectMember,
   type ProjectMemberRecord,
   type ProjectRole,
@@ -89,17 +94,50 @@ export async function addProjectMember(
     role: ProjectRole;
     createdBy: string;
   },
-  db: DatabaseExecutor = getDb(),
+  db: DatabaseTransaction,
 ): Promise<ProjectMemberRecord> {
+  await lockProjectMembershipChanges(input.projectId, db);
   const [record] = await db.insert(projectMember).values(input).returning();
   return record;
 }
 
-export async function updateProjectMemberRole(
+async function lockProjectMembershipChanges(
+  projectId: string,
+  db: DatabaseTransaction,
+): Promise<boolean> {
+  const [lockedProject] = await db
+    .select({ id: project.id })
+    .from(project)
+    .where(eq(project.id, projectId))
+    .limit(1)
+    .for("update", { of: project });
+  return Boolean(lockedProject);
+}
+
+async function hasOtherProjectManager(
+  projectId: string,
+  memberId: string,
+  db: DatabaseTransaction,
+): Promise<boolean> {
+  const [otherManager] = await db
+    .select({ id: projectMember.id })
+    .from(projectMember)
+    .where(
+      and(
+        eq(projectMember.projectId, projectId),
+        eq(projectMember.role, "project_manager"),
+        ne(projectMember.id, memberId),
+      ),
+    )
+    .limit(1);
+  return Boolean(otherManager);
+}
+
+async function updateProjectMemberRole(
   memberId: string,
   projectId: string,
   role: ProjectRole,
-  db: DatabaseExecutor = getDb(),
+  db: DatabaseTransaction,
 ): Promise<ProjectMemberRecord | null> {
   const [record] = await db
     .update(projectMember)
@@ -111,10 +149,10 @@ export async function updateProjectMemberRole(
   return record ?? null;
 }
 
-export async function removeProjectMember(
+async function removeProjectMember(
   memberId: string,
   projectId: string,
-  db: DatabaseExecutor = getDb(),
+  db: DatabaseTransaction,
 ): Promise<ProjectMemberRecord | null> {
   const [record] = await db
     .delete(projectMember)
@@ -123,4 +161,74 @@ export async function removeProjectMember(
     )
     .returning();
   return record ?? null;
+}
+
+export type ChangeProjectMemberRoleResult =
+  | {
+      kind: "updated";
+      member: ProjectMemberRecord;
+      previousRole: ProjectRole;
+    }
+  | { kind: "not_found" }
+  | {
+      kind: "last_project_manager";
+      member: ProjectMemberRecord;
+    };
+
+export async function changeProjectMemberRoleSafely(
+  memberId: string,
+  projectId: string,
+  role: ProjectRole,
+  db: DatabaseTransaction,
+): Promise<ChangeProjectMemberRoleResult> {
+  if (!(await lockProjectMembershipChanges(projectId, db))) {
+    return { kind: "not_found" };
+  }
+  const previous = await findProjectMemberById(memberId, projectId, db, {
+    lockForUpdate: true,
+  });
+  if (!previous) return { kind: "not_found" };
+  if (
+    previous.role === "project_manager" &&
+    role !== "project_manager" &&
+    !(await hasOtherProjectManager(projectId, memberId, db))
+  ) {
+    return { kind: "last_project_manager", member: previous };
+  }
+  const changed = await updateProjectMemberRole(memberId, projectId, role, db);
+  return changed
+    ? { kind: "updated", member: changed, previousRole: previous.role }
+    : { kind: "not_found" };
+}
+
+export type RemoveProjectMemberResult =
+  | { kind: "removed"; member: ProjectMemberRecord }
+  | { kind: "not_found" }
+  | {
+      kind: "last_project_manager";
+      member: ProjectMemberRecord;
+    };
+
+export async function removeProjectMemberSafely(
+  memberId: string,
+  projectId: string,
+  db: DatabaseTransaction,
+): Promise<RemoveProjectMemberResult> {
+  if (!(await lockProjectMembershipChanges(projectId, db))) {
+    return { kind: "not_found" };
+  }
+  const previous = await findProjectMemberById(memberId, projectId, db, {
+    lockForUpdate: true,
+  });
+  if (!previous) return { kind: "not_found" };
+  if (
+    previous.role === "project_manager" &&
+    !(await hasOtherProjectManager(projectId, memberId, db))
+  ) {
+    return { kind: "last_project_manager", member: previous };
+  }
+  const deleted = await removeProjectMember(memberId, projectId, db);
+  return deleted
+    ? { kind: "removed", member: deleted }
+    : { kind: "not_found" };
 }

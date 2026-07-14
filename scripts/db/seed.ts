@@ -1,5 +1,5 @@
 import { hashPassword } from "better-auth/crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   account,
@@ -90,6 +90,7 @@ const memberships: Array<{
   { id: "seed-membership-a-member", projectId: "project-001", userKey: "MEMBER_A", role: "project_member", createdByKey: "MANAGER_A" },
   { id: "seed-membership-a-viewer", projectId: "project-001", userKey: "VIEWER_A", role: "viewer", createdByKey: "MANAGER_A" },
   { id: "seed-membership-b-manager", projectId: "project-002", userKey: "MANAGER_B", role: "project_manager", createdByKey: "ADMIN" },
+  { id: "seed-membership-c-manager", projectId: "project-003", userKey: "ADMIN", role: "project_manager", createdByKey: "ADMIN" },
 ];
 
 function requiredEnvironment(name: string): string {
@@ -189,6 +190,24 @@ async function main(): Promise<void> {
       .onConflictDoNothing({
         target: [projectMember.projectId, projectMember.userId],
       });
+  }
+
+  const zeroManagerProjects = await db.execute<{ id: string }>(sql`
+    select p.id
+    from projects p
+    where not exists (
+      select 1
+      from project_members pm
+      where pm.project_id = p.id and pm.role = 'project_manager'
+    )
+    order by p.id
+  `);
+  if (zeroManagerProjects.rows.length > 0) {
+    throw new Error(
+      `Seed refused to continue because these projects have no project_manager: ${zeroManagerProjects.rows
+        .map((row) => row.id)
+        .join(", ")}`,
+    );
   }
 
   process.stdout.write("Insert-only Seed completed without changing existing records.\n");

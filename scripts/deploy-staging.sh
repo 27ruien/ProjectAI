@@ -844,6 +844,29 @@ printf 'Applying committed PostgreSQL migrations.\n'
 "${operations[@]}" "$db_tools_image_id" npm run db:migrate
 printf 'Applying idempotent Staging seed data.\n'
 "${operations[@]}" "$db_tools_image_id" npm run db:seed
+printf 'Verifying every Staging project retains a project manager.\n'
+"${operations[@]}" "$db_tools_image_id" node --input-type=module -e '
+    import pg from "pg";
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const result = await client.query(`
+        select p.id
+        from projects p
+        where not exists (
+          select 1
+          from project_members pm
+          where pm.project_id = p.id and pm.role = $1
+        )
+        order by p.id
+      `, ["project_manager"]);
+      if (result.rowCount !== 0) {
+        throw new Error("Staging contains a project without a project_manager");
+      }
+    } finally {
+      await client.end();
+    }
+  '
 
 "${compose[@]}" up --detach --no-build --pull never projectai-staging
 

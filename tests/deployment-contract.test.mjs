@@ -69,6 +69,14 @@ test("database operations use the preloaded immutable image without Compose buil
   assert.doesNotMatch(script, /--profile operations run/);
   assert.match(script, /"\$db_tools_image_id" npm run db:migrate/);
   assert.match(script, /"\$db_tools_image_id" npm run db:seed/);
+  assert.match(
+    script,
+    /Verifying every Staging project retains a project manager/,
+  );
+  assert.match(
+    script,
+    /not exists \([\s\S]+?pm\.role = \$1[\s\S]+?"project_manager"/,
+  );
 });
 
 test("rollback preserves the previous image health contract", async () => {

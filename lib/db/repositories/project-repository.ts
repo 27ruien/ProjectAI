@@ -66,15 +66,42 @@ export async function findAuthorizedProject(
   db: DatabaseExecutor = getDb(),
   options: { lockForUpdate?: boolean } = {},
 ): Promise<AuthorizedProjectRecord | null> {
-  if (systemRole === "system_admin") {
+  if (options.lockForUpdate) {
     const query = db
       .select(projectSelection)
       .from(project)
       .where(eq(project.id, projectId))
       .limit(1);
-    const [record] = options.lockForUpdate
-      ? await query.for("update", { of: project })
-      : await query;
+    const [lockedProject] = await query.for("update", { of: project });
+    if (!lockedProject) return null;
+    if (systemRole === "system_admin") {
+      return { ...lockedProject, projectRole: null };
+    }
+
+    // Membership mutations use the project row as their per-project mutex.
+    // Read the actor membership only after acquiring it so concurrent role
+    // changes cannot authorize against a stale statement snapshot.
+    const [membership] = await db
+      .select({ role: projectMember.role })
+      .from(projectMember)
+      .where(
+        and(
+          eq(projectMember.userId, userId),
+          eq(projectMember.projectId, projectId),
+        ),
+      )
+      .limit(1);
+    return membership
+      ? { ...lockedProject, projectRole: membership.role }
+      : null;
+  }
+
+  if (systemRole === "system_admin") {
+    const [record] = await db
+      .select(projectSelection)
+      .from(project)
+      .where(eq(project.id, projectId))
+      .limit(1);
     return record ? { ...record, projectRole: null } : null;
   }
 
@@ -115,7 +142,6 @@ export async function listProjectRosterSummaries(
 
 export async function createProjectWithManager(
   input: NewProjectRecord,
-  creatorRole: ProjectRole = "project_manager",
   db?: DatabaseExecutor,
 ): Promise<ProjectRecord> {
   const create = async (executor: DatabaseExecutor) => {
@@ -127,7 +153,7 @@ export async function createProjectWithManager(
       id: crypto.randomUUID(),
       projectId: createdProject.id,
       userId: input.createdBy,
-      role: creatorRole,
+      role: "project_manager",
       createdBy: input.createdBy,
     });
     return createdProject;

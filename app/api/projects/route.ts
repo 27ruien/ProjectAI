@@ -89,7 +89,6 @@ export async function POST(request: Request): Promise<Response> {
           targetLaunchDate: parsed.data.targetLaunchDate ?? null,
           createdBy: principal.user.id,
         },
-        "project_manager",
         tx,
       );
       await writeAuditEvent(
