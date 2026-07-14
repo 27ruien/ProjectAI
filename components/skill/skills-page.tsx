@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { mockAIExecutions, mockAIModelProfiles, mockSkills } from "@/data/mock";
+import type { WorkspaceMockPayload } from "@/lib/auth/ui-types";
 import {
   Activity,
   ArrowRight,
@@ -57,13 +57,14 @@ type ProfileRecord = { id: string; profileId: string; displayName: string; descr
 type ExecutionRecord = { id: string; executionId?: string; skillId?: string; status: string; durationMs: number; cost: number; createdAt: string; modelProfileId?: string };
 
 interface SkillsPageProps {
+  data: WorkspaceMockPayload;
   initialSkillId?: string;
 }
 
-export function SkillsPage({ initialSkillId }: SkillsPageProps) {
-  const skills = mockSkills as unknown as SkillRecord[];
-  const profiles = mockAIModelProfiles as unknown as ProfileRecord[];
-  const executions = mockAIExecutions as unknown as ExecutionRecord[];
+export function SkillsPage({ data, initialSkillId }: SkillsPageProps) {
+  const skills = data.skills as unknown as SkillRecord[];
+  const profiles = data.aiModelProfiles as unknown as ProfileRecord[];
+  const executions = data.aiExecutions as unknown as ExecutionRecord[];
   const [search, setSearch] = useState("");
   const [moduleFilter, setModuleFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");

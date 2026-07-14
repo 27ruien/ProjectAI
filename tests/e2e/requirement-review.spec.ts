@@ -6,7 +6,9 @@ test("需求提取失败重试后进入审核并修改后通过", async ({ page 
   await page.waitForLoadState("networkidle");
   await expect(page.getByRole("heading", { name: "配置需求提取" })).toBeVisible();
 
-  const mockDocument = page.getByRole("checkbox", { name: /客户需求说明_v3\.docx/ });
+  const mockDocument = page.getByRole("checkbox", {
+    name: /北美旗舰店 AI 互动活动_当前需求说明\.docx/,
+  });
   await expect(mockDocument).toBeChecked();
   await mockDocument.uncheck();
   await expect(mockDocument).not.toBeChecked();

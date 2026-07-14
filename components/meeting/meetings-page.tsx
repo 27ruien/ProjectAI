@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { mockActionItems, mockDecisions, mockMeetings, mockProjects, mockRisks } from "@/data/mock";
+import type { AuthorizedProjectSummary, ProjectMockPayload } from "@/lib/auth/ui-types";
 import {
   AlertTriangle,
   CalendarDays,
@@ -42,7 +42,6 @@ type MeetingRecord = {
   createdAt: string;
 };
 
-type ProjectRecord = { id: string; name: string };
 type NamedRecord = { id: string; title?: string; name?: string; content?: string; actionId?: string; riskId?: string; status?: string; owner?: string };
 type MeetingTab = "summary" | "record" | "outputs";
 
@@ -58,16 +57,15 @@ const meetingProcess = [
 ];
 
 interface MeetingsPageProps {
-  projectId?: string;
+  project: AuthorizedProjectSummary;
+  data: ProjectMockPayload;
 }
 
-export function MeetingsPage({ projectId }: MeetingsPageProps) {
-  const allMeetings = mockMeetings as unknown as MeetingRecord[];
-  const meetings = useMemo(() => projectId ? allMeetings.filter((meeting) => meeting.projectId === projectId) : allMeetings, [allMeetings, projectId]);
-  const projects = mockProjects as unknown as ProjectRecord[];
-  const decisions = mockDecisions as unknown as NamedRecord[];
-  const actions = mockActionItems as unknown as NamedRecord[];
-  const risks = mockRisks as unknown as NamedRecord[];
+export function MeetingsPage({ project, data }: MeetingsPageProps) {
+  const meetings = data.meetings as unknown as MeetingRecord[];
+  const decisions = data.decisions as unknown as NamedRecord[];
+  const actions = data.actions as unknown as NamedRecord[];
+  const risks = data.risks as unknown as NamedRecord[];
   const [selectedId, setSelectedId] = useState(meetings[0]?.id ?? "");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("all");
@@ -79,7 +77,7 @@ export function MeetingsPage({ projectId }: MeetingsPageProps) {
     [meetings, search, typeFilter],
   );
   const selected = meetings.find((meeting) => meeting.id === selectedId) ?? filtered[0];
-  const projectName = (id: string) => projects.find((project) => project.id === id)?.name ?? "未命名项目";
+  const projectName = () => project.name;
 
   useEffect(() => {
     if (!feedback) return;
@@ -102,7 +100,7 @@ export function MeetingsPage({ projectId }: MeetingsPageProps) {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">会议与决策</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">将会议原始记录转为经过审核的决策、需求、Action 与风险。</p>
         </div>
-        <button type="button" onClick={() => setFeedback("上传入口已准备，可选择音频、视频或会议纪要文件")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground"><Upload className="size-4" /> 上传会议记录</button>
+        {project.permissions.canEditProject ? <button type="button" onClick={() => setFeedback("上传入口仍为 Mock，本轮未接入真实文件上传")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground"><Upload className="size-4" /> 上传会议记录</button> : null}
       </div>
 
       <div className="grid gap-5 xl:grid-cols-[310px_minmax(0,1fr)]">
@@ -116,7 +114,7 @@ export function MeetingsPage({ projectId }: MeetingsPageProps) {
               <button key={meeting.id} type="button" onClick={() => { setSelectedId(meeting.id); setTab("summary"); }} className={`w-full px-4 py-4 text-left transition ${selected?.id === meeting.id ? "bg-primary/[0.06] shadow-[inset_3px_0_var(--primary)]" : "hover:bg-muted/35"}`}>
                 <div className="flex items-start justify-between gap-2"><span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground">{meetingType(meeting.type)}</span><MeetingReviewStatus status={meeting.reviewStatus} /></div>
                 <p className="mt-2 line-clamp-2 text-xs font-semibold leading-5 text-foreground">{meeting.title}</p>
-                <p className="mt-1 text-[10px] text-muted-foreground">{projectName(meeting.projectId)}</p>
+                <p className="mt-1 text-[10px] text-muted-foreground">{projectName()}</p>
                 <div className="mt-2 flex items-center justify-between text-[9px] text-muted-foreground"><span className="flex items-center gap-1"><CalendarDays className="size-2.5" />{formatDateTime(meeting.startAt)}</span><span className="flex items-center gap-1"><Users className="size-2.5" />{meeting.participants.length}</span></div>
               </button>
             ))}
@@ -131,7 +129,7 @@ export function MeetingsPage({ projectId }: MeetingsPageProps) {
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2"><span className="rounded-md bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary">{meetingType(selected.type)}</span><MeetingReviewStatus status={selected.reviewStatus} /></div>
                   <h2 className="mt-2 text-lg font-semibold text-foreground">{selected.title}</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">{projectName(selected.projectId)} · {formatDateTime(selected.startAt)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{projectName()} · {formatDateTime(selected.startAt)}</p>
                 </div>
                 <div className="flex -space-x-1.5">{selected.participants.slice(0, 5).map((person) => <span key={person} title={person} className="flex size-8 items-center justify-center rounded-full border-2 border-card bg-muted text-[10px] font-semibold text-foreground">{person.slice(0, 1)}</span>)}{selected.participants.length > 5 ? <span className="flex size-8 items-center justify-center rounded-full border-2 border-card bg-foreground text-[9px] text-background">+{selected.participants.length - 5}</span> : null}</div>
               </div>

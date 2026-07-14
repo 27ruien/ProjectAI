@@ -25,6 +25,7 @@ export interface ActionItemView {
 interface ActionItemRowProps {
   item: ActionItemView;
   projectName: string;
+  readOnly?: boolean;
   selected: boolean;
   onSelectedChange: (selected: boolean) => void;
   onStatusChange: (status: string) => void;
@@ -47,20 +48,18 @@ export const priorityConfig: Record<string, { label: string; style: string; dot:
   P3: { label: "P3", style: "text-muted-foreground", dot: "bg-slate-400" },
 };
 
-export function ActionItemRow({ item, projectName, selected, onSelectedChange, onStatusChange, onOpenSource }: ActionItemRowProps) {
+export function ActionItemRow({ item, projectName, readOnly = false, selected, onSelectedChange, onStatusChange, onOpenSource }: ActionItemRowProps) {
   const overdue = new Date(item.dueDate).getTime() < ACTION_REFERENCE_TIME && !["completed", "cancelled"].includes(item.status);
   const priority = priorityConfig[item.priority] ?? priorityConfig.P2;
 
   return (
     <tr className={`group border-b border-border transition hover:bg-muted/25 ${selected ? "bg-primary/[0.035]" : ""}`}>
       <td className="w-10 px-3 py-3 align-top">
-        <input aria-label={`选择 ${item.actionId}`} type="checkbox" checked={selected} onChange={(event) => onSelectedChange(event.target.checked)} className="size-3.5 accent-[var(--primary)]" />
+        {readOnly ? null : <input aria-label={`选择 ${item.actionId}`} type="checkbox" checked={selected} onChange={(event) => onSelectedChange(event.target.checked)} className="size-3.5 accent-[var(--primary)]" />}
       </td>
       <td className="min-w-72 px-2 py-3 align-top">
         <div className="flex items-start gap-2">
-          <button type="button" onClick={() => onStatusChange(item.status === "completed" ? "todo" : "completed")} className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${item.status === "completed" ? "border-emerald-600 bg-emerald-600 text-white" : "border-muted-foreground/40 text-transparent hover:border-emerald-500 hover:text-emerald-500"}`}>
-            <Check className="size-2.5" />
-          </button>
+          {readOnly ? <span className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${item.status === "completed" ? "border-emerald-600 bg-emerald-600 text-white" : "border-muted-foreground/40 text-transparent"}`}><Check className="size-2.5" /></span> : <button type="button" onClick={() => onStatusChange(item.status === "completed" ? "todo" : "completed")} className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${item.status === "completed" ? "border-emerald-600 bg-emerald-600 text-white" : "border-muted-foreground/40 text-transparent hover:border-emerald-500 hover:text-emerald-500"}`}><Check className="size-2.5" /></button>}
           <div className="min-w-0">
             <p className={`text-xs font-medium leading-5 ${item.status === "completed" ? "text-muted-foreground line-through" : "text-foreground"}`}>{item.title}</p>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-[9px] text-muted-foreground">
@@ -79,15 +78,15 @@ export function ActionItemRow({ item, projectName, selected, onSelectedChange, o
         <div className={`flex items-center gap-1 text-[10px] ${overdue ? "font-medium text-rose-700" : "text-muted-foreground"}`}><CalendarDays className="size-3" />{formatDate(item.dueDate)}</div>
       </td>
       <td className="whitespace-nowrap px-2 py-2.5 align-top">
-        <select aria-label={`${item.actionId} 状态`} value={item.status} onChange={(event) => onStatusChange(event.target.value)} className={`h-7 rounded-full border-0 px-2 text-[10px] font-medium outline-none ${actionStatusConfig[item.status]?.style ?? "bg-muted text-muted-foreground"}`}>
+        {readOnly ? <span className={`inline-flex h-7 items-center rounded-full px-2 text-[10px] font-medium ${actionStatusConfig[item.status]?.style ?? "bg-muted text-muted-foreground"}`}>{actionStatusConfig[item.status]?.label ?? item.status}</span> : <select aria-label={`${item.actionId} 状态`} value={item.status} onChange={(event) => onStatusChange(event.target.value)} className={`h-7 rounded-full border-0 px-2 text-[10px] font-medium outline-none ${actionStatusConfig[item.status]?.style ?? "bg-muted text-muted-foreground"}`}>
           {Object.entries(actionStatusConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}
-        </select>
+        </select>}
       </td>
       <td className="whitespace-nowrap px-2 py-3 align-top"><span className={`inline-flex items-center gap-1.5 text-[10px] font-medium ${priority.style}`}><span className={`size-1.5 rounded-full ${priority.dot}`} />{priority.label}</span></td>
       <td className="whitespace-nowrap px-2 py-3 align-top">
         <button type="button" onClick={onOpenSource} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"><ExternalLink className="size-3" />{sourceLabel(item.source)}</button>
       </td>
-      <td className="w-9 px-2 py-2.5 align-top"><button type="button" onClick={onOpenSource} aria-label="更多操作" className="rounded-md p-1 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100"><MoreHorizontal className="size-3.5" /></button></td>
+      <td className="w-9 px-2 py-2.5 align-top">{readOnly ? null : <button type="button" onClick={onOpenSource} aria-label="更多操作" className="rounded-md p-1 text-muted-foreground opacity-0 hover:bg-muted group-hover:opacity-100"><MoreHorizontal className="size-3.5" /></button>}</td>
     </tr>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { mockRequirements, mockScopeChanges, mockScopeVersions } from "@/data/mock";
+import type { AuthorizedProjectSummary, ProjectMockPayload } from "@/lib/auth/ui-types";
 import {
   ArrowRight,
   CalendarClock,
@@ -52,14 +52,14 @@ type ScopeChangeRecord = {
 type RequirementRecord = { id: string; requirementId?: string; title?: string; description?: string; content?: string };
 
 interface ScopePageProps {
-  projectId?: string;
+  project: AuthorizedProjectSummary;
+  data: ProjectMockPayload;
 }
 
-export function ScopePage({ projectId }: ScopePageProps) {
-  const allScopes = mockScopeVersions as unknown as ScopeRecord[];
-  const scopes = useMemo(() => projectId ? allScopes.filter((scope) => scope.projectId === projectId) : allScopes, [allScopes, projectId]);
-  const changes = mockScopeChanges as unknown as ScopeChangeRecord[];
-  const requirements = mockRequirements as unknown as RequirementRecord[];
+export function ScopePage({ data }: ScopePageProps) {
+  const scopes = data.scopes as unknown as ScopeRecord[];
+  const changes = data.scopeChanges as unknown as ScopeChangeRecord[];
+  const requirements = data.requirements as unknown as RequirementRecord[];
   const sorted = useMemo(() => [...scopes].sort((a, b) => Number(b.version) - Number(a.version)), [scopes]);
   const [newVersionId, setNewVersionId] = useState(sorted.find((item) => item.status === "active")?.id ?? sorted[0]?.id ?? "");
   const [oldVersionId, setOldVersionId] = useState(

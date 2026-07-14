@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { mockWorkflows, mockSkills } from "@/data/mock";
+import type {
+  AuthorizedProjectSummary,
+  WorkspaceMockPayload,
+} from "@/lib/auth/ui-types";
 import {
   ArrowRight,
   Bot,
@@ -34,13 +37,15 @@ type WorkflowRecord = {
 type SkillRecord = { id: string; name: string; displayName: string };
 
 interface WorkflowsPageProps {
+  data: WorkspaceMockPayload;
+  editableProject?: Pick<AuthorizedProjectSummary, "id" | "name">;
   onOpenReviews?: () => void;
 }
 
-export function WorkflowsPage({ onOpenReviews }: WorkflowsPageProps) {
+export function WorkflowsPage({ data, editableProject, onOpenReviews }: WorkflowsPageProps) {
   const { toast } = useToast();
-  const workflows = mockWorkflows as unknown as WorkflowRecord[];
-  const skills = mockSkills as unknown as SkillRecord[];
+  const workflows = data.workflows as unknown as WorkflowRecord[];
+  const skills = data.skills as unknown as SkillRecord[];
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [showExecution, setShowExecution] = useState(false);
@@ -55,8 +60,8 @@ export function WorkflowsPage({ onOpenReviews }: WorkflowsPageProps) {
     [search, statusFilter, workflows],
   );
 
-  if (showExecution) {
-    return <RequirementExtractionPage onBack={() => setShowExecution(false)} onOpenReviews={onOpenReviews} />;
+  if (showExecution && editableProject) {
+    return <RequirementExtractionPage editableProject={editableProject} onBack={() => setShowExecution(false)} onOpenReviews={onOpenReviews} />;
   }
 
   return (
@@ -138,8 +143,9 @@ export function WorkflowsPage({ onOpenReviews }: WorkflowsPageProps) {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowExecution(true)}
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:opacity-90"
+                  onClick={() => editableProject && setShowExecution(true)}
+                  disabled={!editableProject}
+                  className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <Play className="size-3.5 fill-current" /> 运行 <ArrowRight className="size-3.5" />
                 </button>

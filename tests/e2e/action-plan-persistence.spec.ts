@@ -22,6 +22,7 @@ test("Action 状态刷新后保持并清理测试状态", async ({ page }) => {
       .toBe("completed");
 
     await page.reload();
+    await page.waitForLoadState("networkidle");
     await expect(page.getByRole("combobox", { name: "ACT-001 状态" })).toHaveValue("completed");
   } finally {
     await page.evaluate(
@@ -35,6 +36,7 @@ test("Action 状态刷新后保持并清理测试状态", async ({ page }) => {
       [storageKey, originalStoredValue] as const,
     );
     await page.reload();
+    await page.waitForLoadState("networkidle");
   }
 
   await expect(page.getByRole("combobox", { name: "ACT-001 状态" })).toHaveValue(originalStatus);

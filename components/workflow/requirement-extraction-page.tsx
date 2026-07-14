@@ -16,9 +16,11 @@ import {
 import { AIGeneratingState, type WorkflowLog, type WorkflowRunStatus } from "./ai-generating-state";
 import type { WorkflowStepItem } from "./workflow-stepper";
 import { mockAIGateway } from "@/lib/ai";
+import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import { useToast } from "@/components/common/toast";
 
 interface RequirementExtractionPageProps {
+  editableProject: Pick<AuthorizedProjectSummary, "id" | "name">;
   onBack?: () => void;
   onOpenReviews?: () => void;
 }
@@ -51,13 +53,6 @@ const stepLogs = [
   "等待人工审核通过后写入正式需求中心",
 ];
 
-const inputFiles = [
-  { name: "客户需求说明_v3.docx", meta: "2.8 MB · 当前版本", selected: true },
-  { name: "6月28日需求澄清会.pdf", meta: "4.1 MB · 已解析", selected: true },
-  { name: "交互活动范围确认.xlsx", meta: "680 KB · 3 个工作表", selected: true },
-  { name: "历史报价范围_v1.pdf", meta: "1.2 MB · 仅供参考", selected: false },
-];
-
 function initialSteps(): WorkflowStepItem[] {
   return stepDefinitions.map(([id, title, description]) => ({ id, title, description, status: "pending" }));
 }
@@ -71,7 +66,7 @@ function currentTime() {
   }).format(new Date());
 }
 
-export function RequirementExtractionPage({ onBack, onOpenReviews }: RequirementExtractionPageProps) {
+export function RequirementExtractionPage({ editableProject, onBack, onOpenReviews }: RequirementExtractionPageProps) {
   const { toast } = useToast();
   const [status, setStatus] = useState<WorkflowRunStatus>("idle");
   const [steps, setSteps] = useState<WorkflowStepItem[]>(initialSteps);
@@ -79,6 +74,15 @@ export function RequirementExtractionPage({ onBack, onOpenReviews }: Requirement
   const [logs, setLogs] = useState<WorkflowLog[]>([]);
   const [simulateFailure, setSimulateFailure] = useState(true);
   const hasFailedRef = useRef(false);
+  const inputFiles = useMemo(
+    () => [
+      { name: `${editableProject.name}_当前需求说明.docx`, meta: "2.8 MB · 当前版本", selected: true },
+      { name: `${editableProject.name}_需求澄清纪要.pdf`, meta: "4.1 MB · 已解析", selected: true },
+      { name: `${editableProject.name}_范围确认.xlsx`, meta: "680 KB · 3 个工作表", selected: true },
+      { name: `${editableProject.name}_历史范围_v1.pdf`, meta: "1.2 MB · 仅供参考", selected: false },
+    ],
+    [editableProject.name],
+  );
 
   const progress = useMemo(() => {
     const completed = steps.filter((step) => step.status === "completed").length;
@@ -98,9 +102,13 @@ export function RequirementExtractionPage({ onBack, onOpenReviews }: Requirement
         try {
           const result = await mockAIGateway.generateStructuredOutput({
             profileId: "requirement-analysis",
-            projectId: "project-001",
+            projectId: editableProject.id,
             skillId: "requirement-extraction",
-            sourceIds: ["document-001", "document-002", "document-003"],
+            sourceIds: [
+              `${editableProject.id}-document-current`,
+              `${editableProject.id}-meeting-current`,
+              `${editableProject.id}-scope-current`,
+            ],
             prompt: "从当前有效项目资料中提取结构化需求，识别重复、冲突和待确认问题，并保留来源引用。",
             schemaName: "RequirementExtractionResult",
             mockData: { requirementCount: 24, duplicateCount: 3, conflictCount: 2, questionCount: 5 },
@@ -151,7 +159,7 @@ export function RequirementExtractionPage({ onBack, onOpenReviews }: Requirement
     }, 720);
 
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [activeIndex, simulateFailure, status]);
+  }, [activeIndex, editableProject.id, simulateFailure, status]);
 
   const startRun = () => {
     hasFailedRef.current = false;
@@ -188,7 +196,7 @@ export function RequirementExtractionPage({ onBack, onOpenReviews }: Requirement
               <ArrowLeft className="size-3.5" /> 返回工作流
             </button>
             <h1 className="text-xl font-semibold tracking-tight text-foreground">AI 提取需求</h1>
-            <p className="mt-1 text-sm text-muted-foreground">北美旗舰店 AI 互动活动 · Workflow Run #WF-240712</p>
+            <p className="mt-1 text-sm text-muted-foreground">{editableProject.name} · Workflow Run #WF-240712</p>
           </div>
           <div className="flex items-center gap-2">
             {status === "completed" ? (

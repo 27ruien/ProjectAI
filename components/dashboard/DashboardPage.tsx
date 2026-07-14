@@ -1,329 +1,123 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
 import {
-  Activity,
-  AlertTriangle,
   ArrowRight,
-  Bot,
-  Check,
   CheckCircle2,
   ChevronRight,
   Clock3,
-  FileText,
+  Eye,
   FolderKanban,
   Gauge,
-  LoaderCircle,
-  RefreshCw,
-  ShieldAlert,
+  LockKeyhole,
+  ShieldCheck,
   Sparkles,
-  TimerReset,
-  WandSparkles,
+  UserRoundCheck,
 } from "lucide-react";
 import {
-  actions,
-  activities,
-  documents,
-  projects,
-  reviews,
-  risks,
-} from "@/data/mock";
-import {
-  asRecords,
-  dateLabel,
-  numberValue,
-  relativeLabel,
-  statusClasses,
-  statusLabel,
-  textValue,
-} from "@/components/project/mock-view";
-import { storageKey } from "@/lib/storage-key";
+  projectRoleLabel,
+  systemRoleLabel,
+  type ViewerContext,
+} from "@/lib/auth/ui-types";
+import { dateLabel, statusClasses, statusLabel } from "@/components/project/mock-view";
 
-type ShowcaseState = "ready" | "loading" | "empty" | "error";
-
-const metricIcons = [FolderKanban, Sparkles, TimerReset, ShieldAlert, WandSparkles, Activity];
-
-export function DashboardPage() {
-  const projectRows = useMemo(() => asRecords(projects), []);
-  const reviewRows = useMemo(() => asRecords(reviews), []);
-  const actionRows = useMemo(() => asRecords(actions), []);
-  const riskRows = useMemo(() => asRecords(risks), []);
-  const activityRows = useMemo(() => asRecords(activities), []);
-  const documentRows = useMemo(() => asRecords(documents), []);
-  const [checked, setChecked] = useState<string[]>([]);
-  const [showcase, setShowcase] = useState<ShowcaseState>("ready");
-
-  const toggleTodo = (id: string) => {
-    setChecked((current) => {
-      const next = current.includes(id)
-        ? current.filter((item) => item !== id)
-        : [...current, id];
-      window.localStorage.setItem(storageKey("dashboard-todos"), JSON.stringify(next));
-      return next;
-    });
-  };
-
-  const activeProjects = projectRows.filter((project) =>
-    ["active", "planning", "inProgress"].includes(textValue(project, "status", "active")),
-  ).length;
-  const pendingReviews = reviewRows.filter((review) =>
-    ["pending", "pendingReview", "generated"].includes(textValue(review, "status", "pendingReview")),
-  ).length;
-  const urgentActions = actionRows.filter((action) =>
-    ["overdue", "todo", "inProgress", "blocked"].includes(textValue(action, "status", "todo")),
-  ).length;
-  const highRisks = riskRows.filter((risk) =>
-    ["high", "critical"].includes(textValue(risk, ["level", "severity"], "medium")),
-  ).length;
+export function DashboardPage({ viewer }: { viewer: ViewerContext }) {
+  const projects = viewer.projects;
+  const activeProjects = projects.filter((project) => ["active", "planning", "at_risk"].includes(project.status)).length;
+  const attentionProjects = projects.filter((project) => ["attention", "at_risk", "critical"].includes(project.health)).length;
+  const readOnlyProjects = projects.filter((project) => !project.permissions.canEditProject).length;
+  const editableProject = projects.find((project) => project.permissions.canEditProject);
 
   const metrics = [
-    { label: "进行中项目", value: activeProjects || 6, detail: "2 个项目本周进入新阶段", tone: "text-primary" },
-    { label: "待审核 AI 产出", value: pendingReviews || 8, detail: "3 项将在今天到期", tone: "text-warning" },
-    { label: "即将到期 Action", value: urgentActions || 12, detail: "含 3 项已逾期", tone: "text-destructive" },
-    { label: "高风险项目", value: highRisks || 2, detail: "较上周减少 1 个", tone: "text-destructive" },
-    { label: "AI 节省工时", value: "46.5h", detail: "本月累计 186 小时", tone: "text-success" },
-    { label: "AI 调用次数", value: "1,284", detail: "成功率 97.8%", tone: "text-primary" },
+    { label: "可访问项目", value: projects.length, detail: "来自服务端授权结果", icon: FolderKanban, tone: "text-primary" },
+    { label: "进行中项目", value: activeProjects, detail: "仅统计当前授权范围", icon: Gauge, tone: "text-success" },
+    { label: "需要关注", value: attentionProjects, detail: "依据项目健康度", icon: Clock3, tone: attentionProjects ? "text-warning" : "text-success" },
+    { label: "只读项目", value: readOnlyProjects, detail: "写操作已由服务端关闭", icon: Eye, tone: "text-info" },
   ];
-
-  const visibleProjects = projectRows.slice(0, 5);
-  const visibleTodos = actionRows.slice(0, 6);
-  const visibleRisks = riskRows.slice(0, 4);
 
   return (
     <main className="min-h-full bg-background px-5 py-6 lg:px-8 lg:py-7">
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="mb-1 text-sm text-muted-foreground">7 月 12 日，星期日</p>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">早上好，林可</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">今天有 3 项 AI 产出待审核，2 个项目需要你关注。</p>
+          <p className="mb-1 text-sm text-muted-foreground">安全工作区</p>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">你好，{viewer.user.displayName}</h1>
+          <p className="mt-1.5 text-sm text-muted-foreground">你当前可访问 {projects.length} 个项目，列表已按成员关系完成服务端过滤。</p>
         </div>
         <div className="flex items-center gap-2">
-          <Link
-            href="/projects/new"
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          >
-            <FolderKanban className="size-4" />
-            创建项目
-          </Link>
-          <Link
-            href="/workflows/requirement-extraction"
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-          >
-            <Sparkles className="size-4" />
-            运行 AI 工作流
-          </Link>
+          {viewer.canCreateProject ? (
+            <Link href="/projects/new" className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted">
+              <FolderKanban className="size-4" />创建项目
+            </Link>
+          ) : null}
+          {editableProject ? (
+            <Link href={`/workflows/requirement-extraction?project=${editableProject.id}`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+              <Sparkles className="size-4" />运行 AI 工作流
+            </Link>
+          ) : null}
         </div>
       </header>
 
-      <section className="grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 xl:grid-cols-6" aria-label="关键指标">
-        {metrics.map((metric, index) => {
-          const Icon = metricIcons[index];
-          return (
-            <article key={metric.label} className="bg-card px-4 py-4">
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">{metric.label}</span>
-                <Icon className={`size-4 ${metric.tone}`} />
-              </div>
-              <p className="text-2xl font-semibold tabular-nums text-foreground">{metric.value}</p>
-              <p className="mt-1.5 truncate text-[11px] text-muted-foreground">{metric.detail}</p>
-            </article>
-          );
-        })}
+      <section className="grid gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-2 xl:grid-cols-4" aria-label="授权范围摘要">
+        {metrics.map((metric) => (
+          <article key={metric.label} className="bg-card px-5 py-4">
+            <div className="mb-4 flex items-center justify-between"><span className="text-xs font-medium text-muted-foreground">{metric.label}</span><metric.icon className={`size-4 ${metric.tone}`} /></div>
+            <p className="text-2xl font-semibold tabular-nums text-foreground">{metric.value}</p>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">{metric.detail}</p>
+          </article>
+        ))}
       </section>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.8fr)]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.75fr)]">
         <section className="overflow-hidden rounded-xl border border-border bg-card">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">项目推进</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">最近访问与关键交付进度</p>
-            </div>
-            <Link href="/projects" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-              全部项目 <ArrowRight className="size-3.5" />
-            </Link>
+            <div><h2 className="text-sm font-semibold text-foreground">我的项目</h2><p className="mt-0.5 text-xs text-muted-foreground">项目基础信息来自 PostgreSQL</p></div>
+            <Link href="/projects" className="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline">全部项目 <ArrowRight className="size-3.5" /></Link>
           </div>
-          <div className="divide-y divide-border">
-            {(visibleProjects.length ? visibleProjects : Array.from({ length: 4 }, (_, index) => ({ id: `fallback-${index}` }))).map((project, index) => {
-              const id = textValue(project, "id", `p${index + 1}`);
-              const progress = Math.min(100, numberValue(project, ["progress", "completionRate"], [68, 42, 81, 35, 56][index] ?? 50));
-              const health = textValue(project, ["health", "healthStatus"], index === 1 ? "attention" : "healthy");
-              return (
-                <Link
-                  key={id}
-                  href={`/projects/${id}/overview`}
-                  className="group grid grid-cols-[minmax(0,1.4fr)_minmax(120px,0.8fr)_auto] items-center gap-4 px-5 py-3.5 transition-colors hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-foreground group-hover:text-primary">
-                      {textValue(project, ["name", "projectName"], ["北美旗舰店 AI 互动活动", "品牌官网重构", "会员系统升级", "CRM 数据看板建设"][index] ?? "项目")}
-                    </p>
-                    <p className="mt-1 truncate text-xs text-muted-foreground">
-                      {textValue(project, ["client", "clientName"], "品牌客户")} · {textValue(project, ["stage", "currentStage"], "交付实施")}
-                    </p>
-                  </div>
-                  <div>
-                    <div className="mb-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
-                      <span>交付进度</span><span className="tabular-nums">{progress}%</span>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                      <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${progress}%` }} />
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${statusClasses(health)}`}>{statusLabel(health)}</span>
-                    <ChevronRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
-                  </div>
+          {projects.length ? (
+            <div className="divide-y divide-border">
+              {projects.slice(0, 6).map((project) => (
+                <Link key={project.id} href={`/projects/${project.id}/overview`} className="group grid gap-3 px-5 py-4 transition-colors hover:bg-muted/40 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center">
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-foreground group-hover:text-primary">{project.name}</p><p className="mt-1 truncate text-xs text-muted-foreground">{project.clientName} · {statusLabel(project.stage)}</p></div>
+                  <div className="flex flex-wrap items-center gap-2"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClasses(project.health)}`}>{statusLabel(project.health)}</span><span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-[10px] text-muted-foreground">{projectRoleLabel(project.projectRole)}</span></div>
+                  <ChevronRight className="hidden size-4 text-muted-foreground sm:block" />
                 </Link>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <div className="grid min-h-64 place-items-center px-6 text-center"><div><FolderKanban className="mx-auto size-7 text-muted-foreground" /><p className="mt-3 text-sm font-medium text-foreground">暂无可访问项目</p><p className="mt-1 text-xs text-muted-foreground">请联系系统管理员或项目经理分配项目成员关系。</p></div></div>
+          )}
         </section>
 
-        <section className="rounded-xl border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">我的待办</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">{visibleTodos.length || 6} 项需要处理</p>
+        <div className="space-y-6">
+          <section className="rounded-xl border border-border bg-card">
+            <div className="border-b border-border px-5 py-4"><h2 className="text-sm font-semibold text-foreground">当前身份</h2><p className="mt-0.5 text-xs text-muted-foreground">身份信息由 Session 恢复</p></div>
+            <div className="space-y-4 p-5">
+              <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><UserRoundCheck className="size-5" /></span><div className="min-w-0"><p className="truncate text-sm font-medium text-foreground">{viewer.user.displayName}</p><p className="truncate text-xs text-muted-foreground">{viewer.user.email}</p></div></div>
+              <div className="grid grid-cols-2 gap-2"><IdentityFact label="系统角色" value={systemRoleLabel(viewer.user.systemRole)} /><IdentityFact label="Session" value="已验证" /></div>
             </div>
-            <CheckCircle2 className="size-4 text-muted-foreground" />
-          </div>
-          <div className="divide-y divide-border px-2">
-            {(visibleTodos.length ? visibleTodos : Array.from({ length: 5 }, (_, index) => ({ id: `todo-${index}` }))).map((action, index) => {
-              const id = textValue(action, "id", `todo-${index}`);
-              const done = checked.includes(id);
-              const status = textValue(action, "status", index === 0 ? "overdue" : "todo");
-              return (
-                <label key={id} className="flex cursor-pointer items-start gap-3 rounded-lg px-3 py-3 transition-colors hover:bg-muted/50">
-                  <input className="sr-only" type="checkbox" checked={done} onChange={() => toggleTodo(id)} />
-                  <span className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded border transition-colors ${done ? "border-primary bg-primary text-primary-foreground" : "border-input bg-card"}`}>
-                    {done && <Check className="size-3" />}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-sm ${done ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                      {textValue(action, ["title", "content", "name"], ["审核会员中心需求提取结果", "确认支付接口排期", "更新客户周报", "跟进埋点方案", "评估新增优惠券需求"][index] ?? "处理项目事项")}
-                    </span>
-                    <span className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
-                      <span>{textValue(action, ["projectName", "project"], "北美旗舰店 AI 互动活动")}</span>
-                      <span>·</span>
-                      <span className={status === "overdue" ? "text-destructive" : ""}>{status === "overdue" ? "已逾期" : dateLabel(textValue(action, "dueDate", ""))}</span>
-                    </span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
-        </section>
+          </section>
+
+          <section className="rounded-xl border border-success/20 bg-success-soft p-5">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><ShieldCheck className="size-4 text-success" />项目隔离已启用</div>
+            <ul className="mt-3 space-y-2 text-xs leading-5 text-muted-foreground">
+              <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />项目列表由数据库成员关系过滤</li>
+              <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />项目深层路由在服务端重新授权</li>
+              <li className="flex gap-2"><CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-success" />拒绝访问会写入安全审计事件</li>
+            </ul>
+          </section>
+        </div>
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2 xl:grid-cols-3">
-        <section className="rounded-xl border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-foreground">待审核 AI 产出</h2>
-            <Link href="/reviews" className="text-xs font-medium text-primary hover:underline">进入审核中心</Link>
-          </div>
-          <div className="divide-y divide-border">
-            {(reviewRows.length ? reviewRows.slice(0, 4) : Array.from({ length: 4 }, (_, index) => ({ id: `review-${index}` }))).map((review, index) => (
-              <Link key={textValue(review, "id", `review-${index}`)} href={`/reviews?task=${textValue(review, "id", `review-${index}`)}`} className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-muted/50">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary"><Bot className="size-4" /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-foreground">{textValue(review, ["title", "name"], ["AI 提取 12 条新需求", "Scope v2.3 变更分析", "本周项目风险分析", "6 月项目周报"][index] ?? "AI 产出")}</span>
-                  <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{textValue(review, ["projectName", "project"], "北美旗舰店 AI 互动活动")} · {relativeLabel(textValue(review, "createdAt", ""))}</span>
-                </span>
-                <span className="rounded-full border border-warning/20 bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning">待审核</span>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-foreground">风险预警</h2>
-            <AlertTriangle className="size-4 text-warning" />
-          </div>
-          <div className="divide-y divide-border">
-            {(visibleRisks.length ? visibleRisks : Array.from({ length: 4 }, (_, index) => ({ id: `risk-${index}` }))).map((risk, index) => {
-              const level = textValue(risk, ["level", "severity"], index === 0 ? "high" : "medium");
-              const projectId = textValue(risk, "projectId", "p1");
-              return (
-                <Link key={textValue(risk, "id", `risk-${index}`)} href={`/projects/${projectId}/risks?risk=${textValue(risk, "id", `risk-${index}`)}`} className="flex items-start gap-3 px-5 py-3 transition-colors hover:bg-muted/50">
-                  <span className={`mt-1 size-2 shrink-0 rounded-full ${["high", "critical"].includes(level) ? "bg-destructive" : "bg-warning"}`} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm font-medium text-foreground">{textValue(risk, ["name", "title"], ["第三方素材授权尚未确认", "会员数据迁移窗口压缩", "海外 CDN 性能波动", "关键接口联调晚于计划"][index] ?? "项目风险")}</span>
-                    <span className="mt-1 block truncate text-[11px] text-muted-foreground">{textValue(risk, ["projectName", "project"], "会员系统升级")} · {textValue(risk, ["owner", "assignee"], "林可")}</span>
-                  </span>
-                  <span className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${statusClasses(level)}`}>{statusLabel(level)}</span>
-                </Link>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-border bg-card lg:col-span-2 xl:col-span-1">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-foreground">最近 AI 活动</h2>
-            <Gauge className="size-4 text-muted-foreground" />
-          </div>
-          <div className="space-y-0 px-5 py-2">
-            {(activityRows.length ? activityRows.slice(0, 5) : Array.from({ length: 5 }, (_, index) => ({ id: `activity-${index}` }))).map((activity, index) => (
-              <div key={textValue(activity, "id", `activity-${index}`)} className="relative flex gap-3 py-2.5 before:absolute before:left-[7px] before:top-7 before:h-[calc(100%-12px)] before:w-px before:bg-border last:before:hidden">
-                <span className={`relative z-10 mt-1 size-3.5 shrink-0 rounded-full border-2 border-card ${index === 0 ? "bg-primary" : "bg-muted-foreground/40"}`} />
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-foreground">{textValue(activity, ["title", "action", "description"], ["完成需求去重分析", "生成 Scope 影响摘要", "项目知识索引已更新", "提取会议 Action Items", "生成项目周报草稿"][index] ?? "AI 任务已完成")}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{relativeLabel(textValue(activity, ["createdAt", "timestamp"], ""))}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </div>
-
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="rounded-xl border border-border bg-card">
-          <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-sm font-semibold text-foreground">最近生成文档</h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">AI 草稿与正式版本严格分离</p>
-            </div>
-            <FileText className="size-4 text-muted-foreground" />
-          </div>
-          <div className="grid divide-y divide-border sm:grid-cols-2 sm:divide-x sm:divide-y-0">
-            {(documentRows.length ? documentRows.slice(0, 2) : [{ id: "doc-1" }, { id: "doc-2" }]).map((document, index) => (
-              <Link key={textValue(document, "id", `doc-${index}`)} href={`/projects/${textValue(document, "projectId", "p1")}/documents?document=${textValue(document, "id", `doc-${index}`)}`} className="flex items-center gap-3 px-5 py-4 transition-colors hover:bg-muted/50">
-                <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-border bg-muted/50 text-muted-foreground"><FileText className="size-4" /></span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium text-foreground">{textValue(document, ["name", "title", "fileName"], index === 0 ? "北美互动活动项目周报 W27" : "会员系统 Scope 变更说明 v2.3")}</span>
-                  <span className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground"><span>{relativeLabel(document.updatedAt ?? document.createdAt)}</span><span>·</span><span>{index === 0 ? "AI 草稿" : "已确认"}</span></span>
-                </span>
-              </Link>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-border bg-card">
-          <div className="border-b border-border px-5 py-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-foreground">界面状态示例</h2>
-              <div className="flex rounded-lg bg-muted p-0.5">
-                {(["ready", "loading", "empty", "error"] as ShowcaseState[]).map((state) => (
-                  <button key={state} type="button" onClick={() => setShowcase(state)} className={`rounded-md px-2 py-1 text-[10px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${showcase === state ? "bg-card font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}>
-                    {{ ready: "正常", loading: "加载", empty: "空", error: "错误" }[state]}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-          <div className="grid min-h-32 place-items-center p-5 text-center">
-            {showcase === "ready" && <div><CheckCircle2 className="mx-auto size-6 text-success" /><p className="mt-2 text-sm font-medium text-foreground">数据已同步</p><p className="mt-1 text-xs text-muted-foreground">刚刚更新 8 个项目</p></div>}
-            {showcase === "loading" && <div><LoaderCircle className="mx-auto size-6 animate-spin text-primary" /><p className="mt-2 text-sm font-medium text-foreground">正在载入项目数据</p><p className="mt-1 text-xs text-muted-foreground">正在校验当前有效版本</p></div>}
-            {showcase === "empty" && <div><FileText className="mx-auto size-6 text-muted-foreground" /><p className="mt-2 text-sm font-medium text-foreground">暂无匹配内容</p><p className="mt-1 text-xs text-muted-foreground">调整筛选条件后重试</p></div>}
-            {showcase === "error" && <div><AlertTriangle className="mx-auto size-6 text-destructive" /><p className="mt-2 text-sm font-medium text-foreground">数据加载失败</p><button type="button" onClick={() => setShowcase("loading")} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"><RefreshCw className="size-3" />重试</button></div>}
-          </div>
-        </section>
-      </div>
-      <p className="mt-6 flex items-center gap-1.5 text-[11px] text-muted-foreground"><Clock3 className="size-3.5" />数据为演示环境 Mock 内容，最后同步于 2 分钟前</p>
+      <section className="mt-6 rounded-xl border border-info/20 bg-info-soft px-4 py-3">
+        <div className="flex items-start gap-2.5"><LockKeyhole className="mt-0.5 size-4 shrink-0 text-info" /><div><p className="text-xs font-medium text-foreground">能力边界</p><p className="mt-1 text-xs leading-5 text-muted-foreground">用户、Session、项目与成员关系为真实数据库能力；项目详情中的文档、需求、Scope、Action、会议、风险与 AI 产出仍为当前项目专属 Mock。</p></div></div>
+      </section>
+      <p className="mt-4 text-[11px] text-muted-foreground">项目最近更新时间：{dateLabel(projects[0]?.updatedAt)}</p>
     </main>
   );
+}
+
+function IdentityFact({ label, value }: { label: string; value: string }) {
+  return <div className="rounded-lg bg-muted/45 px-3 py-2.5"><p className="text-[10px] text-muted-foreground">{label}</p><p className="mt-1 text-xs font-medium text-foreground">{value}</p></div>;
 }
 
 export default DashboardPage;

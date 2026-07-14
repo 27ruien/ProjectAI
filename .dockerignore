@@ -6,7 +6,15 @@
 .wrangler
 dist
 node_modules
+playwright-report
+product-review-evidence
+review-artifacts
+test-logs
+test-results
 coverage
+backups
+.staging-deploy-in-progress
+.staging-deploy-lock
 *.log
 .env
 .env.*

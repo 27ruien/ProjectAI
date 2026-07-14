@@ -51,4 +51,4 @@ body:
     id: build
     attributes:
       label: 环境、版本与 Commit
-      placeholder: staging / 0.2.0-staging / abc1234
+      placeholder: staging / 0.3.0-staging / abc1234

@@ -24,35 +24,39 @@ async function render(path = "/") {
   );
 }
 
-test("server-renders the Project AI OS shell", async () => {
-  const response = await render("/");
+test("server-renders the public Project AI OS login", async () => {
+  const response = await render("/login");
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /Project AI OS/);
-  assert.match(html, /工作台|正在装配项目工作台/);
+  assert.match(html, /登录工作台/);
+  assert.match(html, /Identity and Project Isolation/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
-test("all primary product routes resolve", async () => {
+test("root and every protected product route redirect anonymous users to login", async () => {
   const routes = [
-    "/dashboard", "/projects", "/projects/new", "/projects/proj-001/overview",
-    "/projects/proj-001/documents", "/projects/proj-001/knowledge", "/projects/proj-001/requirements",
-    "/projects/proj-001/scope", "/projects/proj-001/actions", "/projects/proj-001/meetings", "/projects/proj-001/risks",
+    "/", "/dashboard", "/projects", "/projects/new", "/projects/project-001/overview",
+    "/projects/project-001/documents", "/projects/project-001/knowledge", "/projects/project-001/requirements",
+    "/projects/project-001/scope", "/projects/project-001/actions", "/projects/project-001/meetings", "/projects/project-001/risks",
     "/workflows", "/workflows/requirement-extraction", "/reviews", "/skills", "/skills/project-document-summary",
     "/knowledge", "/analytics", "/settings", "/settings/ai-models", "/settings/ai-models/requirement-analysis",
   ];
   for (const route of routes) {
     const response = await render(route);
-    assert.equal(response.status, 200, `${route} should resolve`);
+    assert.match(String(response.status), /^30[2378]$/, `${route} should redirect`);
+    assert.match(
+      response.headers.get("location") ?? "",
+      route === "/" ? /\/dashboard$/ : /\/login(?:\?|$)/,
+    );
   }
 });
 
-test("review center renders pending tasks instead of an empty default filter", async () => {
-  const response = await render("/reviews");
-  const html = await response.text();
-  assert.match(html, /客户需求确认稿 v1\.3/);
-  assert.match(html, />7<\/strong>待审核/);
+test("login is the only public application page", async () => {
+  const response = await render("/login?returnTo=%2Fprojects");
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /使用管理员为你预创建的企业账号/);
 });
 
 test("keeps AI infrastructure centralized and removes starter preview", async () => {

@@ -22,6 +22,7 @@ interface ReviewPanelProps {
   reviewNote: string;
   onReviewNoteChange: (value: string) => void;
   regenerating?: boolean;
+  readOnly?: boolean;
 }
 
 export function stringifyContent(content: unknown): string {
@@ -58,6 +59,7 @@ export function ReviewPanel({
   reviewNote,
   onReviewNoteChange,
   regenerating = false,
+  readOnly = false,
 }: ReviewPanelProps) {
   const [tab, setTab] = useState<"edit" | "diff">("edit");
   const original = stringifyContent(task.generatedContent);
@@ -73,7 +75,11 @@ export function ReviewPanel({
               <span className="text-[10px] text-muted-foreground">v{task.version ?? 1}</span>
             </div>
             <h2 className="mt-2 text-base font-semibold text-foreground">{task.title}</h2>
-            <p className="mt-1 text-xs text-muted-foreground">{task.changeSummary ?? "请核对 AI 输出与来源证据，必要时直接修改。"}</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {readOnly
+                  ? "当前项目为只读权限，可核对 AI 输出与来源证据，但不能修改或审核。"
+                  : task.changeSummary ?? "请核对 AI 输出与来源证据，必要时直接修改。"}
+              </p>
           </div>
           <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-right">
             <p className="text-[9px] uppercase tracking-wide text-muted-foreground">置信度</p>
@@ -105,14 +111,17 @@ export function ReviewPanel({
             <div>
               <div className="mb-2 flex items-center justify-between">
                 <label htmlFor="review-content" className="flex items-center gap-1.5 text-xs font-semibold text-foreground"><Braces className="size-3.5" /> 结构化内容</label>
-                <span className="text-[10px] text-muted-foreground">自动保存草稿</span>
+                <span className="text-[10px] text-muted-foreground">
+                  {readOnly ? "只读" : "自动保存草稿"}
+                </span>
               </div>
               <textarea
                 id="review-content"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
+                readOnly={readOnly}
                 spellCheck={false}
-                className="min-h-[330px] w-full resize-y rounded-lg border border-border bg-background p-4 font-mono text-xs leading-6 text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/10"
+                className="min-h-[330px] w-full resize-y rounded-lg border border-border bg-background p-4 font-mono text-xs leading-6 text-foreground outline-none transition read-only:cursor-default read-only:bg-muted/25 focus:border-primary focus:ring-2 focus:ring-primary/10"
               />
             </div>
             <div>
@@ -121,8 +130,9 @@ export function ReviewPanel({
                 id="review-note"
                 value={reviewNote}
                 onChange={(event) => onReviewNoteChange(event.target.value)}
-                placeholder="记录修改原因、待补充信息或驳回依据…"
-                className="min-h-24 w-full resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground focus:border-primary"
+                readOnly={readOnly}
+                placeholder={readOnly ? "当前项目为只读权限" : "记录修改原因、待补充信息或驳回依据…"}
+                className="min-h-24 w-full resize-none rounded-lg border border-border bg-background px-3 py-2.5 text-xs leading-5 text-foreground outline-none placeholder:text-muted-foreground read-only:cursor-default read-only:bg-muted/25 focus:border-primary"
               />
             </div>
           </div>
@@ -156,4 +166,3 @@ export function reviewTypeLabel(type: string) {
   };
   return labels[type] ?? type;
 }
-

@@ -1,10 +1,3 @@
-import {
-  mockAIExecutions,
-  mockAIModelProfiles,
-  mockAIModels,
-  mockAIProviders,
-  mockSourceCitations,
-} from "@/data/mock";
 import type {
   AIGateway,
   AIGenerationMetadata,
@@ -22,6 +15,11 @@ import type {
   TokenUsage,
 } from "@/types";
 import { AICostCalculator } from "../cost/ai-cost-calculator";
+import {
+  safeMockAIModelProfiles,
+  safeMockAIModels,
+  safeMockAIProviders,
+} from "../fixtures/non-project-catalog";
 import { AIExecutionLogger } from "../logging/ai-execution-logger";
 import type { ProviderResult } from "../providers/ai-provider";
 import { MockAIProvider } from "../providers/mock-ai-provider";
@@ -71,13 +69,13 @@ export class MockAIGateway implements AIGateway {
   readonly costCalculator: AICostCalculator;
 
   constructor(dependencies: MockAIGatewayDependencies = {}) {
-    this.modelRegistry = dependencies.modelRegistry ?? new AIModelRegistry(mockAIModels);
-    this.profileRegistry = dependencies.profileRegistry ?? new ModelProfileRegistry(mockAIModelProfiles);
-    this.providerRegistry = dependencies.providerRegistry ?? new AIProviderRegistry(mockAIProviders);
+    this.modelRegistry = dependencies.modelRegistry ?? new AIModelRegistry(safeMockAIModels);
+    this.profileRegistry = dependencies.profileRegistry ?? new ModelProfileRegistry(safeMockAIModelProfiles);
+    this.providerRegistry = dependencies.providerRegistry ?? new AIProviderRegistry(safeMockAIProviders);
     const provider = dependencies.provider ?? new MockAIProvider();
     this.providerRegistry.list().forEach((item) => this.providerRegistry.setAdapter(item.id, provider));
     this.router = dependencies.router ?? new ModelRouter(this.modelRegistry, this.profileRegistry, this.providerRegistry);
-    this.logger = dependencies.logger ?? new AIExecutionLogger(mockAIExecutions);
+    this.logger = dependencies.logger ?? new AIExecutionLogger();
     this.costCalculator = dependencies.costCalculator ?? new AICostCalculator();
   }
 
@@ -126,7 +124,7 @@ export class MockAIGateway implements AIGateway {
       summary: result.data.summary,
       extractedFacts: result.data.extractedFacts,
       extractedRequirements: result.data.extractedRequirements,
-      citations: mockSourceCitations.filter((citation) => citation.documentId === input.documentId),
+      citations: [],
       ...result.metadata,
     };
   }

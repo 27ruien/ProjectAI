@@ -29,14 +29,11 @@ import {
   SlidersHorizontal,
   X,
 } from "lucide-react";
-import { projects } from "@/data/mock";
+import type { ViewerContext } from "@/lib/auth/ui-types";
 import {
-  asRecords,
   dateLabel,
-  numberValue,
   statusClasses,
   statusLabel,
-  textValue,
 } from "./mock-view";
 
 interface ProjectRow {
@@ -65,25 +62,25 @@ function compactCount(value: number, tone: "neutral" | "warning" | "danger") {
   return <span className={`inline-flex min-w-6 justify-center rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums ${classes[tone]}`}>{value}</span>;
 }
 
-export function ProjectsPage() {
+export function ProjectsPage({ viewer }: { viewer: ViewerContext }) {
   const router = useRouter();
   const allProjects = useMemo<ProjectRow[]>(
     () =>
-      asRecords(projects).map((project, index) => ({
-        id: textValue(project, "id", `p${index + 1}`),
-        name: textValue(project, ["name", "projectName"], `项目 ${index + 1}`),
-        client: textValue(project, ["client", "clientName"], "品牌客户"),
-        manager: textValue(project, ["manager", "projectManager", "owner"], ["林可", "周霖", "陈舟", "吴桐"][index % 4]),
-        status: textValue(project, "status", index === 7 ? "completed" : "active"),
-        stage: textValue(project, ["stage", "currentStage"], ["需求确认", "方案设计", "交付实施", "联调测试"][index % 4]),
-        health: textValue(project, ["health", "healthStatus"], index % 4 === 1 ? "attention" : index % 4 === 3 ? "atRisk" : "healthy"),
-        targetDate: textValue(project, ["targetLaunchDate", "launchDate"], "2026-09-30"),
-        updatedAt: textValue(project, "updatedAt", "2026-07-12"),
-        actionCount: numberValue(project, ["openActionCount", "actionCount", "incompleteActions"], [8, 12, 6, 3, 9, 4, 11, 0][index] ?? 0),
-        reviewCount: numberValue(project, ["pendingReviewCount", "reviewCount"], [3, 1, 2, 0, 4, 1, 2, 0][index] ?? 0),
-        riskCount: numberValue(project, ["riskCount", "openRiskCount"], [2, 1, 3, 0, 2, 1, 2, 0][index] ?? 0),
+      viewer.projects.map((project) => ({
+        id: project.id,
+        name: project.name,
+        client: project.clientName,
+        manager: project.managerDisplayName ?? "待分配",
+        status: project.status,
+        stage: project.stage,
+        health: project.health,
+        targetDate: project.targetLaunchDate ?? "",
+        updatedAt: project.updatedAt,
+        actionCount: 0,
+        reviewCount: 0,
+        riskCount: 0,
       })),
-    [],
+    [viewer.projects],
   );
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -183,9 +180,9 @@ export function ProjectsPage() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">项目</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">集中查看项目进度、健康度与待处理事项。</p>
         </div>
-        <Link href="/projects/new" className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+        {viewer.canCreateProject ? <Link href="/projects/new" className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
           <Plus className="size-4" />创建项目
-        </Link>
+        </Link> : null}
       </header>
 
       <section className="overflow-hidden rounded-xl border border-border bg-card">

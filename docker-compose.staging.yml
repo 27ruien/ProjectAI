@@ -1,26 +1,124 @@
+name: projectai-staging
+
 services:
-  projectai-staging:
-    image: project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}
+  projectai-postgres:
+    image: postgres:17-alpine
+    container_name: project-ai-os-staging-postgres
+    restart: unless-stopped
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - projectai-staging-postgres:/var/lib/postgresql/data
+    networks:
+      - projectai-staging-internal
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -h 127.0.0.1 -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  projectai-migrate:
+    profiles:
+      - operations
+    image: ${STAGING_DB_TOOLS_IMAGE:-project-ai-os-staging-db-tools:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     build:
       context: .
+      target: db-tools
+    environment:
+      NODE_ENV: production
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL is required}
+      AUTH_COOKIE_PREFIX: ${AUTH_COOKIE_PREFIX:?AUTH_COOKIE_PREFIX is required}
+      AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:?AUTH_TRUSTED_ORIGINS is required}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?SEED_ADMIN_EMAIL is required}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD is required}
+      SEED_MANAGER_A_EMAIL: ${SEED_MANAGER_A_EMAIL:?SEED_MANAGER_A_EMAIL is required}
+      SEED_MANAGER_A_PASSWORD: ${SEED_MANAGER_A_PASSWORD:?SEED_MANAGER_A_PASSWORD is required}
+      SEED_MANAGER_B_EMAIL: ${SEED_MANAGER_B_EMAIL:?SEED_MANAGER_B_EMAIL is required}
+      SEED_MANAGER_B_PASSWORD: ${SEED_MANAGER_B_PASSWORD:?SEED_MANAGER_B_PASSWORD is required}
+      SEED_MEMBER_A_EMAIL: ${SEED_MEMBER_A_EMAIL:?SEED_MEMBER_A_EMAIL is required}
+      SEED_MEMBER_A_PASSWORD: ${SEED_MEMBER_A_PASSWORD:?SEED_MEMBER_A_PASSWORD is required}
+      SEED_VIEWER_A_EMAIL: ${SEED_VIEWER_A_EMAIL:?SEED_VIEWER_A_EMAIL is required}
+      SEED_VIEWER_A_PASSWORD: ${SEED_VIEWER_A_PASSWORD:?SEED_VIEWER_A_PASSWORD is required}
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    command: npm run db:migrate
+
+  projectai-staging:
+    image: ${STAGING_APP_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    build:
+      context: .
+      target: runner
       args:
         NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
         NEXT_PUBLIC_APP_ENV: staging
-        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.2.0-staging}
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.3.0-staging}
         NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     container_name: project-ai-os-staging
     restart: unless-stopped
+    init: true
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     environment:
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
+      VINEXT_TRUSTED_HOSTS: gridworks.cn
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET is required}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL is required}
+      AUTH_COOKIE_PREFIX: ${AUTH_COOKIE_PREFIX:?AUTH_COOKIE_PREFIX is required}
+      AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:?AUTH_TRUSTED_ORIGINS is required}
+      STAGING_HEALTHCHECK_PATH: ${STAGING_HEALTHCHECK_PATH:-/api/health}
       NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.2.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.3.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
       AI_PROVIDER: mock
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
     ports:
       - "127.0.0.1:3101:3000"
     healthcheck:
@@ -29,9 +127,18 @@ services:
           "CMD",
           "node",
           "-e",
-          "fetch('http://127.0.0.1:3000/tool/projectai-staging/dashboard').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+          "const base=(process.env.NEXT_PUBLIC_BASE_PATH||'').replace(/\\/$/,'');const path=process.env.STAGING_HEALTHCHECK_PATH||'/api/health';fetch('http://127.0.0.1:3000'+base+path).then(async r=>{if(!r.ok)process.exit(1);if(path==='/api/health'&&(await r.json()).status!=='ok')process.exit(1)}).catch(()=>process.exit(1))"
         ]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+volumes:
+  projectai-staging-postgres:
+    name: projectai-staging-postgres
+
+networks:
+  projectai-staging-internal:
+    name: projectai-staging-internal
+    driver: bridge

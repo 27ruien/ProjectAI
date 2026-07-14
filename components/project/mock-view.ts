@@ -64,15 +64,18 @@ export function dateLabel(value: unknown, fallback = "—"): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
     month: "2-digit",
     day: "2-digit",
-    year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    timeZone: "Asia/Shanghai",
   }).format(date);
 }
 
+const MOCK_REFERENCE_TIME = new Date("2026-07-13T12:00:00+08:00").getTime();
+
 export function relativeLabel(value: unknown): string {
   if (typeof value !== "string") return "刚刚";
-  const delta = Date.now() - new Date(value).getTime();
+  const delta = MOCK_REFERENCE_TIME - new Date(value).getTime();
   if (!Number.isFinite(delta) || delta < 0) return dateLabel(value);
   const hours = Math.floor(delta / 3_600_000);
   if (hours < 1) return "刚刚";
@@ -91,6 +94,7 @@ export function statusLabel(status: string): string {
     healthy: "正常",
     attention: "需关注",
     atRisk: "有风险",
+    at_risk: "有风险",
     critical: "严重风险",
     low: "低",
     medium: "中",
@@ -110,6 +114,13 @@ export function statusLabel(status: string): string {
     failed: "解析失败",
     approved: "已通过",
     activeVersion: "当前有效",
+    discovery: "项目发现",
+    development: "开发实施",
+    testing: "联调测试",
+    design: "方案设计",
+    launch: "上线准备",
+    operation: "运营中",
+    cancelled: "已取消",
   };
   return (labels[status] ?? status) || "未知";
 }
@@ -121,7 +132,7 @@ export function statusClasses(status: string): string {
   if (["attention", "medium", "pendingReview", "processing", "P1"].includes(status)) {
     return "border-warning/20 bg-warning/10 text-warning";
   }
-  if (["atRisk", "high", "critical", "failed", "rejected", "overdue", "blocked", "P0"].includes(status)) {
+  if (["atRisk", "at_risk", "high", "critical", "failed", "rejected", "overdue", "blocked", "P0"].includes(status)) {
     return "border-destructive/20 bg-destructive/10 text-destructive";
   }
   if (["P2", "inProgress", "planning"].includes(status)) {
