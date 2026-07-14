@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
+import { assertEvidenceIndex } from "./review-evidence-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const gunzipAsync = promisify(gunzip);
@@ -772,72 +773,67 @@ async function verifyReviewEvidenceCompleteness() {
   }
 
   const reviewRoot = path.join(outputRoot, "review-artifacts");
-  const manifestPath = path.join(reviewRoot, "manifest.json");
-  let manifest;
+  if (await exists(path.join(reviewRoot, "manifest.json"))) {
+    throw new Error(
+      "The evidence payload must not contain a legacy authoritative manifest.",
+    );
+  }
+  const indexPath = path.join(reviewRoot, "evidence-index.json");
+  let evidenceIndex;
   try {
-    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    evidenceIndex = JSON.parse(await readFile(indexPath, "utf8"));
   } catch {
-    throw new Error("A valid product review manifest is required before evidence upload.");
+    throw new Error(
+      "A valid product review evidence index is required before evidence upload.",
+    );
   }
-  for (const field of [
-    "commit",
-    "branch",
-    "environment",
-    "version",
-    "buildTime",
-    "status",
-  ]) {
-    if (typeof manifest[field] !== "string" || !manifest[field].trim()) {
-      throw new Error(`The product review manifest is missing ${field}.`);
-    }
-  }
+  assertEvidenceIndex(evidenceIndex, {
+    ci: /^true$/i.test(process.env.CI || ""),
+  });
   if (
-    !Array.isArray(manifest.requiredScreenshots) ||
-    !Array.isArray(manifest.screenshotFiles) ||
-    !Array.isArray(manifest.missingScreenshots) ||
-    typeof manifest.screenshotsComplete !== "boolean"
+    !Array.isArray(evidenceIndex.requiredScreenshots) ||
+    !Array.isArray(evidenceIndex.screenshotFiles) ||
+    !Array.isArray(evidenceIndex.missingScreenshots) ||
+    typeof evidenceIndex.screenshotsComplete !== "boolean"
   ) {
-    throw new Error("The product review manifest has an invalid screenshot contract.");
+    throw new Error("The product review evidence index has an invalid screenshot contract.");
   }
   for (const screenshot of requiredReviewScreenshots) {
-    if (!manifest.requiredScreenshots.includes(screenshot)) {
+    if (!evidenceIndex.requiredScreenshots.includes(screenshot)) {
       throw new Error(`Required product review screenshot is undeclared: ${screenshot}`);
     }
   }
   if (
-    manifest.requiredScreenshots.length !== requiredReviewScreenshots.length ||
-    new Set(manifest.requiredScreenshots).size !== requiredReviewScreenshots.length
+    evidenceIndex.requiredScreenshots.length !== requiredReviewScreenshots.length ||
+    new Set(evidenceIndex.requiredScreenshots).size !== requiredReviewScreenshots.length
   ) {
-    throw new Error("The product review manifest changed the required screenshot set.");
+    throw new Error("The product review evidence index changed the required screenshot set.");
   }
 
   const missingScreenshots = requiredReviewScreenshots.filter(
-    (screenshot) => !manifest.screenshotFiles.includes(screenshot),
+    (screenshot) => !evidenceIndex.screenshotFiles.includes(screenshot),
   );
-  const declaredMissing = [...manifest.missingScreenshots].sort();
+  const declaredMissing = [...evidenceIndex.missingScreenshots].sort();
   if (
-    new Set(manifest.screenshotFiles).size !== manifest.screenshotFiles.length ||
-    new Set(manifest.missingScreenshots).size !== manifest.missingScreenshots.length ||
+    new Set(evidenceIndex.screenshotFiles).size !== evidenceIndex.screenshotFiles.length ||
+    new Set(evidenceIndex.missingScreenshots).size !== evidenceIndex.missingScreenshots.length ||
     JSON.stringify(declaredMissing) !== JSON.stringify([...missingScreenshots].sort()) ||
-    manifest.screenshotsComplete !== (missingScreenshots.length === 0)
+    evidenceIndex.screenshotsComplete !== (missingScreenshots.length === 0)
   ) {
-    throw new Error("The product review manifest misstates screenshot completeness.");
+    throw new Error("The product review evidence index misstates screenshot completeness.");
   }
 
-  const status = manifest.status.toLowerCase();
-  if (!["success", "failure", "cancelled", "local"].includes(status)) {
-    throw new Error("The product review manifest contains an unsupported run status.");
-  }
+  const status = evidenceIndex.status.toLowerCase();
   if ((status === "success" || status === "local") && missingScreenshots.length > 0) {
     throw new Error("Successful product review evidence requires every screenshot.");
   }
 
   metrics.reviewStatus = status;
-  metrics.screenshotsComplete = manifest.screenshotsComplete;
-  metrics.screenshotCount = manifest.screenshotFiles.length;
+  metrics.screenshotsComplete = evidenceIndex.screenshotsComplete;
+  metrics.screenshotCount = evidenceIndex.screenshotFiles.length;
   metrics.missingReviewScreenshots = missingScreenshots;
 
-  for (const screenshot of manifest.screenshotFiles) {
+  for (const screenshot of evidenceIndex.screenshotFiles) {
     assertSafeReviewRelativePath(screenshot);
     const screenshotPath = path.join(reviewRoot, ...screenshot.split("/"));
     let stats;

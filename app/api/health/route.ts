@@ -14,10 +14,14 @@ export async function GET(): Promise<Response> {
         (select count(*) from project_members limit 1) as memberships_count
     `);
 
-    return jsonResponse(
-      { status: "ok" },
-      { headers: { "cache-control": "no-store" } },
-    );
+    const headers = new Headers({ "cache-control": "no-store" });
+    const commitSha = process.env.NEXT_PUBLIC_COMMIT_SHA?.trim();
+    if (commitSha && /^[0-9a-f]{40}$/i.test(commitSha)) {
+      // A revision identifier is non-secret deployment provenance. Keep it in
+      // a header so the established minimal health body remains stable.
+      headers.set("x-projectai-commit-sha", commitSha.toLowerCase());
+    }
+    return jsonResponse({ status: "ok" }, { headers });
   } catch {
     return jsonResponse(
       { status: "unavailable" },

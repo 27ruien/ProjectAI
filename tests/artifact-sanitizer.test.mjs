@@ -25,6 +25,29 @@ const requiredScreenshots = [
   "screenshots/project-access-denied.png",
   "screenshots/viewer-readonly.png",
 ];
+const headSha = "a".repeat(40);
+const testedMergeSha = "b".repeat(40);
+
+function reviewEvidenceIndex(overrides = {}) {
+  return {
+    schemaVersion: 2,
+    eventName: "pull_request",
+    headSha,
+    testedMergeSha,
+    stagingSha: null,
+    branch: "test-branch",
+    workflowRunId: "123456",
+    environment: "test",
+    version: "test",
+    buildTime: "2026-07-13T00:00:00Z",
+    status: "failure",
+    requiredScreenshots,
+    screenshotFiles: [],
+    missingScreenshots: requiredScreenshots,
+    screenshotsComplete: false,
+    ...overrides,
+  };
+}
 
 function sanitizerEnvironment(overrides = {}) {
   return {
@@ -415,19 +438,12 @@ test("requires complete successful CI screenshots but accepts explicit failure e
   try {
     await mkdir(reviewRoot);
     await writeFile(
-      path.join(reviewRoot, "manifest.json"),
-      JSON.stringify({
-        commit: "test-commit",
-        branch: "test-branch",
-        environment: "test",
-        version: "test",
-        buildTime: "2026-07-13T00:00:00Z",
-        status: "success",
-        requiredScreenshots,
-        screenshotFiles: [],
-        missingScreenshots: requiredScreenshots,
-        screenshotsComplete: false,
-      }),
+      path.join(reviewRoot, "evidence-index.json"),
+      JSON.stringify(
+        reviewEvidenceIndex({
+          status: "success",
+        }),
+      ),
     );
     await assert.rejects(
       execFileAsync(process.execPath, [sanitizer.pathname], {
@@ -440,19 +456,8 @@ test("requires complete successful CI screenshots but accepts explicit failure e
     );
 
     await writeFile(
-      path.join(reviewRoot, "manifest.json"),
-      JSON.stringify({
-        commit: "test-commit",
-        branch: "test-branch",
-        environment: "test",
-        version: "test",
-        buildTime: "2026-07-13T00:00:00Z",
-        status: "failure",
-        requiredScreenshots,
-        screenshotFiles: [],
-        missingScreenshots: requiredScreenshots,
-        screenshotsComplete: false,
-      }),
+      path.join(reviewRoot, "evidence-index.json"),
+      JSON.stringify(reviewEvidenceIndex()),
     );
     await execFileAsync(process.execPath, [sanitizer.pathname], {
       cwd: root,
@@ -472,7 +477,7 @@ test("requires complete successful CI screenshots but accepts explicit failure e
   }
 });
 
-test("accepts CI evidence only when the manifest and required screenshots exist", async () => {
+test("accepts CI evidence only when the index and required screenshots exist", async () => {
   const { root } = await fixture();
   const reviewRoot = path.join(root, "review-artifacts");
   const screenshotsRoot = path.join(reviewRoot, "screenshots");
@@ -486,19 +491,15 @@ test("accepts CI evidence only when the manifest and required screenshots exist"
       await writeFile(path.join(reviewRoot, screenshot), onePixelPng);
     }
     await writeFile(
-      path.join(reviewRoot, "manifest.json"),
-      JSON.stringify({
-        commit: "test-commit",
-        branch: "test-branch",
-        environment: "test",
-        version: "test",
-        buildTime: "2026-07-13T00:00:00Z",
-        status: "success",
-        requiredScreenshots,
-        screenshotFiles: requiredScreenshots,
-        missingScreenshots: [],
-        screenshotsComplete: true,
-      }),
+      path.join(reviewRoot, "evidence-index.json"),
+      JSON.stringify(
+        reviewEvidenceIndex({
+          status: "success",
+          screenshotFiles: requiredScreenshots,
+          missingScreenshots: [],
+          screenshotsComplete: true,
+        }),
+      ),
     );
     await execFileAsync(process.execPath, [sanitizer.pathname], {
       cwd: root,
@@ -511,6 +512,43 @@ test("accepts CI evidence only when the manifest and required screenshots exist"
       ),
     );
     assert.equal(reportJson.status, "passed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects legacy commit provenance and an authoritative manifest in payload A", async () => {
+  const { root } = await fixture();
+  const reviewRoot = path.join(root, "review-artifacts");
+  try {
+    await mkdir(reviewRoot);
+    await writeFile(
+      path.join(reviewRoot, "evidence-index.json"),
+      JSON.stringify(reviewEvidenceIndex({ commit: headSha })),
+    );
+    await assert.rejects(
+      execFileAsync(process.execPath, [sanitizer.pathname], {
+        cwd: root,
+        env: sanitizerEnvironment({ CI: "true" }),
+      }),
+      /legacy product review commit field/i,
+    );
+
+    await writeFile(
+      path.join(reviewRoot, "evidence-index.json"),
+      JSON.stringify(reviewEvidenceIndex()),
+    );
+    await writeFile(
+      path.join(reviewRoot, "manifest.json"),
+      JSON.stringify({ artifactId: "123" }),
+    );
+    await assert.rejects(
+      execFileAsync(process.execPath, [sanitizer.pathname], {
+        cwd: root,
+        env: sanitizerEnvironment({ CI: "true" }),
+      }),
+      /must not contain a legacy authoritative manifest/i,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
