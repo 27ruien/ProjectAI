@@ -344,23 +344,17 @@ fi
 
 REMOTE_PREFLIGHT
 
-REMOTE_DOCKER_PLATFORM="$(
-  "${SSH[@]}" bash -s <<'REMOTE_PLATFORM'
-set -Eeuo pipefail
-docker_os="$(sudo docker version --format '{{.Server.Os}}')"
-docker_arch="$(sudo docker version --format '{{.Server.Arch}}')"
-[[ "$docker_os" == "linux" ]]
-case "$docker_arch" in
-  amd64|x86_64) docker_arch="amd64" ;;
-  arm64|aarch64) docker_arch="arm64" ;;
-  *)
-    printf 'Unsupported remote Docker architecture: %s\n' "$docker_arch" >&2
-    exit 1
-    ;;
-esac
-printf 'linux/%s\n' "$docker_arch"
-REMOTE_PLATFORM
+REMOTE_DOCKER_INFO="$(
+  "${SSH[@]}" "sudo docker info --format '{{.OSType}}|{{.Architecture}}'"
 )" || fail "Unable to determine the remote Docker platform"
+IFS='|' read -r REMOTE_DOCKER_OS REMOTE_DOCKER_ARCH <<<"$REMOTE_DOCKER_INFO"
+[[ "$REMOTE_DOCKER_OS" == "linux" ]] || fail "Unsupported remote Docker OS: ${REMOTE_DOCKER_OS:-missing}"
+case "$REMOTE_DOCKER_ARCH" in
+  amd64|x86_64) REMOTE_DOCKER_ARCH="amd64" ;;
+  arm64|aarch64) REMOTE_DOCKER_ARCH="arm64" ;;
+  *) fail "Unsupported remote Docker architecture: ${REMOTE_DOCKER_ARCH:-missing}" ;;
+esac
+REMOTE_DOCKER_PLATFORM="linux/${REMOTE_DOCKER_ARCH}"
 [[ "$REMOTE_DOCKER_PLATFORM" == "linux/amd64" || "$REMOTE_DOCKER_PLATFORM" == "linux/arm64" ]] \
   || fail "Unsupported remote Docker platform: ${REMOTE_DOCKER_PLATFORM}"
 
