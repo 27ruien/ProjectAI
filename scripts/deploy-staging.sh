@@ -370,34 +370,58 @@ read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
 [[ "$production_health" == "healthy" || "$production_health" == "none" ]] \
   || fail "Production container is not healthy before staging deployment"
 
-PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- "$CONTAINER_NAME" <<'REMOTE_IMAGE'
+PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- "$CONTAINER_NAME" "$BASE_PATH" <<'REMOTE_IMAGE'
 set -Eeuo pipefail
 container_name="$1"
+base_path="$2"
 image=""
-requires_database="0"
+health_path="/login"
 if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
   image="$(sudo docker container inspect --format '{{.Image}}' "$container_name")"
-  if sudo docker container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" \
-    | grep -q '^DATABASE_URL='; then
-    requires_database="1"
+  running="$(sudo docker container inspect --format '{{.State.Running}}' "$container_name")"
+  health="$(sudo docker container inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name")"
+  [[ "$running" == "true" && "$health" == "healthy" ]]
+  configured_health_path="$(
+    sudo docker container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_name" \
+      | sed -n 's/^STAGING_HEALTHCHECK_PATH=//p'
+  )"
+  if [[ -n "$configured_health_path" ]]; then
+    health_path="$configured_health_path"
+  elif curl --fail --silent --max-time 5 \
+    "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'; then
+    health_path="/api/health"
   fi
+  case "$health_path" in
+    /api/health)
+      curl --fail --silent --max-time 5 \
+        "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'
+      ;;
+    /login)
+      curl --fail --silent --max-time 5 \
+        "http://127.0.0.1:3101${base_path}/login" >/dev/null
+      ;;
+    *)
+      printf 'Unsupported previous Staging health path: %s\n' "$health_path" >&2
+      exit 1
+      ;;
+  esac
 else
   sudo docker info >/dev/null
 fi
-printf '%s|%s\n' "$image" "$requires_database"
+printf '%s|%s\n' "$image" "$health_path"
 REMOTE_IMAGE
 )" || fail "Unable to inspect the previous Staging image safely"
-IFS='|' read -r PREVIOUS_STAGING_IMAGE PREVIOUS_STAGING_REQUIRES_DATABASE <<<"$PREVIOUS_STAGING_STATE"
+IFS='|' read -r PREVIOUS_STAGING_IMAGE PREVIOUS_STAGING_HEALTH_PATH <<<"$PREVIOUS_STAGING_STATE"
 [[ -z "$PREVIOUS_STAGING_IMAGE" || "$PREVIOUS_STAGING_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || fail "Unable to capture the immutable previous Staging image ID"
-[[ "$PREVIOUS_STAGING_REQUIRES_DATABASE" == "0" || "$PREVIOUS_STAGING_REQUIRES_DATABASE" == "1" ]] \
-  || fail "Unable to determine the previous Staging database dependency"
+[[ "$PREVIOUS_STAGING_HEALTH_PATH" == "/login" || "$PREVIOUS_STAGING_HEALTH_PATH" == "/api/health" ]] \
+  || fail "Unable to determine the previous Staging health contract"
 
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
     "$CONTAINER_NAME" "$DB_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER" \
-    "$PREVIOUS_STAGING_IMAGE" "$PREVIOUS_STAGING_REQUIRES_DATABASE" \
+    "$PREVIOUS_STAGING_IMAGE" "$PREVIOUS_STAGING_HEALTH_PATH" \
     "$COMMIT_SHA" "$APP_VERSION" "$BUILD_TIME" <<'REMOTE_ROLLBACK'
 set -Eeuo pipefail
 remote_dir="$1"
@@ -409,21 +433,20 @@ db_container_name="$6"
 base_path="$7"
 deploy_marker="$8"
 previous_image="$9"
-previous_requires_database="${10}"
+previous_health_path="${10}"
 commit_sha="${11}"
 app_version="${12}"
 build_time="${13}"
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
-[[ "$previous_requires_database" == "0" || "$previous_requires_database" == "1" ]]
+[[ "$previous_health_path" == "/login" || "$previous_health_path" == "/api/health" ]]
 sudo test -e "$deploy_marker" || exit 0
 cd "$remote_dir"
 
-rollback_health_path="/login"
-if [[ "$previous_requires_database" == "1" ]]; then
-  rollback_health_path="/api/health"
-fi
+rollback_health_path="$previous_health_path"
+previous_requires_database="0"
+[[ "$previous_health_path" != "/api/health" ]] || previous_requires_database="1"
 
 compose=(
   sudo env
@@ -683,6 +706,20 @@ compose=(
 )
 trap '${compose[@]} ps >&2 || true' ERR
 
+operations=(
+  sudo docker run
+  --rm
+  --network projectai-staging-internal
+  --cpus 1
+  --memory 512m
+  --pids-limit 256
+  --log-driver json-file
+  --log-opt max-size=10m
+  --log-opt max-file=2
+  --env-file "$env_file"
+  --env NODE_ENV=production
+)
+
 if sudo docker inspect "$db_container_name" >/dev/null 2>&1; then
   existing_db_mount="$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$db_container_name")"
   [[ "$existing_db_mount" == "volume|projectai-staging-postgres|/var/lib/postgresql/data" ]] || {
@@ -788,8 +825,7 @@ while IFS= read -r obsolete_backup; do
 done <<<"$obsolete_backups"
 
 printf 'Applying committed PostgreSQL migrations.\n'
-"${compose[@]}" --profile operations run --rm --no-deps --no-build --pull never \
-  projectai-migrate node --input-type=module -e '
+"${operations[@]}" "$db_tools_image_id" node --input-type=module -e '
     import pg from "pg";
     const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await client.connect();
@@ -809,11 +845,9 @@ printf 'Applying committed PostgreSQL migrations.\n'
       await client.end();
     }
   '
-"${compose[@]}" --profile operations run --rm --no-deps --no-build --pull never \
-  projectai-migrate npm run db:migrate
+"${operations[@]}" "$db_tools_image_id" npm run db:migrate
 printf 'Applying idempotent Staging seed data.\n'
-"${compose[@]}" --profile operations run --rm --no-deps --no-build --pull never \
-  projectai-migrate npm run db:seed
+"${operations[@]}" "$db_tools_image_id" npm run db:seed
 
 "${compose[@]}" up --detach --no-build --pull never projectai-staging
 
@@ -856,13 +890,13 @@ grep -q "${commit_sha:0:8}" <<<"$html"
 grep -q 'noindex' <<<"$html"
 
 printf 'Verifying login, Session refresh/logout, role permissions, and project isolation.\n'
-"${compose[@]}" --profile operations run --rm --no-deps --no-build --pull never \
+"${operations[@]}" \
   --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   --env "EXPECTED_COOKIE_PATH=${base_path}" \
   --env "EXPECTED_COOKIE_PREFIX=projectai_staging" \
   --env "REQUIRE_SECURE_COOKIE=1" \
-  projectai-migrate node scripts/verify-auth-boundaries.mjs
+  "$db_tools_image_id" node scripts/verify-auth-boundaries.mjs
 
 css_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.css" <<<"$html" | sed -n '1p')"
 js_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.js" <<<"$html" | sed -n '1p')"
@@ -953,51 +987,45 @@ assert_public_mime "${PUBLIC_STAGING_URL}/og.png" png
 
 log "Validating public login, Session lifecycle, roles, and cross-project isolation"
 "${SSH[@]}" bash -s -- \
-  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
-  "$PUBLIC_STAGING_URL" "$BASE_PATH" "$COMMIT_SHA" "$APP_VERSION" "$BUILD_TIME" \
-  "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" "$DEPLOY_MARKER" <<'REMOTE_PUBLIC_AUTH'
+  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$PUBLIC_STAGING_URL" "$BASE_PATH" \
+  "$DB_TOOLS_IMAGE_ID" "$DEPLOY_MARKER" <<'REMOTE_PUBLIC_AUTH'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
-compose_project="$3"
-compose_file="$4"
-public_base_url="$5"
-base_path="$6"
-commit_sha="$7"
-app_version="$8"
-build_time="$9"
-app_image_ref="${10}"
-db_tools_image_ref="${11}"
-deploy_marker="${12}"
+public_base_url="$3"
+base_path="$4"
+db_tools_image_id="$5"
+deploy_marker="$6"
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
-[[ "$compose_project" == "projectai-staging" ]]
 [[ "$public_base_url" == "https://gridworks.cn/tool/projectai-staging" ]]
 [[ "$base_path" == "/tool/projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
+[[ "$db_tools_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
 sudo test -e "$deploy_marker"
-cd "$remote_dir"
+[[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_id")" == "$db_tools_image_id" ]]
 
-compose=(
-  sudo env
-  "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
-  "NEXT_PUBLIC_APP_VERSION=$app_version"
-  "NEXT_PUBLIC_BUILD_TIME=$build_time"
-  "STAGING_APP_IMAGE=$app_image_ref"
-  "STAGING_DB_TOOLS_IMAGE=$db_tools_image_ref"
-  docker compose
+operations=(
+  sudo docker run
+  --rm
+  --network projectai-staging-internal
+  --cpus 1
+  --memory 512m
+  --pids-limit 256
+  --log-driver json-file
+  --log-opt max-size=10m
+  --log-opt max-file=2
   --env-file "$env_file"
-  --project-name "$compose_project"
-  --file "$compose_file"
+  --env NODE_ENV=production
 )
 
-"${compose[@]}" --profile operations run --rm --no-deps --no-build --pull never \
+"${operations[@]}" \
   --env "APP_BASE_URL=$public_base_url" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   --env "EXPECTED_COOKIE_PATH=$base_path" \
   --env "EXPECTED_COOKIE_PREFIX=projectai_staging" \
   --env "REQUIRE_SECURE_COOKIE=1" \
-  projectai-migrate node scripts/verify-auth-boundaries.mjs
+  "$db_tools_image_id" node scripts/verify-auth-boundaries.mjs
 REMOTE_PUBLIC_AUTH
 
 log "Confirming Production remains healthy"
