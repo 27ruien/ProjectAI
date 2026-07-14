@@ -136,6 +136,13 @@ jobs:
           mkdir -p test-logs
           npm run test:artifacts 2>&1 | tee test-logs/artifact-sanitizer.log
 
+      - name: Staging deployment safety contract tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:deployment 2>&1 | tee test-logs/deployment-contract.log
+
       - name: Playwright identity, isolation, and MVP flows
         shell: bash
         run: |

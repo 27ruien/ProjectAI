@@ -718,6 +718,7 @@ partial_backup="${host_backup}.partial"
 
 database_size="$(sudo docker exec "$db_container_name" sh -ec '
   PGPASSWORD="$POSTGRES_PASSWORD" psql \
+    --host=127.0.0.1 \
     --username="$POSTGRES_USER" \
     --dbname="$POSTGRES_DB" \
     --tuples-only \
@@ -751,14 +752,18 @@ if ! sudo docker exec "$db_container_name" sh -ec '
     --format=custom \
     --no-owner \
     --no-acl \
+    --host=127.0.0.1 \
     --username="$POSTGRES_USER" \
-    --dbname="$POSTGRES_DB" \
-    --file=-
+    --dbname="$POSTGRES_DB"
 ' | sudo tee "$partial_backup" >/dev/null; then
   sudo rm -f "$partial_backup" || true
   exit 1
 fi
-sudo test -s "$partial_backup"
+if ! sudo test -s "$partial_backup"; then
+  printf 'Staging backup archive is empty.\n' >&2
+  sudo rm -f "$partial_backup" || true
+  exit 1
+fi
 if ! sudo cat "$partial_backup" \
   | sudo docker exec --interactive "$db_container_name" pg_restore --list >/dev/null; then
   printf 'Staging backup archive validation failed.\n' >&2
