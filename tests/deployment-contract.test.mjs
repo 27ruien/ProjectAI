@@ -71,6 +71,11 @@ test("rollback preserves the previous image health contract", async () => {
   assert.match(captureBlock, /STAGING_HEALTHCHECK_PATH=/);
   assert.match(captureBlock, /running.*healthy/);
   assert.doesNotMatch(captureBlock, /grep -q '\^DATABASE_URL='/);
+  assert.doesNotMatch(
+    captureBlock,
+    /\bcase\b/,
+    "Bash 3.2 misparses case blocks inside this heredoc command substitution",
+  );
   assert.match(script, /rollback_health_path="\$previous_health_path"/);
 });
 

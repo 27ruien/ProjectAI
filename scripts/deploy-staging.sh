@@ -391,20 +391,16 @@ if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
     "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'; then
     health_path="/api/health"
   fi
-  case "$health_path" in
-    /api/health)
-      curl --fail --silent --max-time 5 \
-        "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'
-      ;;
-    /login)
-      curl --fail --silent --max-time 5 \
-        "http://127.0.0.1:3101${base_path}/login" >/dev/null
-      ;;
-    *)
-      printf 'Unsupported previous Staging health path: %s\n' "$health_path" >&2
-      exit 1
-      ;;
-  esac
+  if [[ "$health_path" == "/api/health" ]]; then
+    curl --fail --silent --max-time 5 \
+      "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'
+  elif [[ "$health_path" == "/login" ]]; then
+    curl --fail --silent --max-time 5 \
+      "http://127.0.0.1:3101${base_path}/login" >/dev/null
+  else
+    printf 'Unsupported previous Staging health path: %s\n' "$health_path" >&2
+    exit 1
+  fi
 else
   sudo docker info >/dev/null
 fi
