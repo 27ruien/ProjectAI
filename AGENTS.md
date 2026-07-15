@@ -40,12 +40,17 @@
 - 修改 Nginx 前必须备份，且只有 `nginx -t` 通过后才能 reload。
 - Staging 与 Production 必须使用独立目录、容器、端口、basePath、Cookie 前缀/路径、浏览器存储命名空间和数据库；Staging PostgreSQL 不得发布宿主机端口。
 
-## v0.3 范围规则
+## v0.4 范围规则
 
-- v0.3 只真实化用户、credential、Session、项目、项目成员关系、项目基础信息和审计事件。
-- 项目资料、知识问答、需求、Scope、Action、会议、风险和 AI execution 仍为 Mock；必须在服务端确认项目访问权后按精确 `projectId` 过滤，再传给客户端。
-- 本轮禁止接入文件上传、对象存储、解析、OCR、Embedding、pgvector、RAG、Reranker、真实模型或 Provider Key。
-- 本轮只允许部署 Staging；允许在本地/CI 生成 production build 做验证，但不得在 Production 主机上构建、重启、修改或重新部署本应用。
+- v0.4 只在 v0.3 的身份、项目和审计基础上，真实化项目资料、文件版本、私有 S3-compatible 对象存储、完整性校验、授权下载、归档/恢复和存储一致性检查。
+- 本轮文件链路只包含：上传 → 安全存储 → 文件记录 → 版本管理 → 权限下载。项目知识问答、需求、Scope、Action、会议、风险和 AI execution 仍为 Mock；必须在服务端确认项目访问权后按精确 `projectId` 过滤，再传给客户端。
+- 文件正文不得写入 PostgreSQL、Git、`public/` 或应用容器本地持久目录；对象 Key 只能由服务端生成且不得包含原始文件名、用户/客户/项目名称、Session 或路径片段。
+- 对象存储必须私有，凭据仅存服务端 Secret；浏览器不得获得 Bucket、Object Key、内部 Endpoint、Access Key、Secret 或可绕过应用授权的对象 URL。
+- 允许上传的第一版类型仅为 PDF、DOCX、XLSX、PPTX、TXT、Markdown；必须同时验证扩展名、声明 MIME、文件签名、大小和 Office Open XML 容器结构，不执行宏或解析正文。
+- `system_admin`、`project_manager`、`project_member` 可上传；`viewer` 只可查看和下载。只有 `system_admin` 与 `project_manager` 可归档、恢复和切换当前版本；所有限制必须由服务端执行。
+- PostgreSQL 与对象存储的写入必须采用 pending/stored/failed 状态与补偿逻辑；reconciliation 默认只读，显式 apply 也不得针对 Production 自动执行或删除仍被数据库引用的对象。
+- 本轮禁止文档正文解析、OCR、分块、全文检索、Embedding、pgvector、Hybrid Search、RAG、Reranker、真实模型、Provider Key、自动总结、自动 Action/风险/周报。
+- 本轮只允许部署 Staging，并为 Staging 使用独立私有 MinIO、Bucket、命名卷和备份；允许在本地/CI 生成 production build 做验证，但不得在 Production 主机上构建、重启、迁移、修改或重新部署本应用。
 
 ## Review Guidelines
 

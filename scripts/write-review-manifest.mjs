@@ -28,6 +28,12 @@ const requiredScreenshots = [
   "screenshots/project-a-overview.png",
   "screenshots/project-access-denied.png",
   "screenshots/viewer-readonly.png",
+  "screenshots/documents-empty.png",
+  "screenshots/documents-upload-dialog.png",
+  "screenshots/documents-uploaded.png",
+  "screenshots/document-version-history.png",
+  "screenshots/viewer-documents-readonly.png",
+  "screenshots/document-upload-rejected.png",
 ];
 
 const routes = {
@@ -37,6 +43,7 @@ const routes = {
   projectAOverview: "/projects/project-001/overview",
   projectAccessDenied: "/projects/project-002/overview",
   viewerReadonly: "/projects/project-001/overview",
+  documents: "/projects/project-001/documents",
 };
 
 const missingScreenshots = requiredScreenshots.filter(
@@ -69,7 +76,12 @@ const evidenceIndex = {
     process.env.NEXT_PUBLIC_BUILD_TIME?.trim() ||
     (ci ? "" : new Date().toISOString()),
   viewport: { width: 1440, height: 1000 },
-  testedUsers: ["system_admin", "project_manager_a", "viewer_a"],
+  testedUsers: [
+    "system_admin",
+    "project_manager_a",
+    "project_member_a",
+    "viewer_a",
+  ],
   routes,
   screenshotFiles,
   requiredScreenshots,

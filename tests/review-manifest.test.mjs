@@ -50,10 +50,10 @@ function ciEnvironment(overrides = {}) {
   return isolatedEnvironment({
     CI: "true",
     NEXT_PUBLIC_APP_ENV: "test",
-    NEXT_PUBLIC_APP_VERSION: "0.3.0-staging",
+    NEXT_PUBLIC_APP_VERSION: "0.4.0-staging",
     NEXT_PUBLIC_BUILD_TIME: buildTime,
     REVIEW_ARTIFACT_STATUS: "failure",
-    REVIEW_BRANCH: "agent/auth-project-isolation",
+    REVIEW_BRANCH: "agent/project-files-foundation",
     REVIEW_EVENT_NAME: "pull_request",
     REVIEW_HEAD_SHA: headSha,
     REVIEW_STAGING_SHA: stagingSha,
@@ -84,9 +84,16 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     assert.equal(index.headSha, headSha);
     assert.equal(index.testedMergeSha, testedMergeSha);
     assert.equal(index.stagingSha, stagingSha);
-    assert.equal(index.branch, "agent/auth-project-isolation");
+    assert.equal(index.branch, "agent/project-files-foundation");
     assert.equal(index.workflowRunId, "29310000000");
-    assert.equal(index.version, "0.3.0-staging");
+    assert.equal(index.version, "0.4.0-staging");
+    assert.ok(index.requiredScreenshots.includes("screenshots/documents-empty.png"));
+    assert.ok(
+      index.requiredScreenshots.includes(
+        "screenshots/document-upload-rejected.png",
+      ),
+    );
+    assert.equal(index.requiredScreenshots.length, 12);
     assert.equal(index.buildTime, buildTime);
     assert.equal(Object.hasOwn(index, "commit"), false);
     assert.equal(Object.hasOwn(index, "artifactId"), false);
@@ -210,10 +217,10 @@ test("publishes a separate authoritative manifest after payload upload", async (
         headSha,
         testedMergeSha,
         stagingSha: null,
-        branch: "agent/auth-project-isolation",
+        branch: "agent/project-files-foundation",
         workflowRunId: "29310000000",
         artifactId,
-        version: "0.3.0-staging",
+        version: "0.4.0-staging",
         buildTime,
       },
     );

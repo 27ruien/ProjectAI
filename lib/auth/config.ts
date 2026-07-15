@@ -46,6 +46,14 @@ function getTrustedOrigins(authBaseUrl: string): string[] {
   );
 }
 
+function getLoginRateLimitMax(): number {
+  if (process.env.NEXT_PUBLIC_APP_ENV?.toLowerCase() !== "test") return 10;
+  const configured = Number(process.env.AUTH_TEST_LOGIN_RATE_LIMIT_MAX);
+  return Number.isInteger(configured) && configured >= 10 && configured <= 1_000
+    ? configured
+    : 10;
+}
+
 export function getTrustedAuthOrigins(): string[] {
   const appBasePath = normalizeBasePath(process.env.NEXT_PUBLIC_BASE_PATH);
   return getTrustedOrigins(getAuthBaseUrl(appBasePath));
@@ -120,7 +128,7 @@ function createAuth() {
       window: 60,
       max: 100,
       customRules: {
-        "/sign-in/email": { window: 60, max: 10 },
+        "/sign-in/email": { window: 60, max: getLoginRateLimitMax() },
       },
     },
     advanced: {

@@ -16,7 +16,7 @@ const expectedCookiePath = process.env.EXPECTED_COOKIE_PATH || new URL(baseUrl).
 const requireSecureCookie = process.env.REQUIRE_SECURE_COOKIE !== "0";
 const requestOrigin = process.env.AUTH_REQUEST_ORIGIN || new URL(baseUrl).origin;
 const expectedCookiePrefix = process.env.EXPECTED_COOKIE_PREFIX || process.env.AUTH_COOKIE_PREFIX;
-const verifierUserAgent = `projectai-staging-boundary-verifier/0.3/${randomUUID()}`;
+const verifierUserAgent = `projectai-staging-boundary-verifier/0.4/${randomUUID()}`;
 
 const actors = {
   admin: {

@@ -10,6 +10,8 @@ export interface ProjectUiPermissions {
   canEditProject: boolean;
   canManageMembers: boolean;
   canViewAudit: boolean;
+  canUploadDocuments: boolean;
+  canManageDocuments: boolean;
 }
 
 export interface AuthorizedProjectSummary {

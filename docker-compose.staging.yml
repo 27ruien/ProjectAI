@@ -33,6 +33,95 @@ services:
       retries: 10
       start_period: 20s
 
+  projectai-minio:
+    image: ${STAGING_MINIO_IMAGE:-quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z}
+    container_name: project-ai-os-staging-minio
+    restart: unless-stopped
+    init: true
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    command:
+      - server
+      - /data
+      - --console-address
+      - :9001
+    volumes:
+      - projectai-staging-minio:/data
+    networks:
+      - projectai-staging-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "--fail",
+          "--silent",
+          "--show-error",
+          "http://127.0.0.1:9000/minio/health/live"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  projectai-minio-init:
+    image: ${STAGING_MINIO_CLIENT_IMAGE:-quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z}
+    restart: "no"
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        umask 077
+        config_dir="$$(mktemp -d /tmp/projectai-mc.XXXXXX)"
+        policy_file="$$(mktemp /tmp/projectai-policy.XXXXXX)"
+        trap 'rm -rf "$${config_dir}" "$${policy_file}"' EXIT
+        mc --quiet --config-dir "$${config_dir}" alias set projectai-admin "$${OBJECT_STORAGE_ENDPOINT}" "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc --quiet --config-dir "$${config_dir}" mb --ignore-existing "projectai-admin/$${OBJECT_STORAGE_BUCKET}"
+        mc --quiet --config-dir "$${config_dir}" anonymous set none "projectai-admin/$${OBJECT_STORAGE_BUCKET}"
+        if ! mc --quiet --config-dir "$${config_dir}" admin user info projectai-admin "$${OBJECT_STORAGE_ACCESS_KEY}" >/dev/null 2>&1; then
+          mc --quiet --config-dir "$${config_dir}" admin user add projectai-admin "$${OBJECT_STORAGE_ACCESS_KEY}" "$${OBJECT_STORAGE_SECRET_KEY}"
+        fi
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::'"$${OBJECT_STORAGE_BUCKET}"'"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::'"$${OBJECT_STORAGE_BUCKET}"'/projects/*"]}]}' > "$${policy_file}"
+        mc --quiet --config-dir "$${config_dir}" admin policy create projectai-admin projectai-staging-files "$${policy_file}"
+        mc --quiet --config-dir "$${config_dir}" admin policy attach projectai-admin projectai-staging-files --user "$${OBJECT_STORAGE_ACCESS_KEY}"
+        mc --quiet --config-dir "$${config_dir}" alias set projectai-app "$${OBJECT_STORAGE_ENDPOINT}" "$${OBJECT_STORAGE_ACCESS_KEY}" "$${OBJECT_STORAGE_SECRET_KEY}"
+        mc --quiet --config-dir "$${config_dir}" ls "projectai-app/$${OBJECT_STORAGE_BUCKET}" >/dev/null
+        privacy="$$(mc --config-dir "$${config_dir}" anonymous get "projectai-admin/$${OBJECT_STORAGE_BUCKET}" 2>/dev/null)"
+        case "$${privacy}" in
+          *private*) ;;
+          *) printf 'Staging object-storage bucket privacy verification failed.\n' >&2; exit 1 ;;
+        esac
+    depends_on:
+      projectai-minio:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+
   projectai-migrate:
     profiles:
       - operations
@@ -75,6 +164,86 @@ services:
         max-file: "2"
     command: npm run db:migrate
 
+  projectai-storage-ops:
+    profiles:
+      - operations
+    image: ${STAGING_DB_TOOLS_IMAGE:-project-ai-os-staging-db-tools:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    build:
+      context: .
+      target: db-tools
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: staging
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+    networks:
+      - projectai-staging-internal
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    command: npm run storage:verify
+
+  projectai-file-smoke:
+    profiles:
+      - operations
+    image: ${STAGING_DB_TOOLS_IMAGE:-project-ai-os-staging-db-tools:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    build:
+      context: .
+      target: db-tools
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: staging
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      SEED_MANAGER_A_EMAIL: ${SEED_MANAGER_A_EMAIL:?SEED_MANAGER_A_EMAIL is required}
+      SEED_MANAGER_A_PASSWORD: ${SEED_MANAGER_A_PASSWORD:?SEED_MANAGER_A_PASSWORD is required}
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+      projectai-staging:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    command: npm run storage:smoke
+
   projectai-staging:
     image: ${STAGING_APP_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     build:
@@ -83,7 +252,7 @@ services:
       args:
         NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
         NEXT_PUBLIC_APP_ENV: staging
-        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.3.0-staging}
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.4.0-staging}
         NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     container_name: project-ai-os-staging
@@ -107,16 +276,29 @@ services:
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:?BETTER_AUTH_URL is required}
       AUTH_COOKIE_PREFIX: ${AUTH_COOKIE_PREFIX:?AUTH_COOKIE_PREFIX is required}
       AUTH_TRUSTED_ORIGINS: ${AUTH_TRUSTED_ORIGINS:?AUTH_TRUSTED_ORIGINS is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      UPLOAD_ALLOWED_EXTENSIONS: ${UPLOAD_ALLOWED_EXTENSIONS:-pdf,docx,xlsx,pptx,txt,md}
       STAGING_HEALTHCHECK_PATH: ${STAGING_HEALTHCHECK_PATH:-/api/health}
       NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.3.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.4.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
       AI_PROVIDER: mock
     depends_on:
       projectai-postgres:
         condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
     networks:
       - projectai-staging-internal
     ports:
@@ -137,6 +319,8 @@ services:
 volumes:
   projectai-staging-postgres:
     name: projectai-staging-postgres
+  projectai-staging-minio:
+    name: projectai-staging-minio
 
 networks:
   projectai-staging-internal:

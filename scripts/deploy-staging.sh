@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/auth-project-isolation"
+readonly EXPECTED_BRANCH="agent/project-files-foundation"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
 COMPOSE_FILE="docker-compose.staging.yml"
 CONTAINER_NAME="project-ai-os-staging"
 DB_CONTAINER_NAME="project-ai-os-staging-postgres"
+MINIO_CONTAINER_NAME="project-ai-os-staging-minio"
+MINIO_VOLUME_NAME="projectai-staging-minio"
+MINIO_BUCKET_NAME="projectai-staging-files"
+readonly MINIO_IMAGE_REF="quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
+readonly MINIO_CLIENT_IMAGE_REF="quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"
 REMOTE_ENV_FILE="${REMOTE_DIR}/.env.auth-staging"
 DEPLOY_MARKER="${REMOTE_DIR}/.staging-deploy-in-progress"
 DEPLOY_LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
@@ -162,16 +167,20 @@ LOCK_ACQUIRED=1
 log "Checking isolated remote prerequisites and protected environment file"
 "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$CONTAINER_NAME" "$DB_CONTAINER_NAME" \
+  "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
   "$COMPOSE_PROJECT" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
 container_name="$3"
 db_container_name="$4"
-compose_project="$5"
-deploy_marker="$6"
-deploy_lock="$7"
-deploy_id="$8"
+minio_container_name="$5"
+minio_volume_name="$6"
+minio_bucket_name="$7"
+compose_project="$8"
+deploy_marker="$9"
+deploy_lock="${10}"
+deploy_id="${11}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
@@ -211,6 +220,11 @@ fi
 required_keys=(
   POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD DATABASE_URL
   BETTER_AUTH_SECRET BETTER_AUTH_URL AUTH_COOKIE_PREFIX AUTH_TRUSTED_ORIGINS
+  MINIO_ROOT_USER MINIO_ROOT_PASSWORD
+  OBJECT_STORAGE_ENDPOINT OBJECT_STORAGE_REGION OBJECT_STORAGE_BUCKET
+  OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY
+  OBJECT_STORAGE_FORCE_PATH_STYLE OBJECT_STORAGE_USE_SSL
+  MAX_UPLOAD_BYTES UPLOAD_ALLOWED_EXTENSIONS
   SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
   SEED_MANAGER_A_EMAIL SEED_MANAGER_A_PASSWORD
   SEED_MANAGER_B_EMAIL SEED_MANAGER_B_PASSWORD
@@ -235,6 +249,8 @@ done
 if sudo awk -F= '
   $1 == "STAGING_APP_IMAGE" ||
   $1 == "STAGING_DB_TOOLS_IMAGE" ||
+  $1 == "STAGING_MINIO_IMAGE" ||
+  $1 == "STAGING_MINIO_CLIENT_IMAGE" ||
   $1 == "STAGING_HEALTHCHECK_PATH" ||
   $1 ~ /^COMPOSE_/ ||
   $1 ~ /^NEXT_PUBLIC_/ { found = 1 }
@@ -306,6 +322,34 @@ sudo awk -F= '
   printf 'AUTH_TRUSTED_ORIGINS must be https://gridworks.cn.\n' >&2
   exit 1
 }
+sudo awk -F= -v expected_bucket="$minio_bucket_name" '
+  $1 == "MINIO_ROOT_USER" { root_user = substr($0, index($0, "=") + 1) }
+  $1 == "MINIO_ROOT_PASSWORD" { root_password = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_ENDPOINT" { endpoint = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_REGION" { region = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_BUCKET" { bucket = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_ACCESS_KEY" { app_user = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_SECRET_KEY" { app_password = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_FORCE_PATH_STYLE" { path_style = substr($0, index($0, "=") + 1) }
+  $1 == "OBJECT_STORAGE_USE_SSL" { use_ssl = substr($0, index($0, "=") + 1) }
+  $1 == "MAX_UPLOAD_BYTES" { max_bytes = substr($0, index($0, "=") + 1) }
+  $1 == "UPLOAD_ALLOWED_EXTENSIONS" { extensions = substr($0, index($0, "=") + 1) }
+  END {
+    if (root_user !~ /^[A-Za-z0-9._-]{12,64}$/) exit 1
+    if (root_password !~ /^[A-Za-z0-9._-]{32,128}$/) exit 1
+    if (app_user !~ /^[A-Za-z0-9._-]{12,64}$/) exit 1
+    if (app_password !~ /^[A-Za-z0-9._-]{32,128}$/) exit 1
+    if (root_user == app_user || root_password == app_password) exit 1
+    if (endpoint != "http://projectai-minio:9000") exit 1
+    if (region != "us-east-1" || bucket != expected_bucket) exit 1
+    if (path_style != "true" || use_ssl != "false") exit 1
+    if (max_bytes != "52428800") exit 1
+    if (extensions != "pdf,docx,xlsx,pptx,txt,md") exit 1
+  }
+' "$env_file" || {
+  printf 'Staging object-storage configuration is invalid or not least-privileged.\n' >&2
+  exit 1
+}
 
 minimum_free_bytes=3221225472
 release_free_bytes="$(sudo df -PB1 "$remote_dir" | awk 'NR == 2 { print $4 }')"
@@ -338,6 +382,23 @@ if sudo docker inspect "$container_name" >/dev/null 2>&1; then
   app_project="$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container_name")"
   [[ "$app_project" == "$compose_project" ]] || {
     printf 'Unexpected Staging application Compose project: %s\n' "${app_project:-missing}" >&2
+    exit 1
+  }
+fi
+
+if sudo docker inspect "$minio_container_name" >/dev/null 2>&1; then
+  minio_project="$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$minio_container_name")"
+  [[ "$minio_project" == "$compose_project" ]] || {
+    printf 'Unexpected Staging MinIO Compose project: %s\n' "${minio_project:-missing}" >&2
+    exit 1
+  }
+  minio_mount="$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$minio_container_name")"
+  [[ "$minio_mount" == "volume|${minio_volume_name}|/data" ]] || {
+    printf 'Unexpected or missing Staging MinIO data mount.\n' >&2
+    exit 1
+  }
+  [[ -z "$(sudo docker port "$minio_container_name")" ]] || {
+    printf 'Staging MinIO must not publish a host port.\n' >&2
     exit 1
   }
 fi
@@ -500,6 +561,7 @@ else
   [[ "$failed_app_running" != "true" ]]
 fi
 
+"${compose[@]}" rm --stop --force projectai-minio-init >/dev/null 2>&1 || true
 sudo rm -f "$deploy_marker"
 REMOTE_ROLLBACK
 }
@@ -649,9 +711,11 @@ REMOTE_IMAGE_VERIFY
 log "Starting the isolated Staging services from preloaded images"
 "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
-  "$CONTAINER_NAME" "$DB_CONTAINER_NAME" "$BASE_PATH" "$COMMIT_SHA" \
+  "$CONTAINER_NAME" "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" \
+  "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" "$BASE_PATH" "$COMMIT_SHA" \
   "$APP_VERSION" "$BUILD_TIME" "$DEPLOY_MARKER" "$BACKUP_RETENTION" \
-  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" <<'REMOTE_DEPLOY'
+  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" \
+  "$MINIO_IMAGE_REF" "$MINIO_CLIENT_IMAGE_REF" <<'REMOTE_DEPLOY'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -659,27 +723,37 @@ compose_project="$3"
 compose_file="$4"
 container_name="$5"
 db_container_name="$6"
-base_path="$7"
-commit_sha="$8"
-app_version="$9"
-build_time="${10}"
-deploy_marker="${11}"
-backup_retention="${12}"
-app_image_ref="${13}"
-app_image_id="${14}"
-db_tools_image_ref="${15}"
-db_tools_image_id="${16}"
+minio_container_name="$7"
+minio_volume_name="$8"
+minio_bucket_name="$9"
+base_path="${10}"
+commit_sha="${11}"
+app_version="${12}"
+build_time="${13}"
+deploy_marker="${14}"
+backup_retention="${15}"
+app_image_ref="${16}"
+app_image_id="${17}"
+db_tools_image_ref="${18}"
+db_tools_image_id="${19}"
+minio_image_ref="${20}"
+minio_client_image_ref="${21}"
 origin='http://127.0.0.1:3101'
 
 cd "$remote_dir"
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
+[[ "$minio_container_name" == "project-ai-os-staging-minio" ]]
+[[ "$minio_volume_name" == "projectai-staging-minio" ]]
+[[ "$minio_bucket_name" == "projectai-staging-files" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 [[ "$backup_retention" =~ ^[1-9][0-9]*$ ]]
 [[ "$app_image_ref" == "project-ai-os-staging:${commit_sha}" ]]
 [[ "$db_tools_image_ref" == "project-ai-os-staging-db-tools:${commit_sha}" ]]
 [[ "$app_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ "$db_tools_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "$minio_image_ref" == quay.io/minio/minio:RELEASE.* ]]
+[[ "$minio_client_image_ref" == quay.io/minio/mc:RELEASE.* ]]
 sudo test -e "$deploy_marker"
 [[ "$(sudo stat -c '%a' "$env_file")" == "600" ]]
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$app_image_ref")" == "$app_image_id" ]]
@@ -695,25 +769,40 @@ compose=(
   "NEXT_PUBLIC_BUILD_TIME=$build_time"
   "STAGING_APP_IMAGE=$app_image_ref"
   "STAGING_DB_TOOLS_IMAGE=$db_tools_image_ref"
+  "STAGING_MINIO_IMAGE=$minio_image_ref"
+  "STAGING_MINIO_CLIENT_IMAGE=$minio_client_image_ref"
   docker compose
   --env-file "$env_file"
   --project-name "$compose_project"
   --file "$compose_file"
+  --profile operations
 )
-trap '${compose[@]} ps >&2 || true' ERR
 
-operations=(
-  sudo docker run
+minio_backup_env=""
+cleanup_minio_backup_env() {
+  local scoped_env="${minio_backup_env:-}"
+  minio_backup_env=""
+  if [[ -n "$scoped_env" ]]; then
+    sudo rm -f -- "$scoped_env" || true
+  fi
+}
+remote_deploy_error() {
+  local exit_code=$?
+  trap - ERR
+  set +e
+  cleanup_minio_backup_env
+  "${compose[@]}" ps >&2
+  exit "$exit_code"
+}
+trap remote_deploy_error ERR
+trap cleanup_minio_backup_env EXIT
+
+compose_run=(
+  "${compose[@]}"
+  run
   --rm
-  --network projectai-staging-internal
-  --cpus 1
-  --memory 512m
-  --pids-limit 256
-  --log-driver json-file
-  --log-opt max-size=10m
-  --log-opt max-file=2
-  --env-file "$env_file"
-  --env NODE_ENV=production
+  --no-deps
+  --pull never
 )
 
 if sudo docker inspect "$db_container_name" >/dev/null 2>&1; then
@@ -723,7 +812,25 @@ if sudo docker inspect "$db_container_name" >/dev/null 2>&1; then
     exit 1
   }
 fi
-"${compose[@]}" up --detach --no-build projectai-postgres
+if sudo docker inspect "$minio_container_name" >/dev/null 2>&1; then
+  existing_minio_mount="$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$minio_container_name")"
+  [[ "$existing_minio_mount" == "volume|${minio_volume_name}|/data" ]] || {
+    printf 'Refusing to recreate MinIO with an unexpected data mount.\n' >&2
+    exit 1
+  }
+  [[ -z "$(sudo docker port "$minio_container_name")" ]] || {
+    printf 'Refusing to use a Staging MinIO container with a published host port.\n' >&2
+    exit 1
+  }
+fi
+
+printf 'Pulling the pinned MinIO server and client releases.\n'
+"${compose[@]}" pull projectai-minio projectai-minio-init >/dev/null
+minio_image_id="$(sudo docker image inspect --format '{{.Id}}' "$minio_image_ref")"
+minio_client_image_id="$(sudo docker image inspect --format '{{.Id}}' "$minio_client_image_ref")"
+[[ "$minio_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "$minio_client_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+"${compose[@]}" up --detach --no-build --pull never projectai-postgres projectai-minio
 
 db_ready=0
 db_health="starting"
@@ -743,6 +850,59 @@ done
   printf 'Staging PostgreSQL readiness timed out; final health: %s\n' "$db_health" >&2
   exit 1
 }
+
+minio_ready=0
+minio_health="starting"
+for _ in $(seq 1 60); do
+  minio_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$minio_container_name")"
+  if [[ "$minio_health" == "unhealthy" || "$minio_health" == "exited" || "$minio_health" == "dead" ]]; then
+    printf 'Staging MinIO entered terminal state: %s\n' "$minio_health" >&2
+    exit 1
+  fi
+  if [[ "$minio_health" == "healthy" ]]; then
+    minio_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$minio_ready" == "1" ]] || {
+  printf 'Staging MinIO readiness timed out; final health: %s\n' "$minio_health" >&2
+  exit 1
+}
+[[ -z "$(sudo docker port "$minio_container_name")" ]] || {
+  printf 'Staging MinIO unexpectedly published a host port.\n' >&2
+  exit 1
+}
+
+printf 'Recreating the idempotent private MinIO Bucket initializer.\n'
+"${compose[@]}" up --detach --no-build --pull never --force-recreate projectai-minio-init
+minio_init_id="$("${compose[@]}" ps --all --quiet projectai-minio-init)"
+[[ -n "$minio_init_id" ]]
+minio_init_done=0
+for _ in $(seq 1 60); do
+  minio_init_state="$(sudo docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}' "$minio_init_id")"
+  if [[ "$minio_init_state" == "exited|0" ]]; then
+    minio_init_done=1
+    break
+  fi
+  if [[ "$minio_init_state" == exited\|* && "$minio_init_state" != "exited|0" ]]; then
+    printf 'Staging MinIO initialization failed.\n' >&2
+    exit 1
+  fi
+  sleep 1
+done
+[[ "$minio_init_done" == "1" ]] || {
+  printf 'Staging MinIO initialization timed out.\n' >&2
+  exit 1
+}
+
+# Quiesce the only application writer before taking the PostgreSQL and object
+# snapshots so the two independently transactional stores share one boundary.
+if sudo docker inspect "$container_name" >/dev/null 2>&1 \
+  && [[ "$(sudo docker inspect --format '{{.State.Running}}' "$container_name")" == "true" ]]; then
+  printf 'Stopping the Staging application briefly for a cross-store snapshot.\n'
+  "${compose[@]}" stop --timeout 30 projectai-staging
+fi
 
 backup_timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 backup_name="projectai-staging-${backup_timestamp}-${commit_sha}.dump"
@@ -808,6 +968,231 @@ sudo chown root:root "$host_backup"
 sudo chmod 600 "$host_backup"
 sudo test -s "$host_backup"
 
+printf 'Creating a protected MinIO inventory and mirror backup.\n'
+object_backup_root="${remote_dir}/backups/object-storage"
+sudo install -d -m 0700 -o root -g root "$object_backup_root"
+sudo test ! -L "$object_backup_root"
+[[ "$(sudo readlink -f -- "$object_backup_root")" == "$object_backup_root" ]]
+object_backup_stem="projectai-staging-objects-${backup_timestamp}-${commit_sha}"
+inventory_name="${object_backup_stem}.inventory.jsonl"
+mirror_name="${object_backup_stem}.mirror"
+inventory_partial="${object_backup_root}/${inventory_name}.partial"
+mirror_partial="${object_backup_root}/${mirror_name}.partial"
+inventory_backup="${object_backup_root}/${inventory_name}"
+mirror_backup="${object_backup_root}/${mirror_name}"
+
+stale_object_partials="$({
+  sudo find "$object_backup_root" -mindepth 1 -maxdepth 1 \
+    \( -type f -o -type d \) -name 'projectai-staging-objects-*.partial' -printf '%f\n'
+} || true)"
+while IFS= read -r stale_object_partial; do
+  [[ -n "$stale_object_partial" ]] || continue
+  [[ "$stale_object_partial" =~ ^projectai-staging-objects-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}\.(inventory\.jsonl|mirror)\.partial$ ]]
+  sudo rm -rf -- "${object_backup_root}/${stale_object_partial}"
+done <<<"$stale_object_partials"
+
+sudo install -m 0600 -o root -g root /dev/null "$inventory_partial"
+sudo install -d -m 0700 -o root -g root "$mirror_partial"
+
+# The protected Staging env also contains database and authentication secrets.
+# Export only the four values needed by the third-party MinIO client image.
+while IFS='=' read -r storage_key storage_value; do
+  case "$storage_key" in
+    MINIO_ROOT_USER|MINIO_ROOT_PASSWORD|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET)
+      export "${storage_key}=${storage_value}"
+      ;;
+  esac
+done < <(sudo cat "$env_file")
+for storage_key in \
+  MINIO_ROOT_USER MINIO_ROOT_PASSWORD OBJECT_STORAGE_ENDPOINT OBJECT_STORAGE_BUCKET; do
+  [[ -n "${!storage_key:-}" ]] || {
+    printf 'Protected Staging storage backup environment is incomplete.\n' >&2
+    exit 1
+  }
+done
+
+# sudo intentionally drops the caller environment. Give the MinIO client only
+# its four required values through a root-only file, never the full app env.
+minio_backup_env="$(sudo mktemp "${object_backup_root}/.minio-backup-env.XXXXXX")"
+sudo chown root:root "$minio_backup_env"
+sudo chmod 600 "$minio_backup_env"
+{
+  printf 'MINIO_ROOT_USER=%s\n' "$MINIO_ROOT_USER"
+  printf 'MINIO_ROOT_PASSWORD=%s\n' "$MINIO_ROOT_PASSWORD"
+  printf 'OBJECT_STORAGE_ENDPOINT=%s\n' "$OBJECT_STORAGE_ENDPOINT"
+  printf 'OBJECT_STORAGE_BUCKET=%s\n' "$OBJECT_STORAGE_BUCKET"
+} | sudo tee "$minio_backup_env" >/dev/null
+[[ "$(sudo stat -c '%a' "$minio_backup_env")" == "600" ]]
+
+minio_backup_run=(
+  sudo docker run
+  --rm
+  --network projectai-staging-internal
+  --cpus 0.5
+  --memory 256m
+  --pids-limit 128
+  --log-driver json-file
+  --log-opt max-size=10m
+  --log-opt max-file=2
+  --env-file "$minio_backup_env"
+  --mount "type=bind,source=${object_backup_root},target=/backup"
+  --entrypoint /bin/sh
+)
+
+if ! "${minio_backup_run[@]}" \
+  --env "INVENTORY_NAME=${inventory_name}.partial" \
+  "$minio_client_image_id" -ec '
+    umask 077
+    config_dir="$(mktemp -d /tmp/projectai-mc.XXXXXX)"
+    trap '\''rm -rf "$config_dir"'\'' EXIT
+    mc --quiet --config-dir "$config_dir" alias set admin "$OBJECT_STORAGE_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+    mc --json --config-dir "$config_dir" ls --recursive "admin/$OBJECT_STORAGE_BUCKET" > "/backup/$INVENTORY_NAME"
+  '; then
+  sudo rm -rf -- "$inventory_partial" "$mirror_partial"
+  printf 'Staging MinIO inventory failed.\n' >&2
+  exit 1
+fi
+
+inventory_count="$(sudo awk 'NF { count += 1 } END { print count + 0 }' "$inventory_partial")"
+read -r inventory_size_count inventory_bytes <<<"$(sudo awk '
+  match($0, /"size"[[:space:]]*:[[:space:]]*[0-9]+/) {
+    value = substr($0, RSTART, RLENGTH)
+    sub(/^.*:/, "", value)
+    gsub(/[[:space:]]/, "", value)
+    count += 1
+    bytes += value
+  }
+  END { print count + 0, bytes + 0 }
+' "$inventory_partial")"
+[[ "$inventory_count" =~ ^[0-9]+$ && "$inventory_size_count" =~ ^[0-9]+$ && "$inventory_bytes" =~ ^[0-9]+$ ]]
+[[ "$inventory_count" == "$inventory_size_count" ]] || {
+  printf 'Staging MinIO inventory could not be validated safely.\n' >&2
+  exit 1
+}
+
+backup_free_bytes="$(sudo df -PB1 "$object_backup_root" | awk 'NR == 2 { print $4 }')"
+docker_root="$(sudo docker info --format '{{.DockerRootDir}}')"
+docker_free_bytes="$(sudo df -PB1 "$docker_root" | awk 'NR == 2 { print $4 }')"
+[[ "$backup_free_bytes" =~ ^[0-9]+$ && "$docker_free_bytes" =~ ^[0-9]+$ ]]
+required_object_backup_bytes=$((inventory_bytes + 268435456))
+required_restore_bytes=$((inventory_bytes + 268435456))
+(( backup_free_bytes >= required_object_backup_bytes )) || {
+  printf 'Insufficient disk space for the Staging MinIO mirror backup.\n' >&2
+  exit 1
+}
+(( docker_free_bytes >= required_restore_bytes )) || {
+  printf 'Insufficient Docker disk space for the Staging MinIO restore drill.\n' >&2
+  exit 1
+}
+
+if ! "${minio_backup_run[@]}" \
+  --env "MIRROR_NAME=${mirror_name}.partial" \
+  "$minio_client_image_id" -ec '
+    umask 077
+    config_dir="$(mktemp -d /tmp/projectai-mc.XXXXXX)"
+    trap '\''rm -rf "$config_dir"'\'' EXIT
+    mc --quiet --config-dir "$config_dir" alias set admin "$OBJECT_STORAGE_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+    mc --quiet --config-dir "$config_dir" mirror --retry "admin/$OBJECT_STORAGE_BUCKET" "/backup/$MIRROR_NAME" >/dev/null
+  '; then
+  sudo rm -rf -- "$inventory_partial" "$mirror_partial"
+  printf 'Staging MinIO mirror backup failed.\n' >&2
+  exit 1
+fi
+
+mirror_count="$(sudo find "$mirror_partial" -type f -printf '.\n' | wc -l | tr -d '[:space:]')"
+mirror_bytes="$(sudo find "$mirror_partial" -type f -printf '%s\n' | awk '{ total += $1 } END { print total + 0 }')"
+[[ "$mirror_count" == "$inventory_count" && "$mirror_bytes" == "$inventory_bytes" ]] || {
+  printf 'Staging MinIO mirror count or size does not match its inventory.\n' >&2
+  exit 1
+}
+sudo chown -R root:root "$mirror_partial"
+sudo find "$mirror_partial" -type d -exec chmod 700 {} +
+sudo find "$mirror_partial" -type f -exec chmod 600 {} +
+sudo mv "$inventory_partial" "$inventory_backup"
+sudo mv "$mirror_partial" "$mirror_backup"
+sudo chmod 600 "$inventory_backup"
+
+printf 'Restoring the MinIO mirror into an isolated temporary Bucket.\n'
+restore_bucket="projectai-restore-${commit_sha:0:12}-${backup_timestamp,,}"
+if ! "${minio_backup_run[@]}" \
+  --env "MIRROR_NAME=$mirror_name" \
+  --env "RESTORE_BUCKET=$restore_bucket" \
+  --env "EXPECTED_COUNT=$inventory_count" \
+  --env "EXPECTED_BYTES=$inventory_bytes" \
+  "$minio_client_image_id" -ec '
+    umask 077
+    case "$RESTORE_BUCKET" in
+      projectai-restore-[a-z0-9-]*) ;;
+      *) exit 1 ;;
+    esac
+    [ "$RESTORE_BUCKET" != "$OBJECT_STORAGE_BUCKET" ]
+    config_dir="$(mktemp -d /tmp/projectai-mc.XXXXXX)"
+    created=0
+    cleanup() {
+      if [ "$created" = 1 ]; then
+        mc --quiet --config-dir "$config_dir" rb --force "admin/$RESTORE_BUCKET" >/dev/null 2>&1 || true
+      fi
+      rm -rf "$config_dir"
+    }
+    trap cleanup EXIT HUP INT TERM
+    mc --quiet --config-dir "$config_dir" alias set admin "$OBJECT_STORAGE_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+    if mc --quiet --config-dir "$config_dir" stat "admin/$RESTORE_BUCKET" >/dev/null 2>&1; then
+      exit 1
+    fi
+    mc --quiet --config-dir "$config_dir" mb "admin/$RESTORE_BUCKET" >/dev/null
+    created=1
+    mc --quiet --config-dir "$config_dir" mirror --retry "/backup/$MIRROR_NAME" "admin/$RESTORE_BUCKET" >/dev/null
+    mc --json --config-dir "$config_dir" ls --recursive "admin/$RESTORE_BUCKET" > /tmp/projectai-restore-inventory.jsonl
+    restored_count="$(awk '\''NF { count += 1 } END { print count + 0 }'\'' /tmp/projectai-restore-inventory.jsonl)"
+    read -r restored_size_count restored_bytes <<EOF
+$(awk '\''
+  match($0, /"size"[[:space:]]*:[[:space:]]*[0-9]+/) {
+    value = substr($0, RSTART, RLENGTH)
+    sub(/^.*:/, "", value)
+    gsub(/[[:space:]]/, "", value)
+    count += 1
+    bytes += value
+  }
+  END { print count + 0, bytes + 0 }
+'\'' /tmp/projectai-restore-inventory.jsonl)
+EOF
+    rm -f /tmp/projectai-restore-inventory.jsonl
+    [ "$restored_count" = "$EXPECTED_COUNT" ]
+    [ "$restored_size_count" = "$EXPECTED_COUNT" ]
+    [ "$restored_bytes" = "$EXPECTED_BYTES" ]
+    mc --quiet --config-dir "$config_dir" rb --force "admin/$RESTORE_BUCKET" >/dev/null
+    created=0
+    if mc --quiet --config-dir "$config_dir" stat "admin/$RESTORE_BUCKET" >/dev/null 2>&1; then
+      exit 1
+    fi
+  '; then
+  printf 'Staging MinIO isolated restore drill failed.\n' >&2
+  exit 1
+fi
+
+sudo rm -f -- "$minio_backup_env"
+sudo test ! -e "$minio_backup_env"
+minio_backup_env=""
+
+[[ -z "$(sudo find "$object_backup_root" -mindepth 1 -maxdepth 1 -name '*.partial' -print -quit)" ]] || {
+  printf 'A partial Staging MinIO backup remains after validation.\n' >&2
+  exit 1
+}
+
+obsolete_object_mirrors="$({
+  sudo find "$object_backup_root" -mindepth 1 -maxdepth 1 -type d \
+    -name 'projectai-staging-objects-*.mirror' -printf '%f\n' \
+    | sort -r \
+    | tail -n "+$((backup_retention + 1))"
+} || true)"
+while IFS= read -r obsolete_object_mirror; do
+  [[ -n "$obsolete_object_mirror" ]] || continue
+  [[ "$obsolete_object_mirror" =~ ^projectai-staging-objects-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{40}\.mirror$ ]]
+  obsolete_object_stem="${obsolete_object_mirror%.mirror}"
+  sudo rm -rf -- "${object_backup_root}/${obsolete_object_mirror}"
+  sudo rm -f -- "${object_backup_root}/${obsolete_object_stem}.inventory.jsonl"
+done <<<"$obsolete_object_mirrors"
+
 obsolete_backups="$(
   sudo find "${remote_dir}/backups" -maxdepth 1 -type f \
     -name 'projectai-staging-*.dump' -printf '%f\n' \
@@ -821,7 +1206,7 @@ while IFS= read -r obsolete_backup; do
 done <<<"$obsolete_backups"
 
 printf 'Applying committed PostgreSQL migrations.\n'
-"${operations[@]}" "$db_tools_image_id" node --input-type=module -e '
+"${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";
     const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await client.connect();
@@ -841,11 +1226,11 @@ printf 'Applying committed PostgreSQL migrations.\n'
       await client.end();
     }
   '
-"${operations[@]}" "$db_tools_image_id" npm run db:migrate
+"${compose_run[@]}" projectai-migrate npm run db:migrate
 printf 'Applying idempotent Staging seed data.\n'
-"${operations[@]}" "$db_tools_image_id" npm run db:seed
+"${compose_run[@]}" projectai-migrate npm run db:seed
 printf 'Verifying every Staging project retains a project manager.\n'
-"${operations[@]}" "$db_tools_image_id" node --input-type=module -e '
+"${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";
     const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
     await client.connect();
@@ -867,6 +1252,9 @@ printf 'Verifying every Staging project retains a project manager.\n'
       await client.end();
     }
   '
+
+printf 'Verifying PostgreSQL and MinIO consistency before application startup.\n'
+"${compose_run[@]}" projectai-storage-ops npm run storage:verify
 
 "${compose[@]}" up --detach --no-build --pull never projectai-staging
 
@@ -893,6 +1281,9 @@ done
 
 [[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$db_container_name")" == "healthy" ]]
+[[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$minio_container_name")" == "healthy" ]]
+[[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$minio_container_name")" == "volume|${minio_volume_name}|/data" ]]
+[[ -z "$(sudo docker port "$minio_container_name")" ]]
 curl --fail --silent --max-time 10 "${origin}${base_path}/login" >/dev/null
 
 for route in /dashboard /projects /projects/project-002/overview /reviews /settings/ai-models; do
@@ -909,13 +1300,22 @@ grep -q "${commit_sha:0:8}" <<<"$html"
 grep -q 'noindex' <<<"$html"
 
 printf 'Verifying login, Session refresh/logout, role permissions, and project isolation.\n'
-"${operations[@]}" \
+"${compose_run[@]}" \
   --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   --env "EXPECTED_COOKIE_PATH=${base_path}" \
   --env "EXPECTED_COOKIE_PREFIX=projectai_staging" \
   --env "REQUIRE_SECURE_COOKIE=1" \
-  "$db_tools_image_id" node scripts/verify-auth-boundaries.mjs
+  projectai-migrate node scripts/verify-auth-boundaries.mjs
+
+printf 'Verifying real Staging upload, download integrity, versioning, and lifecycle cleanup.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-file-smoke npm run storage:smoke
+
+printf 'Rechecking PostgreSQL and MinIO consistency after application verification.\n'
+"${compose_run[@]}" projectai-storage-ops npm run storage:verify
 
 css_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.css" <<<"$html" | sed -n '1p')"
 js_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.js" <<<"$html" | sed -n '1p')"
@@ -953,6 +1353,7 @@ assert_mime "${origin}${base_path}/og.png" png
 
 # Validation only: this script never edits or reloads Nginx.
 sudo nginx -t
+"${compose[@]}" rm --force projectai-minio-init >/dev/null
 REMOTE_DEPLOY
 
 [[ "$(get_production_state)" == "$PRODUCTION_STATE_BEFORE" ]] \
@@ -966,6 +1367,26 @@ if [[ "$PUBLIC_VALIDATION" != "1" ]]; then
   log "Staging upstream verified; configure Nginx, then rerun with PUBLIC_VALIDATION=1"
   exit 0
 fi
+
+log "Confirming the live Nginx Staging upload proxy contract"
+"${SSH[@]}" bash -s -- "$BASE_PATH" <<'REMOTE_NGINX_CONTRACT'
+set -Eeuo pipefail
+base_path="$1"
+[[ "$base_path" == "/tool/projectai-staging" ]]
+staging_location="$(sudo nginx -T 2>/dev/null | awk -v path="$base_path" '
+  {
+    trimmed = $0
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", trimmed)
+    if (trimmed == "location ^~ " path "/ {") capture = 1
+    if (capture) print
+    if (capture && trimmed == "}") exit
+  }
+')"
+[[ -n "$staging_location" ]]
+grep -Fq 'proxy_pass http://127.0.0.1:3101;' <<<"$staging_location"
+grep -Fq 'client_max_body_size 52m;' <<<"$staging_location"
+grep -Fqi 'X-Robots-Tag "noindex, nofollow"' <<<"$staging_location"
+REMOTE_NGINX_CONTRACT
 
 log "Validating public Staging login, protected-route redirects, noindex, and assets"
 redirect_headers="$(curl --silent --show-error --head --max-time 20 "$PUBLIC_STAGING_URL" | tr -d '\r')"
@@ -1037,44 +1458,60 @@ assert_public_mime "${PUBLIC_STAGING_URL}/og.png" png
 log "Validating public login, Session lifecycle, roles, and cross-project isolation"
 "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$PUBLIC_STAGING_URL" "$BASE_PATH" \
-  "$DB_TOOLS_IMAGE_ID" "$DEPLOY_MARKER" <<'REMOTE_PUBLIC_AUTH'
+  "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$COMMIT_SHA" "$APP_VERSION" \
+  "$BUILD_TIME" "$DB_TOOLS_IMAGE_REF" "$DEPLOY_MARKER" <<'REMOTE_PUBLIC_AUTH'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
 public_base_url="$3"
 base_path="$4"
-db_tools_image_id="$5"
-deploy_marker="$6"
+compose_project="$5"
+compose_file="$6"
+commit_sha="$7"
+app_version="$8"
+build_time="$9"
+db_tools_image_ref="${10}"
+deploy_marker="${11}"
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$public_base_url" == "https://gridworks.cn/tool/projectai-staging" ]]
 [[ "$base_path" == "/tool/projectai-staging" ]]
+[[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
-[[ "$db_tools_image_id" =~ ^sha256:[0-9a-f]{64}$ ]]
 sudo test -e "$deploy_marker"
-[[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_id")" == "$db_tools_image_id" ]]
-
-operations=(
-  sudo docker run
-  --rm
-  --network projectai-staging-internal
-  --cpus 1
-  --memory 512m
-  --pids-limit 256
-  --log-driver json-file
-  --log-opt max-size=10m
-  --log-opt max-file=2
+compose_run=(
+  sudo env
+  "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
+  "NEXT_PUBLIC_APP_VERSION=$app_version"
+  "NEXT_PUBLIC_BUILD_TIME=$build_time"
+  "STAGING_DB_TOOLS_IMAGE=$db_tools_image_ref"
+  docker compose
   --env-file "$env_file"
-  --env NODE_ENV=production
+  --project-name "$compose_project"
+  --file "$compose_file"
+  --profile operations
+  run
+  --rm
+  --no-deps
+  --pull never
 )
 
-"${operations[@]}" \
+"${compose_run[@]}" \
   --env "APP_BASE_URL=$public_base_url" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   --env "EXPECTED_COOKIE_PATH=$base_path" \
   --env "EXPECTED_COOKIE_PREFIX=projectai_staging" \
   --env "REQUIRE_SECURE_COOKIE=1" \
-  "$db_tools_image_id" node scripts/verify-auth-boundaries.mjs
+  projectai-migrate node scripts/verify-auth-boundaries.mjs
+
+printf 'Verifying public Staging upload, download integrity, versioning, and lifecycle cleanup.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=$public_base_url" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-file-smoke npm run storage:smoke
+
+printf 'Rechecking PostgreSQL and MinIO consistency after public verification.\n'
+"${compose_run[@]}" projectai-storage-ops npm run storage:verify
 REMOTE_PUBLIC_AUTH
 
 log "Confirming Production remains healthy"

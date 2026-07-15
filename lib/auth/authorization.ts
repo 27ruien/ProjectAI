@@ -19,6 +19,8 @@ export type ProjectPermissionSet = {
   canRead: true;
   canEditProject: boolean;
   canManageProjectMembers: boolean;
+  canUploadDocuments: boolean;
+  canManageDocuments: boolean;
   canCreateProject: boolean;
   canViewAudit: boolean;
 };
@@ -37,6 +39,10 @@ export function getProjectPermissions(
     canRead: true,
     canEditProject: admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
     canManageProjectMembers:
+      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
+    canUploadDocuments:
+      admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
+    canManageDocuments:
       admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
     canCreateProject: admin,
     canViewAudit: admin,

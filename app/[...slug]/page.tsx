@@ -26,7 +26,7 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
     })),
   );
   const requestHeaders = await headers();
-  const [section, entityId] = route;
+  const [section, entityId, child] = route;
 
   if (
     (section === "settings" || section === "analytics") &&
@@ -52,7 +52,12 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
         (project) => project.id === authorizedProject.id,
       );
       if (!currentProject) notFound();
-      projectData = getAuthorizedMockProjectPayload(authorizedProject.id);
+      // Project files are real in v0.4. Do not serialize the old Mock document
+      // payload into the browser on the documents route. Other project areas
+      // intentionally remain project-filtered Mock capabilities this round.
+      if (child !== "documents") {
+        projectData = getAuthorizedMockProjectPayload(authorizedProject.id);
+      }
     } catch (error) {
       if (error instanceof AuthorizationError && error.status === 404) notFound();
       throw error;

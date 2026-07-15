@@ -1,66 +1,68 @@
 # MVP Acceptance
 
-状态：`通过`、`部分`、`未完成`、`不适用（当前 Mock）`。自动化列描述本分支完成后的覆盖目标。
+状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.4 证据。
 
 | ID | 优先级 | 描述 | 当前状态 | 验证方式 | 自动化覆盖 | 负责人 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SEC-001 | P0 | 不同项目数据不得互相访问 | 通过 | 27 条 PostgreSQL/权限集成测试 + E2E + Staging 角色矩阵 | Manager A/B 列表、统一 404、防 URL/body/memberId tamper、viewer 写入、混合角色逐项目审核权限 | Backend | CI 集成 27/27、E2E 11/11 与 Staging 内外网验证均通过 |
-| SEC-002 | P0 | 未认证用户不能访问真实项目数据 | 通过 | 未登录 SSR/页面/API 与 Staging 深层路由测试 | SSR 4/4、代理边界 3/3 与 E2E 未登录深层路由 | Backend | production build、浏览器 Session 守卫和 Staging 绝对 HTTPS 登录重定向均通过 |
-| SEC-003 | P0 | API Key 不进入浏览器 | 通过 | Bundle/源码扫描 | CI 密钥扫描建议 | AI Platform | 当前无真实 Key |
-| SEC-004 | P0 | API Key 不进入 Git | 通过 | Git 与工作区扫描 | CI 可扩展 | DevOps | `.env*` 已忽略，示例无密钥 |
-| SEC-005 | P0 | 客户文件不进入 Git | 通过 | Git 状态与忽略规则 | CI artifact 检查建议 | DevOps | Mock 上传不保存内容 |
-| SEC-006 | P0 | AI 草稿不能直接覆盖正式数据 | 部分 | 审核流程与数据契约审查 | E2E 覆盖人工审核 | Product/Backend | Mock UI 已分离，真实写入未实现 |
-| SEC-007 | P0 | 上传路径不能造成目录穿越 | 不适用（当前 Mock） | 上传 API 安全测试 | 待真实上传 | Backend/Security | 当前不写文件系统 |
-| SEC-008 | P0 | 知识查询按 projectId 和权限过滤 | 部分 | 授权后服务端 Mock 映射与跨项目 E2E | 项目 API 隔离与 Mock payload 精确过滤已本地通过 | Backend/AI | 本轮 Mock 边界已验证；真实检索/RAG 不在本轮，不能承载客户资料 |
-| MVP-001 | P1 | 项目可以创建 | 部分 | 创建项目 API/UI 与数据库检查 | 管理员持久化集成测试已通过；创建 UI 尚无专门 E2E | Frontend/Backend | PostgreSQL 持久化；当前只允许 system_admin 创建 |
-| MVP-002 | P1 | 文件可以上传 | 部分 | 上传区交互 | 后续 E2E | Frontend | 仅文件元数据 Mock |
-| MVP-003 | P1 | 文件上传后可以持久化 | 未完成 | 刷新与对象存储检查 | 待对象存储 | Backend | 本轮禁止接入存储 |
-| MVP-004 | P1 | 文档可以解析 | 部分 | 解析状态与输出 | 后续 E2E | AI/Backend | 当前为 Mock 解析结果 |
-| MVP-005 | P1 | 文档有状态和版本 | 部分 | 资料列表检查 | SSR | Product | 当前为 Mock 数据 |
-| MVP-006 | P1 | 可以区分当前有效版本 | 部分 | 有效版本标识 | 知识 E2E | Product | 当前为 Mock 数据 |
-| MVP-007 | P1 | 可以进行项目知识问答 | 部分 | 预设问题问答 | 知识 E2E | AI | Mock Knowledge Service |
-| MVP-008 | P1 | 回答必须带来源 | 部分 | 回答引用断言 | 知识 E2E | AI/Product | Mock 引用 |
-| MVP-009 | P1 | 来源含文件、章节、页码或片段 | 部分 | 来源详情断言 | 知识 E2E | AI/Product | Mock 引用元数据 |
-| MVP-010 | P1 | AI 可以提取结构化需求 | 部分 | Workflow 完整执行 | Workflow E2E | AI | Mock AI Gateway |
-| MVP-011 | P1 | 需求有来源证据 | 部分 | 审核来源区检查 | Workflow E2E | AI/Product | Mock 证据 |
-| MVP-012 | P1 | 项目经理可以修改 AI 草稿 | 通过 | 审核文本编辑 | Workflow E2E | Frontend | 仅浏览器内状态 |
-| MVP-013 | P1 | 可以提交审核 | 部分 | Workflow 进入审核中心 | Workflow E2E | Product | Mock 任务未持久化 |
-| MVP-014 | P1 | 可以通过、修改后通过、驳回 | 通过 | 三类按钮状态 | Workflow E2E 覆盖修改后通过 | Frontend | Mock 状态 |
-| MVP-015 | P1 | 审核通过后写入正式需求 | 未完成 | 数据层集成测试 | 待正式数据层 | Backend | UI 仅显示写入队列反馈 |
-| MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 部分 | 契约与页面审查 | Workflow E2E | Product/Backend | Mock 分离，真实数据未实现 |
-| MVP-017 | P1 | 有审计记录 | 部分 | 身份/项目审计集成测试 | 拒绝访问及最后 Manager 变更拒绝审计已通过 | AI/Backend | 登录、退出、项目/成员审计为 PostgreSQL；AI execution/review 仍为 Mock |
-| MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 可恢复失败演示 | Workflow E2E | Frontend/AI | 本轮自动验证 |
-| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | v0.3 HTTP/页面/DB/Nginx 独立检查 | 部署脚本与公网 Host 注入验收 | DevOps | Commit `ff19049...` 已部署；独立 PostgreSQL、最后 Manager 保护、资源 MIME、noindex 与 Production 回归通过 |
-| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | `npm run test:e2e` | 身份/隔离及原三条流程 11/11 | QA | CI 11/11，6/6 截图、脱敏 Evidence A 与权威 Provenance B 完整 |
-| MVP-021 | P1 | Production build 通过 | 通过 | `npm run build`（由 `npm test` 执行） | CI | Frontend | CI production build、SSR 4/4 与反向代理边界 3/3 通过 |
-| OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 已有基础过滤 |
-| OPT-002 | P2 | 更完整统计指标 | 部分 | 数据看板检查 | SSR | Product | Mock 指标 |
+| SEC-001 | P0 | 不同项目数据不得互相访问 | 部分 | PostgreSQL/授权集成与 v0.3 Staging 基线 | 文件 API URL/body/document/version 篡改仍需 v0.4 最终 CI/Staging 回归 | Backend | 集中式 404 防枚举已完成；新增真实文件边界在最终矩阵通过前重新开放此门禁 |
+| SEC-002 | P0 | 未认证用户不能访问真实项目数据 | 通过 | 页面/API/下载未认证测试 | v0.4 真实文件 API 纳入最终回归 | Backend | Session 与服务端守卫来自已合并 v0.3 |
+| SEC-003 | P0 | API Key 不进入浏览器 | 通过 | Bundle/DTO/源码扫描 | Artifact 存储元数据扫描 | AI Platform | 无真实模型 Key；对象存储凭据也只在服务端 |
+| SEC-004 | P0 | API Key 不进入 Git | 通过 | Git 与工作区扫描 | CI Secret/Artifact 检查 | DevOps | 示例变量无真实值，受保护环境文件不跟踪 |
+| SEC-005 | P0 | 客户文件不进入 Git | 通过 | Git 状态、fixture 与 evidence allowlist 检查 | 测试文件运行时生成，上传原件不发布 | DevOps | 正文只进入私有对象存储；当前验收只使用虚构文件 |
+| SEC-006 | P0 | AI 草稿不能直接覆盖正式数据 | 部分 | 审核契约与页面审查 | Mock Workflow E2E | Product/Backend | AI/正式需求仍为 Mock；v0.4 文件写入不属于 AI 正式写入 |
+| SEC-007 | P0 | 上传路径不能造成目录穿越 | 通过 | 真实文件名/OOXML 路径安全测试与服务端 Key 审查 | NFKC、分隔符/控制字符/bidi、绝对路径、`..`、ZIP entry/symlink 覆盖 | Backend/Security | Object Key 只含受控 ID 与随机 UUID，不包含用户文件名，也不解压到文件系统 |
+| SEC-008 | P0 | 知识查询按 projectId 和权限过滤 | 部分 | 服务端 Mock 映射与跨项目 E2E | 项目授权和 Mock payload 精确过滤 | Backend/AI | 真实文件已有项目隔离，但解析/索引/RAG 未实现，不能标记通过 |
+| MVP-001 | P1 | 项目可以创建 | 部分 | 创建 API/UI 与数据库 | 已有管理员持久化集成测试 | Frontend/Backend | 当前只允许 system_admin 创建 |
+| MVP-002 | P1 | 文件可以上传 | 部分 | 真实 API/UI、刷新和对象检查 | 本地文件集成与 Playwright 通过；最终 CI/Staging 待运行 | Frontend/Backend | PDF/OOXML/TXT/MD，Manager/Member 可上传；不再使用文档 Mock |
+| MVP-003 | P1 | 文件上传后可以持久化 | 部分 | PostgreSQL + S3-compatible Object Storage | 本地幂等、补偿、下载完整性和 reconciliation 全绿 | Backend | 本地真实 MinIO 已验证；v0.4 CI 与 Staging 尚无最终证据 |
+| MVP-004 | P1 | 文档可以解析 | 部分 | 解析状态与输出 | 仅既有 Mock UI | AI/Backend | v0.4 只校验文件容器，不解析正文 |
+| MVP-005 | P1 | 文档有状态和版本 | 部分 | 数据库约束、API/UI 与并发测试 | 本地 version 1/2、历史保留、归档和并发测试通过；待 CI/Staging | Product/Backend | `project_documents` + 不可变 versions 已实现 |
+| MVP-006 | P1 | 可以区分当前有效版本 | 部分 | Partial Unique Index 与切换 API | 本地单 current、stored-only、并发切换通过；待 CI/Staging | Product/Backend | 归档资料不参与未来有效知识；知识索引仍未实现 |
+| MVP-007 | P1 | 可以进行项目知识问答 | 部分 | 预设问题问答 | Mock Knowledge Service | AI | 不读取真实上传文件 |
+| MVP-008 | P1 | 回答必须带来源 | 部分 | 回答引用断言 | Mock 知识 E2E | AI/Product | 仅 Mock 引用 |
+| MVP-009 | P1 | 来源含文件、章节、页码或片段 | 部分 | 来源详情断言 | Mock 知识 E2E | AI/Product | 与真实文件版本尚未建立引用关系 |
+| MVP-010 | P1 | AI 可以提取结构化需求 | 部分 | Workflow 执行 | Mock AI Gateway | AI | 不把真实上传文件交给 AI |
+| MVP-011 | P1 | 需求有来源证据 | 部分 | 审核来源区 | Mock Workflow E2E | AI/Product | 仅 Mock 证据 |
+| MVP-012 | P1 | 项目经理可以修改 AI 草稿 | 通过 | 审核文本编辑 | Mock Workflow E2E | Frontend | 仅浏览器 Mock 状态 |
+| MVP-013 | P1 | 可以提交审核 | 部分 | Workflow 进入审核中心 | Mock Workflow E2E | Product | 任务未持久化 |
+| MVP-014 | P1 | 可以通过、修改后通过、驳回 | 通过 | 三类按钮状态 | Mock Workflow E2E | Frontend | 仍为 Mock 状态 |
+| MVP-015 | P1 | 审核通过后写入正式需求 | 未完成 | 正式数据层集成测试 | 无 | Backend | v0.4 明确不实现 |
+| MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 部分 | 契约与页面审查 | Mock Workflow E2E | Product/Backend | 数据层未实现 |
+| MVP-017 | P1 | 有审计记录 | 部分 | PostgreSQL 审计查询 | 文件上传/下载/current/归档/恢复/拒绝/reconciliation 本地通过，待 CI/Staging | AI/Backend | 审计不含 Object Key、Endpoint、凭据、Session 或正文；AI execution 仍 Mock |
+| MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 页面流程与可恢复失败 | 文件 UI + Mock Workflow E2E | Frontend/AI | 资料页具备空态、加载、错误、重试和上传反馈 |
+| MVP-019 | P1 | Staging 可访问并 noindex | 部分 | v0.3 在线基线 | v0.4 部署与 MinIO 验收另见下表 | DevOps | 当前在线 Staging 仍是 v0.3；v0.4 尚未部署，不能标记通过 |
+| MVP-020 | P1 | Playwright 产品与安全流程通过 | 部分 | `npm run test:e2e` | 本地 `15/15` 与 12 张截图通过，最终 CI 待运行 | QA | v0.3 旧结果不替代 v0.4 |
+| MVP-021 | P1 | Production build 通过 | 部分 | `npm run build`（由 `npm test` 执行） | 本地 build + SSR `7/7` 通过，最终 CI 待运行 | Frontend | 仅本地/CI 生成 production build；未在 Production 主机执行 |
+| OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 资料页有 active/archived 和搜索基础 |
+| OPT-002 | P2 | 更完整统计指标 | 部分 | 数据看板检查 | SSR | Product | 大部分仍为 Mock |
 | OPT-003 | P2 | 移动端适配 | 部分 | 多视口检查 | 后续 E2E | Frontend | 现有响应式基础 |
 | OPT-004 | P2 | 更丰富视觉动效 | 未完成 | 视觉审查 | 无 | Design | 非 MVP 阻塞 |
 | OPT-005 | P2 | 自动生成 Scope | 部分 | Scope 页面检查 | SSR | Product/AI | Mock |
 | OPT-006 | P2 | 自动生成 Action Plan | 部分 | Action 页面检查 | 持久化 E2E | Product/AI | Mock |
-| OPT-007 | P2 | 自动测试业务模块 | 未完成 | 产品能力验收 | 无 | Product | 本轮明确禁止 |
-| OPT-008 | P2 | 原型和页面生成 | 未完成 | 产品能力验收 | 无 | Product | 本轮明确禁止 |
+| OPT-007 | P2 | 自动测试业务模块 | 未完成 | 产品能力验收 | 无 | Product | v0.4 不实现 |
+| OPT-008 | P2 | 原型和页面生成 | 未完成 | 产品能力验收 | 无 | Product | v0.4 不实现 |
 
-## v0.3 交付门禁
+## v0.4 交付门禁
 
-下表用于跟踪 Identity and Project Isolation 本轮交付，不改变上方长期 MVP 统计。`部分` 表示代码或测试已存在，但本分支全部运行证据尚未闭环。
+`部分` 表示实现或测试合同已存在，但最终 GitHub CI、Staging 或产品/安全证据尚未闭环；不得改写为“已交付”。
 
-| ID | 描述 | 当前状态 | 已有证据 | 关闭条件 |
+| ID | 描述 | 当前状态 | 当前证据 | 关闭条件 |
 | --- | --- | --- | --- | --- |
-| V03-IDENT-001 | Better Auth 登录/退出、端点白名单、无公共注册、disabled 拒绝/撤销、token 最小响应、通用错误、数据库限流与写请求 Origin/JSON 边界 | 通过 | CI 集成 27/27、build/SSR、E2E 11/11 与 Staging 登录矩阵通过 | 已关闭 |
-| V03-SESSION-001 | PostgreSQL Session、刷新保持、退出撤销、HttpOnly/SameSite/Secure/Path Cookie | 通过 | DB/Cookie、token/no-store、浏览器刷新/退出和 Staging Secure/Path 验证通过；发布后 sessions=0 | 已关闭 |
-| V03-DATA-001 | PostgreSQL Schema、提交 Migration、幂等 Seed、受保护测试 Reset | 通过 | CI 空 PostgreSQL Migration/Seed、约束与幂等测试通过；Seed 对零 Manager 数据失败关闭且不覆盖既有角色 | 已关闭 |
-| V03-AUTHZ-001 | 系统/项目角色、集中授权、404 防枚举、viewer 服务端只读、混合角色逐项目审核权限 | 通过 | CI 集成 27/27、跨项目/Viewer E2E、6 张审查截图与 Staging 角色矩阵通过 | 已关闭 |
-| V03-MANAGER-001 | 每个项目至少保留一名 project_manager；system_admin 不绕过；并发降级/删除不能归零 | 通过 | project 行事务锁、精确 409 合同、并发降级/删除测试；Staging PATCH/DELETE 409、角色不变、拒绝审计 2 条、零 Manager 项目 0 | 已关闭 |
-| V03-AUDIT-001 | 身份/项目审计、mutation 同事务与敏感 metadata 清理 | 通过 | 27/27 集成套件与 Staging 拒绝审计核验通过；发布后 audits=120 | 已关闭 |
-| V03-CI-001 | CI PostgreSQL 及成功/失败产品审查 artifacts | 通过 | Run `29313984989` 全绿；Evidence `8303225084` + Provenance `8303225479`，6/6 截图、32/32 合同与 passed 脱敏报告 | 已关闭 |
-| V03-STAGING-001 | 独立私网 PostgreSQL、受控 Migration/Seed、应用/数据库 Healthy 与 Production 不变 | 通过 | Commit `ff19049...` 已部署；App/DB Healthy、5 份备份可解析、Host 注入关闭、Production 精确未变 | 已关闭 |
+| V04-DATA-001 | 文件 Schema/Migration、外键、唯一/Partial Unique/状态检查约束 | 部分 | 本地 Migration、Seed 与约束集成通过 | 空 CI PostgreSQL 执行 Migration，约束测试全绿 |
+| V04-FILE-001 | 允许类型、50 MiB、文件名/签名/OOXML 安全和 SHA-256 | 部分 | 本地 `test:files` `19/19`、`test:storage` 合计 `36/36`；SEC-007 已通过 | CI 与 Staging 拒绝流程通过 |
+| V04-AUTHZ-001 | 上传/下载/版本/归档服务端角色和跨项目归属链 | 部分 | 本地 Manager/Member/Viewer/Admin、未认证和跨项目测试通过 | 对应 CI + Staging 全部通过 |
+| V04-VERSION-001 | 不可变版本、单 current、并发递增/切换、归档/恢复 | 部分 | 本地 PostgreSQL/MinIO 并发与 E2E v1/v2 通过 | 真实 Staging 版本流程通过 |
+| V04-STORAGE-001 | S3-compatible 存储、私有 Bucket、幂等上传与完整性下载 | 部分 | 本地 MinIO、SHA 下载、幂等与 SDK runtime 通过 | CI 临时 MinIO和 Staging 私有 Bucket/上传下载实际验证 |
+| V04-COMP-001 | 三段式补偿、failed/quarantined 与默认 dry-run reconciliation | 部分 | 本地补偿、orphan/missing、verify 和 dry-run `0` finding 通过 | Staging `storage:verify` 与清理通过 |
+| V04-UI-001 | 真实资料页、状态反馈、版本历史和权限显示 | 部分 | 本地 Playwright `15/15`、12 张截图、pending 有界轮询通过 | 最终 CI Evidence 复核通过 |
+| V04-CI-001 | PostgreSQL + 临时 MinIO、完整门禁、强 Evidence allowlist | 未完成 | Workflow 合同已更新 | 最终 GitHub Run 全绿，Payload A/Provenance B 下载复核并记录真实 ID |
+| V04-STAGING-001 | 私网 MinIO、卷、跨存储备份/恢复、健康与 Production 不变 | 未完成 | Compose/部署合同已更新 | v0.4 只部署 Staging，完成独立基础设施和业务验收 |
+| V04-PR-001 | Draft PR、产品/安全审查且不合并 | 未完成 | 当前尚无 PR | 推送分支并创建 Draft PR；未经批准保持未合并 |
 
 ## 统计
 
-- P0：8 条；通过 5，部分 2，未完成 0，不适用 1。
-- P1：21 条；通过 6，部分 13，未完成 2。
+- P0：8 条；通过 5，部分 3，未完成 0。
+- P1：21 条；通过 3，部分 17，未完成 1。
 - P2：8 条；部分 5，未完成 3。
 
-以上 P0/P1/P2 统计只计算第一张长期 MVP 表，不计算 v0.3 交付门禁。当前 CI 证据为 PostgreSQL/权限集成 27/27、build + SSR/代理 7/7、E2E 11/11、部署契约 8/8、artifact/provenance 32/32 和 6/6 审查截图；Staging 运行与 Production 不变证据见 `MVP_STATUS.md`。P0 部分项在真实资料试点前必须关闭；Mock 演示通过不代表真实能力通过。
+统计只计算第一张长期 MVP 表。v0.4 交付门禁单独跟踪；SEC-007 的通过只代表真实上传路径/Object Key 安全已建立，不代表解析或知识查询完成。SEC-008 在真实索引/RAG 按项目授权前必须保持“部分”。

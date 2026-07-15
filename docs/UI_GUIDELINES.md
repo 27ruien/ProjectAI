@@ -20,7 +20,7 @@
 
 - Staging 全局显示醒目的 `STAGING` 标识。
 - 同时显示环境、版本、Commit 短码和构建时间，并保留完整 SHA 的可查询信息。
-- 固定提示“Mock 演示版，禁止上传真实客户项目资料”。
+- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存，但解析、知识索引和 AI 仍未启用。
 - Staging 设置 robots noindex，并由 Nginx 添加 `X-Robots-Tag`。
 
 ## 反馈入口

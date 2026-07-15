@@ -52,6 +52,10 @@ export default defineConfig({
           PORT: String(port),
           HOST: "127.0.0.1",
           NEXT_PUBLIC_BASE_PATH: basePath,
+          // The complete serial suite intentionally exercises several actors
+          // through the real credential endpoint. Production keeps the strict
+          // limit; only this guarded test runtime raises the allowance.
+          AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100",
         },
         reuseExistingServer: false,
         timeout: 120_000,

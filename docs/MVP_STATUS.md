@@ -4,101 +4,94 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前版本 | `0.3.0-staging`（Identity and Project Isolation） |
-| `main` 基线 | `821bdf8d85a009256b04780c725ef2eb5bd2c8cc`（PR #1 Squash Merge） |
-| 开发分支 | `agent/auth-project-isolation` |
-| Draft PR | [#2 Add authentication and project isolation](https://github.com/27ruien/ProjectAI/pull/2) |
+| 当前开发版本 | `0.4.0-staging`（Project Files Foundation） |
+| `main` 基线 | `acd403b009bd788a59d2157936ce24fb89bd4dba`（包含已合并的 v0.3） |
+| 开发分支 | `agent/project-files-foundation` |
+| Draft PR | 尚未创建 |
+| v0.4 PR Head | 尚未产生提交 |
+| 最终 v0.4 CI | 尚未运行 |
+| v0.4 Evidence / Provenance | 尚未生成 |
 | Staging | https://gridworks.cn/tool/projectai-staging/ |
-| Staging 运行 Commit | `ff19049deca065b3dbc4698c3a219980dcd2f47b` |
-| Production | https://gridworks.cn/tool/projectai/（本轮未部署、未重启、未迁移） |
-| CI | [Run 29313984989](https://github.com/27ruien/ProjectAI/actions/runs/29313984989)，全部通过 |
-| 产品审查 Evidence | `product-review-evidence-29313984989-1`（ID `8303225084`，保留 14 天） |
-| 权威 Provenance Manifest | `product-review-manifest-29313984989-1`（ID `8303225479`，保留 14 天） |
+| Staging 当前已知运行版本 | v0.3，Commit `ff19049deca065b3dbc4698c3a219980dcd2f47b`；不是 v0.4 验收证据 |
+| v0.4 Staging SHA | 尚未部署、尚未观测 |
+| Production | https://gridworks.cn/tool/projectai/；v0.4 禁止部署 |
 
-## v0.3 交付结论
+## v0.4 当前结论
 
-`Project AI OS v0.3 — Identity and Project Isolation` 的代码、CI、产品审查 evidence 和 Staging 验证已经闭环。Draft PR 仍等待产品与安全审查，未经审查不得合并。
+`Project AI OS v0.4 — Project Files Foundation` 已完成本地实现与完整门禁：代码树包含文件数据模型、S3-compatible 存储适配、真实资料 API/UI、版本/current、归档/恢复、审计、一致性工具、Staging MinIO/备份契约和 CI MinIO 配置。
 
-- Better Auth 邮箱密码登录、受控预创建账号、PostgreSQL credential 与数据库 Session 已真实化；无公共注册、找回密码或社交登录。
-- Session 通过 HttpOnly、SameSite、Secure、独立 Cookie 前缀与 `/tool/projectai-staging` Path 传递，不进入 localStorage、URL、日志或 artifact。
-- 用户、credential、项目、项目成员、项目基础信息与身份/项目审计已使用 PostgreSQL；Migration 已提交，Seed 为 insert-only 幂等。
-- 集中式服务端授权覆盖管理员、Manager、Member、Viewer、统一 404 防枚举、viewer 写拒绝和跨项目 URL/body/memberId 篡改。
-- 每个项目以 `projects` 行作为成员变更互斥锁；唯一 `project_manager` 的降级或删除（包括 system_admin 操作）统一返回 `409 LAST_PROJECT_MANAGER`，拒绝事件在同一事务提交审计。Seed 和 Staging 发布均失败关闭零 Manager 数据。
-- Mock 项目业务数据只在服务端确认项目成员关系后按精确 `projectId` 过滤并序列化。
-- 反向代理只信任规范 HTTPS Host；Nginx exact basePath 使用固定绝对 URL，应用 `proxy.ts` 对不匹配的 Host、X-Forwarded-Host 或协议返回 404。
-- 验证器为每次运行生成唯一 User-Agent，HTTP logout 失败时按该值参数化删除本次 Session；发现泄漏或无法证明清理均失败关闭。
+本状态仍不等于 B1 已交付：GitHub CI、产品审查 artifacts、Draft PR、v0.4 Staging 部署与独立验证尚待执行。不得复用 v0.3 的 CI、Artifact、Staging SHA 或 Production baseline 冒充 v0.4 证据。
 
-## 自动化与产品审查证据
+## 本分支实现边界
 
-| 验证 | 结果 |
-| --- | --- |
-| TypeScript | 通过 |
-| ESLint | 通过 |
-| Production build + SSR/代理边界 | `7/7` |
-| PostgreSQL 身份、授权、审计与隔离集成测试 | `27/27` |
-| Artifact sanitizer + provenance contract | `32/32` |
-| Staging 部署安全契约 | `8/8` |
-| Playwright 身份、隔离与 MVP 流程 | `11/11` |
-| 产品审查截图 | `6/6` |
-| Evidence 脱敏 | `passed`；review `success`；6/6 截图；unsafe binary/archive removed 均为 `0` |
+### 已形成的真实能力
 
-CI 先上传仅含脱敏证据与 `evidence-index.json` 的 Payload A，再使用 GitHub 返回的真实 Artifact ID/digest 生成独立、权威的 Provenance B。Run `29313984989` 的 manifest 明确记录 `headSha=ff19049...`、`testedMergeSha=b1961b49...`、`workflowRunId=29313984989`、Evidence `artifactId=8303225084`、版本和实际 build time；部署前旧 Staging 尚未提供可信 revision header，因此该轮 `stagingSha` 为 `null`，没有用 Head 冒充。当前 Staging 已通过健康端点公开经校验的完整运行 SHA，后续 CI 会实时记录。
-
-## Staging 验证
-
-- App 与 PostgreSQL 均 `running=true`、`healthy`、restart count `0`；App 容器 ID `f205c58e5077...`，镜像 `project-ai-os-staging:ff19049...`；DB 容器 ID `4ba3776fb587...`。
-- Compose project 为 `projectai-staging`；PostgreSQL 不发布宿主机端口，专属网络仅连接 App/DB，数据使用命名卷 `projectai-staging-postgres`。
-- App/DB 均限制为 1 CPU、768 MiB、PID 256、json-file `10m × 3`；环境文件为 `root:root 600`，18 个 key 且全部唯一。
-- 数据库纯计数：users `5`、accounts `5`、sessions `0`、projects `3`、memberships `5`、audits `120`、零 Manager 项目 `0`。
-- 唯一 Manager 的公网 PATCH 与 DELETE 均返回精确 `409 LAST_PROJECT_MANAGER`；成员角色保持 `project_manager`，产生 `2` 条 `project_member_change_denied / denied / last_project_manager` 审计，验证 Session 清理后为 `0`。
-- 备份目录为 `root:root 700`；共 5 份 root-only dump，最新 `projectai-staging-20260714T072535Z-ff19049deca065b3dbc4698c3a219980dcd2f47b.dump`，`pg_restore --list` 通过。
-- 无部署 marker 或 lock 残留；Migration 当前，Seed 未覆盖既有身份、credential、角色、成员或项目字段。
-- 正常入口为绝对 HTTPS：basePath → 尾斜杠 → dashboard → login；login/health、CSS、JS、font、SVG、PNG MIME 与 noindex 均通过。
-- 恶意 `Host` 无尾斜杠只能得到 canonical HTTPS；带尾斜杠、login 和 dashboard 均为 404 且无 `Location`。
-- 本次未修改或 reload Nginx；发布脚本只执行 `nginx -t`，配置测试通过。
-
-## Production 保护结果
-
-Production 容器状态在 Nginx 最小化修改和 Staging 发布前后均精确为：
-
-```text
-c5f98b491e67668139e3b84ccf2c7dbee75556135826eddabf0267382078b0d1 true 0 healthy
-```
-
-Production 根路径和 dashboard 均为 200。本轮未在 Production 主机上构建、重启、迁移、修改应用目录或重新部署本应用。
-
-## 能力边界
-
-### 真实能力
-
-用户、`accounts.password_hash` credential、数据库 Session、登录限流、项目、项目成员关系、项目基础信息、身份/项目审计、服务端项目授权和 404 防枚举；前端交互、路由与 basePath；CI/Staging 配置。
+- `project_documents` 与 `project_document_versions` PostgreSQL 模型、Migration 和约束。
+- S3-compatible Object Storage；正文与数据库元数据分离，不写入容器目录、Git、`public/` 或 PostgreSQL。
+- PDF、DOCX、XLSX、PPTX、TXT、Markdown；默认上限 50 MiB；扩展名、MIME、签名、UTF-8 与受限 OOXML 容器校验。
+- 服务端生成不可变 Object Key；Object Key 和 Bucket/Endpoint/凭据不进入客户端 DTO。
+- UUID `Idempotency-Key`、pending → object put → stored/current 三段式上传、失败补偿与受控重试。
+- `system_admin`/Manager 全部资料操作，Member 可上传/下载，Viewer 只读下载；项目/document/version 归属均由服务端校验。
+- 不覆盖历史对象的版本管理、Partial Unique Index 单 current、Manager/Admin 手动切换 current。
+- 归档/恢复不物理删除文件；默认 active 列表与 archived 列表分离。
+- 下载使用 `attachment`、`nosniff`、`private, no-store`，并在响应前核对大小、ETag 和 SHA-256 metadata。
+- `storage:verify` 只读一致性检查；`storage:reconcile` 默认 dry-run，apply 受环境、Bucket 确认、最小对象年龄和二次数据库引用检查保护。
+- Staging Compose 中的私有 MinIO、独立命名卷、幂等 Bucket 初始化、最小权限应用凭据；PostgreSQL + MinIO 跨存储备份与临时 Bucket 恢复演练契约。
 
 ### 仍为 Mock
 
-项目资料、知识检索与问答、需求、Scope、Action、会议、风险、审核业务写入和 AI execution。Mock 内容只能在服务端授权后按项目过滤。
+- 项目知识检索、问答和引用内容。
+- 需求、Scope、Action、会议、风险、业务审核写入和 AI execution。
 
-### 明确不在 v0.3 范围
+真实上传文件不会被解析、分块、索引或提供给 AI。解析/OCR、Embedding、pgvector、RAG、Reranker、真实模型和 Provider Key 均未接入。
 
-- 文件上传、对象存储、解析和 OCR。
-- Embedding、pgvector、Hybrid RAG、Reranker、真实模型或 Provider Key。
-- 正式需求/Scope/Action/会议/风险持久化和完整 AI 审计。
-- 公开注册、密码找回、社交登录与多租户计费。
+## 验证状态
+
+| 门禁 | 当前状态 | 说明 |
+| --- | --- | --- |
+| Migration 与空库应用 | 本地通过 | 独立 PostgreSQL 应用 Migration、Reset/Seed 与约束测试通过；仍待 CI 复核 |
+| TypeScript / ESLint / build | 本地通过 | TypeScript、ESLint、production build 与 SSR `7/7` 通过 |
+| v0.3 身份与项目隔离回归 | 本地 `27/27` 通过 | Session、项目隔离、最后 Manager 与并发保护继续通过 |
+| 文件路径/OOXML/UI 状态单元验证 | 本地 `19/19` 通过 | 包含 SEC-007、OOXML 和 `202 pending` 有界轮询；不替代 CI/Staging |
+| 文件存储集成测试 | 本地 `17/17` 通过 | 使用独立 PostgreSQL 与隔离 MinIO；`test:storage` 合计 `36/36` |
+| Playwright 真实文件流程 | 本地 `15/15` 通过 | 上传、刷新、SHA 下载、v2、Viewer、跨项目、拒绝流程与 12 张截图 |
+| Evidence sanitizer / provenance | 本地 `29/29` 通过 | 强 allowlist、无标签/编码 Object Key 脱敏；本地 Payload 仅含 12 张截图和 index |
+| Staging 部署安全契约 | 本地 `14/14` 通过 | PostgreSQL + MinIO 备份/恢复、公网 Nginx 文件 smoke 和 Production 保护合同 |
+| GitHub CI / Draft PR | 待执行 | 当前没有可引用的 Run、Artifact ID 或 PR URL |
+| v0.4 Staging | 未部署 | 当前在线环境仍是 v0.3，不代表 v0.4 |
+| Production 不变 | 待本轮前后复核 | v0.4 明确禁止 Production 部署 |
+
+## Staging 目标状态（尚未验证）
+
+- 应用：`project-ai-os-staging`，`127.0.0.1:3101`，basePath `/tool/projectai-staging`。
+- PostgreSQL：`project-ai-os-staging-postgres` + `projectai-staging-postgres`，无宿主机端口。
+- MinIO：`project-ai-os-staging-minio` + `projectai-staging-minio`，Bucket `projectai-staging-files`，无宿主机/Console 端口、无匿名策略。
+- Compose project/network：`projectai-staging` / `projectai-staging-internal`。
+- 受保护环境文件：`/srv/projectai-staging/.env.auth-staging`，`root:root 600`；MinIO root 与应用凭据必须不同。
+- 部署前取得 PostgreSQL custom dump、MinIO JSONL inventory 与 root-only mirror；恢复演练只能使用临时 Bucket。
+- 部署后运行两次只读 `storage:verify`，完成真实上传/下载/版本/归档验收，清理测试 Session 和测试对象，再证明 Production 容器状态精确不变。
+
+以上均为目标合同，必须在部署后以实际容器、Bucket policy、备份、请求和数据库结果关闭，当前不得标记为通过。
 
 ## 当前风险与待审事项
 
-- P0：真实知识索引/RAG 未实现，禁止上传或导入真实客户资料；当前服务端 Mock 过滤不能解释为真实知识检索已完成。
-- P1：Mock Workflow 通过不代表正式业务持久化或真实 AI 能力通过。
-- P2：`npm audit --omit=dev` 报告 4 个 moderate，来自 Drizzle Kit 旧 `@esbuild-kit`/esbuild 开发工具链；无 high/critical，不进入 standalone 应用运行镜像。禁止使用破坏性 `audit fix --force` 降级 Drizzle Kit。
-- P2：GitHub Actions 提示 `actions/checkout@v4`、`setup-node@v4`、`upload-artifact@v4` 的 Node 20 runtime 已弃用，当前由 runner 强制使用 Node 24；后续应升级到官方兼容版本。
-- P2：`nginx -t` 仍显示既有 HTTP `gridworks.cn` server_name 冲突 warning；配置测试成功且 HTTPS/Staging/Production 均通过，本轮未扩大范围修改其他站点。
-- P2：vinext 字体仍使用同源 `/assets/_vinext_fonts/` 窄映射；升级字体或 vinext 后必须重新验证 hash，不能增加宽泛 `/assets/` 代理。
+- 本地代码与门禁复审未发现未关闭的 P0/P1；最终 GitHub CI 与 Staging 独立验证仍是发布门禁，不得用本地结果替代。
+- P0 发布门禁：跨项目文件上传、列表、版本切换和下载已本地通过，但尚未形成最终 CI/Staging 证据。
+- P0 发布门禁：Bucket 私有、Object Key 不受文件名影响、Artifact 不携带正文/对象地址/凭据尚待最终 CI 与 Staging 独立复核。
+- P1 发布门禁：Migration、build、真实 MinIO、并发 current、补偿和 dry-run reconciliation 已本地通过，尚待最终 CI 复核。
+- P1 门禁：Staging PostgreSQL/MinIO 备份和临时 Bucket 恢复演练尚未执行。
+- P1 产品边界：知识问答仍是授权后按项目过滤的 Mock；真实文件不能被解释为已建立知识索引。
+- P2：`npm audit --omit=dev --audit-level=high` 无 High/Critical，仍报告 Drizzle Kit 工具链旧 `esbuild` 的 4 个 Moderate；自动修复要求 breaking downgrade，因此本轮不强制改写 Migration 工具链。
+- P2：production build 仍有单个大于 500 kB 的 chunk 警告；不阻塞 B1，后续可按页面拆分动态 import。
+- P2：GitHub Action runtime 提示、Nginx 既有 warning 与 vinext 字体窄映射继续在最终复核中跟踪。
 
-当前没有 v0.3 技术阻塞或未解决 P0/P1。剩余动作是 PR #2 的产品/安全审查；PR 保持 Draft，不得自动合并。下一轮真实上传、对象存储、解析和 Project RAG 必须单独设计与审查，不得并入本 PR。
+## 下一步
 
-## 最近验证
+1. 创建有意图明确的 Commit，推送 `agent/project-files-foundation` 并创建 Draft PR。
+2. 等待最终 GitHub CI，下载复核 Payload A 与 Provenance B，记录真实 Run/Artifact ID。
+3. 只部署 Staging，执行跨存储备份恢复、公网真实文件验收、清理和 Production 不变检查。
+4. 用实际 SHA、CI、Artifact、Staging 与风险结论更新本文件；未经产品/安全审查不得合并，也不得开始 B2。
 
-- 时间：2026-07-14（Asia/Shanghai）。
-- CI：Run `29313984989` 全绿；Evidence ID `8303225084` 与 Provenance ID `8303225479` 已下载复核，32/32 provenance/sanitizer 合同通过。
-- Staging：Commit `ff19049...` 已部署，内部和公网登录、Session、角色、跨项目隔离、最后 Manager 保护、Host 注入、资源与 noindex 全部通过；健康响应 header 返回完整运行 SHA。
-- 基础设施：数据库私网、命名卷、资源限制、5 份备份可读、零 Manager 项目 `0`、测试 Session 清零、marker/lock 清理均通过独立只读审计。
-- Production：容器 ID、运行状态、restart count 与 health 精确未变。
+## 历史基线
+
+v0.3 的身份与项目隔离曾在 GitHub Run `29313984989` 和 Staging Commit `ff19049...` 完成验证。它只作为回归基线，不是 v0.4 的 CI、Evidence、Staging 或 Production 不变证据。
