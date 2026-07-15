@@ -120,6 +120,14 @@ test("MinIO backup uses inventory, atomic mirror validation, and an isolated res
   assert.match(script, /sudo mv "\$mirror_partial" "\$mirror_backup"/);
   assert.match(script, /projectai-restore-\$\{commit_sha:0:12\}/);
   assert.match(script, /\[ "\$RESTORE_BUCKET" != "\$OBJECT_STORAGE_BUCKET" \]/);
+  const restoreDrill = script.match(
+    /printf 'Restoring the MinIO mirror[\s\S]+?Staging MinIO isolated restore drill failed/,
+  )?.[0];
+  assert.ok(restoreDrill);
+  assert.match(restoreDrill, /mc --json[\s\S]+?du "admin\/\$RESTORE_BUCKET"/);
+  assert.match(restoreDrill, /restored_count[\s\S]+?EXPECTED_COUNT/);
+  assert.match(restoreDrill, /restored_bytes[\s\S]+?EXPECTED_BYTES/);
+  assert.doesNotMatch(restoreDrill, /\bawk\b/);
   assert.match(script, /rb --force "admin\/\$RESTORE_BUCKET"/);
   assert.match(script, /A partial Staging MinIO backup remains after validation/);
   assert.match(script, /minio_backup_env="\$\(sudo mktemp/);

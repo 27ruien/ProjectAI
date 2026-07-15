@@ -1142,23 +1142,21 @@ if ! "${minio_backup_run[@]}" \
     mc --quiet --config-dir "$config_dir" mb "admin/$RESTORE_BUCKET" >/dev/null
     created=1
     mc --quiet --config-dir "$config_dir" mirror --retry "/backup/$MIRROR_NAME" "admin/$RESTORE_BUCKET" >/dev/null
-    mc --json --config-dir "$config_dir" ls --recursive "admin/$RESTORE_BUCKET" > /tmp/projectai-restore-inventory.jsonl
-    restored_count="$(awk '\''NF { count += 1 } END { print count + 0 }'\'' /tmp/projectai-restore-inventory.jsonl)"
-    read -r restored_size_count restored_bytes <<EOF
-$(awk '\''
-  match($0, /"size"[[:space:]]*:[[:space:]]*[0-9]+/) {
-    value = substr($0, RSTART, RLENGTH)
-    sub(/^.*:/, "", value)
-    gsub(/[[:space:]]/, "", value)
-    count += 1
-    bytes += value
-  }
-  END { print count + 0, bytes + 0 }
-'\'' /tmp/projectai-restore-inventory.jsonl)
-EOF
-    rm -f /tmp/projectai-restore-inventory.jsonl
+    restore_usage="$(mc --json --config-dir "$config_dir" du "admin/$RESTORE_BUCKET")"
+    case "$restore_usage" in
+      *'\''"status":"success"'\''*) ;;
+      *) exit 1 ;;
+    esac
+    restored_count="${restore_usage#*\"objects\":}"
+    restored_bytes="${restore_usage#*\"size\":}"
+    [ "$restored_count" != "$restore_usage" ]
+    [ "$restored_bytes" != "$restore_usage" ]
+    restored_count="${restored_count%%,*}"
+    restored_bytes="${restored_bytes%%,*}"
+    case "$restored_count:$restored_bytes" in
+      *[!0-9:]*|:*|*:) exit 1 ;;
+    esac
     [ "$restored_count" = "$EXPECTED_COUNT" ]
-    [ "$restored_size_count" = "$EXPECTED_COUNT" ]
     [ "$restored_bytes" = "$EXPECTED_BYTES" ]
     mc --quiet --config-dir "$config_dir" rb --force "admin/$RESTORE_BUCKET" >/dev/null
     created=0
