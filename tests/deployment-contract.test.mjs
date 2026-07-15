@@ -196,6 +196,9 @@ test("operations use scoped Compose services and storage verification stays read
     /<<'REMOTE_PUBLIC_AUTH'[\s\S]+?\nREMOTE_PUBLIC_AUTH/,
   )?.[0];
   assert.ok(publicVerification);
+  assert.match(publicVerification, /cd "\$remote_dir"/);
+  assert.match(publicVerification, /--interactive=false/);
+  assert.match(publicVerification, /--no-TTY/);
   assert.match(
     publicVerification,
     /projectai-file-smoke npm run storage:smoke[\s\S]+?projectai-storage-ops npm run storage:verify/,

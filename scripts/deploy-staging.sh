@@ -1491,6 +1491,7 @@ deploy_marker="${11}"
 [[ "$base_path" == "/tool/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
+cd "$remote_dir"
 sudo test -e "$deploy_marker"
 compose_run=(
   sudo env
@@ -1507,6 +1508,8 @@ compose_run=(
   --rm
   --no-deps
   --pull never
+  --interactive=false
+  --no-TTY
 )
 
 "${compose_run[@]}" \
