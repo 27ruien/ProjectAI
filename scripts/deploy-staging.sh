@@ -803,6 +803,8 @@ compose_run=(
   --rm
   --no-deps
   --pull never
+  --interactive=false
+  --no-TTY
 )
 
 if sudo docker inspect "$db_container_name" >/dev/null 2>&1; then

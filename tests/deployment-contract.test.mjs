@@ -154,6 +154,10 @@ test("operations use scoped Compose services and storage verification stays read
     "projectai-storage-ops",
     "projectai-file-smoke",
   );
+  const composeRun = script.match(/compose_run=\([\s\S]*?\n\)/)?.[0];
+  assert.ok(composeRun);
+  assert.match(composeRun, /--interactive=false/);
+  assert.match(composeRun, /--no-TTY/);
   assert.match(script, /compose_run=\(/);
   assert.match(script, /--no-deps/);
   assert.match(script, /--pull never/);
