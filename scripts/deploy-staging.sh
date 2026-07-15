@@ -1403,12 +1403,25 @@ hostile_base_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:
 [[ "$hostile_base_location" == "${PUBLIC_STAGING_URL}/" ]] \
   || fail "Staging base redirect trusted an unvalidated Host header"
 
-app_root_headers="$(curl --silent --show-error --head --max-time 20 "${PUBLIC_STAGING_URL}/" | tr -d '\r')"
-app_root_code="$(awk 'NR == 1 { print $2 }' <<<"$app_root_headers")"
-app_root_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }' <<<"$app_root_headers")"
-[[ "$app_root_code" =~ ^30[2378]$ ]] || fail "Staging application root did not redirect to the dashboard"
-[[ "$app_root_location" == "${PUBLIC_STAGING_URL}/dashboard" ]] \
-  || fail "Staging application root did not use the canonical HTTPS dashboard URL"
+app_root_ready=0
+app_root_code="unavailable"
+app_root_location=""
+for _ in $(seq 1 15); do
+  app_root_headers="$(
+    curl --silent --show-error --head --max-time 20 "${PUBLIC_STAGING_URL}/" \
+      | tr -d '\r' || true
+  )"
+  app_root_code="$(awk 'NR == 1 { print $2 }' <<<"$app_root_headers")"
+  app_root_location="$(awk 'tolower($0) ~ /^location:/ { sub(/^[^:]+:[[:space:]]*/, ""); print; exit }' <<<"$app_root_headers")"
+  if [[ "$app_root_code" =~ ^30[2378]$ ]] \
+    && [[ "$app_root_location" == "${PUBLIC_STAGING_URL}/dashboard" ]]; then
+    app_root_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$app_root_ready" == "1" ]] \
+  || fail "Staging application root did not reach the canonical HTTPS dashboard redirect (status ${app_root_code:-missing})"
 
 hostile_app_headers="$(curl --silent --show-error --head --max-time 20 \
   --header 'Host: attacker.invalid' "${PUBLIC_STAGING_URL}/" | tr -d '\r')"

@@ -289,6 +289,14 @@ test("public Staging redirects stay on the canonical HTTPS URL", async () => {
   assert.match(proxy, /status: 404/);
   assert.match(script, /--header 'Host: attacker\.invalid'/);
   assert.match(script, /hostile_app_code" == "404"/);
+  assert.match(
+    script,
+    /app_root_ready=0[\s\S]+?for _ in \$\(seq 1 15\)[\s\S]+?app_root_ready=1/,
+  );
+  assert.match(
+    script,
+    /app_root_location" == "\$\{PUBLIC_STAGING_URL\}\/dashboard"/,
+  );
 });
 
 test("authentication boundary verification revokes sessions on failure paths", async () => {
