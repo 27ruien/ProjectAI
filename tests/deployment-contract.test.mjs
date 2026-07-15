@@ -18,6 +18,10 @@ const authBoundaryVerifier = new URL(
   "../scripts/verify-auth-boundaries.mjs",
   import.meta.url,
 );
+const fileStorageVerifier = new URL(
+  "../scripts/verify-file-storage-flow.ts",
+  import.meta.url,
+);
 const requestProxy = new URL("../proxy.ts", import.meta.url);
 
 function serviceBlock(compose, service, nextService) {
@@ -311,6 +315,18 @@ test("authentication boundary verification revokes sessions on failure paths", a
   assert.match(verifier, /delete from sessions where user_agent = \$1/);
   assert.match(verifier, /leakedSessionCount > 0/);
   assert.doesNotMatch(verifier, /signOut\([^\n]+\.catch/);
+});
+
+test("internal file smoke preserves the reviewed public proxy origin", async () => {
+  const verifier = await readFile(fileStorageVerifier, "utf8");
+  assert.match(verifier, /const configuredRequestUrl = new URL\(configuredRequestOrigin\)/);
+  assert.match(verifier, /host: configuredRequestUrl\.host/);
+  assert.match(verifier, /"x-forwarded-host": configuredRequestUrl\.host/);
+  assert.match(
+    verifier,
+    /"x-forwarded-proto": configuredRequestUrl\.protocol\.replace\(\/:\$\/, ""\)/,
+  );
+  assert.equal([...verifier.matchAll(/\.\.\.proxyRequestHeaders/g)].length, 2);
 });
 
 test("Staging deployment shell is syntactically valid", async () => {

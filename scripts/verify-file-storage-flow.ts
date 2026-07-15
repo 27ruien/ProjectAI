@@ -17,6 +17,12 @@ const configuredBaseUrl: string = baseUrl;
 const configuredRequestOrigin: string = requestOrigin;
 const configuredEmail: string = email;
 const configuredPassword: string = password;
+const configuredRequestUrl = new URL(configuredRequestOrigin);
+const proxyRequestHeaders = {
+  host: configuredRequestUrl.host,
+  "x-forwarded-host": configuredRequestUrl.host,
+  "x-forwarded-proto": configuredRequestUrl.protocol.replace(/:$/, ""),
+} as const;
 
 const endpoint = (path: string) =>
   `${configuredBaseUrl}/${path.replace(/^\/+/, "")}`;
@@ -50,6 +56,7 @@ async function authenticatedFetch(path: string, init: RequestInit = {}) {
       cookie,
       origin: configuredRequestOrigin,
       "user-agent": verifierUserAgent,
+      ...proxyRequestHeaders,
     },
   });
 }
@@ -62,6 +69,7 @@ async function signIn(): Promise<void> {
       "content-type": "application/json",
       origin: configuredRequestOrigin,
       "user-agent": verifierUserAgent,
+      ...proxyRequestHeaders,
     },
     body: JSON.stringify({
       email: configuredEmail,
