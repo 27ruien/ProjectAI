@@ -319,11 +319,9 @@ test("authentication boundary verification revokes sessions on failure paths", a
 
 test("internal file smoke preserves the reviewed public proxy origin", async () => {
   const verifier = await readFile(fileStorageVerifier, "utf8");
-  assert.match(verifier, /const configuredRequestUrl = new URL\(configuredRequestOrigin\)/);
-  assert.match(verifier, /host: configuredRequestUrl\.host/);
+  assert.match(verifier, /fetchWithPublicHost\(endpoint\(path\), configuredRequestOrigin, init\)/);
   assert.doesNotMatch(verifier, /x-forwarded-host/i);
   assert.doesNotMatch(verifier, /x-forwarded-proto/i);
-  assert.equal([...verifier.matchAll(/\.\.\.directUpstreamHostHeaders/g)].length, 2);
 });
 
 test("Staging deployment shell is syntactically valid", async () => {

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeDatabasePool, getPool } from "../lib/db/client";
 import { getObjectStorage } from "../lib/files/object-storage";
+import { fetchWithPublicHost } from "./lib/fetch-with-public-host";
 
 const baseUrl = process.env.APP_BASE_URL?.trim().replace(/\/+$/, "");
 const requestOrigin = process.env.AUTH_REQUEST_ORIGIN?.trim();
@@ -17,16 +18,11 @@ const configuredBaseUrl: string = baseUrl;
 const configuredRequestOrigin: string = requestOrigin;
 const configuredEmail: string = email;
 const configuredPassword: string = password;
-const configuredRequestUrl = new URL(configuredRequestOrigin);
-// Direct container checks must present the public Host accepted by Vinext. The
-// request is not traversing Nginx, so injecting X-Forwarded-* here would make
-// the router apply the external base-path rewrite a second time.
-const directUpstreamHostHeaders = {
-  host: configuredRequestUrl.host,
-} as const;
 
 const endpoint = (path: string) =>
   `${configuredBaseUrl}/${path.replace(/^\/+/, "")}`;
+const stagingFetch = (path: string, init: RequestInit = {}) =>
+  fetchWithPublicHost(endpoint(path), configuredRequestOrigin, init);
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
@@ -49,7 +45,7 @@ async function responseJson<T>(response: Response, label: string): Promise<T> {
 }
 
 async function authenticatedFetch(path: string, init: RequestInit = {}) {
-  return fetch(endpoint(path), {
+  return stagingFetch(path, {
     ...init,
     redirect: "manual",
     headers: {
@@ -57,20 +53,18 @@ async function authenticatedFetch(path: string, init: RequestInit = {}) {
       cookie,
       origin: configuredRequestOrigin,
       "user-agent": verifierUserAgent,
-      ...directUpstreamHostHeaders,
     },
   });
 }
 
 async function signIn(): Promise<void> {
-  const response = await fetch(endpoint("api/auth/sign-in/email"), {
+  const response = await stagingFetch("api/auth/sign-in/email", {
     method: "POST",
     redirect: "manual",
     headers: {
       "content-type": "application/json",
       origin: configuredRequestOrigin,
       "user-agent": verifierUserAgent,
-      ...directUpstreamHostHeaders,
     },
     body: JSON.stringify({
       email: configuredEmail,
