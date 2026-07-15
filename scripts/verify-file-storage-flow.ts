@@ -18,10 +18,11 @@ const configuredRequestOrigin: string = requestOrigin;
 const configuredEmail: string = email;
 const configuredPassword: string = password;
 const configuredRequestUrl = new URL(configuredRequestOrigin);
-const proxyRequestHeaders = {
+// Direct container checks must present the public Host accepted by Vinext. The
+// request is not traversing Nginx, so injecting X-Forwarded-* here would make
+// the router apply the external base-path rewrite a second time.
+const directUpstreamHostHeaders = {
   host: configuredRequestUrl.host,
-  "x-forwarded-host": configuredRequestUrl.host,
-  "x-forwarded-proto": configuredRequestUrl.protocol.replace(/:$/, ""),
 } as const;
 
 const endpoint = (path: string) =>
@@ -56,7 +57,7 @@ async function authenticatedFetch(path: string, init: RequestInit = {}) {
       cookie,
       origin: configuredRequestOrigin,
       "user-agent": verifierUserAgent,
-      ...proxyRequestHeaders,
+      ...directUpstreamHostHeaders,
     },
   });
 }
@@ -69,7 +70,7 @@ async function signIn(): Promise<void> {
       "content-type": "application/json",
       origin: configuredRequestOrigin,
       "user-agent": verifierUserAgent,
-      ...proxyRequestHeaders,
+      ...directUpstreamHostHeaders,
     },
     body: JSON.stringify({
       email: configuredEmail,
