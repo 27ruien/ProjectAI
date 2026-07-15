@@ -3,10 +3,16 @@ import {
   jsonResponse,
   requireTrustedMutationRequest,
 } from "@/lib/auth/http";
-import { requireApiPrincipal } from "@/lib/auth/session";
+import {
+  requireApiPrincipal,
+  type AuthenticatedPrincipal,
+} from "@/lib/auth/session";
+import { getRequestAuditContext } from "@/lib/auth/request-context";
+import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { listProjectDocumentVersions } from "@/lib/db/repositories/document-repository";
 import { requireProjectDocumentResource } from "@/lib/files/authorization";
 import { documentRoles, uploadDocument } from "@/lib/files/document-service";
+import { FileOperationError } from "@/lib/files/errors";
 import {
   fileRouteErrorResponse,
   idempotencyKeyFrom,
@@ -58,13 +64,19 @@ export async function POST(
   request: Request,
   context: VersionsRouteContext,
 ): Promise<Response> {
+  let principal: AuthenticatedPrincipal | null = null;
+  let authorizedProject:
+    | Awaited<ReturnType<typeof requireProjectRole>>
+    | null = null;
+  let projectId = "";
+  let documentId = "";
   try {
     requireTrustedMutationRequest(request, {
       allowedMediaTypes: ["multipart/form-data"],
     });
-    const { projectId, documentId } = await context.params;
-    const principal = await requireApiPrincipal(request.headers);
-    const authorizedProject = await requireProjectRole(
+    ({ projectId, documentId } = await context.params);
+    principal = await requireApiPrincipal(request.headers);
+    authorizedProject = await requireProjectRole(
       principal,
       projectId,
       documentRoles.upload,
@@ -111,6 +123,30 @@ export async function POST(
       },
     );
   } catch (error) {
+    if (
+      error instanceof FileOperationError &&
+      principal &&
+      authorizedProject &&
+      projectId &&
+      documentId &&
+      [
+        "FILE_TOO_LARGE",
+        "UNSUPPORTED_FILE_TYPE",
+        "FILE_SIGNATURE_MISMATCH",
+        "INVALID_OFFICE_CONTAINER",
+      ].includes(error.code)
+    ) {
+      await writeAuditEvent({
+        actorUserId: principal.user.id,
+        projectId,
+        eventType: "document_upload_failed",
+        entityType: "project_document",
+        entityId: documentId,
+        result: "failed",
+        metadata: { failureCode: error.code },
+        ...getRequestAuditContext(request.headers),
+      });
+    }
     return fileRouteErrorResponse(error);
   }
 }

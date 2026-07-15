@@ -758,6 +758,44 @@ describe("Project Files real PostgreSQL and MinIO integration", () => {
     assert.equal(afterRows.length, beforeRows.length, "validation failures reserve no version");
   });
 
+  it("audits a rejected new-version upload against its logical document", async () => {
+    const createdResponse = await uploadViaRoute({
+      actor: managerA,
+      projectId: projectAId,
+      file: createPdfFixture("新版本拒绝审计.pdf"),
+    });
+    const created = await responseJson<UploadResponse>(createdResponse);
+
+    const rejected = await uploadVersionViaRoute({
+      actor: managerA,
+      projectId: projectAId,
+      documentId: created.document.id,
+      file: createSignatureMismatchFixture(),
+    });
+    assert.equal(rejected.status, 415);
+    assert.equal(
+      (await responseJson<ErrorResponse>(rejected)).error.code,
+      "FILE_SIGNATURE_MISMATCH",
+    );
+
+    const events = await getDb()
+      .select()
+      .from(auditEvent)
+      .where(
+        and(
+          eq(auditEvent.projectId, projectAId),
+          eq(auditEvent.entityId, created.document.id),
+          eq(auditEvent.eventType, "document_upload_failed"),
+        ),
+      );
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.entityType, "project_document");
+    assert.equal(events[0]?.result, "failed");
+    assert.deepEqual(events[0]?.metadata, {
+      failureCode: "FILE_SIGNATURE_MISMATCH",
+    });
+  });
+
   it("sanitizes traversal filenames and never derives object keys from user input", async () => {
     const response = await uploadViaRoute({
       actor: managerA,

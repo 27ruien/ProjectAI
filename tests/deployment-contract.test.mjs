@@ -214,8 +214,20 @@ test("rollback preserves the previous application health contract", async () => 
   )?.[0];
   assert.ok(captureBlock);
   assert.match(captureBlock, /STAGING_HEALTHCHECK_PATH=/);
+  assert.match(captureBlock, /NEXT_PUBLIC_COMMIT_SHA=/);
+  assert.match(captureBlock, /NEXT_PUBLIC_APP_VERSION=/);
+  assert.match(captureBlock, /NEXT_PUBLIC_BUILD_TIME=/);
   assert.match(captureBlock, /running.*healthy/);
   assert.match(script, /rollback_health_path="\$previous_health_path"/);
+  const rollbackBlock = script.match(
+    /<<'REMOTE_ROLLBACK'[\s\S]+?\nREMOTE_ROLLBACK/,
+  )?.[0];
+  assert.ok(rollbackBlock);
+  assert.match(rollbackBlock, /NEXT_PUBLIC_COMMIT_SHA=\$previous_commit_sha/);
+  assert.match(rollbackBlock, /NEXT_PUBLIC_APP_VERSION=\$previous_app_version/);
+  assert.match(rollbackBlock, /NEXT_PUBLIC_BUILD_TIME=\$previous_build_time/);
+  assert.doesNotMatch(rollbackBlock, /NEXT_PUBLIC_COMMIT_SHA=\$commit_sha/);
+  assert.match(rollbackBlock, /restored_environment=/);
   assert.match(script, /rm --stop --force projectai-minio-init/);
 });
 

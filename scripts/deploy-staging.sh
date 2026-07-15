@@ -437,6 +437,9 @@ container_name="$1"
 base_path="$2"
 image=""
 health_path="/login"
+commit_sha=""
+app_version=""
+build_time=""
 if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
   image="$(sudo docker container inspect --format '{{.Image}}' "$container_name")"
   running="$(sudo docker container inspect --format '{{.State.Running}}' "$container_name")"
@@ -462,24 +465,46 @@ if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
     printf 'Unsupported previous Staging health path: %s\n' "$health_path" >&2
     exit 1
   fi
+  container_environment="$(
+    sudo docker container inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_name"
+  )"
+  commit_sha="$(sed -n 's/^NEXT_PUBLIC_COMMIT_SHA=//p' <<<"$container_environment")"
+  app_version="$(sed -n 's/^NEXT_PUBLIC_APP_VERSION=//p' <<<"$container_environment")"
+  build_time="$(sed -n 's/^NEXT_PUBLIC_BUILD_TIME=//p' <<<"$container_environment")"
+  [[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$app_version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]
+  [[ "$build_time" =~ ^[0-9A-Za-z][0-9A-Za-z:._+-]*$ ]]
 else
   sudo docker info >/dev/null
 fi
-printf '%s|%s\n' "$image" "$health_path"
+printf '%s|%s|%s|%s|%s\n' \
+  "$image" "$health_path" "$commit_sha" "$app_version" "$build_time"
 REMOTE_IMAGE
 )" || fail "Unable to inspect the previous Staging image safely"
-IFS='|' read -r PREVIOUS_STAGING_IMAGE PREVIOUS_STAGING_HEALTH_PATH <<<"$PREVIOUS_STAGING_STATE"
+IFS='|' read -r \
+  PREVIOUS_STAGING_IMAGE PREVIOUS_STAGING_HEALTH_PATH \
+  PREVIOUS_STAGING_COMMIT_SHA PREVIOUS_STAGING_APP_VERSION \
+  PREVIOUS_STAGING_BUILD_TIME <<<"$PREVIOUS_STAGING_STATE"
 [[ -z "$PREVIOUS_STAGING_IMAGE" || "$PREVIOUS_STAGING_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || fail "Unable to capture the immutable previous Staging image ID"
 [[ "$PREVIOUS_STAGING_HEALTH_PATH" == "/login" || "$PREVIOUS_STAGING_HEALTH_PATH" == "/api/health" ]] \
   || fail "Unable to determine the previous Staging health contract"
+if [[ -n "$PREVIOUS_STAGING_IMAGE" ]]; then
+  [[ "$PREVIOUS_STAGING_COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "Unable to capture the previous Staging Commit provenance"
+  [[ "$PREVIOUS_STAGING_APP_VERSION" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]] \
+    || fail "Unable to capture the previous Staging version provenance"
+  [[ "$PREVIOUS_STAGING_BUILD_TIME" =~ ^[0-9A-Za-z][0-9A-Za-z:._+-]*$ ]] \
+    || fail "Unable to capture the previous Staging build-time provenance"
+fi
 
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
     "$CONTAINER_NAME" "$DB_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER" \
     "$PREVIOUS_STAGING_IMAGE" "$PREVIOUS_STAGING_HEALTH_PATH" \
-    "$COMMIT_SHA" "$APP_VERSION" "$BUILD_TIME" <<'REMOTE_ROLLBACK'
+    "$PREVIOUS_STAGING_COMMIT_SHA" "$PREVIOUS_STAGING_APP_VERSION" \
+    "$PREVIOUS_STAGING_BUILD_TIME" <<'REMOTE_ROLLBACK'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -491,13 +516,18 @@ base_path="$7"
 deploy_marker="$8"
 previous_image="$9"
 previous_health_path="${10}"
-commit_sha="${11}"
-app_version="${12}"
-build_time="${13}"
+previous_commit_sha="${11}"
+previous_app_version="${12}"
+previous_build_time="${13}"
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$previous_health_path" == "/login" || "$previous_health_path" == "/api/health" ]]
+if [[ -n "$previous_image" ]]; then
+  [[ "$previous_commit_sha" =~ ^[0-9a-f]{40}$ ]]
+  [[ "$previous_app_version" =~ ^[0-9A-Za-z][0-9A-Za-z._+-]*$ ]]
+  [[ "$previous_build_time" =~ ^[0-9A-Za-z][0-9A-Za-z:._+-]*$ ]]
+fi
 sudo test -e "$deploy_marker" || exit 0
 cd "$remote_dir"
 
@@ -507,9 +537,9 @@ previous_requires_database="0"
 
 compose=(
   sudo env
-  "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
-  "NEXT_PUBLIC_APP_VERSION=$app_version"
-  "NEXT_PUBLIC_BUILD_TIME=$build_time"
+  "NEXT_PUBLIC_COMMIT_SHA=$previous_commit_sha"
+  "NEXT_PUBLIC_APP_VERSION=$previous_app_version"
+  "NEXT_PUBLIC_BUILD_TIME=$previous_build_time"
   "STAGING_HEALTHCHECK_PATH=$rollback_health_path"
   docker compose
   --env-file "$env_file"
@@ -521,9 +551,9 @@ if [[ -n "$previous_image" ]]; then
   printf 'Restoring the previously running Staging application image.\n' >&2
   rollback_compose=(
     sudo env
-    "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
-    "NEXT_PUBLIC_APP_VERSION=$app_version"
-    "NEXT_PUBLIC_BUILD_TIME=$build_time"
+    "NEXT_PUBLIC_COMMIT_SHA=$previous_commit_sha"
+    "NEXT_PUBLIC_APP_VERSION=$previous_app_version"
+    "NEXT_PUBLIC_BUILD_TIME=$previous_build_time"
     "STAGING_APP_IMAGE=$previous_image"
     "STAGING_HEALTHCHECK_PATH=$rollback_health_path"
     docker compose
@@ -554,6 +584,12 @@ if [[ -n "$previous_image" ]]; then
   done
   [[ "$restored" == "1" ]]
   [[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$previous_image" ]]
+  restored_environment="$(
+    sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container_name"
+  )"
+  [[ "$(sed -n 's/^NEXT_PUBLIC_COMMIT_SHA=//p' <<<"$restored_environment")" == "$previous_commit_sha" ]]
+  [[ "$(sed -n 's/^NEXT_PUBLIC_APP_VERSION=//p' <<<"$restored_environment")" == "$previous_app_version" ]]
+  [[ "$(sed -n 's/^NEXT_PUBLIC_BUILD_TIME=//p' <<<"$restored_environment")" == "$previous_build_time" ]]
 else
   printf 'No previous Staging image exists; stopping the failed application and preserving PostgreSQL.\n' >&2
   "${compose[@]}" stop projectai-staging

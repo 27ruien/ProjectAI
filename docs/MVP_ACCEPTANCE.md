@@ -49,7 +49,7 @@
 | ID | 描述 | 当前状态 | 当前证据 | 关闭条件 |
 | --- | --- | --- | --- | --- |
 | V04-DATA-001 | 文件 Schema/Migration、外键、唯一/Partial Unique/状态检查约束 | 通过 | 最终 CI 空库 Migration、约束集成与 Staging catalog 独立复核 | 已关闭；禁止以 destructive schema push 替代 Migration |
-| V04-FILE-001 | 允许类型、50 MiB、文件名/签名/OOXML 安全和 SHA-256 | 通过 | `test:files` `20/20`、`test:storage` `37/37`；Staging 真实 PDF v1/v2 与 SHA 下载通过 | 已关闭；解析正文仍不在范围内 |
+| V04-FILE-001 | 允许类型、50 MiB、文件名/签名/OOXML 安全和 SHA-256 | 通过 | `test:files` `20/20`、`test:storage` `38/38`；Staging 真实 PDF v1/v2 与 SHA 下载通过 | 已关闭；解析正文仍不在范围内 |
 | V04-AUTHZ-001 | 上传/下载/版本/归档服务端角色和跨项目归属链 | 通过 | 最终 CI Manager/Member/Viewer/Admin、未认证及跨项目矩阵；Staging 内外网角色/隔离回归 | 已关闭；客户端 role/projectId 始终不可信 |
 | V04-VERSION-001 | 不可变版本、单 current、并发递增/切换、归档/恢复 | 通过 | 最终 CI 并发与 E2E；Staging v1/v2、current、归档/恢复通过 | 已关闭；历史对象未覆盖或物理删除 |
 | V04-STORAGE-001 | S3-compatible 存储、私有 Bucket、幂等上传与完整性下载 | 通过 | CI 临时 MinIO；Staging 私网 MinIO、anonymous 403、真实上传/下载与 0 finding verify | 已关闭；无对象存储端口或凭据暴露 |
