@@ -1,108 +1,140 @@
 # Architecture
 
-## v0.3 请求与数据边界
+## v0.4 请求、身份与文件边界
 
 ```mermaid
 flowchart LR
-  A["Browser Request"] --> B["App Router / Route Handler"]
-  B --> C["Better Auth 1.6.23"]
-  C --> D["PostgreSQL users / accounts / sessions"]
-  D --> E["Authenticated Principal"]
-  E --> F["Central Authorization"]
-  F --> G["projects + project_members Repository"]
-  G -->|"authorized"| H["Database project data"]
-  G -->|"authorized projectId only"| I["Server-side Mock mapper"]
-  I --> J["Client Workspace"]
-  F -->|"missing or inaccessible"| K["404 + sanitized audit event"]
-  F -->|"known project, insufficient write role"| L["403 + sanitized audit event"]
+  A["Browser"] --> B["App Router / Route Handler"]
+  B --> C["Better Auth + PostgreSQL Session"]
+  C --> D["Authenticated Principal"]
+  D --> E["Central Project Authorization"]
+  E --> F["projects + project_members"]
+  F -->|"authorized projectId"| G["Project Document Service"]
+  G --> H["project_documents + versions"]
+  G --> I["S3-compatible private object storage"]
+  G --> J["audit_events"]
+  E -->|"missing / cross-project"| K["404 + sanitized audit"]
+  E -->|"known project, insufficient role"| L["403 + sanitized audit"]
 ```
 
-身份与项目访问不是客户端状态：每个受保护页面和 Route Handler 都从数据库 Session 恢复用户，再由集中授权层查询 PostgreSQL 项目/成员关系。`system_admin` 的全项目能力只在该层集中处理。
+身份、角色、`projectId`、`documentId` 和 `versionId` 均不可信。受保护页面和 Route Handler 从数据库 Session 恢复用户，再由集中授权层查询项目成员关系。文件服务继续验证 `project → document → version` 复合归属；不存在和跨项目资源统一 404，只有已经确认项目可见但写角色不足时返回 403。`system_admin` 绕过项目成员关系只存在于集中授权层。
 
-同一项目的成员写操作使用 `projects` 行作为 PostgreSQL 事务互斥锁。固定顺序为 project `FOR UPDATE` → 锁后重新授权 → target membership `FOR UPDATE` → 最后 Manager guard → mutation/audit；因此普通 Manager 和 `system_admin` 都不能把项目降到零 `project_manager`，两个并发降级或删除也不能产生 write skew。拒绝操作不在事务内抛错，而是提交脱敏审计后由 Route Handler 返回精确 409。
+v0.4 后，项目资料不再走 `data/mock`：列表、元数据、版本、current、归档和下载均来自 PostgreSQL 与私有对象存储。知识问答、需求、Scope、Action、会议、风险和 AI execution 仍是服务端授权后按精确 `projectId` 过滤的 Mock，客户端不会收到其他项目数据，也不会把真实文件正文交给 Mock AI。
 
-项目详情中的文档、引用、需求、Scope、Action、会议、风险和 AI execution 仍为 Mock。Catch-all Server Component 必须先调用 `requireProjectAccess(projectId)`，成功后才允许 `getAuthorizedMockProjectPayload(authorizedProject.id)` 精确过滤并序列化；工作台级项目数组由当前用户已授权项目 ID 集合在服务端过滤。客户端没有“收到全部数据再隐藏”的权限职责。
+## PostgreSQL 与对象存储职责
+
+| 存储 | 责任 | 明确不保存 |
+| --- | --- | --- |
+| PostgreSQL | 身份、Session、项目/成员；逻辑资料；版本元数据；幂等标识；SHA-256、ETag、状态/current；审计 | 文件正文、对象存储 Secret、完整 Provider 响应 |
+| S3-compatible Object Storage | 不可变文件正文和 `sha256` object metadata | 用户角色、项目授权、current/归档业务状态 |
+
+数据库是业务状态事实来源，但不能单独证明对象存在；对象存储也不能决定访问权限。任何读取先授权并查询数据库，再以内置 Object Key 访问对象。客户端 DTO 永不包含 Bucket、Endpoint、Object Key、Access Key 或 Secret。
 
 ## PostgreSQL 模型
 
 | 表 | 责任与关键约束 |
 | --- | --- |
-| `users` | 规范化唯一 email、display name、系统角色、active/disabled、时间戳；不保存密码字段 |
-| `accounts` | Better Auth credential identity；安全哈希只位于 `accounts.password_hash`，provider/account 唯一；`users` 不复制 hash |
-| `sessions` | Better Auth token、user、过期时间、创建时间、last seen、基础请求信息；token 唯一 |
-| `verifications` / `rate_limits` | Better Auth 兼容表与数据库登录限流 |
-| `projects` | 项目基础信息、状态、阶段、健康、目标上线日、创建者与时间戳 |
-| `project_members` | 项目角色、创建者；`(project_id, user_id)` 唯一，角色由 PostgreSQL enum 约束 |
-| `audit_events` | actor、project、event/entity/result、脱敏 metadata、IP、User Agent、时间 |
+| `users` | 唯一规范化 email、系统角色、active/disabled；不保存密码 |
+| `accounts` | Better Auth credential；安全哈希只位于 `accounts.password_hash` |
+| `sessions` | 数据库 Session、到期/创建/last seen；token 唯一 |
+| `verifications` / `rate_limits` | Better Auth 兼容状态与数据库登录限流 |
+| `projects` | 项目基础信息及同项目成员/文件写操作的事务锁边界 |
+| `project_members` | `(project_id, user_id)` 唯一、项目角色 enum；最后 Manager 约束由事务服务执行 |
+| `project_documents` | 逻辑资料、项目、display name、`pending/active/archived/failed`、创建/归档元数据；项目删除 `restrict` |
+| `project_document_versions` | 不可变版本、project/document 复合外键、版本号、current、upload/object 唯一标识、文件元数据、`pending/stored/failed/quarantined/deleted` |
+| `audit_events` | actor、project、event/entity/result、脱敏 metadata、请求上下文与时间 |
 
-数据库访问集中在 `lib/db/repositories/`，页面组件不写 SQL。Migration 由 `drizzle/` 提交并通过 `npm run db:migrate` 执行；Staging/Production 禁止 destructive schema push。
+文件版本约束包括：
 
-当前持久化事件包括 `login_succeeded`、`login_failed`、`logout`、`project_created`、`project_viewed`、`project_access_denied`、`project_member_added`、`project_member_role_changed` 和 `project_member_removed`。只允许 `system_admin` 通过只读 API 查询最近事件；普通用户不能读取审计列表。
+- `(document_id, version_number)`、`upload_id`、`object_key` 唯一。
+- Partial Unique Index：`unique(document_id) where is_current = true`。
+- current 必须是 stored；stored 必须有 ETag/storedAt 且没有 failure code。
+- pending 不得有 ETag/storedAt/current；failed/quarantined 必须有受控 failure code 且不得 current。
+- `documentId + projectId` 复合外键和版本查询共同防止跨项目资源拼接。
 
-## 当前 AI 业务链路
+数据库访问集中在 `lib/db/repositories/` 和领域服务中，页面组件不写 SQL。Migration 提交在 `drizzle/` 并只通过 `npm run db:migrate` 前向执行；Staging/Production 禁止 schema push。
+
+## Object Key、文件验证与下载
+
+Object Key 由服务端生成：
+
+```text
+projects/{projectId}/documents/{documentId}/versions/{versionId}/{randomUuid}
+```
+
+四个动态段只允许受控 ID 字符；Key 不使用原文件名、邮箱、客户/项目名称、路径、Session 或客户端随机片段。原文件名经 NFKC、basename、控制/bidi/非字符和 UTF-8 长度清理，仅作为 PostgreSQL 元数据及安全 `Content-Disposition` 使用。
+
+上传默认上限 50 MiB，允许 PDF、DOCX、XLSX、PPTX、TXT 和 Markdown。验证器同时检查扩展名、声明 MIME、真实字节数和签名；OOXML 只在内存中检查 ZIP central directory、路径、加密/symlink/重复 entry、压缩比、总量、宏/ActiveX、核心部件与 `[Content_Types].xml`，不解压到文件系统，也不解析正文。
+
+下载在读取对象后、发送响应前核对数据库大小、ETag 和 SHA-256 object metadata；响应固定 `attachment`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: private, no-store`。完整性异常统一为脱敏的 `STORAGE_UNAVAILABLE`，不返回内部 S3 错误。
+
+## 上传状态机与补偿
+
+```mermaid
+stateDiagram-v2
+  [*] --> Pending: "DB reservation + upload audit"
+  Pending --> Stored: "Object put verified + DB finalize"
+  Pending --> Failed: "Put/finalize failed; object deletion confirmed"
+  Pending --> Quarantined: "Compensation deletion not confirmed"
+  Failed --> Pending: "same idempotency key + identical file retry"
+  Stored --> [*]
+```
+
+三段式流程：
+
+1. 事务锁定项目和逻辑资料，使用 `projectId + actorUserId + UUID Idempotency-Key` 派生唯一 `upload_id`，创建 pending 版本。
+2. 向全新 Object Key 写入验证后的字节并核对 size/SHA-256/ETag。
+3. 再次锁定并事务性标记 stored、选择最高 stored 版本为 current、取消旧 current、激活资料并写审计。
+
+对象 put 失败会尝试删除目标 Key并把版本置 failed；删除无法确认则 quarantined。对象成功但数据库 finalize 失败会再次补偿删除并记录 `FINALIZE_*` failure code。标记失败本身为 best effort；stale pending、缺失对象、metadata mismatch 和 orphan 由只读检查接管。新版本永远生成新 Key，不覆盖历史对象。
+
+## 版本、current 与归档
+
+- 新版本事务锁定 `project_documents` 行后计算下一个版本号，数据库唯一约束兜底并发重复。
+- 只有 Manager/Admin 能切换 current；目标必须属于同一项目/文档并为 stored。锁 + Partial Unique Index 防止双 current。
+- 归档/恢复只有 Manager/Admin 可执行。归档不删对象、不删版本、不改变 current，仅从默认 active 列表排除并禁止新增版本/current 切换。
+- Member 可上传资料/版本，Viewer 只读；所有项目角色可下载其授权项目 stored 版本。
+
+## 一致性与 reconciliation
+
+`verifyFileStorage()` 同时遍历数据库与 `projects/` 对象前缀，报告：missing object、size/ETag/SHA metadata mismatch、multiple current、active without current、超过 15 分钟 pending 和 orphan。CLI 只输出计数，不输出 Object Key 或 Secret。
+
+`storage:reconcile` 默认 dry-run。即使传入 `--apply`，仍要求非 Production、`ALLOW_STORAGE_RECONCILE_APPLY=1`、精确 `OBJECT_STORAGE_BUCKET_CONFIRM`、至少 300 秒 orphan 年龄；删除前再次查询数据库引用，只删除仍无引用的对象并写审计。数据库记录缺对象不会被脚本自动删除或伪造修复。
+
+## AI 与知识稳定边界
 
 ```mermaid
 flowchart LR
-  A["业务页面"] --> B["Workflow"]
-  B --> C["Skill"]
-  C --> D["Model Profile"]
-  D --> E["AI Gateway"]
-  E --> F["Model Router"]
-  F --> G["Provider Adapter"]
-  G --> H["Execution Logger"]
-  H --> I["AI Draft"]
-  I --> J["Human Review"]
-  J --> K["Formal Data"]
+  A["Business Page"] --> B["Workflow / Skill"]
+  B --> C["modelProfileId"]
+  C --> D["AI Gateway"]
+  D --> E["Mock Provider"]
+  E --> F["AI Draft"]
+  F --> G["Human Review"]
 ```
 
-页面只依赖 Workflow、Skill、`AIGateway` 和 `ProjectKnowledgeService` 契约，不得感知具体 Provider 或模型名称。
+`ProjectKnowledgeService` 与 `AIGateway` 保持稳定边界，页面和 Skill 不保存具体 Provider 模型名。v0.4 没有 Parser、OCR、Embedding、索引、RAG、Reranker、真实模型或 Provider Key；真实文件存储不会自动进入知识服务。
 
-该 AI 链路在 v0.3 仍由 Mock Provider 和服务器授权后的 Mock 项目数据驱动，没有真实模型、文件解析、Embedding 或 RAG。
+## Staging 环境与备份
 
-## 下一阶段候选真实架构（未实现）
+- Production：`/tool/projectai`、`/srv/projectai`、`project-ai-os`、`127.0.0.1:3100`；v0.4 不得修改。
+- Staging 应用/数据库：`project-ai-os-staging`、`project-ai-os-staging-postgres`、卷 `projectai-staging-postgres`、`127.0.0.1:3101`。
+- Staging MinIO：`project-ai-os-staging-minio`、卷 `projectai-staging-minio`、Bucket `projectai-staging-files`；仅连接 `projectai-staging-internal`，不发布 API/Console 端口，不允许匿名访问。
+- `projectai-minio-init` 使用 root credential 幂等创建私有 Bucket 和受 `projects/*` 限制的应用用户；应用只得到 scoped app credential。root/app credential 必须不同并只存在于 `root:root 600` 环境文件。
+- 应用依赖 PostgreSQL/MinIO Healthy 与 init 成功；MinIO、应用、数据库和 operations 有 CPU、内存、PID 与滚动日志边界。
 
-```mermaid
-flowchart LR
-  A["Next.js"] --> B["API Layer"]
-  B --> C["PostgreSQL"]
-  B --> D["Object Storage"]
-  D --> E["Document Parser"]
-  E --> F["Full Text Search"]
-  E --> G["pgvector"]
-  F --> H["Hybrid Retrieval"]
-  G --> H
-  H --> I["Reranker"]
-  I --> J["LLM"]
-  J --> K["Citation"]
-```
+部署在 Migration 前短暂停止 Staging 应用写入，先创建可解析的 PostgreSQL custom dump，再生成 MinIO JSONL inventory 与 root-only mirror；对象数和字节数一致后才原子改名。mirror 恢复到唯一临时 Bucket，复核后删除临时 Bucket，不覆盖正式 Bucket。普通部署、失败和应用镜像回滚均保留两个命名卷和备份。
 
-## 稳定边界
+## CI 与产品审查证据边界
 
-- `ProjectKnowledgeService` 保持接口不变；Mock 将来由权限过滤、混合检索和引用服务替换。
-- `AIGateway` 保持接口不变；Mock Provider 将来由真实 Provider Adapter 替换。
-- Skill 只保存 `modelProfileId`，不保存供应商模型名。
-- 所有调用写 execution log；API Key 只存在服务端。
-- 正式数据、AI 生成记录、审核版本和审计记录分表/分存储模型保存。
-- `requireAuthenticatedUser`、`requireSystemAdmin`、`requireProjectAccess`、`requireProjectRole`、`canReadProject`、`canEditProject` 与 `canManageProjectMembers` 是身份/项目边界；任何未来 Repository/检索服务也必须复用该边界。
+CI 使用 PostgreSQL 17 和运行时创建的 MinIO：每次生成随机 root/app credential 与唯一 Bucket，Secret 全部 mask，MinIO 数据放在 tmpfs，结束时 `if: always()` 删除容器、网络和 root-only 临时凭据文件。CI 不连接 Staging/Production 或远程 Bucket。
 
-## 环境与部署
+产品 Evidence 采用强 allowlist。Payload A 只可包含：
 
-- Production：`/tool/projectai`、`/srv/projectai`、`project-ai-os`、`127.0.0.1:3100`。
-- Staging：`/tool/projectai-staging`、`/srv/projectai-staging`、`project-ai-os-staging`、`project-ai-os-staging-postgres`、`projectai-staging-postgres`、`127.0.0.1:3101`。
-- Staging PostgreSQL 只在 `projectai-staging-internal` Docker 网络中提供 `5432`，不发布宿主机端口；应用在数据库 Healthy 后启动，Migration/Seed 由短生命周期 operations 容器受控执行。
-- Compose 不把完整 `.env.auth-staging` 注入所有容器：PostgreSQL 只接收 `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD`，operations 容器按 Migration/Seed 需要接收数据库、认证和 Seed 变量，应用只接收运行所需的 `DATABASE_URL`、Better Auth/Cookie 配置与公开构建元数据，不接收 Seed 密码或 `POSTGRES_PASSWORD`。
-- 应用健康检查调用 `${basePath}/api/health`；只有 PostgreSQL 认证/查询成功且 `users`、`sessions`、`projects`、`project_members` 四张已提交核心表可查询时才返回 `status: ok`，失败只返回通用 `503`，不泄露计数、Schema 或连接信息。健康响应仅在运行环境提供完整合法 Commit 时附加非敏感的 `x-projectai-commit-sha` 响应头；CI 必须同时验证 HTTPS 请求成功、body 为 `status: ok` 且该头为完整 SHA，才可把它记为实际观测的 `stagingSha`。
-- 发布只使用当前 Commit 的 tracked-file archive，并以 Staging 专属原子锁串行化；远端 Secret、备份、锁与事务标记不进入镜像 context。已有 PostgreSQL 数据挂载必须严格匹配固定命名卷。
-- 每次 Staging Migration 前检查空间并流式创建、原子完成 root-only custom-format `pg_dump`，保留最近 10 份。部署在替换应用前记录上一镜像并提前创建事务标记；替换后的任一验收失败会自动恢复上一应用镜像，数据库卷和备份保持不动。数据库 schema 的不兼容回退仍必须在维护窗口人工审核后执行。
-- Staging 应用、PostgreSQL 和 operations 容器都有 CPU、内存、PID 与滚动日志上限，避免共享主机资源失控影响 Production。
-- 两套环境共享代码契约，不共享应用/数据库容器、端口、部署目录、数据库、认证 URL、Cookie 前缀/路径或 localStorage 命名空间。
-- vinext standalone 的浏览器资源 URL 带 basePath，上游资源目录为 `/assets/`，由窄范围 Nginx location 适配。
-- v0.3 只允许部署 Staging，Production Compose、环境变量、数据库和容器均不得修改。
+- `evidence-index.json`、`sanitization-report.json`。
+- 12 张约定 PNG/JPEG/WebP 截图（原 6 张身份/隔离截图 + 6 张真实文件截图）。
+- 固定名称的 UTF-8 纯文本测试日志。
 
-## CI 产品审查证据边界
+`playwright-report/`、`test-results/`、trace/video、任意归档/PDF、上传测试原件、数据库/对象备份和未列名文件均不进入 Payload A。sanitizer 对数据库/认证/MinIO/object-storage Secret、Bucket/Endpoint/Object Key、Cookie/Session 和编码变体做删除/脱敏并失败关闭。
 
-测试生成的 `playwright-report/`、`review-artifacts/`、`test-results/` 和 `test-logs/` 是 CI 工作区内的原始输入，不直接上传。`review-artifacts/evidence-index.json` 是预上传索引：它拆分 `headSha`、`testedMergeSha`、`stagingSha`，并记录 `branch`、`workflowRunId`、`version`、`buildTime`、运行状态和截图合同；它既不包含上传前未知的 `artifactId`，也不允许含义模糊的 legacy `commit`。
-
-所有输入先复制到 `product-review-evidence/`，结合运行时环境 Secret 与必须可查询的数据库 Session Token 做精确值扫描；所有文本执行结构化 Session/Cookie 清理，改名、嵌套或 SFX ZIP 与 gzip 由 magic 识别，归档 entry 路径一并清理，ZIP Data URI 支持 MIME、大小写、空白、Base64 和原始 percent-encoding 变体。Secret 集合同时覆盖 URL、JSON、标准/URL-safe/折行 Base64 与组合编码。归档递归解包、脱敏、复核并重建；无法保证安全的二进制/普通归档即使已删除或替换为 omission 说明，也会让整个步骤失败。数据库 Session 不可核验、内嵌归档无法解析、evidence index 自相矛盾或 legacy provenance 存在时同样失败关闭。成功运行必须有 6 张必需截图；失败/取消运行允许 index 明确列出缺失截图并上传已安全清洗的日志。最终树与合同复核通过后才写入 `sanitization-report.json`。
-
-GitHub Actions 随后执行不可颠倒的两阶段发布：先上传脱敏 Payload A `product-review-evidence-${workflowRunId}-${runAttempt}`；上传动作返回 A 的真实 `artifact-id` 与 digest 后，再从已脱敏 index 生成权威 `product-review-manifest/manifest.json`，并上传独立 Provenance B `product-review-manifest-${workflowRunId}-${runAttempt}`。B 的 `artifactId` 指向 A，digest 将 Manifest 与不可变 Payload 绑定；B 不尝试记录自身尚未分配的 ID。任一步骤失败都会阻止后续阶段。
+GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成并上传独立 Provenance B。`headSha`、`testedMergeSha` 与实际可观测的 `stagingSha` 不得互相回填。当前 v0.4 最终 CI、Artifact 与 Staging 运行尚未完成，状态以 `MVP_STATUS.md` 为准。

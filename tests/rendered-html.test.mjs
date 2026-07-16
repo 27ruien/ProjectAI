@@ -31,7 +31,7 @@ test("server-renders the public Project AI OS login", async () => {
   const html = await response.text();
   assert.match(html, /Project AI OS/);
   assert.match(html, /登录工作台/);
-  assert.match(html, /Identity and Project Isolation/);
+  assert.match(html, /Project Files Foundation/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 

@@ -1,95 +1,125 @@
 # Testing
 
-## 测试分层
+## v0.4 测试分层
 
 1. TypeScript：`npm run typecheck`。
 2. ESLint：`npm run lint`。
-3. PostgreSQL Migration + insert-only 幂等 Seed：`npm run db:migrate`、`npm run db:seed`。
-4. 身份/项目授权集成：`npm run test:integration`。
-5. Production build + SSR/路由/反向代理 Host 边界：`npm test`（已经包含一次 `npm run build`）。
-6. 浏览器身份、隔离和原 MVP 主流程：`npm run test:e2e`。
-7. 完整 MVP 验证：`npm run qa:mvp`；CI 额外显式运行数据库集成测试。
-8. Staging：数据库/应用健康、认证 Cookie、Session 刷新/退出、角色与跨项目边界、canonical HTTPS、恶意 Host、HTTP/MIME/Nginx 和 Production 不变回归。
+3. PostgreSQL Migration + insert-only Seed：`npm run db:migrate`、`npm run db:seed`。
+4. v0.3 身份/项目授权回归：`npm run test:integration`。
+5. 文件名、类型、签名与 OOXML 安全：`npm run test:files`。
+6. PostgreSQL + S3-compatible 文件集成：`npm run test:storage`。
+7. Production build + SSR/路由/反向代理边界：`npm test`。
+8. Artifact allowlist / provenance：`npm run test:artifacts`。
+9. Staging/MinIO/备份安全契约：`npm run test:deployment`。
+10. 浏览器身份、隔离、真实资料和其余 Mock 流程：`npm run test:e2e`。
+11. 完整本地门禁：`npm run qa:mvp`。
+12. Staging：App/PostgreSQL/MinIO、私有 Bucket、真实文件流程、跨存储备份恢复、清理和 Production 不变。
 
-## 独立测试数据库
+代码或单层测试完成不能替代后续层级。当前 v0.4 最终全套、CI 和 Staging 尚待执行，结果只在 `MVP_STATUS.md` 记录。
 
-- 集成和 E2E 只允许连接本地/CI PostgreSQL，数据库名称必须包含 `test` 或 `ci`；不得连接 Staging/Production。
-- `npm run db:reset:test` 还要求 `ALLOW_TEST_DATABASE_RESET=true`，脚本会重建 `public` schema、执行已提交 Migration，再由 npm 命令运行 insert-only Seed。
-- Seed 创建 1 个 system admin、Manager A/B、Member A、Viewer A 和 3 个项目；密码必须由未跟踪的本地环境或 CI 临时 Secret 提供。
-- CI 使用 PostgreSQL `17-alpine` Service 和测试专用数据库凭据；Seed 密码与 Better Auth Secret 每次运行随机生成、写入 GitHub 环境并 mask，不进入仓库或 artifact。
+## 隔离测试基础设施
 
-## 身份与项目隔离集成测试
+- 集成和 E2E 只允许连接本地/CI PostgreSQL，数据库名必须包含 `test` 或 `ci`；不得连接 Staging/Production。
+- `db:reset:test` 还要求 `NODE_ENV=test` 与 `ALLOW_TEST_DATABASE_RESET=true`，并拒绝远程主机。
+- 文件集成测试只允许使用本地/CI S3-compatible 存储。CI 在运行时生成 MinIO root/app credential 和唯一 Bucket，全部 mask；数据位于 tmpfs，任务结束后无论成功失败都删除 MinIO 容器、网络和 root-only 临时凭据文件。
+- CI 不连接 Staging PostgreSQL、Staging MinIO、Production 或任何远程真实 Bucket。
+- PDF、DOCX、XLSX、PPTX、TXT 和 Markdown fixture 在运行时生成，只含虚构内容；不得提交客户文件或大量二进制 fixture。
+- Better Auth Secret、Seed 密码与对象存储凭据每次 CI 随机生成，不进入仓库、日志或 Artifact。
 
-当前 `tests/integration/identity-project-isolation.test.ts` 共 26 条，覆盖：
+## 身份与项目隔离回归
 
-- Manager A/B 只得到自己的项目，system admin 得到 3 个项目。
-- 跨项目 ID 和不存在 ID 使用相同 404，并写入脱敏拒绝审计。
-- viewer 可读但不能使用写角色。
-- 嵌套 audit metadata 会移除 password、token、cookie、database URL 与文件正文等敏感键，同时保留安全字段。
-- 重复成员唯一约束、非法 PostgreSQL enum、被项目/成员引用用户的删除约束。
-- 登录创建数据库 Session、Session 查询、HttpOnly/SameSite/Path Cookie 与退出撤销；Auth JSON 不返回 token 且统一 `no-store`；恶意 Origin 或非 JSON 写请求在任何 Session/业务变更前被拒绝。
-- 公共注册关闭；未纳入白名单的 Better Auth 账户/Session 管理端点统一 404 且不返回 token；disabled 用户不能产生 Session，既有 Session 在查询时撤销；未知邮箱和错误密码返回相同错误。
-- 基于受信客户端 IP 的登录频率限制。
-- URL/body `projectId` 与跨项目 `memberId` 篡改、viewer 写入和普通用户创建项目均被服务端拒绝。
-- Seed 重跑保持已有身份状态、项目编辑、成员角色和 credential hash。
-- Seed 保证每个项目至少一名 Manager；已有零 Manager 数据会失败关闭且不覆盖既有角色。
-- 成员 CRUD 与管理员项目创建把业务写入和审计放在同一数据库事务。
-- 唯一 Manager 不能降级为 member/viewer 或删除，system admin 不绕过；添加第二 Manager 后允许变更；两个不同 Manager 并发降级或删除最终严格保留一名。
-- 健康端点只在完整 40 位运行 SHA 存在时设置 provenance header，响应体不泄露数据库细节。
-- credential hash 只存在于 `accounts.password_hash`，不等于明文，`users` 无重复 hash 列。
+既有集成测试必须继续覆盖：
 
-`tests/integration/review-project-permissions.test.ts` 另有 1 条混合角色边界：同一用户在项目 A 可编辑、项目 B 仅 viewer 时，每条审核任务必须按自身 `projectId` 获得可审核或只读标记，未授权项目记录不会序列化。因此完整 integration suite 当前为 27 条。
+- Manager/Admin/Member/Viewer 项目列表和写权限。
+- 跨项目与不存在项目统一 404、拒绝审计和 metadata 脱敏。
+- 未认证、disabled、Session 刷新/退出、HttpOnly/SameSite/Secure/Path 和 Origin/JSON 边界。
+- 项目成员增删改、唯一 Manager 409、system admin 不绕过、并发降级/删除仍保留 Manager。
+- Seed insert-only 幂等、零 Manager 失败关闭、credential hash 只在 `accounts.password_hash`。
 
-2026-07-14 本地已从空测试库执行受保护 Reset/Migration/Seed，并验证 Seed 非破坏性和零 Manager 失败关闭；当前 27/27 集成测试通过。GitHub Run `29313984989` 已在空 PostgreSQL Service 重复通过，Staging Commit `ff19049...` 的公网角色、隔离和最后 Manager 409/拒绝审计矩阵也已独立验证。
+文件 API 在这些边界上增加 `documentId` 和 `versionId`，不得降低 v0.3 的 404 防枚举、审计或 Session 合同。
 
-## Playwright 环境
+## 文件校验测试
 
-- 默认本地 basePath：`/tool/projectai`。
-- Staging basePath：`/tool/projectai-staging`。
-- 使用 `PLAYWRIGHT_BASE_URL` 指向已运行环境；未设置时 Playwright 启动本地 vinext server。
-- 浏览器只安装 Chromium；Node.js 版本为 22。
+`tests/file-validation.test.ts` 至少验证：
 
-## MVP E2E 清单
+- 服务端 NFKC/basename 文件名清理，移除路径分隔符、控制/bidi 字符、尾点和超长内容。
+- Object Key 只含 project/document/version ID 和随机 UUID，不包含原文件名、`..`、绝对路径、邮箱或客户/项目名称。
+- PDF magic、UTF-8 文本、声明 MIME/扩展名/签名一致性和实际字节数。
+- DOCX/XLSX/PPTX 的 ZIP signature、`[Content_Types].xml` 和对应核心部件。
+- OOXML 路径穿越、绝对/Windows 路径、symlink、加密/重复 entry、宏/ActiveX、异常压缩比、entry/central directory/解压总量上限。
+- 空文件、超过 `MAX_UPLOAD_BYTES`、未知/旧 Office/可执行/HTML/SVG/压缩包类型被拒绝。
 
-### 身份、Session 与权限
+SEC-007 只有上述真实路径与 Key 安全测试通过后才成立；它不代表解析或 RAG 完成。
 
-- 未登录访问 dashboard 和项目深层路由跳转 `/login`；登录页 label、键盘表单和密码显示切换可用。
-- 登录后刷新仍保持 Session；退出后旧 Session 无法继续访问受保护页面。
-- system admin API 返回全部 3 个 Seed 项目。
-- Manager A 页面与 API 只包含项目 A；直接输入项目 B URL 或修改 API `projectId` 被拒绝。
-- Viewer A 可读项目 A，页面无写入口，PATCH 和项目创建 API 均被服务端拒绝。
-- 以 `1440 × 1000` 生成 login、admin dashboard、Manager A projects、项目 A overview、access denied、viewer readonly 六张审查截图。
+## 文件存储集成测试
 
-### 项目知识问答
+`tests/integration/project-files.test.ts` 使用真实 PostgreSQL 和隔离对象存储语义，必须覆盖：
 
-进入项目 → 项目知识 → 预设问题 → 回答 → 来源文件/章节/页码/版本 → 来源详情。
+### 上传和幂等
 
-### 需求提取与审核
+- Manager、Member 可上传；Viewer 403、未认证 401、跨项目 404。
+- 50 MiB/配置上限、类型、签名和非法 OOXML 拒绝。
+- 相同 actor/project/UUID Idempotency-Key 不重复创建版本或对象；不同内容复用 key 返回冲突。
+- 成功后数据库为 stored、对象存在且 size/SHA-256/ETag 一致。
+- object put、对象 metadata、数据库 finalize 和补偿删除失败产生受控 failed/quarantined 状态，不泄露 Provider 错误。
 
-选择 Mock 文件 → 启动 → 可恢复失败 → Retry → 完成 → 审核中心 → 编辑草稿/备注 → 修改后通过 → 状态反馈。
+### 版本、current 和归档
 
-### Action 状态持久化
+- 第一次为 version 1；新版本递增且使用新 Key，旧版本保留。
+- 成功的新版本成为 current，旧 current 取消；同一文档最多一个 current。
+- 并发上传无重复版本号；并发切换 current 不产生两个 current。
+- 只有 stored 且属于同一 project/document 的版本可设 current；Manager/Admin 可切换，Member/Viewer 不可。
+- Manager/Admin 可归档/恢复；Member/Viewer 不可。归档不删除历史对象且默认 active 列表排除。
 
-进入 Action Plan → 修改 ACT-001 → 刷新 → 验证恢复 → 清理测试 key，避免污染后续测试。
+### 下载和一致性
 
-前三条业务主流程仍为 Mock，并且测试身份必须先拥有对应 Seed 项目；通过不代表上传、RAG 或正式业务持久化已实现。
+- 所有授权角色可下载，跨项目/篡改 ID 404。
+- 下载正文 SHA-256 等于上传内容，响应含准确 type/length、`attachment`、`nosniff`、`private, no-store`。
+- 客户端 DTO/响应头/错误不暴露 Object Key、Endpoint、Bucket 或 credential。
+- 缺失对象、size/ETag/SHA metadata mismatch、stale pending、active without current、multiple current 和 orphan 可被只读检查发现。
+- reconciliation 默认 dry-run，不删除对象；apply 保护与二次引用检查单独验证。
 
-## 运行时错误契约
+## Playwright 真实资料流程
 
-每条 E2E 监听：
+浏览器继续监听 `console.error`、`pageerror`、未处理 rejection、`requestfailed` 和 HTTP 500+，不能只断言 200。
 
-- `console.error`。
-- `pageerror` 与未处理 Promise rejection。
-- `requestfailed`。
-- HTTP 500 及以上响应。
+### Manager
 
-失败附件：screenshot、video、trace、HTML report、console/network log。不得通过全局忽略错误让测试“变绿”；若允许第三方失败，必须按 URL 精确写明原因。Seed 密码通过隔离的 API Context 换取 Cookie；原始证据只留在 CI 工作区，发布前还必须经过下述独立脱敏和复核，不能仅依赖测试代码避免记录凭据。
+登录 → 授权项目 → 真实资料页 → 上传虚构文件 → 成功 → 刷新仍存在 → 下载 → 上传新版本 → 版本历史 → 新版本 current → 归档/恢复。
 
-## 选择器原则
+### Viewer
 
-- 优先 role、accessible name、label、heading 和稳定业务 ID。
-- 不依赖 Tailwind class、DOM 层级或随机时间戳。
-- 组件新增交互时同步维护可访问名称和 E2E。
+登录 → 可查看/下载 → 无上传/current/归档/恢复入口 → 直接上传 API 仍返回 403。
+
+### 跨项目与拒绝
+
+- Manager A 篡改 project/document/version ID 不能查看、切换或下载 Project B 文件。
+- 伪造扩展名/签名文件显示明确错误；数据库没有 stored 版本，对象存储没有可用对象。
+
+### 仍为 Mock 的回归
+
+项目知识、需求提取/审核和 Action 状态流程继续按原契约运行，但不得把真实文件发送到 Mock AI。测试通过也不代表解析、RAG、正式需求或真实模型完成。
+
+## 产品审查截图
+
+成功 CI 必须生成 12 张 `1440 × 1000` 中文界面截图：
+
+```text
+login.png
+dashboard-admin.png
+projects-manager-a.png
+project-a-overview.png
+project-access-denied.png
+viewer-readonly.png
+documents-empty.png
+documents-upload-dialog.png
+documents-uploaded.png
+document-version-history.png
+viewer-documents-readonly.png
+document-upload-rejected.png
+```
+
+截图只显示虚构文件名，不显示正文、Bucket、Endpoint、Object Key、Cookie 或凭据。
 
 ## 本地命令
 
@@ -101,59 +131,44 @@ npm run db:seed
 npm run typecheck
 npm run lint
 npm run test:integration
+npm run test:files
+npm run test:storage
+npm run storage:verify
+npm run storage:reconcile
 npm test
+npm run test:artifacts
+npm run test:deployment
 npm run test:e2e
 npm run qa:mvp
 ```
 
-测试输出目录 `test-results/`、`playwright-report/`、trace、video 和 screenshot 不得提交。
+`storage:reconcile` 在没有参数时必须输出 `dry-run` 且不删除对象。只有显式 `--apply` 加非 Production、`ALLOW_STORAGE_RECONCILE_APPLY=1`、精确 Bucket 确认和合法最小年龄才能执行 orphan 清理。
 
 ## CI 与产品审查 artifacts
 
-PR 与 main push 运行 Node 22、npm cache、Chromium、PostgreSQL 17、Migration、Seed、typecheck、lint、一次 production build + SSR/反向代理边界、当前 27 条授权/审计/最后 Manager/逐项目审核权限集成测试、8 条部署契约和 Playwright；新提交取消同分支旧任务，不进行部署。
+CI 顺序包含 PostgreSQL/MinIO 初始化、Migration/Seed、typecheck、lint、build/SSR、身份集成、文件存储集成、两次只读 storage verify/reconcile、artifact/deployment 合同和 E2E。新提交取消同分支旧任务；CI 不部署环境。
 
-`PLAYWRIGHT_REVIEW_ARTIFACTS=1` 时生成：
+Payload A 使用强 allowlist，允许来源仅为：
 
-```text
-review-artifacts/
-  evidence-index.json
-  screenshots/
-    login.png
-    dashboard-admin.png
-    projects-manager-a.png
-    project-a-overview.png
-    project-access-denied.png
-    viewer-readonly.png
-```
+- `review-artifacts/evidence-index.json` 和约定的 12 张图片。
+- 固定名称的 UTF-8 纯文本日志：typecheck、lint、build/SSR、integration、storage integration/verify、artifact sanitizer、deployment contract 和 Playwright。
+- sanitizer 最终生成的 `sanitization-report.json`。
 
-`evidence-index.json` 是 Payload A 的预上传索引，不是权威发布 Manifest。它记录运行身份、截图合同和审查状态，但不得包含 `artifactId`、旧的单一 `commit` 字段、密码、Cookie、Session Token 或数据库连接。CI 缺少必需的 Head、PR merge、branch、workflow、version 或 build 时间元数据时失败关闭；本地运行以明确的 `null` / `local` 语义表示未进入 GitHub 发布链路。
+以下内容不得发布：`playwright-report/`、`test-results/`、trace、video、HTML report、任意 PDF/归档、上传测试原件、数据库/对象备份、未列名文件、`.env`、Cookie/Session、MinIO/S3 credential、内部 Bucket/Endpoint/Object Key。文件扩展名不作为信任边界；允许的日志必须是有大小上限的有效 UTF-8 文本且不得含二进制 magic/NUL。
 
-产品审查 revision 字段不得混用：
+sanitizer 从 CI 环境、root-only MinIO 临时文件和测试数据库收集需要清理的精确 Secret/Session，覆盖明文、URL/JSON、标准/URL-safe/折行 Base64 和 percent-encoding；无法查询数据库 Session、发现 storage metadata、allowlist 违规或成功截图缺失时失败关闭并跳过上传。
 
-- `headSha`：PR 分支实际 Head；main push 为被推送 Commit；普通本地索引为 `null`。
-- `testedMergeSha`：PR runner 实际 checkout 并执行测试的 GitHub 临时 merge Commit，来自 `git rev-parse HEAD` 且必须等于该 PR run 的 `github.sha`；main push 和本地索引为 `null`。
-- `stagingSha`：本次 CI 通过公网 Staging `/api/health` 的 `x-projectai-commit-sha` 响应头实际观测到的运行 Commit。只有 body 为 `status: ok` 且响应头是完整合法 SHA 时记录；网络失败、缺失或非法值均为 `null`，绝不能回填 `headSha` 或 `testedMergeSha`。
-- `branch`：PR head ref 或 push ref name。
-- `workflowRunId`：生成并上传该证据的 GitHub Actions Run ID，以十进制字符串保存；本地为 `null`。
-- `artifactId`：GitHub 为已上传的 Payload A 分配的数字 Artifact ID，以十进制字符串保存。该值只存在于上传后生成的权威 Manifest。
-- `version`：通过 `NEXT_PUBLIC_APP_VERSION` 注入受测 build 的应用版本。
-- `buildTime`：通过 `NEXT_PUBLIC_BUILD_TIME` 注入受测 build 的 ISO-8601 时间；不是 PR 更新时间、Commit 时间或 Manifest 生成时间。
+`evidence-index.json` 是预上传索引，不含 `artifactId` 或 legacy `commit`。字段含义：
 
-CI 的 `if: always()` 收尾在成功或失败时都执行，但原始目录不直接上传：
+- `headSha`：PR Head；main push 为被推送 Commit。
+- `testedMergeSha`：PR runner 实际 checkout 的临时 merge Commit；main/local 为 `null`。
+- `stagingSha`：本次 CI 从公网健康端点实际观测的合法完整 SHA；不可观测则为 `null`，不得回填。
+- `branch`、`workflowRunId`、`version`、`buildTime`：本次测试身份与 build 元数据。
 
-1. 写入 `review-artifacts/evidence-index.json`，并把 `playwright-report/`、`review-artifacts/`、`test-results/`、`test-logs/` 复制到 `product-review-evidence/`。
-2. 从当前 CI 数据库读取 Session Token，并把它们与 `DATABASE_URL`、从 URL 单独解析的数据库密码、Better Auth Secret、数据库密码和 Seed 密码的精确值及组合编码变体加入敏感值集合；配置了数据库但无法完成查询时整个 sanitizer 失败关闭，不上传无法证明安全的证据。
-3. 对 Cookie、Set-Cookie、Authorization、Session、password 和数据库连接字段做结构化脱敏；文件扩展名不作为信任边界，改名/嵌套 ZIP、gzip、归档 entry 名，以及任意文本内大小写、空白、Base64 或原始 percent-encoding 变体的 ZIP Data URI 都必须递归处理、复核并重建。无法安全处理的二进制/普通归档会先删除或以 omission 文件替代，并让整个脱敏步骤失败关闭，绝不发布不完整副本。
-4. 对最终目录再次执行精确 Secret、折行编码和未脱敏 Session Cookie 扫描，并验证 evidence index 一致性。运行状态为 success/local 时强制 6 张必需截图均存在且非空；failure/cancelled 可缺图，但 `evidence-index.json` 与 `sanitization-report.json` 必须明确列出缺失项。通过后才写脱敏报告。
-5. 上传不可变 Payload A：`product-review-evidence-${workflowRunId}-${runAttempt}`。脱敏失败会使 CI 失败并跳过上传，未经确认的原始证据不会离开 runner。
-6. Payload A 上传成功后，读取 `actions/upload-artifact` 返回的真实 `artifact-id` 和 SHA-256 digest，生成唯一权威 `product-review-manifest/manifest.json`；Manifest 的 `artifactId` 明确指向 Payload A，而不是承载 Manifest 的 Artifact 自身。
-7. 将权威 Manifest 作为独立 Provenance B：`product-review-manifest-${workflowRunId}-${runAttempt}` 上传。GitHub Artifact 在上传前没有 ID 且上传后不可变，因此不得把占位 ID 写入 Payload A，也不得覆盖上传制造新的不匹配 ID。A/B 均保留 14 天。
-
-`npm run test:artifacts` 当前合并运行 sanitizer 与 Manifest 合同共 32 条测试，覆盖归档/编码/Session 脱敏、截图完整性、legacy `commit` 拒绝、CI 字段失败关闭、local/null 语义，以及 Artifact ID/name/digest/Run 的上传后绑定。
+CI 先上传不可变 Payload A `product-review-evidence-*`；GitHub 返回真实 artifact ID/digest 后，才生成权威 `product-review-manifest/manifest.json` 并上传独立 Provenance B `product-review-manifest-*`。A 未成功时不得生成 B。
 
 ## 当前验证状态
 
-- 本地与 CI 已通过：typecheck、lint、PostgreSQL/权限集成 27/27、production build + SSR/代理 7/7、部署契约 8/8、artifact/provenance 32/32 和 Playwright 11/11。
-- Run `29313984989` 已同时产出并下载复核 Payload A `product-review-evidence-29313984989-1`（ID `8303225084`）与 Provenance B `product-review-manifest-29313984989-1`（ID `8303225479`）；A 含 6/6 截图和 `passed` 脱敏报告，B 正确区分 Head `ff19049...` 与 tested merge `b1961b49...`。
-- Staging Commit `ff19049...` 已通过内部与公网登录、Session、角色、跨项目隔离、最后 Manager 409/审计约束、Secure/Path Cookie、Host 注入、资源 MIME、noindex、数据库/应用 Healthy、备份解析和 Production 精确不变验证；健康响应 header 返回完整运行 SHA。
-- 详细运行证据见 `MVP_STATUS.md`。后续任何应用代码、Migration、Compose、Nginx snippet 或运行脚本变化都必须重新执行完整门禁，不能复用本次 Staging 结论。
+- v0.3 的历史 CI/Staging 结果只作为回归基线。
+- v0.4 的完整本地门禁、最终 GitHub Run、12 张截图、Artifact ID/digest、Staging App/PostgreSQL/MinIO 与备份恢复尚未记录。
+- 任何 v0.4 运行结果只能在实际完成并复核后写入 `MVP_STATUS.md`；不得复制旧 Run、旧 6 张截图或旧 Staging SHA。

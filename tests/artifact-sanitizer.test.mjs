@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import {
+  access,
   mkdir,
   mkdtemp,
   readFile,
@@ -11,11 +12,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
-import { gunzip, gzip } from "node:zlib";
 
 const execFileAsync = promisify(execFile);
-const gunzipAsync = promisify(gunzip);
-const gzipAsync = promisify(gzip);
 const sanitizer = new URL("../scripts/sanitize-test-artifacts.mjs", import.meta.url);
 const requiredScreenshots = [
   "screenshots/login.png",
@@ -24,6 +22,12 @@ const requiredScreenshots = [
   "screenshots/project-a-overview.png",
   "screenshots/project-access-denied.png",
   "screenshots/viewer-readonly.png",
+  "screenshots/documents-empty.png",
+  "screenshots/documents-upload-dialog.png",
+  "screenshots/documents-uploaded.png",
+  "screenshots/document-version-history.png",
+  "screenshots/viewer-documents-readonly.png",
+  "screenshots/document-upload-rejected.png",
 ];
 const headSha = "a".repeat(40);
 const testedMergeSha = "b".repeat(40);
@@ -61,372 +65,199 @@ function sanitizerEnvironment(overrides = {}) {
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "projectai-sanitizer-test-"));
   const report = path.join(root, "playwright-report");
-  const archiveSource = path.join(root, "archive-source");
   await mkdir(report);
-  await mkdir(archiveSource);
-  return { root, report, archiveSource };
+  return { root, report };
 }
 
-test("sanitizes the ZIP embedded in a Playwright HTML report", async () => {
-  const { root, report, archiveSource } = await fixture();
-  const secret = "sanitizer-test-password-Aa1!";
+test("publishes only allowlisted evidence and redacts storage metadata", async () => {
+  const { root, report } = await fixture();
+  const resultsRoot = path.join(root, "test-results");
+  const logsRoot = path.join(root, "test-logs");
+  const reviewRoot = path.join(root, "review-artifacts");
+  const endpoint = "http://projectai-ci-minio:9000";
+  const bucket = "projectai-ci-files-123456";
+  const accessKey = "projectai-ci-app-access";
+  const secretKey = "projectai-ci-app-secret-Aa1-0123456789";
+  const rootUser = "projectai-ci-root-user";
+  const rootPassword = "projectai-ci-root-password-Aa1-0123456789";
+  const objectKey = "projects/project-001/documents/doc-1/versions/version-1/random";
+  const sessionValue = "opaque-session-token-for-storage-evidence";
   try {
+    await Promise.all([
+      mkdir(resultsRoot),
+      mkdir(logsRoot),
+      mkdir(reviewRoot),
+    ]);
+    await writeFile(path.join(report, "trace.zip"), Buffer.from("PK\u0003\u0004upload"));
+    await writeFile(path.join(resultsRoot, "customer.pdf"), "%PDF-1.7\nfixture\n");
+    await writeFile(path.join(reviewRoot, "customer.pdf"), "%PDF-1.7\nfixture\n");
+    await writeFile(path.join(logsRoot, "customer-upload.pdf"), "%PDF-1.7\nfixture\n");
     await writeFile(
-      path.join(archiveSource, "trace.trace"),
-      `${JSON.stringify({ password: secret, cookie: `session_token=${secret}` })}\n`,
+      path.join(reviewRoot, "evidence-index.json"),
+      JSON.stringify(reviewEvidenceIndex()),
     );
-    const sourceArchive = path.join(root, "source.zip");
-    await execFileAsync("zip", ["-q", "-r", sourceArchive, "."], {
-      cwd: archiveSource,
-    });
-    const encoded = (await readFile(sourceArchive)).toString("base64");
     await writeFile(
-      path.join(report, "index.html"),
-      `<template id="playwrightReportBase64">data:application/zip;base64,${encoded}</template>`,
+      path.join(logsRoot, "integration.log"),
+      [
+        JSON.stringify({
+          objectKey,
+          storageEndpoint: endpoint,
+          bucket,
+          objectStorageAccessKey: accessKey,
+          objectStorageSecretKey: secretKey,
+        }),
+        `OBJECT_STORAGE_ENDPOINT=${endpoint}`,
+        `OBJECT_STORAGE_BUCKET=${bucket}`,
+        `objectKey=${objectKey}`,
+        JSON.stringify({ name: "projectai.session_token", value: sessionValue }),
+      ].join("\n"),
     );
 
     await execFileAsync(process.execPath, [sanitizer.pathname], {
       cwd: root,
-      env: sanitizerEnvironment({ BETTER_AUTH_SECRET: secret }),
+      env: sanitizerEnvironment({
+        MINIO_ROOT_USER: rootUser,
+        MINIO_ROOT_PASSWORD: rootPassword,
+        OBJECT_STORAGE_ENDPOINT: endpoint,
+        OBJECT_STORAGE_BUCKET: bucket,
+        OBJECT_STORAGE_ACCESS_KEY: accessKey,
+        OBJECT_STORAGE_SECRET_KEY: secretKey,
+      }),
     });
 
-    const sanitizedHtml = await readFile(
-      path.join(root, "product-review-evidence/playwright-report/index.html"),
+    const outputRoot = path.join(root, "product-review-evidence");
+    await assert.rejects(access(path.join(outputRoot, "playwright-report")));
+    await assert.rejects(access(path.join(outputRoot, "test-results")));
+    await assert.rejects(access(path.join(outputRoot, "review-artifacts/customer.pdf")));
+    await assert.rejects(access(path.join(outputRoot, "test-logs/customer-upload.pdf")));
+
+    const sanitized = await readFile(
+      path.join(outputRoot, "test-logs/integration.log"),
       "utf8",
     );
-    assert.doesNotMatch(sanitizedHtml, new RegExp(secret));
-    const match = sanitizedHtml.match(/data:application\/zip;base64,([A-Za-z0-9+/=]+)/);
-    assert.ok(match, "sanitized report should retain a rebuilt embedded archive");
-    const rebuiltArchive = path.join(root, "rebuilt.zip");
-    await writeFile(rebuiltArchive, Buffer.from(match[1], "base64"));
-    const { stdout } = await execFileAsync("unzip", ["-p", rebuiltArchive, "trace.trace"]);
-    assert.doesNotMatch(stdout, new RegExp(secret));
-    assert.match(stdout, /\[REDACTED\]/);
+    for (const unsafe of [
+      endpoint,
+      bucket,
+      accessKey,
+      secretKey,
+      rootUser,
+      rootPassword,
+      objectKey,
+      sessionValue,
+    ]) {
+      assert.equal(sanitized.includes(unsafe), false);
+    }
+    assert.match(sanitized, /\[REDACTED\]/);
 
     const reportJson = JSON.parse(
-      await readFile(
-        path.join(root, "product-review-evidence/sanitization-report.json"),
-        "utf8",
-      ),
+      await readFile(path.join(outputRoot, "sanitization-report.json"), "utf8"),
     );
-    assert.equal(reportJson.status, "passed");
-    assert.equal(reportJson.embeddedArchivesSanitized, 1);
+    assert.deepEqual(reportJson.copiedRoots.sort(), [
+      "review-artifacts",
+      "test-logs",
+    ]);
+    assert.ok(reportJson.disallowedEvidenceEntriesRemoved >= 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("fails closed for an invalid embedded report archive", async () => {
-  const { root, report } = await fixture();
+test("fails closed when an allowlisted log contains an upload payload", async () => {
+  const { root } = await fixture();
+  const logsRoot = path.join(root, "test-logs");
   try {
-    await writeFile(
-      path.join(report, "copied-report.txt"),
-      "<template>DATA : APPLICATION/ZIP ; BASE64 ,\nZm9v</template>",
-    );
+    await mkdir(logsRoot);
+    await writeFile(path.join(logsRoot, "integration.log"), "%PDF-1.7\nfixture\n");
     await assert.rejects(
       execFileAsync(process.execPath, [sanitizer.pathname], {
         cwd: root,
         env: sanitizerEnvironment(),
       }),
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("sanitizes renamed and nested ZIPs, gzip streams, paths, and Session data", async () => {
-  const { root, report } = await fixture();
-  const secret = "sanitizer-nested-secret-Aa1!";
-  const sessionValue = "opaque-session-value-not-loaded-from-the-database";
-  const nestedSource = path.join(root, "nested-source");
-  const outerSource = path.join(root, "outer-source");
-  await mkdir(nestedSource);
-  await mkdir(outerSource);
-
-  try {
-    await writeFile(
-      path.join(nestedSource, `trace-${secret}.data`),
-      `password=${secret}\nsession_token=${sessionValue}\n`,
-    );
-    const nestedArchive = path.join(root, "nested-source.zip");
-    await execFileAsync("zip", ["-q", "-r", nestedArchive, "."], {
-      cwd: nestedSource,
-    });
-    await writeFile(
-      path.join(outerSource, "nested.bin"),
-      await readFile(nestedArchive),
-    );
-    const renamedArchive = path.join(report, "renamed.bin");
-    await execFileAsync("zip", ["-q", "-r", renamedArchive, "."], {
-      cwd: outerSource,
-    });
-
-    await writeFile(
-      path.join(report, "compressed.payload"),
-      await gzipAsync(Buffer.from(`password=${secret}\nsession_token=${sessionValue}\n`)),
-    );
-    await writeFile(
-      path.join(report, "copied-report.txt"),
-      `<template>DATA:APPLICATION/ZIP;BASE64,\n${(
-        await readFile(nestedArchive)
-      ).toString("base64")}</template>`,
-    );
-
-    await execFileAsync(process.execPath, [sanitizer.pathname], {
-      cwd: root,
-      env: sanitizerEnvironment({ BETTER_AUTH_SECRET: secret }),
-    });
-
-    const evidenceRoot = path.join(root, "product-review-evidence/playwright-report");
-    const sanitizedOuter = path.join(evidenceRoot, "renamed.bin");
-    const { stdout: nestedBuffer } = await execFileAsync(
-      "unzip",
-      ["-p", sanitizedOuter, "nested.bin"],
-      { encoding: "buffer" },
-    );
-    const rebuiltNested = path.join(root, "rebuilt-nested.zip");
-    await writeFile(rebuiltNested, nestedBuffer);
-    const { stdout: nestedNames } = await execFileAsync("unzip", ["-Z1", rebuiltNested]);
-    const { stdout: nestedText } = await execFileAsync("unzip", ["-p", rebuiltNested]);
-    assert.doesNotMatch(nestedNames, new RegExp(secret));
-    assert.doesNotMatch(nestedText, new RegExp(secret));
-    assert.doesNotMatch(nestedText, new RegExp(sessionValue));
-    assert.match(nestedText, /\[REDACTED\]/);
-
-    const gzipPayload = await gunzipAsync(
-      await readFile(path.join(evidenceRoot, "compressed.payload")),
-    );
-    assert.doesNotMatch(gzipPayload.toString("utf8"), new RegExp(secret));
-    assert.doesNotMatch(gzipPayload.toString("utf8"), new RegExp(sessionValue));
-
-    const copiedReport = await readFile(
-      path.join(evidenceRoot, "copied-report.txt"),
-      "utf8",
-    );
-    const embeddedMatch = copiedReport.match(
-      /data:application\/zip;base64,([A-Za-z0-9+/=]+)/,
-    );
-    assert.ok(embeddedMatch, "variant Data URI should be normalized and rebuilt");
-    const embeddedArchive = path.join(root, "rebuilt-embedded.zip");
-    await writeFile(embeddedArchive, Buffer.from(embeddedMatch[1], "base64"));
-    const { stdout: embeddedText } = await execFileAsync("unzip", [
-      "-p",
-      embeddedArchive,
-    ]);
-    assert.doesNotMatch(embeddedText, new RegExp(secret));
-    assert.doesNotMatch(embeddedText, new RegExp(sessionValue));
-
-    const reportJson = JSON.parse(
-      await readFile(
-        path.join(root, "product-review-evidence/sanitization-report.json"),
-        "utf8",
-      ),
-    );
-    assert.equal(reportJson.status, "passed");
-    assert.ok(reportJson.archivesSanitized >= 2);
-    assert.ok(reportJson.embeddedArchivesSanitized >= 1);
-    assert.ok(reportJson.gzipStreamsSanitized >= 1);
-    assert.ok(reportJson.artifactNamesSanitized >= 1);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("closes alternate MIME, raw Data URI, split-path, and oversized cookie bypasses", async () => {
-  const { root, report } = await fixture();
-  const secret = "audit????Aa1!";
-  const sessionValue = "opaque-cookie-session-value";
-  const archiveSource = path.join(root, "bypass-archive-source");
-  const encodedSecretPath = Buffer.from(secret, "utf8").toString("base64");
-  const pathParts = encodedSecretPath.split("/");
-  const secretPath = path.join(archiveSource, ...pathParts);
-  await mkdir(path.dirname(secretPath), { recursive: true });
-
-  try {
-    await writeFile(secretPath, `password=${secret}\n`);
-    await writeFile(
-      path.join(archiveSource, encodeURIComponent(encodedSecretPath)),
-      `password=${secret}\n`,
-    );
-    const sourceArchive = path.join(root, "bypass-source.zip");
-    await execFileAsync("zip", ["-q", "-r", sourceArchive, "."], {
-      cwd: archiveSource,
-    });
-    const archiveBuffer = await readFile(sourceArchive);
-    const alternateMimePayload = archiveBuffer
-      .toString("base64")
-      .replace(/(.{60})/g, "$1%0A");
-    const percentEncodedPayload = [...archiveBuffer]
-      .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
-      .join("");
-    await writeFile(
-      path.join(report, "alternate-mime.txt"),
-      `<template>data:application/x-zip-compressed;base64,${alternateMimePayload}</template>`,
-    );
-    await writeFile(
-      path.join(report, "octet-stream-mime.txt"),
-      `<template>data:application/octet-stream;base64,${alternateMimePayload}</template>`,
-    );
-    await writeFile(
-      path.join(report, "percent-encoded-mime.txt"),
-      `<template>data:application/zip,${percentEncodedPayload}</template>`,
-    );
-    await writeFile(
-      path.join(report, "cookie.data"),
-      JSON.stringify({
-        name: "projectai.session_token",
-        domain: "example.test",
-        path: "/",
-        metadata: {
-          source: "browser",
-          retained: true,
-          padding: "x".repeat(21_000),
-        },
-        value: sessionValue,
-      }),
-    );
-
-    await execFileAsync(process.execPath, [sanitizer.pathname], {
-      cwd: root,
-      env: sanitizerEnvironment({ BETTER_AUTH_SECRET: secret }),
-    });
-
-    const evidenceRoot = path.join(root, "product-review-evidence/playwright-report");
-    const cookieArtifact = await readFile(path.join(evidenceRoot, "cookie.data"), "utf8");
-    assert.equal(cookieArtifact.includes(sessionValue), false);
-    assert.match(cookieArtifact, /\[REDACTED\]/);
-
-    const alternateMime = await readFile(
-      path.join(evidenceRoot, "alternate-mime.txt"),
-      "utf8",
-    );
-    assert.equal(alternateMime.includes(secret), false);
-    const embeddedMatch = alternateMime.match(
-      /data:application\/zip;base64,([A-Za-z0-9+/=]+)/,
-    );
-    assert.ok(embeddedMatch, "alternate ZIP MIME should be rebuilt canonically");
-
-    const octetStreamMime = await readFile(
-      path.join(evidenceRoot, "octet-stream-mime.txt"),
-      "utf8",
-    );
-    assert.equal(octetStreamMime.includes(secret), false);
-    assert.match(octetStreamMime, /data:application\/zip;base64,/);
-
-    const percentEncodedMime = await readFile(
-      path.join(evidenceRoot, "percent-encoded-mime.txt"),
-      "utf8",
-    );
-    const percentEncodedMatch = percentEncodedMime.match(
-      /data:application\/zip;base64,([A-Za-z0-9+/=]+)/,
-    );
-    assert.ok(percentEncodedMatch, "percent-encoded ZIP Data URI should be rebuilt");
-
-    const embeddedArchive = path.join(root, "alternate-rebuilt.zip");
-    await writeFile(embeddedArchive, Buffer.from(embeddedMatch[1], "base64"));
-    const { stdout: names } = await execFileAsync("unzip", ["-Z1", embeddedArchive]);
-    const { stdout: contents } = await execFileAsync("unzip", ["-p", embeddedArchive]);
-    assert.equal(names.includes(encodedSecretPath), false);
-    assert.equal(names.includes(encodeURIComponent(encodedSecretPath)), false);
-    assert.equal(contents.includes(secret), false);
-    const percentArchive = path.join(root, "percent-rebuilt.zip");
-    await writeFile(percentArchive, Buffer.from(percentEncodedMatch[1], "base64"));
-    const { stdout: percentContents } = await execFileAsync("unzip", [
-      "-p",
-      percentArchive,
-    ]);
-    assert.equal(percentContents.includes(secret), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test("fails closed for structured Session data hidden in a binary artifact", async () => {
-  const { root, report } = await fixture();
-  const sessionValue = "opaque-binary-session-not-loaded-from-database";
-  try {
-    await writeFile(
-      path.join(report, "binary.payload"),
-      Buffer.concat([
-        Buffer.from([0]),
-        Buffer.from(`projectai.session_token=${sessionValue}\n`),
-      ]),
+      /not safe UTF-8 text/i,
     );
     await assert.rejects(
-      execFileAsync(process.execPath, [sanitizer.pathname], {
-        cwd: root,
-        env: sanitizerEnvironment(),
-      }),
-    );
-    await assert.rejects(
-      readFile(
-        path.join(
-          root,
-          "product-review-evidence/playwright-report/binary.payload",
-        ),
-      ),
-    );
-    await assert.rejects(
-      readFile(path.join(root, "product-review-evidence/sanitization-report.json")),
+      access(path.join(root, "product-review-evidence/test-logs/integration.log")),
     );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("redacts whitespace-folded Base64 secret variants", async () => {
-  const { root, report } = await fixture();
-  const secret = "sanitizer-whitespace-base64-secret-Aa1!";
+test("redacts whitespace-folded storage secrets and raw object keys", async () => {
+  const { root } = await fixture();
+  const logsRoot = path.join(root, "test-logs");
+  const secret = "storage-whitespace-base64-secret-Aa1!";
+  const objectKey = "projects/project-001/documents/doc-1/versions/version-1/random";
   const foldedBase64 = Buffer.from(secret, "utf8")
     .toString("base64")
     .match(/.{1,8}/g)
     .join("\n ");
   try {
-    await writeFile(path.join(report, "folded.log"), `encoded=${foldedBase64}\n`);
+    await mkdir(logsRoot);
+    await writeFile(
+      path.join(logsRoot, "storage-integration.log"),
+      `encoded=${foldedBase64}\nobject_key=${objectKey}\n`,
+    );
     await execFileAsync(process.execPath, [sanitizer.pathname], {
       cwd: root,
-      env: sanitizerEnvironment({ BETTER_AUTH_SECRET: secret }),
+      env: sanitizerEnvironment({ OBJECT_STORAGE_SECRET_KEY: secret }),
     });
     const sanitized = await readFile(
-      path.join(root, "product-review-evidence/playwright-report/folded.log"),
+      path.join(
+        root,
+        "product-review-evidence/test-logs/storage-integration.log",
+      ),
       "utf8",
     );
     assert.match(sanitized, /\[REDACTED\]/);
     assert.equal(sanitized.includes(foldedBase64), false);
+    assert.equal(sanitized.includes(objectKey), false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("fails the sanitizer when an unsafe standalone archive must be removed", async () => {
-  const { root, report } = await fixture();
+test("redacts unlabeled canonical object keys in raw and encoded forms", async () => {
+  const { root } = await fixture();
+  const logsRoot = path.join(root, "test-logs");
+  const objectKey =
+    "projects/project-001/documents/document-001/versions/version-001/123e4567-e89b-12d3-a456-426614174000";
+  const percentEncodedObjectKey = encodeURIComponent(objectKey);
+  const jsonEscapedObjectKey = objectKey.replaceAll("/", "\\/");
+  const nestedJsonEscapedObjectKey = JSON.stringify({
+    message: jsonEscapedObjectKey,
+  });
   try {
+    await mkdir(logsRoot);
     await writeFile(
-      path.join(report, "invalid-archive.bin"),
-      Buffer.concat([
-        Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-        Buffer.from("not-a-valid-zip"),
-      ]),
+      path.join(logsRoot, "storage-integration.log"),
+      [
+        `inventory result ${objectKey}`,
+        `request target ${percentEncodedObjectKey}`,
+        `trace payload {"message":"${jsonEscapedObjectKey}"}`,
+        `nested trace ${nestedJsonEscapedObjectKey}`,
+      ].join("\n"),
     );
-    await assert.rejects(
-      execFileAsync(process.execPath, [sanitizer.pathname], {
-        cwd: root,
-        env: sanitizerEnvironment(),
-      }),
-    );
-    assert.match(
-      await readFile(
-        path.join(
-          root,
-          "product-review-evidence/playwright-report/invalid-archive.bin.omitted.txt",
-        ),
-        "utf8",
+    await execFileAsync(process.execPath, [sanitizer.pathname], {
+      cwd: root,
+      env: sanitizerEnvironment(),
+    });
+    const sanitized = await readFile(
+      path.join(
+        root,
+        "product-review-evidence/test-logs/storage-integration.log",
       ),
-      /omitted/i,
+      "utf8",
     );
-    await assert.rejects(
-      readFile(path.join(root, "product-review-evidence/sanitization-report.json")),
-    );
+    for (const unsafe of [
+      objectKey,
+      percentEncodedObjectKey,
+      jsonEscapedObjectKey,
+      nestedJsonEscapedObjectKey,
+    ]) {
+      assert.equal(sanitized.includes(unsafe), false);
+    }
+    assert.equal((sanitized.match(/\[REDACTED\]/g) ?? []).length, 4);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -439,20 +270,13 @@ test("requires complete successful CI screenshots but accepts explicit failure e
     await mkdir(reviewRoot);
     await writeFile(
       path.join(reviewRoot, "evidence-index.json"),
-      JSON.stringify(
-        reviewEvidenceIndex({
-          status: "success",
-        }),
-      ),
+      JSON.stringify(reviewEvidenceIndex({ status: "success" })),
     );
     await assert.rejects(
       execFileAsync(process.execPath, [sanitizer.pathname], {
         cwd: root,
         env: sanitizerEnvironment({ CI: "true" }),
       }),
-    );
-    await assert.rejects(
-      readFile(path.join(root, "product-review-evidence/sanitization-report.json")),
     );
 
     await writeFile(
@@ -512,6 +336,7 @@ test("accepts CI evidence only when the index and required screenshots exist", a
       ),
     );
     assert.equal(reportJson.status, "passed");
+    assert.equal(reportJson.screenshotCount, requiredScreenshots.length);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -555,9 +380,11 @@ test("rejects legacy commit provenance and an authoritative manifest in payload 
 });
 
 test("fails closed when configured Session storage cannot be verified", async () => {
-  const { root, report } = await fixture();
+  const { root } = await fixture();
+  const logsRoot = path.join(root, "test-logs");
   try {
-    await writeFile(path.join(report, "run.log"), "test failure\n");
+    await mkdir(logsRoot);
+    await writeFile(path.join(logsRoot, "integration.log"), "test failure\n");
     await assert.rejects(
       execFileAsync(process.execPath, [sanitizer.pathname], {
         cwd: root,

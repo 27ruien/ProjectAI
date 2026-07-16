@@ -21,7 +21,10 @@ function normalizedOrigin(value: string): string | null {
   }
 }
 
-export function requireTrustedMutationRequest(request: Request): void {
+export function requireTrustedMutationRequest(
+  request: Request,
+  options: { allowedMediaTypes?: readonly string[] } = {},
+): void {
   const suppliedOrigin = request.headers.get("origin")?.trim() || "";
   const origin = normalizedOrigin(suppliedOrigin);
   const trustedOrigins = new Set(
@@ -42,7 +45,20 @@ export function requireTrustedMutationRequest(request: Request): void {
       .split(";", 1)[0]
       .trim()
       .toLowerCase();
-    if (mediaType !== "application/json") {
+    const allowedMediaTypes = options.allowedMediaTypes ?? ["application/json"];
+    if (!allowedMediaTypes.includes(mediaType)) {
+      throw new MutationRequestError(
+        415,
+        "UNSUPPORTED_MEDIA_TYPE",
+        "请求格式无效",
+      );
+    }
+    if (
+      mediaType === "multipart/form-data" &&
+      !/;\s*boundary=(?:"[^"]+"|[^;\s]+)/i.test(
+        request.headers.get("content-type") || "",
+      )
+    ) {
       throw new MutationRequestError(
         415,
         "UNSUPPORTED_MEDIA_TYPE",

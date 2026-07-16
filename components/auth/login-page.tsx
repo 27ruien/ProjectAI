@@ -53,7 +53,7 @@ export function LoginPage({ initialReturnTo }: { initialReturnTo?: string }) {
         <div className="relative my-auto max-w-xl py-16">
           <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-xs text-[#b9b9c8]">
             <ShieldCheck className="size-3.5 text-[#a9a2ff]" aria-hidden="true" />
-            Identity and Project Isolation
+            Project Files Foundation
           </p>
           <h1 className="max-w-lg text-4xl font-semibold leading-[1.18] tracking-[-0.035em] text-white">
             在可信的项目边界内，推进每一次交付。

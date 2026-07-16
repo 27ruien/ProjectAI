@@ -56,9 +56,10 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   if (section === "dashboard") page = <DashboardPage viewer={viewer} />;
   else if (section === "projects" && !entityId) page = <ProjectsPage viewer={viewer} />;
   else if (section === "projects" && entityId === "new") page = viewer.canCreateProject ? <CreateProjectPage /> : <AccessDeniedPage />;
-  else if (isProjectDetail && (!exactProject || !exactProjectData)) page = <AccessDeniedPage obscureResource />;
+  else if (isProjectDetail && !exactProject) page = <AccessDeniedPage obscureResource />;
+  else if (exactProject && child === "documents") page = <DocumentsPage key={exactProject.id} project={exactProject} />;
+  else if (isProjectDetail && !exactProjectData) page = <AccessDeniedPage obscureResource />;
   else if (exactProject && exactProjectData && (!child || child === "overview")) page = <ProjectOverviewPage project={exactProject} data={exactProjectData} />;
-  else if (exactProject && exactProjectData && child === "documents") page = <DocumentsPage project={exactProject} data={exactProjectData} />;
   else if (exactProject && exactProjectData && child === "knowledge") page = <ProjectKnowledgePage project={exactProject} data={exactProjectData} />;
   else if (exactProject && exactProjectData && child === "requirements") page = <RequirementsPage project={exactProject} data={exactProjectData} />;
   else if (exactProject && exactProjectData && child === "scope") page = <ProjectSection project={exactProject} tab="scope"><ScopePage project={exactProject} data={exactProjectData} /></ProjectSection>;

@@ -8,6 +8,13 @@
       "when": 1783919367639,
       "tag": "0000_lovely_mongu",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784080728401,
+      "tag": "0001_wide_sunspot",
+      "breakpoints": true
     }
   ]
 }

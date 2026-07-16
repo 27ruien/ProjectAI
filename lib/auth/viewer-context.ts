@@ -22,6 +22,8 @@ function toUiPermissions(
     canEditProject: permissions.canEditProject,
     canManageMembers: permissions.canManageProjectMembers,
     canViewAudit: permissions.canViewAudit,
+    canUploadDocuments: permissions.canUploadDocuments,
+    canManageDocuments: permissions.canManageDocuments,
   };
 }
 

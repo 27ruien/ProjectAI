@@ -23,14 +23,39 @@ const execFileAsync = promisify(execFile);
 const gunzipAsync = promisify(gunzip);
 const gzipAsync = promisify(gzip);
 const sourceRoots = [
-  "playwright-report",
   "review-artifacts",
-  "test-results",
   "test-logs",
 ];
+const allowedTestLogs = new Set([
+  "artifact-sanitizer.log",
+  "build-and-ssr.log",
+  "deployment-contract.log",
+  "integration.log",
+  "lint.log",
+  "playwright.log",
+  "storage-integration.log",
+  "storage-verify.log",
+  "typecheck.log",
+]);
 const outputRoot = path.resolve("product-review-evidence");
 const redacted = "[REDACTED]";
 const whitespaceEncodedSecrets = new Set();
+const canonicalObjectKeySegment = String.raw`[A-Za-z0-9_-]{1,128}`;
+const canonicalObjectKeySeparator = String.raw`(?:/|\\+/|%2f)`;
+const canonicalObjectKeyUuid =
+  String.raw`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`;
+const canonicalObjectKeySource =
+  String.raw`(?<![A-Za-z0-9_-])projects${canonicalObjectKeySeparator}` +
+  `${canonicalObjectKeySegment}${canonicalObjectKeySeparator}` +
+  `documents${canonicalObjectKeySeparator}${canonicalObjectKeySegment}` +
+  `${canonicalObjectKeySeparator}versions${canonicalObjectKeySeparator}` +
+  `${canonicalObjectKeySegment}${canonicalObjectKeySeparator}` +
+  `${canonicalObjectKeyUuid}(?![A-Za-z0-9_-])`;
+const canonicalObjectKeyPattern = new RegExp(canonicalObjectKeySource, "gi");
+const canonicalObjectKeyVerificationPattern = new RegExp(
+  canonicalObjectKeySource,
+  "i",
+);
 const requiredReviewScreenshots = [
   "screenshots/login.png",
   "screenshots/dashboard-admin.png",
@@ -38,6 +63,12 @@ const requiredReviewScreenshots = [
   "screenshots/project-a-overview.png",
   "screenshots/project-access-denied.png",
   "screenshots/viewer-readonly.png",
+  "screenshots/documents-empty.png",
+  "screenshots/documents-upload-dialog.png",
+  "screenshots/documents-uploaded.png",
+  "screenshots/document-version-history.png",
+  "screenshots/viewer-documents-readonly.png",
+  "screenshots/document-upload-rejected.png",
 ];
 const metrics = {
   copiedRoots: [],
@@ -46,6 +77,7 @@ const metrics = {
   embeddedArchivesSanitized: 0,
   gzipStreamsSanitized: 0,
   artifactNamesSanitized: 0,
+  disallowedEvidenceEntriesRemoved: 0,
   unsafeBinaryFilesRemoved: 0,
   unsafeArchivesRemoved: 0,
   sessionTokensLoaded: 0,
@@ -56,7 +88,7 @@ const metrics = {
 };
 
 const sensitivePropertyName =
-  /^(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token)$/i;
+  /^(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey)$/i;
 
 function isSensitiveStructuredName(value) {
   return (
@@ -69,6 +101,14 @@ function isSensitiveStructuredName(value) {
 
 function lowerCasePercentEscapes(value) {
   return value.replace(/%[0-9A-F]{2}/g, (escape) => escape.toLowerCase());
+}
+
+function redactCanonicalObjectKeys(input) {
+  return input.replace(canonicalObjectKeyPattern, redacted);
+}
+
+function containsCanonicalObjectKey(input) {
+  return canonicalObjectKeyVerificationPattern.test(input);
 }
 
 function flexibleEncodedPattern(value) {
@@ -226,6 +266,12 @@ async function collectSecrets() {
     "DATABASE_URL",
     "BETTER_AUTH_SECRET",
     "POSTGRES_PASSWORD",
+    "MINIO_ROOT_USER",
+    "MINIO_ROOT_PASSWORD",
+    "OBJECT_STORAGE_ENDPOINT",
+    "OBJECT_STORAGE_BUCKET",
+    "OBJECT_STORAGE_ACCESS_KEY",
+    "OBJECT_STORAGE_SECRET_KEY",
     "SEED_ADMIN_PASSWORD",
     "SEED_MANAGER_A_PASSWORD",
     "SEED_MANAGER_B_PASSWORD",
@@ -291,9 +337,25 @@ function redactStructuredValues(input) {
     )
     .replace(/^(cookie|set-cookie|authorization):.*$/gim, `$1: ${redacted}`)
     .replace(
-      /("(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token)"\s*:\s*")[^"]*(")/gi,
+      /("(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey)"\s*:\s*")[^"]*(")/gi,
       `$1${redacted}$2`,
+    )
+    .replace(
+      /\b(objectKey|object_key|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET)=(?!\[REDACTED\])[^\s,;]+/gi,
+      `$1=${redacted}`,
     );
+}
+
+function containsUnsafeStorageMetadata(input) {
+  return (
+    containsCanonicalObjectKey(input) ||
+    /"(?:objectKey|object_key|objectStorageEndpoint|storageEndpoint|object_storage_endpoint|objectStorageBucket|object_storage_bucket|bucket)"\s*:\s*"(?!\[REDACTED\]")[^"]+"/i.test(
+      input,
+    ) ||
+    /\b(?:objectKey|object_key|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET)=(?!\[REDACTED\])[^\s,;]+/i.test(
+      input,
+    )
+  );
 }
 
 function bufferContainsSecret(buffer, secrets) {
@@ -309,6 +371,7 @@ function textContainsSecret(input, secrets) {
 
 function unsafeStructuredValue(input) {
   if (transformJsonDocument(input, "verify").changed) return true;
+  if (containsUnsafeStorageMetadata(input)) return true;
   const values = [
     ...input.matchAll(/(?:[A-Za-z0-9_-]+\.)?session_token(?:=|%3D)([^;\s"',}\\]+)/gi),
   ].map((match) => match[1]);
@@ -339,6 +402,7 @@ function sanitizeText(input, secrets) {
   let sanitized = input;
   for (const secret of secrets) sanitized = sanitized.split(secret).join(redacted);
   sanitized = redactWhitespaceEncodedSecrets(sanitized);
+  sanitized = redactCanonicalObjectKeys(sanitized);
   sanitized = transformJsonDocument(sanitized, "sanitize").value;
   return redactStructuredValues(sanitized);
 }
@@ -763,6 +827,72 @@ function isSupportedReviewScreenshot(filePath, buffer) {
   return false;
 }
 
+function isSafeTextLog(buffer) {
+  if (buffer.length > 10 * 1024 * 1024) return false;
+  if (buffer.subarray(0, 5).toString("ascii") === "%PDF-") return false;
+  if (isZipBuffer(buffer) || isGzipBuffer(buffer)) return false;
+  if (buffer.subarray(0, 8).includes(0)) return false;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function enforceEvidenceAllowlist() {
+  const reviewRoot = path.join(outputRoot, "review-artifacts");
+  if (await exists(reviewRoot)) {
+    for (const entry of await readdir(reviewRoot, { withFileTypes: true })) {
+      const entryPath = path.join(reviewRoot, entry.name);
+      if (
+        entry.isFile() &&
+        (entry.name === "evidence-index.json" || entry.name === "manifest.json")
+      ) {
+        continue;
+      }
+      if (entry.isDirectory() && entry.name === "screenshots") {
+        for (const screenshot of await readdir(entryPath, { withFileTypes: true })) {
+          const screenshotPath = path.join(entryPath, screenshot.name);
+          if (
+            screenshot.isFile() &&
+            isSupportedReviewScreenshot(
+              screenshotPath,
+              await readFile(screenshotPath),
+            )
+          ) {
+            continue;
+          }
+          await rm(screenshotPath, { recursive: true, force: true });
+          metrics.disallowedEvidenceEntriesRemoved += 1;
+        }
+        continue;
+      }
+      await rm(entryPath, { recursive: true, force: true });
+      metrics.disallowedEvidenceEntriesRemoved += 1;
+    }
+  }
+
+  const logsRoot = path.join(outputRoot, "test-logs");
+  if (await exists(logsRoot)) {
+    for (const entry of await readdir(logsRoot, { withFileTypes: true })) {
+      const entryPath = path.join(logsRoot, entry.name);
+      if (!entry.isFile() || !allowedTestLogs.has(entry.name)) {
+        await rm(entryPath, { recursive: true, force: true });
+        metrics.disallowedEvidenceEntriesRemoved += 1;
+        continue;
+      }
+      if (!isSafeTextLog(await readFile(entryPath))) {
+        await rm(entryPath, { force: true });
+        metrics.disallowedEvidenceEntriesRemoved += 1;
+        throw new Error(
+          `Allowed test log is not safe UTF-8 text: ${entry.name}`,
+        );
+      }
+    }
+  }
+}
+
 async function verifyReviewEvidenceCompleteness() {
   const required =
     /^true$/i.test(process.env.CI || "") ||
@@ -866,6 +996,7 @@ for (const sourceRoot of sourceRoots) {
   metrics.copiedRoots.push(sourceRoot);
 }
 
+await enforceEvidenceAllowlist();
 const secrets = await collectSecrets();
 await sanitizeTree(outputRoot, secrets);
 await verifyTree(outputRoot, secrets);

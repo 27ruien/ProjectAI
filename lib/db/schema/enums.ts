@@ -45,6 +45,21 @@ export const auditResultEnum = pgEnum("audit_result", [
   "failed",
 ]);
 
+export const documentStatusEnum = pgEnum("document_status", [
+  "pending",
+  "active",
+  "archived",
+  "failed",
+]);
+
+export const documentStorageStatusEnum = pgEnum("document_storage_status", [
+  "pending",
+  "stored",
+  "failed",
+  "quarantined",
+  "deleted",
+]);
+
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];
@@ -52,3 +67,6 @@ export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
 export type ProjectStage = (typeof projectStageEnum.enumValues)[number];
 export type ProjectHealth = (typeof projectHealthEnum.enumValues)[number];
 export type AuditResult = (typeof auditResultEnum.enumValues)[number];
+export type DocumentStatus = (typeof documentStatusEnum.enumValues)[number];
+export type DocumentStorageStatus =
+  (typeof documentStorageStatusEnum.enumValues)[number];

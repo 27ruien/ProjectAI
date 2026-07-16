@@ -7,7 +7,7 @@ import {
 } from "../schema";
 
 const FORBIDDEN_METADATA_KEY =
-  /password|passphrase|secret|token|cookie|authorization|api.?key|database.?url|connection|string|file.?content|document.?body|client.?content/i;
+  /password|passphrase|secret|token|cookie|authorization|api.?key|database.?url|connection|string|file.?content|document.?body|client.?content|object.?key|bucket|storage.?endpoint|presigned.?url|original.?filename/i;
 
 function sanitizeValue(value: unknown, depth: number): unknown {
   if (depth > 3) return "[truncated]";

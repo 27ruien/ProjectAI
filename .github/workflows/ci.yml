@@ -16,7 +16,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17-alpine
@@ -90,6 +90,113 @@ jobs:
             echo "SEED_VIEWER_A_PASSWORD=$password"
           } >> "$GITHUB_ENV"
 
+      - name: Start isolated MinIO with ephemeral credentials
+        shell: bash
+        env:
+          MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
+          MINIO_CLIENT_IMAGE: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
+        run: |
+          set -Eeuo pipefail
+          container="projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          network="projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          root_file="${RUNNER_TEMP}/projectai-ci-minio-root.env"
+          root_user="ci-root-$(openssl rand -hex 12)"
+          root_password="$(openssl rand -hex 32)"
+          app_access_key="ci-app-$(openssl rand -hex 12)"
+          app_secret_key="$(openssl rand -hex 32)"
+          bucket="projectai-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(openssl rand -hex 4)"
+          endpoint="http://127.0.0.1:9000"
+
+          for secret in "$root_user" "$root_password" "$app_access_key" "$app_secret_key" "$bucket" "$endpoint"; do
+            echo "::add-mask::$secret"
+          done
+
+          umask 077
+          {
+            printf 'MINIO_ROOT_USER=%s\n' "$root_user"
+            printf 'MINIO_ROOT_PASSWORD=%s\n' "$root_password"
+          } > "$root_file"
+
+          {
+            printf 'PROJECTAI_CI_MINIO_CONTAINER=%s\n' "$container"
+            printf 'PROJECTAI_CI_MINIO_NETWORK=%s\n' "$network"
+            printf 'PROJECTAI_CI_MINIO_ROOT_FILE=%s\n' "$root_file"
+            printf 'OBJECT_STORAGE_ENDPOINT=%s\n' "$endpoint"
+            printf 'OBJECT_STORAGE_REGION=us-east-1\n'
+            printf 'OBJECT_STORAGE_BUCKET=%s\n' "$bucket"
+            printf 'OBJECT_STORAGE_ACCESS_KEY=%s\n' "$app_access_key"
+            printf 'OBJECT_STORAGE_SECRET_KEY=%s\n' "$app_secret_key"
+            printf 'OBJECT_STORAGE_FORCE_PATH_STYLE=true\n'
+            printf 'OBJECT_STORAGE_USE_SSL=false\n'
+            printf 'MAX_UPLOAD_BYTES=52428800\n'
+            printf 'UPLOAD_ALLOWED_EXTENSIONS=pdf,docx,xlsx,pptx,txt,md\n'
+          } >> "$GITHUB_ENV"
+
+          export MINIO_ROOT_USER="$root_user"
+          export MINIO_ROOT_PASSWORD="$root_password"
+          export OBJECT_STORAGE_BUCKET="$bucket"
+          export OBJECT_STORAGE_ACCESS_KEY="$app_access_key"
+          export OBJECT_STORAGE_SECRET_KEY="$app_secret_key"
+
+          docker pull "$MINIO_IMAGE" >/dev/null
+          docker pull "$MINIO_CLIENT_IMAGE" >/dev/null
+          docker network create "$network" >/dev/null
+          docker run --detach --rm \
+            --name "$container" \
+            --network "$network" \
+            --network-alias projectai-minio \
+            --publish 127.0.0.1:9000:9000 \
+            --tmpfs /data:rw,noexec,nosuid,nodev,size=512m \
+            --env MINIO_ROOT_USER \
+            --env MINIO_ROOT_PASSWORD \
+            "$MINIO_IMAGE" server /data --console-address :9001 >/dev/null
+
+          ready=0
+          for _ in {1..30}; do
+            if curl --fail --silent --show-error --max-time 3 \
+              "$endpoint/minio/health/live" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          [[ "$ready" == "1" ]] || {
+            echo "CI MinIO readiness timed out." >&2
+            exit 1
+          }
+
+          docker run --rm \
+            --network "$network" \
+            --env MINIO_ROOT_USER \
+            --env MINIO_ROOT_PASSWORD \
+            --env OBJECT_STORAGE_BUCKET \
+            --env OBJECT_STORAGE_ACCESS_KEY \
+            --env OBJECT_STORAGE_SECRET_KEY \
+            --entrypoint /bin/sh \
+            "$MINIO_CLIENT_IMAGE" -ec '
+              umask 077
+              config_dir="$(mktemp -d /tmp/projectai-mc.XXXXXX)"
+              policy_file="$(mktemp /tmp/projectai-policy.XXXXXX)"
+              trap '\''rm -rf "$config_dir" "$policy_file"'\'' EXIT
+              mc --quiet --config-dir "$config_dir" alias set admin http://projectai-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+              mc --quiet --config-dir "$config_dir" mb --ignore-existing "admin/$OBJECT_STORAGE_BUCKET"
+              mc --quiet --config-dir "$config_dir" anonymous set none "admin/$OBJECT_STORAGE_BUCKET"
+              mc --quiet --config-dir "$config_dir" admin user add admin "$OBJECT_STORAGE_ACCESS_KEY" "$OBJECT_STORAGE_SECRET_KEY"
+              printf "%s" '\''{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::'\''"$OBJECT_STORAGE_BUCKET"'\''"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::'\''"$OBJECT_STORAGE_BUCKET"'\''/projects/*"]}]}'\'' > "$policy_file"
+              mc --quiet --config-dir "$config_dir" admin policy create admin projectai-ci-files "$policy_file"
+              mc --quiet --config-dir "$config_dir" admin policy attach admin projectai-ci-files --user "$OBJECT_STORAGE_ACCESS_KEY"
+              mc --quiet --config-dir "$config_dir" alias set app http://projectai-minio:9000 "$OBJECT_STORAGE_ACCESS_KEY" "$OBJECT_STORAGE_SECRET_KEY"
+              mc --quiet --config-dir "$config_dir" ls "app/$OBJECT_STORAGE_BUCKET" >/dev/null
+            '
+
+          anonymous_code="$(curl --silent --show-error --output /dev/null \
+            --write-out '%{http_code}' --max-time 5 \
+            "$endpoint/$bucket?list-type=2")"
+          [[ "$anonymous_code" == "403" ]] || {
+            echo "CI object-storage bucket is not private." >&2
+            exit 1
+          }
+
       - name: Install dependencies
         run: npm ci
 
@@ -143,6 +250,21 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:integration 2>&1 | tee test-logs/integration.log
+
+      - name: Project file storage integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:storage 2>&1 | tee test-logs/storage-integration.log
+
+      - name: Verify database and object-storage consistency
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p test-logs
+          npm run storage:verify 2>&1 | tee test-logs/storage-verify.log
+          npm run storage:reconcile 2>&1 | tee -a test-logs/storage-verify.log
 
       - name: Product review artifact sanitizer tests
         shell: bash
@@ -212,7 +334,15 @@ jobs:
       - name: Sanitize product review evidence
         id: sanitize_evidence
         if: always()
-        run: npm run review:sanitize
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -n "${PROJECTAI_CI_MINIO_ROOT_FILE:-}" && -f "$PROJECTAI_CI_MINIO_ROOT_FILE" ]]; then
+            set -a
+            source "$PROJECTAI_CI_MINIO_ROOT_FILE"
+            set +a
+          fi
+          npm run review:sanitize
 
       - name: Upload product review evidence
         id: upload_evidence
@@ -243,3 +373,16 @@ jobs:
           retention-days: 14
           path: |
             product-review-manifest/manifest.json
+
+      - name: Destroy isolated CI MinIO
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          container="${PROJECTAI_CI_MINIO_CONTAINER:-projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          network="${PROJECTAI_CI_MINIO_NETWORK:-projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
+          docker rm --force "$container" >/dev/null 2>&1 || true
+          docker network rm "$network" >/dev/null 2>&1 || true
+          if [[ -n "${PROJECTAI_CI_MINIO_ROOT_FILE:-}" ]]; then
+            rm -f -- "$PROJECTAI_CI_MINIO_ROOT_FILE"
+          fi
