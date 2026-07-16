@@ -7,16 +7,20 @@
 | 当前开发版本 | `0.5.0-staging`（Document Processing and Knowledge Index Foundation / B2） |
 | `main` 基线 | `a4a171d6c241ffd14e2d29a52a8a83e64942becb`（已合并 v0.4 Project Files Foundation） |
 | 开发分支 | `agent/document-processing-index` |
-| Draft PR | 待创建；标题固定为 `Add document processing and knowledge index foundation` |
-| B2 CI / Evidence | 待最终 Commit 推送后由 GitHub Actions 生成；不得用 v0.4 Run 或 Artifact 代替 |
-| Staging | 待最终 CI 通过后仅部署 https://gridworks.cn/tool/projectai-staging/ |
-| Production | https://gridworks.cn/tool/projectai/；B2 禁止构建、迁移、重启、增加 Worker 或重新部署 |
+| Draft PR | [#4 Add document processing and knowledge index foundation](https://github.com/27ruien/ProjectAI/pull/4)，OPEN / Draft / MERGEABLE / 未合并 |
+| B2 代码验证 SHA | `94e00e422f273f4db93622806fd6a84c653466d3` |
+| B2 CI | [Run 29483198249](https://github.com/27ruien/ProjectAI/actions/runs/29483198249)，`validate` Success |
+| Evidence | `product-review-evidence-29483198249-1`，Artifact ID `8369380379`，Digest `sha256:94e81ae258f13d054b75f8b68585184cf67acdc44e26b49d8646846001dcff80` |
+| Provenance | `product-review-manifest-29483198249-1`，Artifact ID `8369380755`，Digest `sha256:ba6c9d7be5995831cd0a7a81e8e9b83eb7b0a277c75111a87333dfa68044ac58` |
+| Staging | https://gridworks.cn/tool/projectai-staging/；B2 部署验证通过，运行 SHA 在最终文档 CI 后再次与 PR Head 对齐 |
+| Staging 首次 B2 验证 | Commit `94e00e422f273f4db93622806fd6a84c653466d3`，Build Time `2026-07-16T08:25:20Z` |
+| Production | https://gridworks.cn/tool/projectai/；容器 ID/镜像、running、restart count `0`、health `healthy` 前后精确不变 |
 
 ## 当前结论
 
-v0.5 B2 已在本地工作树完成核心实现：持久化解析任务、独立 Worker、六种文件格式的有界解析、Section/Chunk、来源定位、PostgreSQL 全文与 `pg_trgm` 模糊检索、版本/归档有效性切换、重建索引、服务端权限与审计，以及真实项目知识搜索页面。
+v0.5 B2 工程交付门禁已闭环：持久化解析任务、独立 Worker、六格式有界解析、Section/Chunk、来源定位、PostgreSQL FTS/contains/`pg_trgm`/`word_similarity`、版本与归档有效性、reindex、服务端权限/审计和真实项目知识搜索均通过最终 CI 与 Staging 实测。
 
-这不等于交付完成。最终 Commit、Draft PR、远端 CI、22 张产品截图及实际尺寸、Payload A/Provenance B、Staging Migration/Worker/业务验收和 Production 精确不变证据仍待完成。不得在这些门禁前声明 B2 已交付或合并。
+这不授权合并或开始 B3。Draft PR 仍等待产品与安全人工审查；AI 综合回答、OCR、Embedding、RAG、Qwen 和正式 AI 业务写入均未实现。
 
 ## v0.5 真实能力
 
@@ -41,17 +45,20 @@ v0.5 B2 已在本地工作树完成核心实现：持久化解析任务、独立
 
 | 门禁 | 当前状态 |
 | --- | --- |
-| TypeScript / ESLint / parser unit / artifact / deployment contract | 本地执行并持续修复；最终结果以提交前完整回归为准 |
-| PostgreSQL + MinIO 集成 | 测试已实现；本机无可用隔离服务时由 CI 从空库执行 Migration 后验证 |
-| Playwright | B2 流程已实现，覆盖六格式、状态、来源、Viewer、跨项目、版本、归档与 reindex；最终截图只接受 CI 实际产物 |
-| Evidence | Manifest schema v3 已记录 Worker/Parser/Chunker 版本及每张 PNG 的实际宽高，不再硬编码统一 viewport |
-| Staging | 未部署；受控脚本已补齐内部/公网六格式搜索冒烟、暂停 Worker 的 Lease/SKIP LOCKED 验收及失败重试遗留清理，最终仍须在 CI 通过后实际执行 |
-| Production | 不得改变；部署前后必须比较容器身份、运行状态、restart count 与 health |
+| TypeScript / ESLint / Build / Parser / Artifact / Deployment | Run `29483198249` 全绿；Parser/Chunker `15/15`，部署契约 `16/16` |
+| PostgreSQL + MinIO 集成 | CI 从空库执行 Migration/Seed；文件存储与文档 Queue/Lease/Search 集成全绿 |
+| Playwright | `18/18`；覆盖六格式、状态、来源、Viewer、跨项目、版本、归档与 reindex |
+| Evidence | Manifest schema v3；22 张 PNG 全部存在并读取实际尺寸：19 张 `1280×720`，`dashboard-admin` `1280×891`，`project-a-overview` `1280×1441`，`viewer-readonly` `1280×1477` |
+| Artifact 脱敏 | `passed`；Session Token 数 `0`，禁止条目/不安全二进制/不安全归档删除数均 `0` |
+| Staging 健康 | App / PostgreSQL / MinIO / Worker 均 Healthy；App/Worker 同一 image `sha256:141217a5ff6c6c18820b37854f959423aeec20c863e0a33fe5c63e6114a5e574`，Worker/DB/MinIO 无宿主端口 |
+| Staging 业务 | 内部与公网六格式 smoke 均通过：`succeeded=6`、`failed=1`、`needsOcr=1`；中文/英文/模糊搜索、Source Locator、权限、current/archive/reindex 均通过 |
+| Queue / Lease | 独占 Lease、过期恢复、旧 Worker 拒绝提交、双 Worker `SKIP LOCKED` 均通过 |
+| 清理 | 验收 Session、文档、版本、Job、Section、Chunk、对象、审计、running Job、解析临时文件全部 `0` |
+| 备份恢复 | PostgreSQL custom dump 与 MinIO inventory/mirror 均生成并验证；MinIO 临时 Bucket 恢复演练通过且已删除 |
+| Production | 发布前后容器身份、running、restart count 和 health 精确一致；未构建、迁移、重启、增加 Worker 或重新部署 |
 
 ## 合并前剩余步骤
 
-1. 完成完整本地门禁，确认 Migration、类型、Lint、Build、单元、集成、E2E、Artifact 和部署契约。
-2. 提交并推送 `agent/document-processing-index`，创建 Draft PR，不自动合并。
-3. 等待最终 Head 的 CI 全绿并复核 22 张截图、实际尺寸、Payload A 与 Provenance B。
-4. 仅部署 Staging；验证 App/PostgreSQL/MinIO/Worker、六格式解析、搜索、来源、权限、版本/归档/reindex、Lease 与清理。
-5. 更新本文件为实际 Run、Artifact、Staging SHA、健康状态和 Production 不变证据，等待产品与安全审查。
+1. 文档事实回填提交完成最终 CI，并将同一最终 PR Head 再次部署到 Staging 核对运行 SHA。
+2. 产品与安全人工审查 `docs/MVP_ACCEPTANCE.md`、22 张 Evidence 截图、Mock/真实边界和回滚证据。
+3. 审查前保持 PR OPEN / Draft / 未合并；不得开始 B3 或接入 Qwen、Embedding、RAG。

@@ -122,3 +122,10 @@ npm run documents:lease-smoke
 ```
 
 前者同时走容器内部上游和公网 Nginx 路径；后者只在队列为空、Worker 暂停期间执行。验收失败必须保留部署失败状态并触发既有 Staging App/Worker 回滚，不得跳过清理或 Production baseline 复核。
+
+## 最近验证事实
+
+- GitHub Actions Run `29483198249` 对 B2 代码提交 `94e00e422f273f4db93622806fd6a84c653466d3` 全绿：包含空库 Migration、隔离 PostgreSQL/MinIO、15 项 Parser/Chunker、身份/项目隔离、文件存储、文档队列/Lease/搜索集成、16 项部署契约和 18 项 Playwright。
+- Evidence `product-review-evidence-29483198249-1`（Artifact ID `8369380379`）包含 22 张实际 PNG；Provenance `product-review-manifest-29483198249-1`（Artifact ID `8369380755`）绑定 Head、tested merge SHA、Run、Artifact ID/Digest 和 Worker/Parser/Chunker Version。
+- CI 按隔离规则保持 `stagingSha: null`，不连接 Staging。随后受控部署分别通过内部和公网六格式 smoke，并验证 App/Worker/Parser/Chunker Version `1`、Lease 恢复、`SKIP LOCKED`、全量清理和 Production 精确不变。
+- 文档事实回填提交只改变文档；其最终 CI 与最终 Staging 运行 SHA以 Draft PR 检查和 `/api/health` 响应头为准。

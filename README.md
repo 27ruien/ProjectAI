@@ -2,7 +2,7 @@
 
 面向项目经理的 AI 项目交付工作台 MVP。它以项目为核心容器，将项目资料、知识、结构化需求、AI 工作流、人工审核、Scope 变更、Action Plan 与风险管理串联起来。
 
-> **安全提示：v0.5 B2 已实现真实文档解析、Section/Chunk 和项目级词法搜索，但没有 OCR、Embedding、RAG、Qwen 或 AI 综合回答。当前分支的最终 CI、Staging 和产品/安全审查尚未闭环，只能使用虚构测试文件。**
+> **安全提示：v0.5 B2 已实现并在 Staging 验证真实文档解析、Section/Chunk 和项目级词法搜索，但没有 OCR、Embedding、RAG、Qwen 或 AI 综合回答。Draft PR 仍等待产品与安全审查，测试和演示只能使用虚构文件。**
 
 ## 已实现能力
 
@@ -166,7 +166,7 @@ Staging 地址：<https://gridworks.cn/tool/projectai-staging/>
 
 Staging 使用独立目录 `/srv/projectai-staging`、应用容器 `project-ai-os-staging`、Worker `project-ai-os-staging-worker`、数据库容器/卷 `project-ai-os-staging-postgres` / `projectai-staging-postgres`、MinIO 容器/卷 `project-ai-os-staging-minio` / `projectai-staging-minio`、Bucket `projectai-staging-files`、端口 `127.0.0.1:3101` 和 basePath `/tool/projectai-staging`。Worker/PostgreSQL/MinIO 只连接内部 Docker 网络且不发布端口。
 
-服务器凭据保存在 `/srv/projectai-staging/.env.auth-staging`，权限必须为 `root:root 600`；MinIO root 与应用凭据不同，App/Worker 只得到受 `projects/*` 限制的 scoped credential。部署脚本只从当前 Commit 的 `git archive` 构造发布内容，不会同步工作区 ignored 文件，也不会移动或打印该环境文件。当前在线 v0.4 不能替代本分支 v0.5 的 Worker、解析与搜索验收。
+服务器凭据保存在 `/srv/projectai-staging/.env.auth-staging`，权限必须为 `root:root 600`；MinIO root 与应用凭据不同，App/Worker 只得到受 `projects/*` 限制的 scoped credential。部署脚本只从当前 Commit 的 `git archive` 构造发布内容，不会同步工作区 ignored 文件，也不会移动或打印该环境文件。v0.5 B2 已完成 Worker、六格式解析、词法搜索、Lease 恢复和公网链路验收；精确运行事实见 [MVP_STATUS](./docs/MVP_STATUS.md)。
 
 Compose 按容器最小化注入 Secret：Worker 只接收数据库连接和 Bucket-scoped object credential，不接收认证/Seed/MinIO root credential。App、Worker、数据库、MinIO 和 operations 均设置资源/日志上限。
 
@@ -176,7 +176,7 @@ Compose 按容器最小化注入 Secret：Worker 只接收数据库连接和 Buc
 
 ## 后续接入
 
-1. 完成 v0.5 B2 最终 CI、Evidence、Staging Worker/搜索验收和产品/安全审查。
+1. 完成 v0.5 B2 产品与安全人工审查；Draft PR 未 Ready、未合并。
 2. 下一独立迭代再评审 Embedding、Hybrid Search、Reranker 或 RAG；不得把这些能力偷偷带入 B2。
 3. 保持 `ProjectKnowledgeService` 和 `AIGateway` 稳定边界；Provider Key 只进入服务端 Secret。
 4. 真实 AI 结论必须显示来源、经过人工审核并保留审计，不直接覆盖正式数据。

@@ -169,4 +169,4 @@ https://gridworks.cn/tool/projectai-staging/
 
 ## 当前发布状态
 
-v0.5 B2 尚未部署。当前在线 Staging 的 v0.4 能力不能证明新 Migration、`pg_trgm`、Document Worker、解析、Section/Chunk 或真实知识搜索。最终发布完成后必须用实际 App/DB/MinIO/Worker 状态、备份恢复、搜索流程、清理结果、运行 SHA 和 Production baseline 更新 `MVP_STATUS.md`。
+v0.5 B2 已于 2026-07-16 通过受控脚本部署并验证 Staging。App、PostgreSQL、MinIO、Document Worker 均 Healthy，App/Worker 使用同一 immutable image；`pg_trgm`、内部与公网六格式解析/搜索、来源定位、Viewer/跨项目边界、版本/归档/reindex、Lease 恢复与 `SKIP LOCKED` 全部通过。测试 Session、文档、版本、Job、Section、Chunk、对象、running Job 和解析临时文件均清零，Production 容器身份、运行状态、restart count 与 health 前后精确一致。精确 Commit、CI、Artifact 和构建时间记录在 `MVP_STATUS.md`；本轮仍禁止 Production 发布。
