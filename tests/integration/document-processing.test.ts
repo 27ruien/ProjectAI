@@ -205,6 +205,7 @@ after(async () => {
 
 describe("document processing queue, parsers, and lexical search", () => {
   it("creates durable jobs and indexes every supported format with source locations", async () => {
+    let fuzzyDocumentId = "";
     const cases = [
       {
         file: createSearchablePdfFixture(),
@@ -237,7 +238,7 @@ describe("document processing queue, parsers, and lexical search", () => {
       {
         file: createMarkdownFixture(
           "Project Aurora Requirements.md",
-          "requirement: launch checklist",
+          "requirement: Project Aurora approval October 15 123e4567-e89b-12d3-a456-426614174000 aabbccddeeff00112233445566778899 fedcba98765432100123456789abcdef zyxwvutsrqponmlkjihgfedcba",
         ),
         query: "requirement",
         source: "markdown_section",
@@ -246,6 +247,9 @@ describe("document processing queue, parsers, and lexical search", () => {
 
     for (const testCase of cases) {
       const stored = await upload(testCase.file);
+      if (testCase.source === "markdown_section") {
+        fuzzyDocumentId = stored.document.id;
+      }
       const [pending] = await getDb()
         .select()
         .from(documentIngestionJob)
@@ -281,6 +285,11 @@ describe("document processing queue, parsers, and lexical search", () => {
 
     assert.ok((await search(memberUser, "October 15")).results.length > 0);
     assert.ok((await search(managerUser, "launc date")).results.length > 0);
+    assert.ok(fuzzyDocumentId);
+    assert.ok(
+      (await search(managerUser, "Octobr", [fuzzyDocumentId])).results.length >
+        0,
+    );
     assert.ok((await search(viewerUser, "上线日期")).results.length > 0);
 
     const concurrent = await upload(

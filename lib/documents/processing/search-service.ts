@@ -139,6 +139,8 @@ export async function searchProjectKnowledge(input: {
             + case when lower(c.heading_path::text) like lower(${contains}) escape ${escapeCharacter} then 1.25 else 0 end
             + similarity(c.search_text, ${query})
             + similarity(d.display_name, ${query}) * 0.75
+            + word_similarity(${query}, c.search_text) * 1.5
+            + word_similarity(${query}, d.display_name) * 0.5
           ) as raw_score
         from document_chunks c
         inner join document_ingestion_jobs j on j.id = c.ingestion_job_id
@@ -162,6 +164,8 @@ export async function searchProjectKnowledge(input: {
             or lower(d.display_name) like lower(${contains}) escape ${escapeCharacter}
             or similarity(c.search_text, ${query}) >= 0.08
             or similarity(d.display_name, ${query}) >= 0.12
+            or word_similarity(${query}, c.search_text) >= 0.3
+            or word_similarity(${query}, d.display_name) >= 0.35
           )
       )
       select *

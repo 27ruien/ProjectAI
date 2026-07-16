@@ -573,9 +573,11 @@ rollback_staging_if_marked() {
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
     "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$DB_CONTAINER_NAME" \
     "$BASE_PATH" "$DEPLOY_MARKER" \
-    "$PREVIOUS_STAGING_IMAGE" "$PREVIOUS_STAGING_HEALTH_PATH" \
-    "$PREVIOUS_STAGING_COMMIT_SHA" "$PREVIOUS_STAGING_APP_VERSION" \
-    "$PREVIOUS_STAGING_BUILD_TIME" "$PREVIOUS_STAGING_WORKER_IMAGE" \
+    "${PREVIOUS_STAGING_IMAGE:-__projectai_empty__}" "$PREVIOUS_STAGING_HEALTH_PATH" \
+    "${PREVIOUS_STAGING_COMMIT_SHA:-__projectai_empty__}" \
+    "${PREVIOUS_STAGING_APP_VERSION:-__projectai_empty__}" \
+    "${PREVIOUS_STAGING_BUILD_TIME:-__projectai_empty__}" \
+    "${PREVIOUS_STAGING_WORKER_IMAGE:-__projectai_empty__}" \
     "$PREVIOUS_STAGING_WORKER_RUNNING" <<'REMOTE_ROLLBACK'
 set -Eeuo pipefail
 remote_dir="$1"
@@ -594,6 +596,11 @@ previous_app_version="${13}"
 previous_build_time="${14}"
 previous_worker_image="${15}"
 previous_worker_running="${16}"
+[[ "$previous_image" != "__projectai_empty__" ]] || previous_image=""
+[[ "$previous_commit_sha" != "__projectai_empty__" ]] || previous_commit_sha=""
+[[ "$previous_app_version" != "__projectai_empty__" ]] || previous_app_version=""
+[[ "$previous_build_time" != "__projectai_empty__" ]] || previous_build_time=""
+[[ "$previous_worker_image" != "__projectai_empty__" ]] || previous_worker_image=""
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
