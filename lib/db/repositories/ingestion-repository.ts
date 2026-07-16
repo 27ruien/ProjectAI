@@ -92,6 +92,15 @@ function publicStatus(
   return status;
 }
 
+function databaseTimestamp(value: Date | string | null): Date | null {
+  if (value === null || value instanceof Date) return value;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("Document ingestion query returned an invalid timestamp.");
+  }
+  return parsed;
+}
+
 export async function ingestionSummariesForVersions(
   versionIds: string[],
   db: DatabaseExecutor = getDb(),
@@ -104,7 +113,7 @@ export async function ingestionSummariesForVersions(
     parser_version: string;
     chunker_version: string;
     failure_code: string | null;
-    completed_at: Date | null;
+    completed_at: Date | string | null;
     section_count: number | string;
     chunk_count: number | string;
   }>(sql`
@@ -135,7 +144,10 @@ export async function ingestionSummariesForVersions(
         chunkerVersion: row.chunker_version,
         sectionCount: Number(row.section_count),
         chunkCount: Number(row.chunk_count),
-        lastIndexedAt: row.status === "succeeded" ? row.completed_at : null,
+        lastIndexedAt:
+          row.status === "succeeded"
+            ? databaseTimestamp(row.completed_at)
+            : null,
         failureCode: row.failure_code,
         generation: row.generation,
       },

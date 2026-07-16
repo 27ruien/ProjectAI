@@ -4,6 +4,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { AuthenticatedPrincipal } from "../../lib/auth/session";
 import { AuthorizationError } from "../../lib/auth/session";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
+import { ingestionSummariesForVersions } from "../../lib/db/repositories/ingestion-repository";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
 import {
   auditEvent,
@@ -265,6 +266,10 @@ describe("document processing queue, parsers, and lexical search", () => {
         .from(documentIngestionJob)
         .where(eq(documentIngestionJob.versionId, stored.version.id));
       assert.equal(completed?.status, "succeeded");
+      const summary = (
+        await ingestionSummariesForVersions([stored.version.id])
+      ).get(stored.version.id);
+      assert.ok(summary?.lastIndexedAt instanceof Date);
       const result = await search(viewerUser, testCase.query);
       const match = result.results.find(
         (item) => item.documentId === stored.document.id,
