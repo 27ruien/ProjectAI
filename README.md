@@ -166,7 +166,7 @@ Staging 地址：<https://gridworks.cn/tool/projectai-staging/>
 
 Staging 使用独立目录 `/srv/projectai-staging`、应用容器 `project-ai-os-staging`、Worker `project-ai-os-staging-worker`、数据库容器/卷 `project-ai-os-staging-postgres` / `projectai-staging-postgres`、MinIO 容器/卷 `project-ai-os-staging-minio` / `projectai-staging-minio`、Bucket `projectai-staging-files`、端口 `127.0.0.1:3101` 和 basePath `/tool/projectai-staging`。Worker/PostgreSQL/MinIO 只连接内部 Docker 网络且不发布端口。
 
-服务器凭据保存在 `/srv/projectai-staging/.env.auth-staging`，权限必须为 `root:root 600`；MinIO root 与应用凭据不同，App/Worker 只得到受 `projects/*` 限制的 scoped credential。部署脚本只从当前 Commit 的 `git archive` 构造发布内容，不会同步工作区 ignored 文件，也不会移动或打印该环境文件。v0.5 B2 已完成 Worker、六格式解析、词法搜索、Lease 恢复和公网链路验收；精确运行事实见 [MVP_STATUS](./docs/MVP_STATUS.md)。
+服务器凭据保存在 `/srv/projectai-staging/.env.auth-staging`，权限必须为 `root:root 600`；MinIO root 与应用凭据不同，App/Worker 只得到受 `projects/*` 限制的 scoped credential。部署脚本只从当前 Commit 的 `git archive` 构造发布内容，不会同步工作区 ignored 文件，也不会移动或打印该环境文件。v0.5 B2 已完成 Worker、六格式解析、词法搜索、Lease 恢复和公网链路验收；稳定状态见 [MVP_STATUS](./docs/MVP_STATUS.md)，动态精确运行事实见 Draft PR #4 描述和 Provenance Manifest。
 
 Compose 按容器最小化注入 Secret：Worker 只接收数据库连接和 Bucket-scoped object credential，不接收认证/Seed/MinIO root credential。App、Worker、数据库、MinIO 和 operations 均设置资源/日志上限。
 

@@ -158,4 +158,4 @@ CI 使用 PostgreSQL 17 和运行时创建的 MinIO：每次生成随机 root/ap
 
 `playwright-report/`、`test-results/`、trace/video、任意归档/PDF、上传测试原件、数据库/对象备份和未列名文件均不进入 Payload A。sanitizer 对数据库/认证/MinIO/object-storage Secret、Bucket/Endpoint/Object Key、Cookie/Session 和编码变体做删除/脱敏并失败关闭。
 
-GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v3 记录 Worker/Parser/Chunker Version 和 PNG 实际尺寸。当前 v0.5 最终 CI、Artifact 与 Staging 状态以 `MVP_STATUS.md` 为准。
+GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v3 记录 Worker/Parser/Chunker Version 和 PNG 实际尺寸。`MVP_STATUS.md` 记录稳定交付结论；当前 v0.5 最终 Head、CI、Artifact 与 Staging 动态精确事实以 Draft PR #4 描述、Provenance Manifest 和受控部署证据为准。

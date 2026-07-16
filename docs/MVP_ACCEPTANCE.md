@@ -1,6 +1,6 @@
 # MVP Acceptance
 
-状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.5 B2 证据。
+状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.5 B2 证据。本表中的“最终 CI”均指 PR #4 当前 Head 对应的完整全绿 CI，精确 Run、Artifact ID/Digest 与 tested merge SHA 记录在 PR 描述和 Provenance Manifest。
 
 | ID | 优先级 | 描述 | 当前状态 | 验证方式 | 自动化覆盖 | 负责人 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -31,7 +31,7 @@
 | MVP-017 | P1 | 有审计记录 | 通过 | PostgreSQL 审计集成与最终 CI/Staging 操作链 | 文件创建/上传/下载/current/归档/恢复/reindex/search/拒绝/reconciliation 均写审计 | AI/Backend | 审计不含 Object Key、Endpoint、凭据、Session、完整搜索词或正文；AI execution 仍 Mock |
 | MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 页面流程与可恢复失败 | 文件处理状态轮询/reindex + 搜索 Loading/Error/Retry/Empty | Frontend/AI | Workflow 仍保留 Review/Audit 边界 |
 | MVP-019 | P1 | Staging 可访问并 noindex | 通过 | v0.5 公网 Staging、App/DB/MinIO/Worker 健康 | 公网登录/受保护路由/静态资源/noindex 和四服务 Healthy 已验证 | DevOps | Production 精确不变 |
-| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | CI Run `29483198249` | `18/18`；22 张截图完整且记录实际 PNG 尺寸 | QA | 无 Trace/Video 进入 Evidence |
+| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | PR #4 当前 Head 对应最终 CI；精确 Run 见 PR 描述和 Provenance Manifest | `18/18`；22 张截图完整且记录实际 PNG 尺寸 | QA | 无 Trace/Video 进入 Evidence |
 | MVP-021 | P1 | Production build 通过 | 通过 | 最终 CI `npm run build`（由 `npm test` 执行） | production build + SSR `7/7` 通过 | Frontend | 仅本地/CI 构建并部署 Staging；未在 Production 主机执行 |
 | OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 资料页有 active/archived 和搜索基础 |
 | OPT-002 | P2 | 更完整统计指标 | 部分 | 数据看板检查 | SSR | Product | 大部分仍为 Mock |
@@ -51,8 +51,8 @@
 | V05-PARSER-001 | 六格式有界 Parser、needs_ocr、Source Locator 与 Chunker | 通过 | Parser/Chunker `15/15`；内部/公网 Staging 六格式 smoke | 已关闭 |
 | V05-SEARCH-001 | project-scoped FTS/contains/pg_trgm、当前版本/归档过滤与公开 DTO | 通过 | 中文/英文/错拼、来源、Viewer、跨项目、current/archive/reindex 全绿 | 已关闭 |
 | V05-UI-001 | 状态、Polling、Retry、reindex 和真实知识搜索 UI | 通过 | Playwright `18/18`，10 张新增 B2 截图 | 已关闭 |
-| V05-EVIDENCE-001 | Manifest v3、实际 PNG 尺寸、Worker/Parser/Chunker Version 与强 allowlist | 通过 | Evidence ID `8369380379`；Provenance ID `8369380755`；清洗 `passed` | 已关闭 |
-| V05-STAGING-001 | 备份、`pg_trgm`、Worker→App、业务 smoke、全量清理和 Production 不变 | 通过 | 2026-07-16 受控部署；四服务 Healthy、内外网 smoke/Lease/清理全绿、Production 精确不变 | 已关闭 |
+| V05-EVIDENCE-001 | Manifest v3、实际 PNG 尺寸、Worker/Parser/Chunker Version 与强 allowlist | 通过 | PR #4 当前 Head 的 Evidence/Provenance 已生成且清洗 `passed`；精确名称、ID 与 Digest 见 PR 描述 | 已关闭 |
+| V05-STAGING-001 | 备份、`pg_trgm`、Worker→App、业务 smoke、全量清理和 Production 不变 | 通过 | PR #4 当前最终 Head 已受控部署；四服务 Healthy、内外网 smoke/Lease/清理全绿、Production 精确不变；动态部署事实见 PR 描述及部署证据 | 已关闭 |
 | V05-PR-001 | Draft PR OPEN/Draft/未合并 | 通过 | [PR #4](https://github.com/27ruien/ProjectAI/pull/4) OPEN / Draft / MERGEABLE | 已关闭交付动作；人工审查前不得 Ready 或合并 |
 
 ## v0.4 历史交付门禁

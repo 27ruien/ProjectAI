@@ -14,7 +14,7 @@
 10. Playwright 身份、文件、解析和知识搜索：`npm run test:e2e`。
 11. 完整本地门禁：`npm run qa:mvp`。
 
-旧 CI、旧 Staging 和旧截图不能替代当前 Head 的证据。最终事实只写入 `MVP_STATUS.md`。
+旧 CI、旧 Staging 和旧截图不能替代当前 Head 的证据。tracked 文档只记录稳定结论；当前 Head、Run、Artifact ID/Digest、tested merge SHA、Staging image 和 Build Time 等动态精确事实记录在 PR 描述与 Provenance Manifest。
 
 ## 隔离基础设施
 
@@ -125,7 +125,7 @@ npm run documents:lease-smoke
 
 ## 最近验证事实
 
-- GitHub Actions Run `29483198249` 对 B2 代码提交 `94e00e422f273f4db93622806fd6a84c653466d3` 全绿：包含空库 Migration、隔离 PostgreSQL/MinIO、15 项 Parser/Chunker、身份/项目隔离、文件存储、文档队列/Lease/搜索集成、16 项部署契约和 18 项 Playwright。
-- Evidence `product-review-evidence-29483198249-1`（Artifact ID `8369380379`）包含 22 张实际 PNG；Provenance `product-review-manifest-29483198249-1`（Artifact ID `8369380755`）绑定 Head、tested merge SHA、Run、Artifact ID/Digest 和 Worker/Parser/Chunker Version。
-- CI 按隔离规则保持 `stagingSha: null`，不连接 Staging。随后受控部署分别通过内部和公网六格式 smoke，并验证 App/Worker/Parser/Chunker Version `1`、Lease 恢复、`SKIP LOCKED`、全量清理和 Production 精确不变。
-- 文档事实回填提交只改变文档；其最终 CI 与最终 Staging 运行 SHA以 Draft PR 检查和 `/api/health` 响应头为准。
+- PR #4 当前 Head 对应完整 CI 全绿：包含空库 Migration、隔离 PostgreSQL/MinIO、15 项 Parser/Chunker、身份/项目隔离、文件存储、文档队列/Lease/搜索集成、16 项部署契约和 18 项 Playwright。
+- 最终 Evidence 包含 22 张实际 PNG；Provenance 绑定 Head、tested merge SHA、Run、Artifact ID/Digest 和 Worker/Parser/Chunker Version。精确名称、ID 与 Digest 记录在 PR 描述。
+- CI 按隔离规则保持 `stagingSha: null`，不连接 Staging。随后同一最终 Head 通过受控部署完成内部和公网六格式 smoke，并验证 App/Worker/Parser/Chunker Version `1`、Lease 恢复、`SKIP LOCKED`、全量清理和 Production 精确不变。
+- 文档事实一致性提交只改变文档；最终 CI 以 PR #4 当前 Head 检查为准，最终 Staging SHA 以 PR 描述、部署证据和 `/api/health` 响应头为准。
