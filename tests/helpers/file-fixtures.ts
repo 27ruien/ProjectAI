@@ -82,6 +82,55 @@ export function createPdfFixture(
   return new File([body], filename, { type: "application/pdf" });
 }
 
+function pdfWithContent(content: string | null): Uint8Array {
+  const escaped = (content ?? "")
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+  const stream = content
+    ? `BT\n/F1 12 Tf\n72 720 Td\n(${escaped}) Tj\nET\n`
+    : "";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(body);
+  body += `xref\n0 ${objects.length + 1}\n`;
+  body += "0000000000 65535 f \n";
+  for (const offset of offsets.slice(1)) {
+    body += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  }
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`;
+  body += `startxref\n${xrefOffset}\n%%EOF\n`;
+  return new TextEncoder().encode(body);
+}
+
+export function createSearchablePdfFixture(
+  filename = "Project Aurora Scope.pdf",
+  content = "Project Aurora Launch date: October 15 Budget USD 100,000",
+): File {
+  return new File([blobPart(pdfWithContent(content))], filename, {
+    type: "application/pdf",
+  });
+}
+
+export function createScannedPdfFixture(
+  filename = "Project Aurora Scan.pdf",
+): File {
+  return new File([blobPart(pdfWithContent(null))], filename, {
+    type: "application/pdf",
+  });
+}
+
 export function createTextFixture(
   filename = "虚构项目记录.txt",
   marker = "仅用于 Project AI OS 自动化测试的虚构内容。",
@@ -139,6 +188,100 @@ export function createOfficeFixture(
   const archive = zip([
     { name: "[Content_Types].xml", data: contentTypes },
     { name: definition.core, data: "<fictional-document/>" },
+  ]);
+  return new File([blobPart(archive)], filename, { type: definition.mime });
+}
+
+export function createSearchableDocxFixture(
+  filename = "Project Aurora Notes.docx",
+): File {
+  const definition = officeDefinition.docx;
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Override PartName="${definition.partName}" ContentType="${definition.contentType}"/>` +
+    `</Types>`;
+  const documentXml =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">` +
+    `<w:body>` +
+    `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Timeline</w:t></w:r></w:p>` +
+    `<w:p><w:r><w:t>Project Aurora launch date is October 15.</w:t></w:r></w:p>` +
+    `<w:p><w:pPr><w:numPr><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Owner: Example Manager</w:t></w:r></w:p>` +
+    `<w:tbl><w:tr><w:tc><w:p><w:r><w:t>Budget</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>USD 100,000</w:t></w:r></w:p></w:tc></w:tr></w:tbl>` +
+    `</w:body></w:document>`;
+  const archive = zip([
+    { name: "[Content_Types].xml", data: contentTypes },
+    { name: definition.core, data: documentXml },
+  ]);
+  return new File([blobPart(archive)], filename, { type: definition.mime });
+}
+
+export function createSearchableXlsxFixture(
+  filename = "Project Aurora Budget.xlsx",
+): File {
+  const definition = officeDefinition.xlsx;
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Override PartName="${definition.partName}" ContentType="${definition.contentType}"/>` +
+    `<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>` +
+    `</Types>`;
+  const workbook =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<sheets><sheet name="Budget" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
+    `</Relationships>`;
+  const sheet =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>` +
+    `<row r="1"><c r="A1" t="inlineStr"><is><t>Budget</t></is></c><c r="B1" t="inlineStr"><is><t>USD 100,000</t></is></c></row>` +
+    `<row r="2"><c r="A2" t="inlineStr"><is><t>Launch date</t></is></c><c r="B2" t="inlineStr"><is><t>October 15</t></is></c></row>` +
+    `</sheetData></worksheet>`;
+  const archive = zip([
+    { name: "[Content_Types].xml", data: contentTypes },
+    { name: definition.core, data: workbook },
+    { name: "xl/_rels/workbook.xml.rels", data: rels },
+    { name: "xl/worksheets/sheet1.xml", data: sheet },
+  ]);
+  return new File([blobPart(archive)], filename, { type: definition.mime });
+}
+
+export function createSearchablePptxFixture(
+  filename = "Project Aurora Milestones.pptx",
+): File {
+  const definition = officeDefinition.pptx;
+  const contentTypes =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
+    `<Override PartName="${definition.partName}" ContentType="${definition.contentType}"/>` +
+    `<Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>` +
+    `</Types>`;
+  const presentation =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">` +
+    `<p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst></p:presentation>`;
+  const rels =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
+    `<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>` +
+    `</Relationships>`;
+  const slide =
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">` +
+    `<p:cSld><p:spTree><p:sp><p:txBody>` +
+    `<a:p><a:r><a:t>Milestone</a:t></a:r></a:p>` +
+    `<a:p><a:r><a:t>Project Aurora launch October 15</a:t></a:r></a:p>` +
+    `</p:txBody></p:sp></p:spTree></p:cSld></p:sld>`;
+  const archive = zip([
+    { name: "[Content_Types].xml", data: contentTypes },
+    { name: definition.core, data: presentation },
+    { name: "ppt/_rels/presentation.xml.rels", data: rels },
+    { name: "ppt/slides/slide1.xml", data: slide },
   ]);
   return new File([blobPart(archive)], filename, { type: definition.mime });
 }

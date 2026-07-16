@@ -4,85 +4,59 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前开发版本 | `0.4.0-staging`（Project Files Foundation / 交付包 B1） |
-| `main` 基线 | `acd403b009bd788a59d2157936ce24fb89bd4dba`（包含已合并的 v0.3） |
-| 开发分支 | `agent/project-files-foundation` |
-| Draft PR | [#3 Add project file storage foundation](https://github.com/27ruien/ProjectAI/pull/3)，`OPEN`、Draft、未合并 |
-| 最终 v0.4 CI | PR #3 最新 Head 对应 CI 全绿；精确 Run 与 Artifact ID 记录在 PR 描述和 Provenance B |
-| v0.4 Evidence / Provenance | Payload A `product-review-evidence-*` 与 Provenance B `product-review-manifest-*` 均由最终 CI 生成并通过强 allowlist/脱敏检查 |
-| Staging | https://gridworks.cn/tool/projectai-staging/；运行 PR #3 最新 Head，`/api/health` Header 与 Provenance B 精确校验 |
-| Production | https://gridworks.cn/tool/projectai/；本轮未构建、迁移、重启或部署 |
+| 当前开发版本 | `0.5.0-staging`（Document Processing and Knowledge Index Foundation / B2） |
+| `main` 基线 | `a4a171d6c241ffd14e2d29a52a8a83e64942becb`（已合并 v0.4 Project Files Foundation） |
+| 开发分支 | `agent/document-processing-index` |
+| Draft PR | [#4 Add document processing and knowledge index foundation](https://github.com/27ruien/ProjectAI/pull/4)，OPEN / Draft / MERGEABLE / 未合并 |
+| 最终 PR Head | 以 PR #4 当前 Head 为准；精确 SHA 记录在 PR 描述和 Provenance Manifest |
+| 最终 CI | PR #4 当前 Head 对应完整 CI 全绿；精确 Run、tested merge SHA 和 Artifact 绑定记录在 PR 描述和 Provenance Manifest |
+| Evidence / Provenance | 最终 CI 已生成并通过强 allowlist、实际 PNG 尺寸校验和脱敏；精确名称、ID 与 Digest 记录在 PR 描述 |
+| Staging | https://gridworks.cn/tool/projectai-staging/；运行 PR #4 当前最终 Head，精确 SHA、Build Time、image digest 和健康状态记录在 PR 描述及受控部署证据 |
+| Production | https://gridworks.cn/tool/projectai/；容器 ID/镜像、running、restart count `0`、health `healthy` 前后精确不变 |
 
-## v0.4 结论
+## 当前结论
 
-`Project AI OS v0.4 — Project Files Foundation` 已完成 B1 的实现、CI、Staging 和证据闭环。真实能力覆盖 PostgreSQL 文件元数据、私有 S3-compatible 对象存储、上传/下载、不可变版本、单一 current、归档/恢复、项目级授权、审计、补偿与只读一致性检查。
+v0.5 B2 工程交付门禁已闭环：持久化解析任务、独立 Worker、六格式有界解析、Section/Chunk、来源定位、PostgreSQL FTS/contains/`pg_trgm`/`word_similarity`、版本与归档有效性、reindex、服务端权限/审计和真实项目知识搜索均通过最终 CI 与 Staging 实测。
 
-Draft PR #3 必须继续保持未合并，等待产品与安全复审。本轮到此停止；不得开始解析、Embedding、RAG、真实模型或 B2，也不得部署 Production。
+这不授权合并或开始 B3。Draft PR 仍等待产品与安全人工审查；AI 综合回答、OCR、Embedding、RAG、Qwen 和正式 AI 业务写入均未实现。
 
-## 已形成的真实能力
+## v0.5 真实能力
 
-- `project_documents` 与 `project_document_versions` 已通过受控 Migration 建立；项目/文档复合外键、版本号、`upload_id`、Object Key 唯一约束和单 current Partial Unique Index 均在 PostgreSQL 生效。
-- 文件正文只写入 S3-compatible Object Storage；数据库仅保存受控元数据，正文不进入容器目录、Git、`public/` 或 PostgreSQL。
-- 支持 PDF、DOCX、XLSX、PPTX、TXT、Markdown，默认上限 50 MiB；同时校验扩展名、声明 MIME、签名、实际大小、UTF-8 和受限 OOXML 结构。
-- Object Key 由服务端按 `projects/{projectId}/documents/{documentId}/versions/{versionId}/{UUID}` 生成；不含原文件名、客户信息、用户邮箱或路径片段，且不进入客户端 DTO、日志或产品 Artifact。
-- 上传使用 UUID `Idempotency-Key` 和 pending → object put → stored/current 三段式流程；对象或数据库失败均有补偿、受控 failure code 与 dry-run reconciliation。
-- `system_admin`/Manager 可执行全部文件操作，Member 可上传/下载，Viewer 只读；所有 project/document/version 归属与写权限均由服务端重新校验，未授权与不存在资源统一 404。
-- 新版本不覆盖历史对象；事务锁、版本唯一约束和 Partial Unique Index 保护并发版本号与单 current。只有 Manager/Admin 可切换 current、归档和恢复。
-- 下载固定为 `attachment`，包含 `nosniff`、`private, no-store`，并在响应前核对大小、ETag 与 SHA-256 metadata。
-- 文件创建、上传开始/成功/失败、下载、current 切换、归档/恢复、拒绝与 reconciliation 均写入脱敏审计。
+- `document_ingestion_jobs` 是 PostgreSQL 持久化队列，使用 `FOR UPDATE SKIP LOCKED`、实例级 Worker ID、Lease/Heartbeat、最大尝试次数、退避与终态约束。
+- 独立 `project-ai-os-staging-worker` 与 App 使用同一 immutable image、不同 command；无端口、私网访问 PostgreSQL/MinIO、仅使用 Bucket scoped credential，并有 CPU/Memory/PID、日志轮转、优雅退出和文件心跳健康检查。
+- Worker 只从数据库取得 Object Key，重新核对对象大小、ETag、SHA-256 和文件结构；解析在线程内运行并有硬超时，失败不会产生有效半成品索引。
+- 支持 PDF、DOCX、XLSX、PPTX、TXT 和 Markdown：保留页码、标题/段落、Sheet/行列、Slide、文本行等来源定位；扫描型 PDF 进入 `needs_ocr`，本轮不执行 OCR。
+- `document_sections` 保存自然结构；`document_chunks` 保存确定性字符分块、重叠、内容哈希、来源和 generated `tsvector`。索引只在 Job 仍持有 Lease 且版本仍有效时原子激活。
+- 搜索只返回当前项目内 `Active + Current + Stored + Succeeded + Effective` 的 Chunk；支持 PostgreSQL FTS、contains 与 `pg_trgm`，结果包含文件、版本、原文片段和精确 Source Locator。
+- 上传新 current、切换 current、归档、恢复和重新解析会在服务端事务内更新索引有效性；旧版本和归档资料不会继续作为当前知识。
+- Manager/Admin 可重新解析；Member/Viewer 不可。所有跨项目资源继续统一 404，Viewer 可检索和下载来源文件。
+- 项目知识页是真实词法搜索，不生成 AI 综合答案；需求、Scope、Action、会议、风险和 AI execution 仍为 Mock。
 
-## 仍为 Mock 或未实现
+## 明确未实现
 
-- 项目知识检索、问答和引用内容。
-- 需求、Scope、Action、会议、风险、业务审核写入和 AI execution。
-- PDF/Office 正文解析、OCR、分块、全文检索、Embedding、pgvector、Hybrid Search、Reranker、RAG、真实模型、Provider Key 和文件自动总结。
+- OCR、图片提取、宏执行、公式计算或外部链接抓取。
+- Embedding、pgvector、Hybrid Search、Reranker、RAG、Qwen 或任何真实模型/Provider Key。
+- 自动总结、需求提取、Scope/Action/风险生成和 AI 正式业务写入。
+- Production Worker、Production Migration 或 Production 部署。
 
-真实上传文件不会被解析、索引或提供给 AI；页面明确提示“文件已真实存储；文档解析和 AI 知识索引尚未启用”。
+## 当前验证状态
 
-## 验证结果
+| 门禁 | 当前状态 |
+| --- | --- |
+| TypeScript / ESLint / Build / Parser / Artifact / Deployment | PR #4 当前 Head 对应最终 CI 全绿；Parser/Chunker `15/15`，部署契约 `16/16`；精确 Run 见 PR 描述和 Provenance Manifest |
+| PostgreSQL + MinIO 集成 | CI 从空库执行 Migration/Seed；文件存储与文档 Queue/Lease/Search 集成全绿 |
+| Playwright | `18/18`；覆盖六格式、状态、来源、Viewer、跨项目、版本、归档与 reindex |
+| Evidence | Manifest schema v3；22 张 PNG 全部存在并读取实际尺寸：19 张 `1280×720`，`dashboard-admin` `1280×891`，`project-a-overview` `1280×1441`，`viewer-readonly` `1280×1477` |
+| Artifact 脱敏 | `passed`；Session Token 数 `0`，禁止条目/不安全二进制/不安全归档删除数均 `0` |
+| Staging 健康 | App / PostgreSQL / MinIO / Worker 均 Healthy；App/Worker 使用同一当前 Head immutable image，Worker/DB/MinIO 无宿主端口；精确 image digest 见 PR 描述及部署证据 |
+| Staging 业务 | 内部与公网六格式 smoke 均通过：`succeeded=6`、`failed=1`、`needsOcr=1`；中文/英文/模糊搜索、Source Locator、权限、current/archive/reindex 均通过 |
+| Queue / Lease | 独占 Lease、过期恢复、旧 Worker 拒绝提交、双 Worker `SKIP LOCKED` 均通过 |
+| 清理 | 验收 Session、文档、版本、Job、Section、Chunk、对象、审计、running Job、解析临时文件全部 `0` |
+| 备份恢复 | PostgreSQL custom dump 与 MinIO inventory/mirror 均生成并验证；MinIO 临时 Bucket 恢复演练通过且已删除 |
+| Production | 发布前后容器身份、running、restart count 和 health 精确一致；未构建、迁移、重启、增加 Worker 或重新部署 |
 
-| 门禁 | 结果 | 证据 |
-| --- | --- | --- |
-| Migration / PostgreSQL 约束 | 通过 | CI PostgreSQL 17 从空库执行已提交 Migration；Staging 可见两张文件表、复合外键、状态检查、三类唯一索引和单 current Partial Unique Index |
-| TypeScript / ESLint / build | 通过 | 最终 CI 的 typecheck、lint、production build 与 SSR `7/7` 全绿 |
-| v0.3 身份与项目隔离回归 | `27/27` 通过 | Session、角色、跨项目 404、最后 Manager 和并发保护继续全绿 |
-| 文件单元与存储集成 | `38/38` 通过 | `test:files` `20/20`；真实 PostgreSQL + MinIO 集成 `18/18`，包含新版本验证拒绝审计 |
-| Playwright | `15/15` 通过 | Manager 文件闭环、Viewer 只读、跨项目篡改、拒绝流程和 12 张中文截图 |
-| Evidence sanitizer / provenance | `29/29` 通过 | Payload A 仅含 allowlist 截图/index；无原文件、Object Key、Bucket/Endpoint、Cookie、Session 或凭据 |
-| Staging 部署安全契约 | `15/15` 通过 | 备份/恢复、私网 MinIO、代理上传限制、公网文件 smoke、回滚和 Production 保护合同 |
-| Staging 业务验收 | 通过 | 内部与公网各完成登录、Session、角色、跨项目、上传 v1/v2、SHA 下载、current、归档/恢复与清理 |
-| `storage:verify` / reconciliation | 通过 | 部署前后及独立复核均为 0 finding；reconciliation 为 dry-run、0 orphan、0 删除 |
-| Production 不变 | 通过 | 容器 ID `c5f98b491e67668139e3b84ccf2c7dbee75556135826eddabf0267382078b0d1`、镜像 `sha256:a4b6d41941ebb8f995cf2ecaba65a595990187b8b93d03758287f42443cb5469`、StartedAt `2026-07-13T01:53:13.452401053Z`、restart `0`、healthy 与部署前一致；根路径和 Dashboard 均为 200 |
+## 合并前剩余步骤
 
-## Staging 已验证状态
-
-- App：`project-ai-os-staging`，仅绑定 `127.0.0.1:3101 → 3000`，健康，restart `0`。
-- PostgreSQL：`project-ai-os-staging-postgres`，健康、无宿主机端口；文件表与 Migration 已生效。
-- MinIO：`project-ai-os-staging-minio`，健康、无宿主机/Console 端口；网络 `projectai-staging-internal`，命名卷 `projectai-staging-minio`。
-- Bucket：`projectai-staging-files`，anonymous policy 为 private，未认证列表请求返回 403。
-- 环境文件：`/srv/projectai-staging/.env.auth-staging` 为 `root:root 600`，发布同步不会覆盖，也不会进入 Artifact。
-- Nginx：Staging 精确 location 的 `client_max_body_size 52m` 已验证，`nginx -t` 通过；未覆盖既有站点配置。
-- 清理：文件 verifier Session、边界 verifier Session、虚构验收文档/版本与对象均为 0。
-- 备份：每次部署前生成 root-only PostgreSQL custom dump、MinIO JSONL inventory 与 mirror；最新 dump 的 `pg_restore --list` 有 89 个 TOC 条目，inventory/mirror 均为 0 对象/0 bytes，数量一致，无 partial 文件；隔离临时 Bucket 恢复演练通过且临时 Bucket 为 0。
-
-## 已知风险
-
-- 未关闭 P0：无。
-- 未关闭 P1：无。产品与安全复审仍是合并前人工门禁，不得因此自动合并。
-- P2：`npm audit --omit=dev --audit-level=high` 无 High/Critical，仍报告 Drizzle Kit 工具链旧 `esbuild` 的 4 个 Moderate；自动修复会造成 breaking downgrade，本轮不改写 Migration 工具链。
-- P2：production build 仍提示单个 chunk 大于 500 kB，后续可按页面拆分动态 import。
-- P2：GitHub Actions 的 Node 20 action runtime 弃用提示、服务器既有 Nginx conflicting server-name warning 和 vinext 字体窄映射继续跟踪；均未导致本轮门禁失败。
-- P2：50 MiB 上传目前在应用进程内完成有界校验与哈希，高并发时仍需通过限流/流式处理降低 768 MiB 容器的内存压力。
-- P2：MinIO 使用固定发布日期 Tag 而非镜像 Digest；后续可在验证升级流程后增加 Digest 固定。
-- P2：stale pending 与 quarantined 补偿异常当前由只读 verify/reconciliation 和审计暴露，不自动改变状态；自动修复需独立审批策略。
-- P2：PostgreSQL 与对象备份按各自保留策略轮换；后续可增加跨存储配对索引与残留临时 Bucket 的周期扫描。
-
-## 下一步
-
-1. 由产品与安全人员复核 Draft PR #3、Payload A、Provenance B、Staging 和回滚证据。
-2. 未经明确批准不得合并 PR，不得重新部署 Production。
-3. 等待独立 B2 提示词后再讨论解析、索引或 RAG。
-
-## 历史基线
-
-v0.3 的身份与项目隔离曾在 GitHub Run `29313984989` 和 Staging Commit `ff19049...` 完成验证。它只作为回归基线；v0.4 使用 PR #3 最新 Head 自己的 CI、Evidence、Staging 和 Production 不变证据。
+1. 产品与安全复审最终 PR、Evidence、Provenance 和 Staging 证据。
+2. 复审通过后才可 Ready 和 Squash Merge。
+3. 合并前不得部署 Production，不得开始 B3 或接入 Qwen、Embedding、RAG。

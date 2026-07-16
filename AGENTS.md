@@ -40,17 +40,30 @@
 - 修改 Nginx 前必须备份，且只有 `nginx -t` 通过后才能 reload。
 - Staging 与 Production 必须使用独立目录、容器、端口、basePath、Cookie 前缀/路径、浏览器存储命名空间和数据库；Staging PostgreSQL 不得发布宿主机端口。
 
-## v0.4 范围规则
+## v0.4 历史范围规则
 
 - v0.4 只在 v0.3 的身份、项目和审计基础上，真实化项目资料、文件版本、私有 S3-compatible 对象存储、完整性校验、授权下载、归档/恢复和存储一致性检查。
-- 本轮文件链路只包含：上传 → 安全存储 → 文件记录 → 版本管理 → 权限下载。项目知识问答、需求、Scope、Action、会议、风险和 AI execution 仍为 Mock；必须在服务端确认项目访问权后按精确 `projectId` 过滤，再传给客户端。
+- v0.4 当轮文件链路只包含：上传 → 安全存储 → 文件记录 → 版本管理 → 权限下载。项目知识问答、需求、Scope、Action、会议、风险和 AI execution 仍为 Mock；必须在服务端确认项目访问权后按精确 `projectId` 过滤，再传给客户端。
 - 文件正文不得写入 PostgreSQL、Git、`public/` 或应用容器本地持久目录；对象 Key 只能由服务端生成且不得包含原始文件名、用户/客户/项目名称、Session 或路径片段。
 - 对象存储必须私有，凭据仅存服务端 Secret；浏览器不得获得 Bucket、Object Key、内部 Endpoint、Access Key、Secret 或可绕过应用授权的对象 URL。
 - 允许上传的第一版类型仅为 PDF、DOCX、XLSX、PPTX、TXT、Markdown；必须同时验证扩展名、声明 MIME、文件签名、大小和 Office Open XML 容器结构，不执行宏或解析正文。
 - `system_admin`、`project_manager`、`project_member` 可上传；`viewer` 只可查看和下载。只有 `system_admin` 与 `project_manager` 可归档、恢复和切换当前版本；所有限制必须由服务端执行。
 - PostgreSQL 与对象存储的写入必须采用 pending/stored/failed 状态与补偿逻辑；reconciliation 默认只读，显式 apply 也不得针对 Production 自动执行或删除仍被数据库引用的对象。
-- 本轮禁止文档正文解析、OCR、分块、全文检索、Embedding、pgvector、Hybrid Search、RAG、Reranker、真实模型、Provider Key、自动总结、自动 Action/风险/周报。
-- 本轮只允许部署 Staging，并为 Staging 使用独立私有 MinIO、Bucket、命名卷和备份；允许在本地/CI 生成 production build 做验证，但不得在 Production 主机上构建、重启、迁移、修改或重新部署本应用。
+- v0.4 当轮禁止文档正文解析、OCR、分块、全文检索、Embedding、pgvector、Hybrid Search、RAG、Reranker、真实模型、Provider Key、自动总结、自动 Action/风险/周报。
+- v0.4 当轮只允许部署 Staging，并为 Staging 使用独立私有 MinIO、Bucket、命名卷和备份；允许在本地/CI 生成 production build 做验证，但不得在 Production 主机上构建、重启、迁移、修改或重新部署本应用。
+
+## v0.5 B2 范围规则
+
+- v0.5 B2 只在 v0.4 文件存储基础上，真实化文档解析、Section/Chunk、来源定位、PostgreSQL 词法索引和项目知识搜索；需求、Scope、Action、会议、风险、AI execution 和 AI 综合回答仍为 Mock。
+- Stored 文件必须通过 PostgreSQL 持久化 Job 进入独立 Worker；领取使用 `FOR UPDATE SKIP LOCKED`，并具备 Lease、Heartbeat、最大尝试次数、失败重试、崩溃恢复和旧 Worker 拒绝提交。
+- 解析只支持 PDF、DOCX、XLSX、PPTX、TXT、Markdown；必须有页数/页签/行列/字符/Section/Chunk/时间等硬限制，不执行宏、公式、脚本，不访问外部关系、媒体、图片或 URL。
+- 扫描型无文本 PDF 只标记 `needs_ocr`；B2 仍禁止 OCR、图片提取、Embedding、pgvector、Hybrid Search、RAG、Reranker、Qwen、其他真实模型和 Provider Key。
+- 原始二进制文件仍只能保存在私有对象存储。PostgreSQL 可以保存有界的解析文本、Section、Chunk、内容 Hash、Parser/Chunker Version 和 Source Locator，但任何读写、索引和检索行都必须带精确 `projectId` 与复合资源约束。
+- 搜索只允许返回当前项目内 `Active + Current + Stored + Succeeded + Effective` 的 Chunk；新索引成功前旧有效 Generation 保持可用，失败不得删除旧有效索引。
+- 搜索结果必须包含可审核来源；浏览器不得获得 Object Key、Bucket、内部 Endpoint、Lease、Worker ID、全文导出或存储凭据。审计只保存搜索词 Hash、长度、结果数和耗时，不保存完整搜索词。
+- Manager/Admin 可重新解析；Member/Viewer 只可搜索和下载来源文件。所有权限、项目过滤、current/archive 过滤与 reindex 限制必须由服务端执行。
+- B2 只允许部署 Staging；App 与 Worker 使用同一 immutable image、独立 command，Worker 无端口、仅使用 scoped 对象凭据并有资源/日志/健康限制。不得修改或部署 Production。
+- CI、Staging 冒烟和 Evidence 只能使用运行时生成的虚构文件；结束必须清理测试 Session、文档、版本、Job、Section、Chunk、对象和临时解析文件，不得上传原始文件、正文/Chunk 导出、Trace、Video、数据库 Dump 或 MinIO Mirror。
 
 ## Review Guidelines
 

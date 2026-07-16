@@ -30,11 +30,15 @@ const allowedTestLogs = new Set([
   "artifact-sanitizer.log",
   "build-and-ssr.log",
   "deployment-contract.log",
+  "document-processing-integration.log",
+  "document-processing-unit.log",
   "integration.log",
   "lint.log",
   "playwright.log",
   "storage-integration.log",
   "storage-verify.log",
+  "post-cleanup-storage-verify.log",
+  "test-cleanup.log",
   "typecheck.log",
 ]);
 const outputRoot = path.resolve("product-review-evidence");
@@ -69,6 +73,16 @@ const requiredReviewScreenshots = [
   "screenshots/document-version-history.png",
   "screenshots/viewer-documents-readonly.png",
   "screenshots/document-upload-rejected.png",
+  "screenshots/document-processing-pending.png",
+  "screenshots/document-processing-succeeded.png",
+  "screenshots/document-processing-failed.png",
+  "screenshots/document-needs-ocr.png",
+  "screenshots/knowledge-search-results.png",
+  "screenshots/knowledge-search-pdf-citation.png",
+  "screenshots/knowledge-search-docx-citation.png",
+  "screenshots/knowledge-search-xlsx-citation.png",
+  "screenshots/knowledge-search-pptx-citation.png",
+  "screenshots/viewer-knowledge-search.png",
 ];
 const metrics = {
   copiedRoots: [],
@@ -827,6 +841,22 @@ function isSupportedReviewScreenshot(filePath, buffer) {
   return false;
 }
 
+function readPngDimensions(buffer) {
+  if (
+    buffer.length < 24 ||
+    !buffer.subarray(0, 8).equals(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    ) ||
+    buffer.subarray(12, 16).toString("ascii") !== "IHDR"
+  ) {
+    throw new Error("Review screenshot is not a valid PNG.");
+  }
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+  };
+}
+
 function isSafeTextLog(buffer) {
   if (buffer.length > 10 * 1024 * 1024) return false;
   if (buffer.subarray(0, 5).toString("ascii") === "%PDF-") return false;
@@ -923,6 +953,7 @@ async function verifyReviewEvidenceCompleteness() {
   if (
     !Array.isArray(evidenceIndex.requiredScreenshots) ||
     !Array.isArray(evidenceIndex.screenshotFiles) ||
+    !Array.isArray(evidenceIndex.screenshots) ||
     !Array.isArray(evidenceIndex.missingScreenshots) ||
     typeof evidenceIndex.screenshotsComplete !== "boolean"
   ) {
@@ -975,8 +1006,21 @@ async function verifyReviewEvidenceCompleteness() {
     if (!stats.isFile() || stats.size === 0) {
       throw new Error(`Manifest screenshot is not a non-empty file: ${screenshot}`);
     }
-    if (!isSupportedReviewScreenshot(screenshotPath, await readFile(screenshotPath))) {
+    const screenshotBuffer = await readFile(screenshotPath);
+    if (!isSupportedReviewScreenshot(screenshotPath, screenshotBuffer)) {
       throw new Error(`Manifest screenshot has invalid image content: ${screenshot}`);
+    }
+    const filename = path.posix.basename(screenshot);
+    const declared = evidenceIndex.screenshots.find(
+      (entry) => entry.filename === filename,
+    );
+    const actual = readPngDimensions(screenshotBuffer);
+    if (
+      !declared ||
+      declared.width !== actual.width ||
+      declared.height !== actual.height
+    ) {
+      throw new Error(`Manifest screenshot dimensions do not match: ${screenshot}`);
     }
   }
 }

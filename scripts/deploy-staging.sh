@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/project-files-foundation"
+readonly EXPECTED_BRANCH="agent/document-processing-index"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
 COMPOSE_FILE="docker-compose.staging.yml"
 CONTAINER_NAME="project-ai-os-staging"
+WORKER_CONTAINER_NAME="project-ai-os-staging-worker"
 DB_CONTAINER_NAME="project-ai-os-staging-postgres"
 MINIO_CONTAINER_NAME="project-ai-os-staging-minio"
 MINIO_VOLUME_NAME="projectai-staging-minio"
@@ -166,21 +167,22 @@ LOCK_ACQUIRED=1
 
 log "Checking isolated remote prerequisites and protected environment file"
 "${SSH[@]}" bash -s -- \
-  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$CONTAINER_NAME" "$DB_CONTAINER_NAME" \
-  "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
+  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
+  "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
   "$COMPOSE_PROJECT" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
 container_name="$3"
-db_container_name="$4"
-minio_container_name="$5"
-minio_volume_name="$6"
-minio_bucket_name="$7"
-compose_project="$8"
-deploy_marker="$9"
-deploy_lock="${10}"
-deploy_id="${11}"
+worker_container_name="$4"
+db_container_name="$5"
+minio_container_name="$6"
+minio_volume_name="$7"
+minio_bucket_name="$8"
+compose_project="$9"
+deploy_marker="${10}"
+deploy_lock="${11}"
+deploy_id="${12}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
@@ -225,6 +227,15 @@ required_keys=(
   OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY
   OBJECT_STORAGE_FORCE_PATH_STYLE OBJECT_STORAGE_USE_SSL
   MAX_UPLOAD_BYTES UPLOAD_ALLOWED_EXTENSIONS
+  DOCUMENT_WORKER_POLL_MS DOCUMENT_WORKER_LEASE_SECONDS
+  DOCUMENT_WORKER_MAX_ATTEMPTS
+  DOCUMENT_MAX_PAGES DOCUMENT_MAX_SLIDES DOCUMENT_MAX_SHEETS
+  DOCUMENT_MAX_ROWS DOCUMENT_MAX_COLUMNS DOCUMENT_MAX_CELLS
+  DOCUMENT_MAX_CHARACTERS DOCUMENT_MAX_SECTIONS DOCUMENT_MAX_CHUNKS
+  DOCUMENT_PARSE_TIMEOUT_MS
+  DOCUMENT_CHUNK_TARGET_CHARS DOCUMENT_CHUNK_OVERLAP_CHARS
+  DOCUMENT_CHUNK_MIN_CHARS
+  DOCUMENT_PARSER_VERSION DOCUMENT_CHUNKER_VERSION
   SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
   SEED_MANAGER_A_EMAIL SEED_MANAGER_A_PASSWORD
   SEED_MANAGER_B_EMAIL SEED_MANAGER_B_PASSWORD
@@ -248,6 +259,7 @@ done
 
 if sudo awk -F= '
   $1 == "STAGING_APP_IMAGE" ||
+  $1 == "STAGING_WORKER_IMAGE" ||
   $1 == "STAGING_DB_TOOLS_IMAGE" ||
   $1 == "STAGING_MINIO_IMAGE" ||
   $1 == "STAGING_MINIO_CLIENT_IMAGE" ||
@@ -350,6 +362,34 @@ sudo awk -F= -v expected_bucket="$minio_bucket_name" '
   printf 'Staging object-storage configuration is invalid or not least-privileged.\n' >&2
   exit 1
 }
+sudo awk -F= '
+  {
+    values[$1] = substr($0, index($0, "=") + 1)
+  }
+  END {
+    if (values["DOCUMENT_WORKER_POLL_MS"] != "2000") exit 1
+    if (values["DOCUMENT_WORKER_LEASE_SECONDS"] != "120") exit 1
+    if (values["DOCUMENT_WORKER_MAX_ATTEMPTS"] != "3") exit 1
+    if (values["DOCUMENT_MAX_PAGES"] != "1000") exit 1
+    if (values["DOCUMENT_MAX_SLIDES"] != "1000") exit 1
+    if (values["DOCUMENT_MAX_SHEETS"] != "100") exit 1
+    if (values["DOCUMENT_MAX_ROWS"] != "100000") exit 1
+    if (values["DOCUMENT_MAX_COLUMNS"] != "1000") exit 1
+    if (values["DOCUMENT_MAX_CELLS"] != "500000") exit 1
+    if (values["DOCUMENT_MAX_CHARACTERS"] != "10000000") exit 1
+    if (values["DOCUMENT_MAX_SECTIONS"] != "20000") exit 1
+    if (values["DOCUMENT_MAX_CHUNKS"] != "50000") exit 1
+    if (values["DOCUMENT_PARSE_TIMEOUT_MS"] != "120000") exit 1
+    if (values["DOCUMENT_CHUNK_TARGET_CHARS"] != "1800") exit 1
+    if (values["DOCUMENT_CHUNK_OVERLAP_CHARS"] != "200") exit 1
+    if (values["DOCUMENT_CHUNK_MIN_CHARS"] != "120") exit 1
+    if (values["DOCUMENT_PARSER_VERSION"] != "1") exit 1
+    if (values["DOCUMENT_CHUNKER_VERSION"] != "1") exit 1
+  }
+' "$env_file" || {
+  printf 'Staging document-processing limits or versions do not match the reviewed B2 contract.\n' >&2
+  exit 1
+}
 
 minimum_free_bytes=3221225472
 release_free_bytes="$(sudo df -PB1 "$remote_dir" | awk 'NR == 2 { print $4 }')"
@@ -382,6 +422,17 @@ if sudo docker inspect "$container_name" >/dev/null 2>&1; then
   app_project="$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$container_name")"
   [[ "$app_project" == "$compose_project" ]] || {
     printf 'Unexpected Staging application Compose project: %s\n' "${app_project:-missing}" >&2
+    exit 1
+  }
+fi
+if sudo docker inspect "$worker_container_name" >/dev/null 2>&1; then
+  worker_project="$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$worker_container_name")"
+  [[ "$worker_project" == "$compose_project" ]] || {
+    printf 'Unexpected Staging document Worker Compose project: %s\n' "${worker_project:-missing}" >&2
+    exit 1
+  }
+  [[ -z "$(sudo docker port "$worker_container_name")" ]] || {
+    printf 'Staging document Worker must not publish a host port.\n' >&2
     exit 1
   }
 fi
@@ -431,15 +482,19 @@ read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
 [[ "$production_health" == "healthy" || "$production_health" == "none" ]] \
   || fail "Production container is not healthy before staging deployment"
 
-PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- "$CONTAINER_NAME" "$BASE_PATH" <<'REMOTE_IMAGE'
+PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- \
+  "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$BASE_PATH" <<'REMOTE_IMAGE'
 set -Eeuo pipefail
 container_name="$1"
-base_path="$2"
+worker_container_name="$2"
+base_path="$3"
 image=""
 health_path="/login"
 commit_sha=""
 app_version=""
 build_time=""
+worker_image=""
+worker_running="0"
 if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
   image="$(sudo docker container inspect --format '{{.Image}}' "$container_name")"
   running="$(sudo docker container inspect --format '{{.State.Running}}' "$container_name")"
@@ -477,14 +532,23 @@ if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
 else
   sudo docker info >/dev/null
 fi
-printf '%s|%s|%s|%s|%s\n' \
-  "$image" "$health_path" "$commit_sha" "$app_version" "$build_time"
+if sudo docker container inspect "$worker_container_name" >/dev/null 2>&1; then
+  worker_image="$(sudo docker container inspect --format '{{.Image}}' "$worker_container_name")"
+  running="$(sudo docker container inspect --format '{{.State.Running}}' "$worker_container_name")"
+  health="$(sudo docker container inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$worker_container_name")"
+  [[ "$running" == "true" && "$health" == "healthy" ]]
+  worker_running="1"
+fi
+printf '%s|%s|%s|%s|%s|%s|%s\n' \
+  "$image" "$health_path" "$commit_sha" "$app_version" "$build_time" \
+  "$worker_image" "$worker_running"
 REMOTE_IMAGE
 )" || fail "Unable to inspect the previous Staging image safely"
 IFS='|' read -r \
   PREVIOUS_STAGING_IMAGE PREVIOUS_STAGING_HEALTH_PATH \
   PREVIOUS_STAGING_COMMIT_SHA PREVIOUS_STAGING_APP_VERSION \
-  PREVIOUS_STAGING_BUILD_TIME <<<"$PREVIOUS_STAGING_STATE"
+  PREVIOUS_STAGING_BUILD_TIME PREVIOUS_STAGING_WORKER_IMAGE \
+  PREVIOUS_STAGING_WORKER_RUNNING <<<"$PREVIOUS_STAGING_STATE"
 [[ -z "$PREVIOUS_STAGING_IMAGE" || "$PREVIOUS_STAGING_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || fail "Unable to capture the immutable previous Staging image ID"
 [[ "$PREVIOUS_STAGING_HEALTH_PATH" == "/login" || "$PREVIOUS_STAGING_HEALTH_PATH" == "/api/health" ]] \
@@ -497,28 +561,46 @@ if [[ -n "$PREVIOUS_STAGING_IMAGE" ]]; then
   [[ "$PREVIOUS_STAGING_BUILD_TIME" =~ ^[0-9A-Za-z][0-9A-Za-z:._+-]*$ ]] \
     || fail "Unable to capture the previous Staging build-time provenance"
 fi
+[[ "$PREVIOUS_STAGING_WORKER_RUNNING" == "0" || "$PREVIOUS_STAGING_WORKER_RUNNING" == "1" ]] \
+  || fail "Unable to determine the previous Staging Worker state"
+if [[ "$PREVIOUS_STAGING_WORKER_RUNNING" == "1" ]]; then
+  [[ "$PREVIOUS_STAGING_WORKER_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "Unable to capture the immutable previous Staging Worker image ID"
+fi
 
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
-    "$CONTAINER_NAME" "$DB_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER" \
-    "$PREVIOUS_STAGING_IMAGE" "$PREVIOUS_STAGING_HEALTH_PATH" \
-    "$PREVIOUS_STAGING_COMMIT_SHA" "$PREVIOUS_STAGING_APP_VERSION" \
-    "$PREVIOUS_STAGING_BUILD_TIME" <<'REMOTE_ROLLBACK'
+    "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$DB_CONTAINER_NAME" \
+    "$BASE_PATH" "$DEPLOY_MARKER" \
+    "${PREVIOUS_STAGING_IMAGE:-__projectai_empty__}" "$PREVIOUS_STAGING_HEALTH_PATH" \
+    "${PREVIOUS_STAGING_COMMIT_SHA:-__projectai_empty__}" \
+    "${PREVIOUS_STAGING_APP_VERSION:-__projectai_empty__}" \
+    "${PREVIOUS_STAGING_BUILD_TIME:-__projectai_empty__}" \
+    "${PREVIOUS_STAGING_WORKER_IMAGE:-__projectai_empty__}" \
+    "$PREVIOUS_STAGING_WORKER_RUNNING" <<'REMOTE_ROLLBACK'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
 compose_project="$3"
 compose_file="$4"
 container_name="$5"
-db_container_name="$6"
-base_path="$7"
-deploy_marker="$8"
-previous_image="$9"
-previous_health_path="${10}"
-previous_commit_sha="${11}"
-previous_app_version="${12}"
-previous_build_time="${13}"
+worker_container_name="$6"
+db_container_name="$7"
+base_path="$8"
+deploy_marker="$9"
+previous_image="${10}"
+previous_health_path="${11}"
+previous_commit_sha="${12}"
+previous_app_version="${13}"
+previous_build_time="${14}"
+previous_worker_image="${15}"
+previous_worker_running="${16}"
+[[ "$previous_image" != "__projectai_empty__" ]] || previous_image=""
+[[ "$previous_commit_sha" != "__projectai_empty__" ]] || previous_commit_sha=""
+[[ "$previous_app_version" != "__projectai_empty__" ]] || previous_app_version=""
+[[ "$previous_build_time" != "__projectai_empty__" ]] || previous_build_time=""
+[[ "$previous_worker_image" != "__projectai_empty__" ]] || previous_worker_image=""
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
@@ -555,12 +637,14 @@ if [[ -n "$previous_image" ]]; then
     "NEXT_PUBLIC_APP_VERSION=$previous_app_version"
     "NEXT_PUBLIC_BUILD_TIME=$previous_build_time"
     "STAGING_APP_IMAGE=$previous_image"
+    "STAGING_WORKER_IMAGE=${previous_worker_image:-$previous_image}"
     "STAGING_HEALTHCHECK_PATH=$rollback_health_path"
     docker compose
     --env-file "$env_file"
     --project-name "$compose_project"
     --file "$compose_file"
   )
+  "${rollback_compose[@]}" stop --timeout 30 projectai-document-worker >/dev/null 2>&1 || true
   "${rollback_compose[@]}" up --detach --no-deps --no-build --pull never projectai-staging
 
   restored=0
@@ -590,11 +674,30 @@ if [[ -n "$previous_image" ]]; then
   [[ "$(sed -n 's/^NEXT_PUBLIC_COMMIT_SHA=//p' <<<"$restored_environment")" == "$previous_commit_sha" ]]
   [[ "$(sed -n 's/^NEXT_PUBLIC_APP_VERSION=//p' <<<"$restored_environment")" == "$previous_app_version" ]]
   [[ "$(sed -n 's/^NEXT_PUBLIC_BUILD_TIME=//p' <<<"$restored_environment")" == "$previous_build_time" ]]
+  if [[ "$previous_worker_running" == "1" ]]; then
+    [[ "$previous_worker_image" =~ ^sha256:[0-9a-f]{64}$ ]]
+    "${rollback_compose[@]}" up --detach --no-deps --no-build --pull never projectai-document-worker
+    worker_restored=0
+    for _ in $(seq 1 60); do
+      worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$worker_container_name" 2>/dev/null || true)"
+      if [[ "$worker_health" == "healthy" ]]; then
+        worker_restored=1
+        break
+      fi
+      sleep 2
+    done
+    [[ "$worker_restored" == "1" ]]
+    [[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$previous_worker_image" ]]
+  else
+    "${rollback_compose[@]}" rm --stop --force projectai-document-worker >/dev/null 2>&1 || true
+  fi
 else
-  printf 'No previous Staging image exists; stopping the failed application and preserving PostgreSQL.\n' >&2
-  "${compose[@]}" stop projectai-staging
+  printf 'No previous Staging image exists; stopping the failed application and Worker while preserving PostgreSQL.\n' >&2
+  "${compose[@]}" stop projectai-document-worker projectai-staging
   failed_app_running="$(sudo docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null || printf 'false')"
   [[ "$failed_app_running" != "true" ]]
+  failed_worker_running="$(sudo docker inspect --format '{{.State.Running}}' "$worker_container_name" 2>/dev/null || printf 'false')"
+  [[ "$failed_worker_running" != "true" ]]
 fi
 
 "${compose[@]}" rm --stop --force projectai-minio-init >/dev/null 2>&1 || true
@@ -747,7 +850,8 @@ REMOTE_IMAGE_VERIFY
 log "Starting the isolated Staging services from preloaded images"
 "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
-  "$CONTAINER_NAME" "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" \
+  "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$DB_CONTAINER_NAME" \
+  "$MINIO_CONTAINER_NAME" \
   "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" "$BASE_PATH" "$COMMIT_SHA" \
   "$APP_VERSION" "$BUILD_TIME" "$DEPLOY_MARKER" "$BACKUP_RETENTION" \
   "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" \
@@ -758,27 +862,29 @@ env_file="$2"
 compose_project="$3"
 compose_file="$4"
 container_name="$5"
-db_container_name="$6"
-minio_container_name="$7"
-minio_volume_name="$8"
-minio_bucket_name="$9"
-base_path="${10}"
-commit_sha="${11}"
-app_version="${12}"
-build_time="${13}"
-deploy_marker="${14}"
-backup_retention="${15}"
-app_image_ref="${16}"
-app_image_id="${17}"
-db_tools_image_ref="${18}"
-db_tools_image_id="${19}"
-minio_image_ref="${20}"
-minio_client_image_ref="${21}"
+worker_container_name="$6"
+db_container_name="$7"
+minio_container_name="$8"
+minio_volume_name="$9"
+minio_bucket_name="${10}"
+base_path="${11}"
+commit_sha="${12}"
+app_version="${13}"
+build_time="${14}"
+deploy_marker="${15}"
+backup_retention="${16}"
+app_image_ref="${17}"
+app_image_id="${18}"
+db_tools_image_ref="${19}"
+db_tools_image_id="${20}"
+minio_image_ref="${21}"
+minio_client_image_ref="${22}"
 origin='http://127.0.0.1:3101'
 
 cd "$remote_dir"
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
+[[ "$worker_container_name" == "project-ai-os-staging-worker" ]]
 [[ "$minio_container_name" == "project-ai-os-staging-minio" ]]
 [[ "$minio_volume_name" == "projectai-staging-minio" ]]
 [[ "$minio_bucket_name" == "projectai-staging-files" ]]
@@ -804,6 +910,7 @@ compose=(
   "NEXT_PUBLIC_APP_VERSION=$app_version"
   "NEXT_PUBLIC_BUILD_TIME=$build_time"
   "STAGING_APP_IMAGE=$app_image_ref"
+  "STAGING_WORKER_IMAGE=$app_image_ref"
   "STAGING_DB_TOOLS_IMAGE=$db_tools_image_ref"
   "STAGING_MINIO_IMAGE=$minio_image_ref"
   "STAGING_MINIO_CLIENT_IMAGE=$minio_client_image_ref"
@@ -934,12 +1041,18 @@ done
   exit 1
 }
 
-# Quiesce the only application writer before taking the PostgreSQL and object
-# snapshots so the two independently transactional stores share one boundary.
-if sudo docker inspect "$container_name" >/dev/null 2>&1 \
-  && [[ "$(sudo docker inspect --format '{{.State.Running}}' "$container_name")" == "true" ]]; then
-  printf 'Stopping the Staging application briefly for a cross-store snapshot.\n'
-  "${compose[@]}" stop --timeout 30 projectai-staging
+# Quiesce both writers before taking the PostgreSQL and object snapshots so
+# the two independently transactional stores share one boundary.
+writers_running=0
+for writer_container in "$container_name" "$worker_container_name"; do
+  if sudo docker inspect "$writer_container" >/dev/null 2>&1 \
+    && [[ "$(sudo docker inspect --format '{{.State.Running}}' "$writer_container")" == "true" ]]; then
+    writers_running=1
+  fi
+done
+if [[ "$writers_running" == "1" ]]; then
+  printf 'Stopping the Staging application and document Worker briefly for a cross-store snapshot.\n'
+  "${compose[@]}" stop --timeout 30 projectai-document-worker projectai-staging
 fi
 
 backup_timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
@@ -1263,8 +1376,27 @@ printf 'Applying committed PostgreSQL migrations.\n'
     }
   '
 "${compose_run[@]}" projectai-migrate npm run db:migrate
+printf 'Verifying the required PostgreSQL pg_trgm extension.\n'
+"${compose_run[@]}" projectai-migrate node --input-type=module -e '
+    import pg from "pg";
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const result = await client.query(
+        "select extversion from pg_extension where extname = $1",
+        ["pg_trgm"],
+      );
+      if (result.rowCount !== 1 || !result.rows[0]?.extversion) {
+        throw new Error("pg_trgm extension is unavailable");
+      }
+    } finally {
+      await client.end();
+    }
+  '
 printf 'Applying idempotent Staging seed data.\n'
 "${compose_run[@]}" projectai-migrate npm run db:seed
+printf 'Enqueuing any stored current document versions missing a processing Job.\n'
+"${compose_run[@]}" projectai-migrate npm run documents:enqueue
 printf 'Verifying every Staging project retains a project manager.\n'
 "${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";
@@ -1292,6 +1424,29 @@ printf 'Verifying every Staging project retains a project manager.\n'
 printf 'Verifying PostgreSQL and MinIO consistency before application startup.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
 
+printf 'Starting the independent Staging document Worker.\n'
+"${compose[@]}" up --detach --no-build --pull never projectai-document-worker
+
+worker_ready=0
+worker_health="starting"
+for _ in $(seq 1 60); do
+  worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$worker_container_name")"
+  if [[ "$worker_health" == "unhealthy" || "$worker_health" == "exited" || "$worker_health" == "dead" ]]; then
+    printf 'Staging document Worker entered terminal state: %s\n' "$worker_health" >&2
+    exit 1
+  fi
+  if [[ "$worker_health" == "healthy" ]]; then
+    worker_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$worker_ready" == "1" ]] || {
+  printf 'Staging document Worker readiness timed out; final health: %s\n' "$worker_health" >&2
+  exit 1
+}
+
+printf 'Starting the Staging application after the document Worker is healthy.\n'
 "${compose[@]}" up --detach --no-build --pull never projectai-staging
 
 ready=0
@@ -1315,7 +1470,20 @@ done
   exit 1
 }
 
+health_headers="$(
+  curl --fail --silent --show-error --max-time 10 \
+    --dump-header - --output /dev/null "${origin}${base_path}/api/health" \
+    | tr -d '\r'
+)"
+grep -qi "^x-projectai-app-version: ${app_version}$" <<<"$health_headers"
+grep -qi '^x-projectai-worker-version: 1$' <<<"$health_headers"
+grep -qi '^x-projectai-parser-version: 1$' <<<"$health_headers"
+grep -qi '^x-projectai-chunker-version: 1$' <<<"$health_headers"
+
 [[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$worker_container_name")" == "healthy" ]]
+[[ -z "$(sudo docker port "$worker_container_name")" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$db_container_name")" == "healthy" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$minio_container_name")" == "healthy" ]]
 [[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$minio_container_name")" == "volume|${minio_volume_name}|/data" ]]
@@ -1350,7 +1518,74 @@ printf 'Verifying real Staging upload, download integrity, versioning, and lifec
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-file-smoke npm run storage:smoke
 
+printf 'Verifying six-format document processing, lexical search, citations, permissions, and cleanup.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-document-smoke npm run documents:smoke
+
 printf 'Rechecking PostgreSQL and MinIO consistency after application verification.\n'
+"${compose_run[@]}" projectai-storage-ops npm run storage:verify
+
+printf 'Waiting for the document queue to become idle before Lease verification.\n'
+"${compose_run[@]}" projectai-migrate node --input-type=module -e '
+    import pg from "pg";
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const deadline = Date.now() + 120000;
+      let idle = false;
+      while (Date.now() < deadline) {
+        const result = await client.query(
+          "select count(*)::int as count from document_ingestion_jobs where status in ($1, $2)",
+          ["pending", "running"],
+        );
+        if (result.rows[0]?.count === 0) {
+          idle = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (!idle) throw new Error("Document queue did not become idle");
+    } finally {
+      await client.end();
+    }
+  '
+
+printf 'Stopping the document Worker for exclusive Lease recovery verification.\n'
+"${compose[@]}" stop --timeout 30 projectai-document-worker
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-document-smoke npm run documents:lease-smoke
+
+printf 'Restarting the document Worker after Lease verification.\n'
+"${compose[@]}" up --detach --no-build --pull never projectai-document-worker
+worker_restarted=0
+for _ in $(seq 1 60); do
+  worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$worker_container_name")"
+  if [[ "$worker_health" == "unhealthy" || "$worker_health" == "exited" || "$worker_health" == "dead" ]]; then
+    printf 'Staging document Worker failed after Lease verification: %s\n' "$worker_health" >&2
+    exit 1
+  fi
+  if [[ "$worker_health" == "healthy" ]]; then
+    worker_restarted=1
+    break
+  fi
+  sleep 2
+done
+[[ "$worker_restarted" == "1" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$app_image_id" ]]
+unexpected_worker_temp="$(
+  sudo docker exec "$worker_container_name" sh -ec \
+    "find /tmp -maxdepth 1 -type f -name 'projectai-*' ! -name 'projectai-document-worker-heartbeat' -print"
+)"
+[[ -z "$unexpected_worker_temp" ]] || {
+  printf 'Unexpected document Worker temporary files remain.\n' >&2
+  exit 1
+}
+
+printf 'Rechecking storage consistency after Lease verification cleanup.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
 
 css_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.css" <<<"$html" | sed -n '1p')"
@@ -1508,7 +1743,8 @@ log "Validating public login, Session lifecycle, roles, and cross-project isolat
 "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$PUBLIC_STAGING_URL" "$BASE_PATH" \
   "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$COMMIT_SHA" "$APP_VERSION" \
-  "$BUILD_TIME" "$DB_TOOLS_IMAGE_REF" "$DEPLOY_MARKER" <<'REMOTE_PUBLIC_AUTH'
+  "$BUILD_TIME" "$DB_TOOLS_IMAGE_REF" "$DEPLOY_MARKER" \
+  "$WORKER_CONTAINER_NAME" <<'REMOTE_PUBLIC_AUTH'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -1521,12 +1757,14 @@ app_version="$8"
 build_time="$9"
 db_tools_image_ref="${10}"
 deploy_marker="${11}"
+worker_container_name="${12}"
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$public_base_url" == "https://gridworks.cn/tool/projectai-staging" ]]
 [[ "$base_path" == "/tool/projectai-staging" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
+[[ "$worker_container_name" == "project-ai-os-staging-worker" ]]
 cd "$remote_dir"
 sudo test -e "$deploy_marker"
 compose_run=(
@@ -1562,8 +1800,36 @@ printf 'Verifying public Staging upload, download integrity, versioning, and lif
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-file-smoke npm run storage:smoke
 
+printf 'Verifying the public six-format document processing and search flow.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=$public_base_url" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-document-smoke npm run documents:smoke
+
 printf 'Rechecking PostgreSQL and MinIO consistency after public verification.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
+
+"${compose_run[@]}" projectai-migrate node --input-type=module -e '
+    import pg from "pg";
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const result = await client.query(
+        "select count(*)::int as count from document_ingestion_jobs where status = $1",
+        ["running"],
+      );
+      if (result.rows[0]?.count !== 0) {
+        throw new Error("Staging retains a running document Job");
+      }
+    } finally {
+      await client.end();
+    }
+  '
+unexpected_worker_temp="$(
+  sudo docker exec "$worker_container_name" sh -ec \
+    "find /tmp -maxdepth 1 -type f -name 'projectai-*' ! -name 'projectai-document-worker-heartbeat' -print"
+)"
+[[ -z "$unexpected_worker_temp" ]]
 REMOTE_PUBLIC_AUTH
 
 log "Confirming Production remains healthy"

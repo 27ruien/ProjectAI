@@ -54,7 +54,7 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
   if (Object.hasOwn(index, "artifactId")) {
     fail("The pre-upload evidence index must not contain artifactId.");
   }
-  if (index.schemaVersion !== 2) {
+  if (index.schemaVersion !== 3) {
     fail("The product review evidence index has an unsupported schemaVersion.");
   }
 
@@ -108,6 +108,45 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
   if (!isIsoTimestamp(index.buildTime)) {
     fail("The product review evidence index has an invalid buildTime.");
   }
+  for (const [field, value] of [
+    ["workerVersion", index.workerVersion],
+    ["parserVersion", index.parserVersion],
+    ["chunkerVersion", index.chunkerVersion],
+  ]) {
+    if (
+      typeof value !== "string" ||
+      !/^[A-Za-z0-9._-]{1,32}$/.test(value)
+    ) {
+      fail(`The product review evidence index has an invalid ${field}.`);
+    }
+  }
+  if (!Array.isArray(index.screenshotFiles) || !Array.isArray(index.screenshots)) {
+    fail("The product review evidence index has an invalid screenshot inventory.");
+  }
+  if (index.screenshots.length !== index.screenshotFiles.length) {
+    fail("The product review screenshot dimensions are incomplete.");
+  }
+  const screenshotFiles = new Set(index.screenshotFiles);
+  const screenshotNames = new Set();
+  for (const screenshot of index.screenshots) {
+    if (
+      !screenshot ||
+      typeof screenshot !== "object" ||
+      typeof screenshot.filename !== "string" ||
+      pathLikeFilenameInvalid(screenshot.filename) ||
+      !Number.isSafeInteger(screenshot.width) ||
+      screenshot.width < 1 ||
+      !Number.isSafeInteger(screenshot.height) ||
+      screenshot.height < 1
+    ) {
+      fail("The product review evidence index has invalid screenshot dimensions.");
+    }
+    const relativePath = `screenshots/${screenshot.filename}`;
+    if (!screenshotFiles.has(relativePath) || screenshotNames.has(screenshot.filename)) {
+      fail("The product review screenshot inventory is inconsistent.");
+    }
+    screenshotNames.add(screenshot.filename);
+  }
   if (
     typeof index.status !== "string" ||
     !["success", "failure", "cancelled", "local"].includes(
@@ -119,6 +158,15 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
   if (ci && index.status.toLowerCase() === "local") {
     fail("CI product review evidence cannot use local status.");
   }
+}
+
+function pathLikeFilenameInvalid(value) {
+  return (
+    value.trim() !== value ||
+    !/^[A-Za-z0-9._-]+\.png$/i.test(value) ||
+    value.includes("/") ||
+    value.includes("\\")
+  );
 }
 
 export function assertPublishedArtifactIdentity({

@@ -20,7 +20,7 @@ COPY . .
 
 ARG NEXT_PUBLIC_BASE_PATH=/tool/projectai
 ARG NEXT_PUBLIC_APP_ENV=production
-ARG NEXT_PUBLIC_APP_VERSION=0.4.0-staging
+ARG NEXT_PUBLIC_APP_VERSION=0.5.0-staging
 ARG NEXT_PUBLIC_COMMIT_SHA=local
 ARG NEXT_PUBLIC_BUILD_TIME=local
 ENV NEXT_PUBLIC_BASE_PATH=${NEXT_PUBLIC_BASE_PATH}
@@ -37,7 +37,7 @@ WORKDIR /app
 
 ARG NEXT_PUBLIC_BASE_PATH=/tool/projectai
 ARG NEXT_PUBLIC_APP_ENV=production
-ARG NEXT_PUBLIC_APP_VERSION=0.4.0-staging
+ARG NEXT_PUBLIC_APP_VERSION=0.5.0-staging
 ARG NEXT_PUBLIC_COMMIT_SHA=local
 ARG NEXT_PUBLIC_BUILD_TIME=local
 
@@ -55,6 +55,11 @@ RUN addgroup --system --gid 1001 nodejs \
   && adduser --system --uid 1001 --ingroup nodejs nextjs
 
 COPY --from=builder --chown=nextjs:nodejs /app/dist/standalone/ ./
+COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
+COPY --chown=nextjs:nodejs package.json tsconfig.json ./
+COPY --chown=nextjs:nodejs lib ./lib
+COPY --chown=nextjs:nodejs scripts ./scripts
+COPY --chown=nextjs:nodejs types ./types
 
 USER nextjs
 

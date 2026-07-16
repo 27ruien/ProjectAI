@@ -25,7 +25,7 @@ import {
 } from "@/lib/files/http";
 import {
   serializeDocumentList,
-  serializeDocumentVersion,
+  serializeDocumentVersions,
   serializeProjectDocument,
 } from "@/lib/files/serialization";
 
@@ -119,10 +119,12 @@ export async function POST(
           authorizedProject.projectRole,
           current,
         ),
-        version: serializeDocumentVersion(
-          result.version,
-          principal.user.displayName,
-        ),
+        version: (
+          await serializeDocumentVersions(
+            [result.version],
+            principal.user.displayName,
+          )
+        )[0],
         replayed: result.replayed,
         uploadStatus: result.version.storageStatus,
       },

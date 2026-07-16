@@ -1,15 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeDatabasePool, getPool } from "../lib/db/client";
-import { getObjectStorage } from "../lib/files/object-storage";
+import { closeDatabasePool } from "../lib/db/client";
 import { fetchWithPublicHost } from "./lib/fetch-with-public-host";
+import { cleanupDocumentVerification } from "./lib/staging-document-verification";
 
 const baseUrl = process.env.APP_BASE_URL?.trim().replace(/\/+$/, "");
 const requestOrigin = process.env.AUTH_REQUEST_ORIGIN?.trim();
 const projectId = process.env.SEED_PROJECT_A_ID?.trim() || "project-001";
 const email = process.env.SEED_MANAGER_A_EMAIL?.trim();
 const password = process.env.SEED_MANAGER_A_PASSWORD;
-const verifierUserAgent = `projectai-staging-file-verifier/0.4/${randomUUID()}`;
-const displayName = `虚构 Staging 文件验收 ${randomUUID()}`;
+const verifierUserAgent = `projectai-staging-file-verifier/0.5/${randomUUID()}`;
+const displayNamePrefix = "虚构 Staging 文件验收 ";
+const displayName = `${displayNamePrefix}${randomUUID()}`;
 
 if (!baseUrl || !requestOrigin || !email || !password) {
   throw new Error("Staging file verification environment is incomplete.");
@@ -119,40 +120,13 @@ async function upload(
 }
 
 async function cleanup(): Promise<void> {
-  const pool = getPool();
   try {
-    const stale = await pool.query<{ id: string }>(
-      `select id from project_documents
-       where project_id = $1 and display_name = $2`,
-      [projectId, displayName],
-    );
-    const documentIds = new Set(stale.rows.map((row) => row.id));
-    if (documentId) documentIds.add(documentId);
-    for (const id of documentIds) {
-      const versions = await pool.query<{ object_key: string }>(
-        `select object_key from project_document_versions
-         where project_id = $1 and document_id = $2`,
-        [projectId, id],
-      );
-      for (const version of versions.rows) {
-        await getObjectStorage().deleteObject(version.object_key).catch(() => undefined);
-      }
-      await pool.query(
-        `delete from project_document_versions
-         where project_id = $1 and document_id = $2`,
-        [projectId, id],
-      );
-      await pool.query(
-        `delete from project_documents where project_id = $1 and id = $2`,
-        [projectId, id],
-      );
-    }
-    await pool.query(`delete from audit_events where user_agent = $1`, [
-      verifierUserAgent,
-    ]);
-    await pool.query(`delete from sessions where user_agent = $1`, [
-      verifierUserAgent,
-    ]);
+    await cleanupDocumentVerification({
+      projectId,
+      displayNamePrefix,
+      userAgents: [verifierUserAgent],
+      userAgentPrefixes: ["projectai-staging-file-verifier/0.5/"],
+    });
   } finally {
     await closeDatabasePool();
   }

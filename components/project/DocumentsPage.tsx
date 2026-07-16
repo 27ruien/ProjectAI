@@ -24,6 +24,7 @@ import {
   documentErrorMessage,
   downloadProjectDocumentVersion,
   listProjectDocuments,
+  reindexProjectDocumentVersion,
   restoreProjectDocument,
 } from "@/lib/documents/client";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
@@ -124,6 +125,48 @@ function statusPresentation(document: ProjectDocumentDto) {
   );
 }
 
+function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
+  if (!version || version.storageStatus !== "stored") {
+    return {
+      label: "尚未开始",
+      detail: "文件尚未完成存储",
+      classes: "border-border bg-muted text-muted-foreground",
+    };
+  }
+  return {
+    not_started: {
+      label: "尚未开始",
+      detail: "等待创建解析任务",
+      classes: "border-border bg-muted text-muted-foreground",
+    },
+    pending: {
+      label: "等待解析",
+      detail: "解析任务已进入队列",
+      classes: "border-info/20 bg-info-soft text-info",
+    },
+    running: {
+      label: "正在解析",
+      detail: "正在提取结构并建立索引",
+      classes: "border-info/20 bg-info-soft text-info",
+    },
+    succeeded: {
+      label: "知识索引已建立",
+      detail: `${version.ingestion.sectionCount} Section · ${version.ingestion.chunkCount} Chunk`,
+      classes: "border-success/20 bg-success-soft text-success",
+    },
+    failed: {
+      label: "解析失败",
+      detail: version.ingestion.failureCode ?? "可由项目经理重新解析",
+      classes: "border-destructive/20 bg-destructive-soft text-destructive",
+    },
+    needs_ocr: {
+      label: "该 PDF 需要 OCR",
+      detail: "原文件仍可下载，本阶段不执行 OCR",
+      classes: "border-warning/20 bg-warning-soft text-warning",
+    },
+  }[version.ingestion.status];
+}
+
 function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
@@ -200,6 +243,23 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
       });
     return () => controller.abort();
   }, [project.id, view]);
+
+  useEffect(() => {
+    if (
+      phase !== "ready" ||
+      !documents.some((document) =>
+        ["pending", "running"].includes(
+          document.currentVersion?.ingestion.status ?? "",
+        ),
+      )
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => {
+      void loadDocuments({ background: true });
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [documents, loadDocuments, phase]);
 
   const changeView = (nextView: DocumentView) => {
     if (nextView === view) return;
@@ -293,6 +353,28 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     }
   };
 
+  const reindex = async (
+    document: ProjectDocumentDto,
+    version: ProjectDocumentVersionDto,
+  ) => {
+    const actionKey = `reindex:${version.id}`;
+    setPendingAction(actionKey);
+    setActionError(null);
+    try {
+      await reindexProjectDocumentVersion(
+        project.id,
+        document.id,
+        version.id,
+      );
+      toast(`已为“${document.displayName}”创建新的解析任务`, "success");
+      await loadDocuments({ background: true });
+    } catch (caught) {
+      setActionError(documentErrorMessage(caught));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   return (
     <div className="min-h-full bg-background">
       <ProjectContextHeader project={project} activeTab="documents" />
@@ -315,7 +397,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           <Info className="mt-0.5 size-4 shrink-0" />
           <p>
             <strong className="font-semibold">文件已真实存储；</strong>
-            文档解析和 AI 知识索引尚未启用。
+            当前有效版本会异步建立全文知识索引；AI 综合问答将在下一阶段启用。
           </p>
         </aside>
 
@@ -430,6 +512,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
               onDownload={(document, version) => void download(document, version)}
               onVersions={setVersionDocument}
               onUploadVersion={openVersionUpload}
+              onReindex={(document, version) => void reindex(document, version)}
               onLifecycle={(document, kind) => setConfirmAction({ document, kind })}
             />
           ) : null}
@@ -519,6 +602,7 @@ function DocumentTable({
   onDownload,
   onVersions,
   onUploadVersion,
+  onReindex,
   onLifecycle,
 }: {
   documents: ProjectDocumentDto[];
@@ -526,6 +610,10 @@ function DocumentTable({
   onDownload: (document: ProjectDocumentDto, version: ProjectDocumentVersionDto) => void;
   onVersions: (document: ProjectDocumentDto) => void;
   onUploadVersion: (document: ProjectDocumentDto) => void;
+  onReindex: (
+    document: ProjectDocumentDto,
+    version: ProjectDocumentVersionDto,
+  ) => void;
   onLifecycle: (document: ProjectDocumentDto, kind: "archive" | "restore") => void;
 }) {
   return (
@@ -537,7 +625,8 @@ function DocumentTable({
             <th className="px-3 py-3">文件类型</th>
             <th className="px-3 py-3">当前版本</th>
             <th className="px-3 py-3">文件大小</th>
-            <th className="px-3 py-3">状态</th>
+            <th className="px-3 py-3">存储状态</th>
+            <th className="px-3 py-3">解析与索引</th>
             <th className="px-3 py-3">上传者</th>
             <th className="px-3 py-3">更新时间</th>
             <th className="px-4 py-3 text-right">操作</th>
@@ -547,6 +636,7 @@ function DocumentTable({
           {documents.map((document) => {
             const version = document.currentVersion;
             const status = statusPresentation(document);
+            const ingestion = ingestionPresentation(version);
             const canDownload =
               document.permissions.canDownload && version?.storageStatus === "stored";
             const busy = Boolean(pendingAction?.endsWith(`:${document.id}`));
@@ -573,6 +663,10 @@ function DocumentTable({
                 </td>
                 <td className="px-3 py-3.5 text-xs tabular-nums text-foreground">{version ? formatBytes(version.sizeBytes) : "—"}</td>
                 <td className="px-3 py-3.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}>{status.label}</span></td>
+                <td className="px-3 py-3.5">
+                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}>{ingestion.label}</span>
+                  <p className="mt-1 max-w-52 text-[9px] text-muted-foreground">{ingestion.detail}</p>
+                </td>
                 <td className="px-3 py-3.5 text-xs text-foreground">{version?.uploadedBy.displayName ?? document.createdBy.displayName}</td>
                 <td className="px-3 py-3.5 text-xs text-muted-foreground">{formatDate(document.updatedAt)}</td>
                 <td className="px-4 py-3.5">
@@ -595,6 +689,24 @@ function DocumentTable({
                     <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`查看 ${document.displayName} 的版本历史`} title="版本历史" disabled={Boolean(pendingAction)} onClick={() => onVersions(document)}>
                       <History className="size-3.5" />
                     </Button>
+                    {version &&
+                    document.permissions.canReindex &&
+                    document.status === "active" &&
+                    version.storageStatus === "stored" ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label={`重新解析 ${document.displayName}`}
+                        title="重新解析"
+                        loading={pendingAction === `reindex:${version.id}`}
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => onReindex(document, version)}
+                      >
+                        <RefreshCw className="size-3.5" />
+                      </Button>
+                    ) : null}
                     {document.permissions.canUploadVersion && document.status === "active" ? (
                       <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`为 ${document.displayName} 上传新版本`} title="上传新版本" disabled={Boolean(pendingAction)} onClick={() => onUploadVersion(document)}>
                         <Upload className="size-3.5" />

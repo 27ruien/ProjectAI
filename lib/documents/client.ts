@@ -157,6 +157,29 @@ export function setCurrentProjectDocumentVersion(
   );
 }
 
+export function reindexProjectDocumentVersion(
+  projectId: string,
+  documentId: string,
+  versionId: string,
+): Promise<{
+  ingestion: {
+    status: string;
+    generation: number;
+    parserVersion: string;
+    chunkerVersion: string;
+  };
+}> {
+  return jsonMutation(
+    documentPath(
+      projectId,
+      documentId,
+      `/versions/${encodeURIComponent(versionId)}/reindex`,
+    ),
+    "POST",
+    {},
+  );
+}
+
 export type DocumentUploadProgress = {
   loaded: number;
   total: number;

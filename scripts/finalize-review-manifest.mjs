@@ -48,7 +48,7 @@ const artifactDigest = normalizeArtifactDigest(
 );
 
 const manifest = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   headSha: evidenceIndex.headSha,
   testedMergeSha: evidenceIndex.testedMergeSha,
   stagingSha: evidenceIndex.stagingSha,
@@ -62,10 +62,13 @@ const manifest = {
   environment: evidenceIndex.environment,
   eventName: evidenceIndex.eventName,
   status: evidenceIndex.status,
-  viewport: evidenceIndex.viewport,
+  workerVersion: evidenceIndex.workerVersion,
+  parserVersion: evidenceIndex.parserVersion,
+  chunkerVersion: evidenceIndex.chunkerVersion,
   testedUsers: evidenceIndex.testedUsers,
   routes: evidenceIndex.routes,
   screenshotFiles: evidenceIndex.screenshotFiles,
+  screenshots: evidenceIndex.screenshots,
   requiredScreenshots: evidenceIndex.requiredScreenshots,
   missingScreenshots: evidenceIndex.missingScreenshots,
   screenshotsComplete: evidenceIndex.screenshotsComplete,

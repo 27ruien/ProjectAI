@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -50,10 +50,10 @@ function ciEnvironment(overrides = {}) {
   return isolatedEnvironment({
     CI: "true",
     NEXT_PUBLIC_APP_ENV: "test",
-    NEXT_PUBLIC_APP_VERSION: "0.4.0-staging",
+    NEXT_PUBLIC_APP_VERSION: "0.5.0-staging",
     NEXT_PUBLIC_BUILD_TIME: buildTime,
     REVIEW_ARTIFACT_STATUS: "failure",
-    REVIEW_BRANCH: "agent/project-files-foundation",
+    REVIEW_BRANCH: "agent/document-processing-index",
     REVIEW_EVENT_NAME: "pull_request",
     REVIEW_HEAD_SHA: headSha,
     REVIEW_STAGING_SHA: stagingSha,
@@ -84,16 +84,26 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     assert.equal(index.headSha, headSha);
     assert.equal(index.testedMergeSha, testedMergeSha);
     assert.equal(index.stagingSha, stagingSha);
-    assert.equal(index.branch, "agent/project-files-foundation");
+    assert.equal(index.branch, "agent/document-processing-index");
     assert.equal(index.workflowRunId, "29310000000");
-    assert.equal(index.version, "0.4.0-staging");
+    assert.equal(index.version, "0.5.0-staging");
+    assert.equal(index.workerVersion, "1");
+    assert.equal(index.parserVersion, "1");
+    assert.equal(index.chunkerVersion, "1");
+    assert.deepEqual(index.screenshots, []);
+    assert.equal(Object.hasOwn(index, "viewport"), false);
     assert.ok(index.requiredScreenshots.includes("screenshots/documents-empty.png"));
     assert.ok(
       index.requiredScreenshots.includes(
         "screenshots/document-upload-rejected.png",
       ),
     );
-    assert.equal(index.requiredScreenshots.length, 12);
+    assert.ok(
+      index.requiredScreenshots.includes(
+        "screenshots/knowledge-search-results.png",
+      ),
+    );
+    assert.equal(index.requiredScreenshots.length, 22);
     assert.equal(index.buildTime, buildTime);
     assert.equal(Object.hasOwn(index, "commit"), false);
     assert.equal(Object.hasOwn(index, "artifactId"), false);
@@ -144,6 +154,36 @@ test("uses explicit null provenance for main push and local evidence", async () 
   } finally {
     await rm(pushRoot, { recursive: true, force: true });
     await rm(localRoot, { recursive: true, force: true });
+  }
+});
+
+test("reads each PNG screenshot's actual dimensions instead of declaring a viewport", async () => {
+  const root = await temporaryRoot();
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  try {
+    await mkdir(path.join(root, "review-artifacts/screenshots"), {
+      recursive: true,
+    });
+    await writeFile(
+      path.join(root, "review-artifacts/screenshots/login.png"),
+      png,
+    );
+    await runWriter(root, ciEnvironment());
+    const index = JSON.parse(
+      await readFile(
+        path.join(root, "review-artifacts/evidence-index.json"),
+        "utf8",
+      ),
+    );
+    assert.deepEqual(index.screenshots, [
+      { filename: "login.png", width: 1, height: 1 },
+    ]);
+    assert.equal(Object.hasOwn(index, "viewport"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
@@ -217,14 +257,19 @@ test("publishes a separate authoritative manifest after payload upload", async (
         headSha,
         testedMergeSha,
         stagingSha: null,
-        branch: "agent/project-files-foundation",
+        branch: "agent/document-processing-index",
         workflowRunId: "29310000000",
         artifactId,
-        version: "0.4.0-staging",
+        version: "0.5.0-staging",
         buildTime,
       },
     );
     assert.equal(manifest.artifactDigest, `sha256:${artifactDigest}`);
+    assert.equal(manifest.workerVersion, "1");
+    assert.equal(manifest.parserVersion, "1");
+    assert.equal(manifest.chunkerVersion, "1");
+    assert.deepEqual(manifest.screenshots, []);
+    assert.equal(Object.hasOwn(manifest, "viewport"), false);
     assert.equal(Object.hasOwn(manifest, "commit"), false);
     await assert.rejects(
       readFile(

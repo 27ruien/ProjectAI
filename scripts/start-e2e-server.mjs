@@ -20,6 +20,14 @@ const child = spawn(process.execPath, ["dist/standalone/server.js"], {
   },
   stdio: "inherit",
 });
+const documentWorker = spawn(
+  process.execPath,
+  ["--import", "tsx", "scripts/document-worker.ts"],
+  {
+    env: process.env,
+    stdio: "inherit",
+  },
+);
 
 const proxy = http.createServer((request, response) => {
   const incomingUrl = new URL(request.url || "/", `http://${request.headers.host || host}`);
@@ -55,6 +63,7 @@ function stop(exitCode = 0) {
   if (stopping) return;
   stopping = true;
   if (!child.killed) child.kill("SIGTERM");
+  if (!documentWorker.killed) documentWorker.kill("SIGTERM");
   proxy.close(() => process.exit(exitCode));
   proxy.closeAllConnections();
   setTimeout(() => process.exit(exitCode), 2_000).unref();
@@ -64,6 +73,14 @@ child.once("exit", (code, signal) => {
   if (stopping) return;
   process.stderr.write(
     `Standalone E2E server exited unexpectedly (${signal || code || "unknown"}).\n`,
+  );
+  stop(code || 1);
+});
+
+documentWorker.once("exit", (code, signal) => {
+  if (stopping) return;
+  process.stderr.write(
+    `Document E2E worker exited unexpectedly (${signal || code || "unknown"}).\n`,
   );
   stop(code || 1);
 });

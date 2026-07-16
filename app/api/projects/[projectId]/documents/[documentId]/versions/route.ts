@@ -19,7 +19,7 @@ import {
   readUploadForm,
 } from "@/lib/files/http";
 import {
-  serializeDocumentVersion,
+  serializeDocumentVersions,
   serializeProjectDocument,
 } from "@/lib/files/serialization";
 
@@ -53,7 +53,7 @@ export async function GET(
         authorizedProject.projectRole,
         versions.find((version) => version.isCurrent) ?? null,
       ),
-      versions: versions.map((version) => serializeDocumentVersion(version)),
+      versions: await serializeDocumentVersions(versions),
     });
   } catch (error) {
     return fileRouteErrorResponse(error);
@@ -107,10 +107,12 @@ export async function POST(
           authorizedProject.projectRole,
           versions.find((version) => version.isCurrent) ?? null,
         ),
-        version: serializeDocumentVersion(
-          result.version,
-          principal.user.displayName,
-        ),
+        version: (
+          await serializeDocumentVersions(
+            [result.version],
+            principal.user.displayName,
+          )
+        )[0],
         replayed: result.replayed,
         uploadStatus: result.version.storageStatus,
       },

@@ -28,13 +28,23 @@ const requiredScreenshots = [
   "screenshots/document-version-history.png",
   "screenshots/viewer-documents-readonly.png",
   "screenshots/document-upload-rejected.png",
+  "screenshots/document-processing-pending.png",
+  "screenshots/document-processing-succeeded.png",
+  "screenshots/document-processing-failed.png",
+  "screenshots/document-needs-ocr.png",
+  "screenshots/knowledge-search-results.png",
+  "screenshots/knowledge-search-pdf-citation.png",
+  "screenshots/knowledge-search-docx-citation.png",
+  "screenshots/knowledge-search-xlsx-citation.png",
+  "screenshots/knowledge-search-pptx-citation.png",
+  "screenshots/viewer-knowledge-search.png",
 ];
 const headSha = "a".repeat(40);
 const testedMergeSha = "b".repeat(40);
 
 function reviewEvidenceIndex(overrides = {}) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     eventName: "pull_request",
     headSha,
     testedMergeSha,
@@ -44,9 +54,13 @@ function reviewEvidenceIndex(overrides = {}) {
     environment: "test",
     version: "test",
     buildTime: "2026-07-13T00:00:00Z",
+    workerVersion: "1",
+    parserVersion: "1",
+    chunkerVersion: "1",
     status: "failure",
     requiredScreenshots,
     screenshotFiles: [],
+    screenshots: [],
     missingScreenshots: requiredScreenshots,
     screenshotsComplete: false,
     ...overrides,
@@ -320,6 +334,11 @@ test("accepts CI evidence only when the index and required screenshots exist", a
         reviewEvidenceIndex({
           status: "success",
           screenshotFiles: requiredScreenshots,
+          screenshots: requiredScreenshots.map((filename) => ({
+            filename: path.posix.basename(filename),
+            width: 1,
+            height: 1,
+          })),
           missingScreenshots: [],
           screenshotsComplete: true,
         }),

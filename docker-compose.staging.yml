@@ -1,5 +1,25 @@
 name: projectai-staging
 
+x-document-processing-environment: &document-processing-environment
+  DOCUMENT_WORKER_POLL_MS: ${DOCUMENT_WORKER_POLL_MS:-2000}
+  DOCUMENT_WORKER_LEASE_SECONDS: ${DOCUMENT_WORKER_LEASE_SECONDS:-120}
+  DOCUMENT_WORKER_MAX_ATTEMPTS: ${DOCUMENT_WORKER_MAX_ATTEMPTS:-3}
+  DOCUMENT_MAX_PAGES: ${DOCUMENT_MAX_PAGES:-1000}
+  DOCUMENT_MAX_SLIDES: ${DOCUMENT_MAX_SLIDES:-1000}
+  DOCUMENT_MAX_SHEETS: ${DOCUMENT_MAX_SHEETS:-100}
+  DOCUMENT_MAX_ROWS: ${DOCUMENT_MAX_ROWS:-100000}
+  DOCUMENT_MAX_COLUMNS: ${DOCUMENT_MAX_COLUMNS:-1000}
+  DOCUMENT_MAX_CELLS: ${DOCUMENT_MAX_CELLS:-500000}
+  DOCUMENT_MAX_CHARACTERS: ${DOCUMENT_MAX_CHARACTERS:-10000000}
+  DOCUMENT_MAX_SECTIONS: ${DOCUMENT_MAX_SECTIONS:-20000}
+  DOCUMENT_MAX_CHUNKS: ${DOCUMENT_MAX_CHUNKS:-50000}
+  DOCUMENT_PARSE_TIMEOUT_MS: ${DOCUMENT_PARSE_TIMEOUT_MS:-120000}
+  DOCUMENT_CHUNK_TARGET_CHARS: ${DOCUMENT_CHUNK_TARGET_CHARS:-1800}
+  DOCUMENT_CHUNK_OVERLAP_CHARS: ${DOCUMENT_CHUNK_OVERLAP_CHARS:-200}
+  DOCUMENT_CHUNK_MIN_CHARS: ${DOCUMENT_CHUNK_MIN_CHARS:-120}
+  DOCUMENT_PARSER_VERSION: ${DOCUMENT_PARSER_VERSION:-1}
+  DOCUMENT_CHUNKER_VERSION: ${DOCUMENT_CHUNKER_VERSION:-1}
+
 services:
   projectai-postgres:
     image: postgres:17-alpine
@@ -130,6 +150,7 @@ services:
       context: .
       target: db-tools
     environment:
+      <<: *document-processing-environment
       NODE_ENV: production
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -244,6 +265,53 @@ services:
         max-file: "2"
     command: npm run storage:smoke
 
+  projectai-document-smoke:
+    profiles:
+      - operations
+    image: ${STAGING_DB_TOOLS_IMAGE:-project-ai-os-staging-db-tools:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    build:
+      context: .
+      target: db-tools
+    environment:
+      <<: *document-processing-environment
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: staging
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      SEED_MANAGER_A_EMAIL: ${SEED_MANAGER_A_EMAIL:?SEED_MANAGER_A_EMAIL is required}
+      SEED_MANAGER_A_PASSWORD: ${SEED_MANAGER_A_PASSWORD:?SEED_MANAGER_A_PASSWORD is required}
+      SEED_VIEWER_A_EMAIL: ${SEED_VIEWER_A_EMAIL:?SEED_VIEWER_A_EMAIL is required}
+      SEED_VIEWER_A_PASSWORD: ${SEED_VIEWER_A_PASSWORD:?SEED_VIEWER_A_PASSWORD is required}
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+      projectai-document-worker:
+        condition: service_healthy
+      projectai-staging:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    command: npm run documents:smoke
+
   projectai-staging:
     image: ${STAGING_APP_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     build:
@@ -252,7 +320,7 @@ services:
       args:
         NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
         NEXT_PUBLIC_APP_ENV: staging
-        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.4.0-staging}
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.5.0-staging}
         NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     container_name: project-ai-os-staging
@@ -267,6 +335,7 @@ services:
         max-size: 10m
         max-file: "3"
     environment:
+      <<: *document-processing-environment
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
@@ -288,7 +357,7 @@ services:
       STAGING_HEALTHCHECK_PATH: ${STAGING_HEALTHCHECK_PATH:-/api/health}
       NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.4.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.5.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
       AI_PROVIDER: mock
@@ -299,6 +368,8 @@ services:
         condition: service_healthy
       projectai-minio-init:
         condition: service_completed_successfully
+      projectai-document-worker:
+        condition: service_healthy
     networks:
       - projectai-staging-internal
     ports:
@@ -313,6 +384,63 @@ services:
         ]
       interval: 30s
       timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  projectai-document-worker:
+    image: ${STAGING_WORKER_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    container_name: project-ai-os-staging-worker
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    environment:
+      <<: *document-processing-environment
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
+      UPLOAD_ALLOWED_EXTENSIONS: ${UPLOAD_ALLOWED_EXTENSIONS:-pdf,docx,xlsx,pptx,txt,md}
+      NEXT_PUBLIC_APP_ENV: staging
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.5.0-staging}
+      NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
+      NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
+    command:
+      - npm
+      - run
+      - worker:documents
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+    networks:
+      - projectai-staging-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs');const age=Date.now()-fs.statSync('/tmp/projectai-document-worker-heartbeat').mtimeMs;if(age>60000)process.exit(1)"
+        ]
+      interval: 20s
+      timeout: 5s
       retries: 5
       start_period: 30s
 
