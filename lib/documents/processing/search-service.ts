@@ -117,6 +117,7 @@ export async function searchProjectKnowledge(input: {
       )})`
     : sql``;
   const contains = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
+  const escapeCharacter = "\\";
   const result = await getDb().transaction(async (tx) => {
     await tx.execute(sql`set local statement_timeout = '3000ms'`);
     return tx.execute<SearchRow>(sql`
@@ -133,9 +134,9 @@ export async function searchProjectKnowledge(input: {
           c.source_locator,
           (
             ts_rank_cd(c.search_vector, websearch_to_tsquery('english', ${query})) * 2.0
-            + case when lower(c.search_text) like lower(${contains}) escape E'\\' then 2.5 else 0 end
-            + case when lower(d.display_name) like lower(${contains}) escape E'\\' then 1.5 else 0 end
-            + case when lower(c.heading_path::text) like lower(${contains}) escape E'\\' then 1.25 else 0 end
+            + case when lower(c.search_text) like lower(${contains}) escape ${escapeCharacter} then 2.5 else 0 end
+            + case when lower(d.display_name) like lower(${contains}) escape ${escapeCharacter} then 1.5 else 0 end
+            + case when lower(c.heading_path::text) like lower(${contains}) escape ${escapeCharacter} then 1.25 else 0 end
             + similarity(c.search_text, ${query})
             + similarity(d.display_name, ${query}) * 0.75
           ) as raw_score
@@ -157,8 +158,8 @@ export async function searchProjectKnowledge(input: {
           ${documentFilter}
           and (
             c.search_vector @@ websearch_to_tsquery('english', ${query})
-            or lower(c.search_text) like lower(${contains}) escape E'\\'
-            or lower(d.display_name) like lower(${contains}) escape E'\\'
+            or lower(c.search_text) like lower(${contains}) escape ${escapeCharacter}
+            or lower(d.display_name) like lower(${contains}) escape ${escapeCharacter}
             or similarity(c.search_text, ${query}) >= 0.08
             or similarity(d.display_name, ${query}) >= 0.12
           )
