@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { assertEvidenceIndex } from "./review-evidence-contract.mjs";
 
@@ -17,7 +17,7 @@ await Promise.all([
 ]);
 
 const screenshotFiles = (await readdir(screenshotsRoot, { withFileTypes: true }))
-  .filter((entry) => entry.isFile() && /\.(?:png|jpe?g|webp)$/i.test(entry.name))
+  .filter((entry) => entry.isFile() && /\.png$/i.test(entry.name))
   .map((entry) => `screenshots/${entry.name}`)
   .sort();
 
@@ -34,6 +34,16 @@ const requiredScreenshots = [
   "screenshots/document-version-history.png",
   "screenshots/viewer-documents-readonly.png",
   "screenshots/document-upload-rejected.png",
+  "screenshots/document-processing-pending.png",
+  "screenshots/document-processing-succeeded.png",
+  "screenshots/document-processing-failed.png",
+  "screenshots/document-needs-ocr.png",
+  "screenshots/knowledge-search-results.png",
+  "screenshots/knowledge-search-pdf-citation.png",
+  "screenshots/knowledge-search-docx-citation.png",
+  "screenshots/knowledge-search-xlsx-citation.png",
+  "screenshots/knowledge-search-pptx-citation.png",
+  "screenshots/viewer-knowledge-search.png",
 ];
 
 const routes = {
@@ -52,6 +62,30 @@ const missingScreenshots = requiredScreenshots.filter(
 const ci = /^true$/i.test(process.env.CI || "");
 const optional = (value) => value?.trim() || null;
 
+async function pngDimensions(relativePath) {
+  const buffer = await readFile(path.join(root, relativePath));
+  const signature = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+  ]);
+  if (
+    buffer.length < 24 ||
+    !buffer.subarray(0, 8).equals(signature) ||
+    buffer.subarray(12, 16).toString("ascii") !== "IHDR"
+  ) {
+    throw new Error(`Review screenshot is not a valid PNG: ${relativePath}`);
+  }
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  if (width < 1 || height < 1) {
+    throw new Error(`Review screenshot has invalid dimensions: ${relativePath}`);
+  }
+  return {
+    filename: path.posix.basename(relativePath),
+    width,
+    height,
+  };
+}
+
 if (process.env.REVIEW_COMMIT?.trim()) {
   throw new Error(
     "REVIEW_COMMIT is obsolete; provide REVIEW_HEAD_SHA and REVIEW_TESTED_MERGE_SHA.",
@@ -59,7 +93,7 @@ if (process.env.REVIEW_COMMIT?.trim()) {
 }
 
 const evidenceIndex = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   eventName: process.env.REVIEW_EVENT_NAME?.trim() || (ci ? "" : "local"),
   headSha: ci ? optional(process.env.REVIEW_HEAD_SHA) : null,
   testedMergeSha: ci ? optional(process.env.REVIEW_TESTED_MERGE_SHA) : null,
@@ -75,7 +109,9 @@ const evidenceIndex = {
   buildTime:
     process.env.NEXT_PUBLIC_BUILD_TIME?.trim() ||
     (ci ? "" : new Date().toISOString()),
-  viewport: { width: 1440, height: 1000 },
+  workerVersion: process.env.DOCUMENT_WORKER_VERSION?.trim() || "1",
+  parserVersion: process.env.DOCUMENT_PARSER_VERSION?.trim() || "1",
+  chunkerVersion: process.env.DOCUMENT_CHUNKER_VERSION?.trim() || "1",
   testedUsers: [
     "system_admin",
     "project_manager_a",
@@ -84,6 +120,7 @@ const evidenceIndex = {
   ],
   routes,
   screenshotFiles,
+  screenshots: await Promise.all(screenshotFiles.map(pngDimensions)),
   requiredScreenshots,
   missingScreenshots,
   screenshotsComplete: missingScreenshots.length === 0,

@@ -77,7 +77,7 @@ test("MinIO initialization is idempotent, private, and least privileged", async 
   const init = serviceBlock(compose, "projectai-minio-init", "projectai-migrate");
   const migrate = serviceBlock(compose, "projectai-migrate", "projectai-storage-ops");
   const appMatch = compose.match(
-    /\n  projectai-staging:\n([\s\S]*?)\nvolumes:/,
+    /\n  projectai-staging:\n([\s\S]*?)\n  projectai-document-worker:/,
   );
   assert.ok(appMatch, "missing Compose service projectai-staging");
   const app = appMatch[1];
@@ -110,7 +110,7 @@ test("pre-migration PostgreSQL backup streams and validates a custom archive", a
 
 test("MinIO backup uses inventory, atomic mirror validation, and an isolated restore drill", async () => {
   const script = await readFile(deployScript, "utf8");
-  assert.match(script, /Stopping the Staging application briefly for a cross-store snapshot/);
+  assert.match(script, /Stopping the Staging application and document Worker briefly for a cross-store snapshot/);
   assert.match(script, /projectai-staging-objects-\$\{backup_timestamp\}-\$\{commit_sha\}/);
   assert.match(script, /inventory_name="\$\{object_backup_stem\}\.inventory\.jsonl"/);
   assert.match(script, /inventory_partial="\$\{object_backup_root\}\/\$\{inventory_name\}\.partial"/);
@@ -169,7 +169,7 @@ test("operations use scoped Compose services and storage verification stays read
   assert.match(script, /projectai-migrate npm run db:seed/);
   assert.equal(
     [...script.matchAll(/projectai-storage-ops npm run storage:verify/g)].length,
-    3,
+    4,
   );
   assert.doesNotMatch(script, /storage:reconcile[^\n]*--apply/);
   assert.match(storageOps, /OBJECT_STORAGE_ENDPOINT/);
@@ -178,19 +178,53 @@ test("operations use scoped Compose services and storage verification stays read
   const fileSmoke = serviceBlock(
     compose,
     "projectai-file-smoke",
+    "projectai-document-smoke",
+  );
+  const documentSmoke = serviceBlock(
+    compose,
+    "projectai-document-smoke",
     "projectai-staging",
   );
   assert.match(fileSmoke, /SEED_MANAGER_A_EMAIL/);
   assert.match(fileSmoke, /SEED_MANAGER_A_PASSWORD/);
   assert.doesNotMatch(fileSmoke, /MINIO_ROOT_/);
+  assert.match(documentSmoke, /SEED_MANAGER_A_EMAIL/);
+  assert.match(documentSmoke, /SEED_MANAGER_A_PASSWORD/);
+  assert.match(documentSmoke, /SEED_VIEWER_A_EMAIL/);
+  assert.match(documentSmoke, /SEED_VIEWER_A_PASSWORD/);
+  assert.match(documentSmoke, /<<: \*document-processing-environment/);
+  assert.match(documentSmoke, /mem_limit: 768m/);
+  assert.doesNotMatch(documentSmoke, /MINIO_ROOT_/);
   assert.equal(
     [...script.matchAll(/projectai-file-smoke npm run storage:smoke/g)].length,
     2,
   );
+  assert.equal(
+    [...script.matchAll(/projectai-document-smoke npm run documents:smoke/g)]
+      .length,
+    2,
+  );
+  assert.equal(
+    [
+      ...script.matchAll(
+        /projectai-document-smoke npm run documents:lease-smoke/g,
+      ),
+    ].length,
+    1,
+  );
   assert.match(script, /real Staging upload, download integrity, versioning, and lifecycle cleanup/);
+  assert.match(script, /six-format document processing, lexical search, citations, permissions, and cleanup/);
+  assert.match(script, /Stopping the document Worker for exclusive Lease recovery verification/);
+  assert.match(script, /Restarting the document Worker after Lease verification/);
+  assert.match(script, /status in \(\$1, \$2\)/);
+  assert.match(script, /! -name 'projectai-document-worker-heartbeat'/);
   assert.match(
     script,
     /APP_BASE_URL=\$public_base_url[\s\S]+?projectai-file-smoke npm run storage:smoke/,
+  );
+  assert.match(
+    script,
+    /APP_BASE_URL=\$public_base_url[\s\S]+?projectai-document-smoke npm run documents:smoke/,
   );
   const publicVerification = script.match(
     /<<'REMOTE_PUBLIC_AUTH'[\s\S]+?\nREMOTE_PUBLIC_AUTH/,
@@ -201,7 +235,7 @@ test("operations use scoped Compose services and storage verification stays read
   assert.match(publicVerification, /--no-TTY/);
   assert.match(
     publicVerification,
-    /projectai-file-smoke npm run storage:smoke[\s\S]+?projectai-storage-ops npm run storage:verify/,
+    /projectai-file-smoke npm run storage:smoke[\s\S]+?projectai-document-smoke npm run documents:smoke[\s\S]+?projectai-storage-ops npm run storage:verify/,
   );
   assert.match(script, /sudo nginx -T 2>\/dev\/null/);
   assert.match(script, /client_max_body_size 52m/);
@@ -217,6 +251,8 @@ test("rollback preserves the previous application health contract", async () => 
   assert.match(captureBlock, /NEXT_PUBLIC_COMMIT_SHA=/);
   assert.match(captureBlock, /NEXT_PUBLIC_APP_VERSION=/);
   assert.match(captureBlock, /NEXT_PUBLIC_BUILD_TIME=/);
+  assert.match(captureBlock, /worker_container_name/);
+  assert.match(captureBlock, /worker_image/);
   assert.match(captureBlock, /running.*healthy/);
   assert.match(script, /rollback_health_path="\$previous_health_path"/);
   const rollbackBlock = script.match(
@@ -226,6 +262,8 @@ test("rollback preserves the previous application health contract", async () => 
   assert.match(rollbackBlock, /NEXT_PUBLIC_COMMIT_SHA=\$previous_commit_sha/);
   assert.match(rollbackBlock, /NEXT_PUBLIC_APP_VERSION=\$previous_app_version/);
   assert.match(rollbackBlock, /NEXT_PUBLIC_BUILD_TIME=\$previous_build_time/);
+  assert.match(rollbackBlock, /STAGING_WORKER_IMAGE=/);
+  assert.match(rollbackBlock, /projectai-document-worker/);
   assert.doesNotMatch(rollbackBlock, /NEXT_PUBLIC_COMMIT_SHA=\$commit_sha/);
   assert.match(rollbackBlock, /restored_environment=/);
   assert.match(script, /rm --stop --force projectai-minio-init/);
@@ -236,7 +274,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/project-files-foundation"/);
+  assert.match(script, /EXPECTED_BRANCH="agent\/document-processing-index"/);
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -259,12 +297,49 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.match(workflow, /anonymous set none/);
   assert.match(workflow, /anonymous_code[\s\S]+?== "403"/);
   assert.match(workflow, /npm run test:storage/);
+  assert.match(workflow, /npm run test:documents/);
+  assert.match(workflow, /npm run test:document-integration/);
+  assert.match(workflow, /npm run test:cleanup/);
   assert.match(workflow, /npm run storage:verify/);
   assert.match(workflow, /npm run storage:reconcile/);
   assert.match(workflow, /Destroy isolated CI MinIO\n\s+if: always\(\)/);
   assert.match(workflow, /docker rm --force "\$container"/);
   assert.match(workflow, /docker network rm "\$network"/);
   assert.doesNotMatch(workflow, /OBJECT_STORAGE_ENDPOINT=.*gridworks\.cn/);
+  assert.doesNotMatch(workflow, /STAGING_HEALTH_URL|projectai-staging\/api\/health/);
+});
+
+test("Staging document Worker is isolated, bounded, healthy, and uses the immutable app image", async () => {
+  const [script, compose, dockerfile] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(stagingCompose, "utf8"),
+    readFile(new URL("../Dockerfile", import.meta.url), "utf8"),
+  ]);
+  const workerMatch = compose.match(
+    /\n  projectai-document-worker:\n([\s\S]*?)\nvolumes:/,
+  );
+  assert.ok(workerMatch, "missing Compose service projectai-document-worker");
+  const worker = workerMatch[1];
+  assert.match(worker, /container_name: project-ai-os-staging-worker/);
+  assert.match(worker, /STAGING_WORKER_IMAGE/);
+  assert.match(worker, /npm[\s\S]+worker:documents/);
+  assert.match(worker, /restart: unless-stopped/);
+  assert.match(worker, /stop_grace_period: 30s/);
+  assert.match(worker, /cpus: 1\.0/);
+  assert.match(worker, /mem_limit: 768m/);
+  assert.match(worker, /pids_limit: 256/);
+  assert.match(worker, /projectai-staging-internal/);
+  assert.match(worker, /projectai-document-worker-heartbeat/);
+  assert.match(worker, /OBJECT_STORAGE_ACCESS_KEY/);
+  assert.match(worker, /OBJECT_STORAGE_SECRET_KEY/);
+  assert.doesNotMatch(worker, /MINIO_ROOT_(?:USER|PASSWORD)/);
+  assert.doesNotMatch(worker, /^\s+ports:/m);
+  assert.match(script, /Starting the independent Staging document Worker/);
+  assert.match(script, /projectai-document-worker[\s\S]+?projectai-staging/);
+  assert.match(script, /pg_extension where extname = \$1/);
+  assert.match(script, /npm run documents:enqueue/);
+  assert.match(dockerfile, /COPY --from=deps --chown=nextjs:nodejs \/app\/node_modules/);
+  assert.match(dockerfile, /COPY --chown=nextjs:nodejs lib \.\/lib/);
 });
 
 test("Staging proxy accepts multipart framing without exposing object storage", async () => {

@@ -133,6 +133,17 @@ function uploadVersion(
     storedAt: storageStatus === "stored" ? "2026-07-15T00:00:01.000Z" : null,
     supersededAt: null,
     ...overrides,
+    ingestion: overrides.ingestion ?? {
+      status: "not_started",
+      indexedVersion: null,
+      generation: null,
+      parserVersion: null,
+      chunkerVersion: null,
+      sectionCount: 0,
+      chunkCount: 0,
+      lastIndexedAt: null,
+      failureCode: null,
+    },
   };
 }
 
@@ -156,6 +167,7 @@ function uploadDocument(
       canArchive: true,
       canRestore: false,
       canSetCurrent: true,
+      canReindex: true,
     },
     ...overrides,
   };

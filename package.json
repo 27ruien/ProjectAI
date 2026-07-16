@@ -1,6 +1,6 @@
 {
   "name": "project-ai-os",
-  "version": "0.4.0-staging",
+  "version": "0.5.0-staging",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -17,7 +17,7 @@
     "test:deployment": "node --test tests/deployment-contract.test.mjs",
     "review:sanitize": "node scripts/sanitize-test-artifacts.mjs",
     "review:finalize": "node scripts/finalize-review-manifest.mjs",
-    "qa:mvp": "npm run typecheck && npm run lint && npm test && npm run test:integration && npm run test:storage && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
+    "qa:mvp": "npm run typecheck && npm run lint && npm test && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern playwright-report --ignore-pattern review-artifacts --ignore-pattern product-review-evidence --ignore-pattern test-results --ignore-pattern test-logs",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -25,11 +25,19 @@
     "db:seed": "tsx scripts/db/seed.ts",
     "db:reset:test": "NODE_ENV=test tsx scripts/db/reset-test.ts && npm run db:seed",
     "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/identity-project-isolation.test.ts tests/integration/review-project-permissions.test.ts",
+    "test:document-integration": "node --import tsx --test --test-concurrency=1 tests/integration/document-processing.test.ts",
     "test:files": "node --import tsx --test --test-concurrency=1 tests/file-validation.test.ts tests/direct-upstream-fetch.test.ts",
+    "test:documents": "node --import tsx --test --test-concurrency=1 tests/document-processing.test.ts",
     "test:storage": "npm run test:files && node --import tsx --test --test-concurrency=1 tests/integration/project-files.test.ts",
     "storage:verify": "tsx scripts/storage-verify.ts",
     "storage:reconcile": "tsx scripts/reconcile-file-storage.ts",
-    "storage:smoke": "tsx scripts/verify-file-storage-flow.ts"
+    "storage:smoke": "tsx scripts/verify-file-storage-flow.ts",
+    "documents:smoke": "tsx scripts/verify-document-processing-flow.ts",
+    "documents:lease-smoke": "tsx scripts/verify-document-worker-lease.ts",
+    "worker:documents": "tsx scripts/document-worker.ts",
+    "worker:documents:once": "tsx scripts/document-worker.ts --once",
+    "documents:enqueue": "tsx scripts/enqueue-document-ingestion.ts",
+    "test:cleanup": "tsx scripts/cleanup-ci-test-data.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1087.0",
@@ -39,8 +47,10 @@
     "better-auth": "^1.6.23",
     "clsx": "^2.1.1",
     "drizzle-orm": "0.45.2",
+    "fast-xml-parser": "5.10.1",
     "lucide-react": "^1.24.0",
     "next": "16.2.6",
+    "pdfjs-dist": "6.1.200",
     "pg": "^8.22.0",
     "react": "19.2.6",
     "react-dom": "19.2.6",

@@ -6,6 +6,7 @@ export * from "./projects";
 export * from "./project-members";
 export * from "./audit-events";
 export * from "./project-documents";
+export * from "./document-ingestion";
 
 import { account, rateLimit, verification } from "./auth-support";
 import { session } from "./sessions";

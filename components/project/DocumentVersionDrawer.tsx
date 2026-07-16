@@ -17,6 +17,7 @@ import {
   documentErrorMessage,
   downloadProjectDocumentVersion,
   listProjectDocumentVersions,
+  reindexProjectDocumentVersion,
   setCurrentProjectDocumentVersion,
 } from "@/lib/documents/client";
 import type {
@@ -64,6 +65,29 @@ function versionStatus(version: ProjectDocumentVersionDto) {
     deleted: { label: "已删除", classes: "bg-muted text-muted-foreground" },
   }[version.storageStatus];
   return status;
+}
+
+function ingestionStatus(version: ProjectDocumentVersionDto) {
+  return {
+    not_started: {
+      label: "尚未解析",
+      classes: "bg-muted text-muted-foreground",
+    },
+    pending: { label: "等待解析", classes: "bg-info-soft text-info" },
+    running: { label: "正在解析", classes: "bg-info-soft text-info" },
+    succeeded: {
+      label: "知识索引已建立",
+      classes: "bg-success-soft text-success",
+    },
+    failed: {
+      label: "解析失败",
+      classes: "bg-destructive-soft text-destructive",
+    },
+    needs_ocr: {
+      label: "需要 OCR",
+      classes: "bg-warning-soft text-warning",
+    },
+  }[version.ingestion.status];
 }
 
 export function DocumentVersionDrawer({
@@ -125,6 +149,19 @@ export function DocumentVersionDrawer({
     return () => controller.abort();
   }, [document, open, projectId]);
 
+  useEffect(() => {
+    if (
+      !open ||
+      !versions.some((version) =>
+        ["pending", "running"].includes(version.ingestion.status),
+      )
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => void load(), 2_000);
+    return () => window.clearInterval(timer);
+  }, [load, open, versions]);
+
   const setCurrent = async (version: ProjectDocumentVersionDto) => {
     if (!document) return;
     setPendingAction(`current:${version.id}`);
@@ -151,6 +188,25 @@ export function DocumentVersionDrawer({
         version.id,
         version.originalFilename,
       );
+    } catch (caught) {
+      setError(documentErrorMessage(caught));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
+  const reindex = async (version: ProjectDocumentVersionDto) => {
+    if (!document) return;
+    setPendingAction(`reindex:${version.id}`);
+    setError(null);
+    try {
+      await reindexProjectDocumentVersion(
+        projectId,
+        document.id,
+        version.id,
+      );
+      await load();
+      await onChanged();
     } catch (caught) {
       setError(documentErrorMessage(caught));
     } finally {
@@ -219,6 +275,7 @@ export function DocumentVersionDrawer({
         <div className="space-y-3">
           {versions.map((version) => {
             const status = versionStatus(version);
+            const processing = ingestionStatus(version);
             const canDownload =
               Boolean(document?.permissions.canDownload) &&
               version.storageStatus === "stored";
@@ -243,10 +300,18 @@ export function DocumentVersionDrawer({
                           </span>
                         ) : null}
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${status.classes}`}>{status.label}</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${processing.classes}`}>{processing.label}</span>
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground">{version.originalFilename}</p>
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         {version.extension.toUpperCase()} · {formatBytes(version.sizeBytes)} · {version.uploadedBy.displayName} · {formatDate(version.storedAt ?? version.createdAt)}
+                      </p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {version.ingestion.status === "succeeded"
+                          ? `${version.ingestion.sectionCount} Section · ${version.ingestion.chunkCount} Chunk · 索引于 ${formatDate(version.ingestion.lastIndexedAt)}`
+                          : version.ingestion.status === "needs_ocr"
+                            ? "该 PDF 可下载，但本阶段不执行 OCR"
+                            : version.ingestion.failureCode ?? "解析任务状态会自动刷新"}
                       </p>
                     </div>
                   </div>
@@ -275,6 +340,20 @@ export function DocumentVersionDrawer({
                         onClick={() => void download(version)}
                       >
                         <Download className="size-3.5" />
+                      </Button>
+                    ) : null}
+                    {document?.permissions.canReindex &&
+                    document.status === "active" &&
+                    version.storageStatus === "stored" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        loading={pendingAction === `reindex:${version.id}`}
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => void reindex(version)}
+                      >
+                        <RotateCw className="size-3.5" />重新解析
                       </Button>
                     ) : null}
                   </div>

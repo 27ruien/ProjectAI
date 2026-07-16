@@ -42,6 +42,27 @@ export interface ProjectDocumentVersionDto {
   createdAt: string;
   storedAt: string | null;
   supersededAt: string | null;
+  ingestion: DocumentIngestionDto;
+}
+
+export type PublicDocumentIngestionStatus =
+  | "not_started"
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "needs_ocr";
+
+export interface DocumentIngestionDto {
+  status: PublicDocumentIngestionStatus;
+  indexedVersion: number | null;
+  generation: number | null;
+  parserVersion: string | null;
+  chunkerVersion: string | null;
+  sectionCount: number;
+  chunkCount: number;
+  lastIndexedAt: string | null;
+  failureCode: string | null;
 }
 
 export interface ProjectDocumentPermissionsDto {
@@ -50,6 +71,7 @@ export interface ProjectDocumentPermissionsDto {
   canArchive: boolean;
   canRestore: boolean;
   canSetCurrent: boolean;
+  canReindex: boolean;
 }
 
 /** A logical project document with its current, immutable object version. */

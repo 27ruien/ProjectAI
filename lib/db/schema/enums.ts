@@ -60,6 +60,11 @@ export const documentStorageStatusEnum = pgEnum("document_storage_status", [
   "deleted",
 ]);
 
+export const documentIngestionStatusEnum = pgEnum(
+  "document_ingestion_status",
+  ["pending", "running", "succeeded", "failed", "needs_ocr", "cancelled"],
+);
+
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];
@@ -70,3 +75,5 @@ export type AuditResult = (typeof auditResultEnum.enumValues)[number];
 export type DocumentStatus = (typeof documentStatusEnum.enumValues)[number];
 export type DocumentStorageStatus =
   (typeof documentStorageStatusEnum.enumValues)[number];
+export type DocumentIngestionStatus =
+  (typeof documentIngestionStatusEnum.enumValues)[number];

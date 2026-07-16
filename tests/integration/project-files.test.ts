@@ -22,6 +22,9 @@ import { closeDatabasePool, getDb } from "../../lib/db/client";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
 import {
   auditEvent,
+  documentChunk,
+  documentIngestionJob,
+  documentSection,
   project,
   projectDocument,
   projectDocumentVersion,
@@ -599,6 +602,15 @@ after(async () => {
     const projectIds = [projectAId, projectBId].filter(Boolean);
     if (projectIds.length > 0) {
       await getDb().delete(auditEvent).where(inArray(auditEvent.projectId, projectIds));
+      await getDb()
+        .delete(documentChunk)
+        .where(inArray(documentChunk.projectId, projectIds));
+      await getDb()
+        .delete(documentSection)
+        .where(inArray(documentSection.projectId, projectIds));
+      await getDb()
+        .delete(documentIngestionJob)
+        .where(inArray(documentIngestionJob.projectId, projectIds));
       await getDb()
         .delete(projectDocumentVersion)
         .where(inArray(projectDocumentVersion.projectId, projectIds));

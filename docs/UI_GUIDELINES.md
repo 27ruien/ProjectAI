@@ -20,8 +20,15 @@
 
 - Staging 全局显示醒目的 `STAGING` 标识。
 - 同时显示环境、版本、Commit 短码和构建时间，并保留完整 SHA 的可查询信息。
-- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存，但解析、知识索引和 AI 仍未启用。
+- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存并建立词法索引，但 OCR、Embedding、RAG 和 AI 综合回答仍未启用。
 - Staging 设置 robots noindex，并由 Nginx 添加 `X-Robots-Tag`。
+
+## 文档处理与知识搜索
+
+- 资料页和版本抽屉统一显示等待解析、正在解析、知识索引已建立、解析失败和需要 OCR；不显示 Worker ID、Lease 或内部错误堆栈。
+- Pending/Running 使用有界轮询；失败提供明确重试/reindex，页面不得无限 Loading。
+- 知识页把结果称为“搜索结果/原始资料片段”，不得包装成 AI 回答；顶部固定说明“尚未启用 AI 综合回答”。
+- 每个结果显示文件名、current version、受控 excerpt 和 Page/Heading/Sheet/Slide/Line Source Locator，并提供授权下载。
 
 ## 反馈入口
 

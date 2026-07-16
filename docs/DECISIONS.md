@@ -95,7 +95,7 @@
 - 状态：Accepted。
 - 决策：Server Component 先恢复 Session、查询授权项目，再调用 `getAuthorizedMockProjectPayload(authorizedProject.id)`；项目数组数据用授权 ID Set 在服务端过滤，只有非项目全局配置可原样序列化。v0.4 资料页不再使用该 Mock mapper，改为受授权的文件 Repository/S3 服务。
 - 原因：业务内容虽为 Mock，跨项目泄露仍是 P0；客户端过滤会把不可见项目数据送入浏览器，破坏下一轮文件/RAG 的可信边界。
-- 限制：真实文件上传不代表真实检索或知识权限索引已经完成；资料页标明“真实存储、未解析”，知识及其他业务页面继续标注 Mock。
+- 演进：v0.5 B2 已让资料页和项目知识搜索脱离该 Mock 文档能力；需求、Scope、Action、会议、风险和 AI execution 仍按本决策精确过滤 Mock。
 
 ## ADR-016：Seed 幂等，测试 Reset fail-closed
 
@@ -119,8 +119,8 @@
 ## ADR-019：CI 只上传经过独立脱敏与复核的产品证据副本
 
 - 状态：Accepted。
-- 决策：CI 原始 Playwright report、test results、trace/video 和运行时上传 fixture 永不直接进入 Evidence。Payload A 采用强 allowlist，只接受 `evidence-index.json`、脱敏报告、12 张约定截图及固定名称/大小的 UTF-8 文本日志；PDF、归档、未知二进制、未列名路径和上传原件即使位于候选目录也必须拒绝/移除。脱敏集合包含数据库 Session、认证 Secret、MinIO root/app credential、S3 Endpoint/Bucket/Object Key 和编码变体。
-- 两阶段发布：只有 allowlist、Secret 扫描、index 合同和 `sanitization-report.json` 全部通过，才上传不可变 Payload A `product-review-evidence-*`；成功运行必须具备 12 张截图，失败/取消由 index 精确列出缺失项。GitHub 返回 A 的真实数字 Artifact ID 与 SHA-256 digest 后，CI 才生成唯一权威 `product-review-manifest/manifest.json`，再作为独立 Provenance B `product-review-manifest-*` 上传。Manifest 的 `artifactId` 指向 A；B 不自指自身 ID。`headSha`、`testedMergeSha` 和 `stagingSha` 不得相互回填。
+- 决策：CI 原始 Playwright report、test results、trace/video 和运行时上传 fixture 永不直接进入 Evidence。Payload A 采用强 allowlist，只接受 `evidence-index.json`、脱敏报告、22 张约定 PNG 及固定名称/大小的 UTF-8 文本日志；PDF、归档、未知二进制、未列名路径和上传原件必须拒绝/移除。
+- 两阶段发布：成功运行必须具备 22 张截图。Manifest schema v3 从 PNG 读取实际尺寸，并记录 Worker/Parser/Chunker Version；GitHub 返回 Payload A 的真实 Artifact ID 与 SHA-256 digest 后才生成独立 Provenance B。
 - 原因：trace、network、HAR、上传原件和失败日志可能携带 HttpOnly Session、文件正文、Object Key 或临时凭据；“测试数据是虚构/临时值”不能替代最小发布边界。GitHub Artifact ID 在上传前不存在且上传后不可变，占位或自指 ID 无法形成自洽 provenance。
 - 失败策略：数据库 Session 无法核验、任一 allowlist 违规、Secret/对象元数据残留、成功截图不完整、index 自相矛盾或上传后 ID/name/digest/Run 绑定失败都会使 CI 失败并阻止后续发布。Staging 不可观测时只能记录 `stagingSha: null`。
 
@@ -165,3 +165,21 @@
 - 决策：部署在 Migration 前短暂停止唯一 Staging 应用写入者，在同一时间边界创建 PostgreSQL custom-format dump、MinIO JSONL inventory 和 Bucket mirror。dump 必须可被 `pg_restore --list` 解析；mirror 的对象数/字节数必须与 inventory 一致且无 partial。对象恢复只进入唯一临时 Bucket，复核后删除，不覆盖正式 Bucket。
 - 原因：只备份数据库会丢失正文，只备份 Bucket 会失去版本/current/权限元数据；跨存储静默漂移必须在变更前后由只读验证发现。临时 Bucket 演练证明备份可读取，同时把破坏正式 Staging 的风险限制在独立命名空间。
 - 回滚：应用镜像可自动回滚，但数据库和对象存储恢复必须在维护窗口人工决策；普通部署、失败和回滚都不得执行 `down -v` 或删除 PostgreSQL/MinIO 命名卷。Production 不参与 v0.4 发布或恢复。
+
+## ADR-026：文档解析使用 PostgreSQL Queue、Lease 和独立 Worker
+
+- 状态：Accepted。
+- 决策：上传请求只创建持久化 `document_ingestion_jobs`，不在 Web 请求内解析。Worker 使用 `FOR UPDATE SKIP LOCKED` 领取、实例级随机 ID、Lease/Heartbeat、最大尝试次数和新 Generation；解析在线程中受硬超时控制。完成事务再次验证 Lease、Worker、project/document/version/current/active 后才激活索引。
+- 原因：解析时间和资源不可预测；Web 进程内同步解析会造成超时、重复执行和无法恢复的半成品。数据库 Queue 复用现有一致性边界，支持多 Worker 并发且不引入未审查的外部消息系统。
+
+## ADR-027：Section/Chunk 保存来源，B2 只使用 PostgreSQL 词法检索
+
+- 状态：Accepted。
+- 决策：Parser 先输出自然 Section，再由确定性 Chunker 生成带内容 Hash、Parser/Chunker Version 和 Source Locator 的 Chunk。PostgreSQL 使用 generated `tsvector`、GIN 与 `pg_trgm`，仅搜索 Active/Current/Stored/Succeeded/Effective 数据。
+- 原因：来源可追溯和版本有效性必须在 Embedding/RAG 之前成为稳定数据合同。B2 的目标是可审计词法基础，不为展示 AI 而提前引入向量、模型或 Provider。
+
+## ADR-028：Staging App 与 Worker 同镜像、独立进程并共同停写备份
+
+- 状态：Accepted。
+- 决策：`project-ai-os-staging-worker` 与 App 使用同一 immutable image，独立 command、无端口、内部网络、scoped credential、资源限制、日志轮转、优雅退出与心跳健康。Migration 前同时停止 App/Worker；回滚按发布前 Worker 是否存在条件恢复或移除。
+- 原因：同镜像保证 Parser/Schema/Version 与 App 创建的 Job 合同一致，独立进程避免解析资源影响请求服务；共同 quiesce 保持 PostgreSQL/MinIO 备份边界。

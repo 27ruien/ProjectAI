@@ -4,6 +4,10 @@ import type {
   DocumentWithCurrentVersion,
 } from "@/lib/db/repositories/document-repository";
 import { findUserById } from "@/lib/db/repositories/user-repository";
+import {
+  ingestionSummariesForVersions,
+  type IngestionSummary,
+} from "@/lib/db/repositories/ingestion-repository";
 import type {
   ProjectDocumentRecord,
   ProjectDocumentVersionRecord,
@@ -31,6 +35,7 @@ const PUBLIC_FAILURE_CODES = new Set([
 export function serializeDocumentVersion(
   version: VersionWithOptionalUploader,
   fallbackUploaderDisplayName = "项目成员",
+  ingestion?: IngestionSummary,
 ): ProjectDocumentVersionDto {
   const failureCode =
     version.failureCode && PUBLIC_FAILURE_CODES.has(version.failureCode)
@@ -55,7 +60,35 @@ export function serializeDocumentVersion(
     createdAt: version.createdAt.toISOString(),
     storedAt: version.storedAt?.toISOString() ?? null,
     supersededAt: version.supersededAt?.toISOString() ?? null,
+    ingestion: {
+      status: ingestion?.status ?? "not_started",
+      indexedVersion:
+        ingestion?.status === "succeeded" ? version.versionNumber : null,
+      generation: ingestion?.generation ?? null,
+      parserVersion: ingestion?.parserVersion ?? null,
+      chunkerVersion: ingestion?.chunkerVersion ?? null,
+      sectionCount: ingestion?.sectionCount ?? 0,
+      chunkCount: ingestion?.chunkCount ?? 0,
+      lastIndexedAt: ingestion?.lastIndexedAt?.toISOString() ?? null,
+      failureCode: ingestion?.failureCode ?? null,
+    },
   };
+}
+
+export async function serializeDocumentVersions(
+  versions: VersionWithOptionalUploader[],
+  fallbackUploaderDisplayName = "项目成员",
+): Promise<ProjectDocumentVersionDto[]> {
+  const summaries = await ingestionSummariesForVersions(
+    versions.map((version) => version.id),
+  );
+  return versions.map((version) =>
+    serializeDocumentVersion(
+      version,
+      fallbackUploaderDisplayName,
+      summaries.get(version.id),
+    ),
+  );
 }
 
 export function documentPermissions(
@@ -72,6 +105,7 @@ export function documentPermissions(
     canArchive: manager && status === "active",
     canRestore: manager && status === "archived",
     canSetCurrent: manager && status === "active",
+    canReindex: manager && status === "active",
   };
 }
 
@@ -82,6 +116,11 @@ export async function serializeProjectDocument(
   currentVersion: VersionWithOptionalUploader | null = null,
 ): Promise<ProjectDocumentDto> {
   const creator = await findUserById(document.createdBy);
+  const ingestion = currentVersion
+    ? (await ingestionSummariesForVersions([currentVersion.id])).get(
+        currentVersion.id,
+      )
+    : undefined;
   return {
     id: document.id,
     projectId: document.projectId,
@@ -92,7 +131,7 @@ export async function serializeProjectDocument(
     updatedAt: document.updatedAt.toISOString(),
     archivedAt: document.archivedAt?.toISOString() ?? null,
     currentVersion: currentVersion
-      ? serializeDocumentVersion(currentVersion)
+      ? serializeDocumentVersion(currentVersion, "项目成员", ingestion)
       : null,
     permissions: documentPermissions(principal, projectRole, document.status),
   };
@@ -103,14 +142,38 @@ export async function serializeDocumentList(
   principal: AuthenticatedPrincipal,
   projectRole: ProjectRole | null,
 ): Promise<ProjectDocumentDto[]> {
+  const summaries = await ingestionSummariesForVersions(
+    documents
+      .map((document) => document.currentVersion?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
   return Promise.all(
-    documents.map((document) =>
-      serializeProjectDocument(
-        document,
-        principal,
-        projectRole,
-        document.currentVersion as DocumentVersionWithUploader | null,
-      ),
-    ),
+    documents.map(async (document) => {
+      const creator = await findUserById(document.createdBy);
+      const currentVersion =
+        document.currentVersion as DocumentVersionWithUploader | null;
+      return {
+        id: document.id,
+        projectId: document.projectId,
+        displayName: document.displayName,
+        status: document.status,
+        createdBy: { displayName: creator?.displayName ?? "项目成员" },
+        createdAt: document.createdAt.toISOString(),
+        updatedAt: document.updatedAt.toISOString(),
+        archivedAt: document.archivedAt?.toISOString() ?? null,
+        currentVersion: currentVersion
+          ? serializeDocumentVersion(
+              currentVersion,
+              "项目成员",
+              summaries.get(currentVersion.id),
+            )
+          : null,
+        permissions: documentPermissions(
+          principal,
+          projectRole,
+          document.status,
+        ),
+      };
+    }),
   );
 }

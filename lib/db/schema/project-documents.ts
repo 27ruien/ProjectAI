@@ -117,6 +117,11 @@ export const projectDocumentVersion = pgTable(
     ),
     uniqueIndex("project_document_versions_upload_uidx").on(table.uploadId),
     uniqueIndex("project_document_versions_object_key_uidx").on(table.objectKey),
+    unique("project_document_versions_id_document_project_unique").on(
+      table.id,
+      table.documentId,
+      table.projectId,
+    ),
     uniqueIndex("project_document_versions_one_current_uidx")
       .on(table.documentId)
       .where(sql`${table.isCurrent} = true`),

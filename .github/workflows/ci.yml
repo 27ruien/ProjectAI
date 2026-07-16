@@ -45,6 +45,24 @@ jobs:
       SEED_MEMBER_A_EMAIL: member-a.ci@projectai.invalid
       SEED_VIEWER_A_EMAIL: viewer-a.ci@projectai.invalid
       PLAYWRIGHT_REVIEW_ARTIFACTS: "1"
+      DOCUMENT_WORKER_POLL_MS: "2000"
+      DOCUMENT_WORKER_LEASE_SECONDS: "120"
+      DOCUMENT_WORKER_MAX_ATTEMPTS: "3"
+      DOCUMENT_MAX_PAGES: "1000"
+      DOCUMENT_MAX_SLIDES: "1000"
+      DOCUMENT_MAX_SHEETS: "100"
+      DOCUMENT_MAX_ROWS: "100000"
+      DOCUMENT_MAX_COLUMNS: "1000"
+      DOCUMENT_MAX_CELLS: "500000"
+      DOCUMENT_MAX_CHARACTERS: "10000000"
+      DOCUMENT_MAX_SECTIONS: "20000"
+      DOCUMENT_MAX_CHUNKS: "50000"
+      DOCUMENT_PARSE_TIMEOUT_MS: "120000"
+      DOCUMENT_CHUNK_TARGET_CHARS: "1800"
+      DOCUMENT_CHUNK_OVERLAP_CHARS: "200"
+      DOCUMENT_CHUNK_MIN_CHARS: "120"
+      DOCUMENT_PARSER_VERSION: "1"
+      DOCUMENT_CHUNKER_VERSION: "1"
 
     steps:
       - name: Checkout
@@ -244,6 +262,13 @@ jobs:
           set -o pipefail
           npm test 2>&1 | tee test-logs/build-and-ssr.log
 
+      - name: Document parser and chunker unit tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:documents 2>&1 | tee test-logs/document-processing-unit.log
+
       - name: Authentication and project-isolation integration tests
         shell: bash
         run: |
@@ -257,6 +282,13 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:storage 2>&1 | tee test-logs/storage-integration.log
+
+      - name: Document processing, queue, lease, and search integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:document-integration 2>&1 | tee test-logs/document-processing-integration.log
 
       - name: Verify database and object-storage consistency
         shell: bash
@@ -287,39 +319,17 @@ jobs:
           mkdir -p test-logs
           npm run test:e2e 2>&1 | tee test-logs/playwright.log
 
-      - name: Observe the deployed Staging revision
+      - name: Remove all CI Sessions, documents, indexes, objects, and temporary files
         if: always()
         shell: bash
         env:
-          STAGING_HEALTH_URL: https://gridworks.cn/tool/projectai-staging/api/health
+          NODE_ENV: test
+          PROJECTAI_TEST_CLEANUP: "1"
         run: |
-          set -Euo pipefail
-          headers="$(mktemp)"
-          body="$(mktemp)"
-          trap 'rm -f "$headers" "$body"' EXIT
-          if ! curl --fail --silent --show-error --max-time 15 \
-            --dump-header "$headers" --output "$body" "$STAGING_HEALTH_URL"; then
-            echo "Staging revision was not observable for this run."
-            exit 0
-          fi
-          grep -q '"status":"ok"' "$body" || {
-            echo "Staging health did not report ok; revision remains null."
-            exit 0
-          }
-          staging_sha="$(awk '
-            BEGIN { IGNORECASE = 1 }
-            /^x-projectai-commit-sha:/ {
-              sub(/^[^:]+:[[:space:]]*/, "")
-              sub(/\r$/, "")
-              print
-            }
-          ' "$headers" | tail -n 1)"
-          if [[ "$staging_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
-            echo "REVIEW_STAGING_SHA=${staging_sha,,}" >> "$GITHUB_ENV"
-            echo "Observed validated Staging runtime revision."
-          else
-            echo "Staging did not expose a validated runtime revision; stagingSha remains null."
-          fi
+          set -Eeuo pipefail
+          mkdir -p test-logs
+          npm run test:cleanup 2>&1 | tee test-logs/test-cleanup.log
+          npm run storage:verify 2>&1 | tee test-logs/post-cleanup-storage-verify.log
 
       - name: Write product review evidence index
         if: always()

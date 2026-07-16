@@ -12,7 +12,7 @@ import {
 } from "@/lib/files/document-service";
 import { fileRouteErrorResponse } from "@/lib/files/http";
 import {
-  serializeDocumentVersion,
+  serializeDocumentVersions,
   serializeProjectDocument,
 } from "@/lib/files/serialization";
 
@@ -56,7 +56,9 @@ export async function POST(
         authorizedProject.projectRole,
         versions.find((item) => item.isCurrent) ?? null,
       ),
-      version: serializeDocumentVersion(version, principal.user.displayName),
+      version: (
+        await serializeDocumentVersions([version], principal.user.displayName)
+      )[0],
     });
   } catch (error) {
     return fileRouteErrorResponse(error);

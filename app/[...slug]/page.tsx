@@ -52,11 +52,15 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
         (project) => project.id === authorizedProject.id,
       );
       if (!currentProject) notFound();
-      // Project files are real in v0.4. Do not serialize the old Mock document
-      // payload into the browser on the documents route. Other project areas
-      // intentionally remain project-filtered Mock capabilities this round.
+      // Project files are real in v0.5. Do not serialize the old Mock document
+      // payload into the browser on the documents route. The knowledge page
+      // receives only same-project Mock module counts alongside real search.
       if (child !== "documents") {
-        projectData = getAuthorizedMockProjectPayload(authorizedProject.id);
+        const payload = getAuthorizedMockProjectPayload(authorizedProject.id);
+        projectData =
+          child === "knowledge"
+            ? { ...payload, documents: [], citations: [] }
+            : payload;
       }
     } catch (error) {
       if (error instanceof AuthorizationError && error.status === 404) notFound();
