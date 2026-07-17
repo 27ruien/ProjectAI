@@ -9,6 +9,8 @@ export const PROJECT_ASSISTANT_PROFILE_ID =
 export const PROJECT_ASSISTANT_PRIMARY_MODEL = "qwen3.7-plus";
 export const PROJECT_ASSISTANT_FALLBACK_MODEL = "qwen3.6-flash";
 export const PROJECT_ASSISTANT_REGION = "cn-beijing";
+const BEIJING_WORKSPACE_HOST =
+  /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cn-beijing\.maas\.aliyuncs\.com$/;
 
 export type AiProviderKind = "qwen" | "fake";
 
@@ -89,7 +91,8 @@ export function validateQwenBaseUrl(value: string): string {
   }
   if (
     (environment === "staging" || environment === "production") &&
-    parsed.hostname !== "dashscope.aliyuncs.com"
+    parsed.hostname !== "dashscope.aliyuncs.com" &&
+    !BEIJING_WORKSPACE_HOST.test(parsed.hostname)
   ) {
     throw new ProjectAssistantError(
       503,

@@ -245,7 +245,12 @@ sudo awk -F= '
     if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
     if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v1") exit 1
     if (count["QWEN_API_KEY_FILE"] != 1 || values["QWEN_API_KEY_FILE"] != "/run/secrets/qwen_api_key") exit 1
-    if (count["QWEN_BASE_URL"] != 1 || values["QWEN_BASE_URL"] !~ /^https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1\/?$/) exit 1
+    base_url = values["QWEN_BASE_URL"]
+    host = base_url
+    sub(/^https:\/\//, "", host)
+    sub(/\/.*$/, "", host)
+    if (count["QWEN_BASE_URL"] != 1 || base_url !~ /^https:\/\/[^/]+\/compatible-mode\/v1\/?$/) exit 1
+    if (host != "dashscope.aliyuncs.com" && host !~ /^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.cn-beijing\.maas\.aliyuncs\.com$/) exit 1
   }
 ' "$ai_env_file" || {
   printf 'Protected Staging AI configuration is invalid or was enabled before the Provider Probe.\n' >&2

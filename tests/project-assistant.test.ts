@@ -114,6 +114,26 @@ describe("AI configuration and Secret boundaries", () => {
       ),
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
     );
+    assert.equal(
+      validateQwenBaseUrl(
+        "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      ),
+      "https://workspace-123.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    );
+    assert.throws(
+      () =>
+        validateQwenBaseUrl(
+          "https://workspace-123.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+        ),
+      /AI 助手配置无效/,
+    );
+    assert.throws(
+      () =>
+        validateQwenBaseUrl(
+          "https://cn-beijing.maas.aliyuncs.com.example.invalid/compatible-mode/v1",
+        ),
+      /AI 助手配置无效/,
+    );
   });
 
   it("allows the Fake Provider only in the explicit test runtime", () => {
