@@ -39,6 +39,7 @@ function fakeConfig(): AiRuntimeConfig {
     qwenBaseUrl: null,
     qwenApiKeyFile: null,
     timeoutMs: 60_000,
+    executionStaleAfterMs: 900_000,
     maxOutputTokens: 1_800,
     temperature: 0.2,
   };
@@ -145,6 +146,21 @@ describe("AI configuration and Secret boundaries", () => {
     process.env.NEXT_PUBLIC_APP_ENV = "test";
     Object.assign(process.env, { NODE_ENV: "test" });
     assert.equal(getAiRuntimeConfig().provider, "fake");
+  });
+
+  it("bounds stale Execution recovery between five minutes and one hour", () => {
+    process.env.AI_PROVIDER = "fake";
+    process.env.AI_ASSISTANT_ENABLED = "true";
+    process.env.NEXT_PUBLIC_APP_ENV = "test";
+    Object.assign(process.env, { NODE_ENV: "test" });
+    delete process.env.AI_EXECUTION_STALE_AFTER_MS;
+    assert.equal(getAiRuntimeConfig().executionStaleAfterMs, 900_000);
+    process.env.AI_EXECUTION_STALE_AFTER_MS = "300000";
+    assert.equal(getAiRuntimeConfig().executionStaleAfterMs, 300_000);
+    process.env.AI_EXECUTION_STALE_AFTER_MS = "299999";
+    assert.throws(() => getAiRuntimeConfig(), /AI 助手配置无效/);
+    process.env.AI_EXECUTION_STALE_AFTER_MS = "3600001";
+    assert.throws(() => getAiRuntimeConfig(), /AI 助手配置无效/);
   });
 });
 

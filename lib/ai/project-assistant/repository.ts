@@ -403,6 +403,7 @@ export async function reserveAssistantExecution(input: {
   question: string;
   modelProfileId: string;
   idempotencyKey: string;
+  executionStaleAfterMs: number;
 }): Promise<Reservation> {
   const scope = [
     input.projectId,
@@ -425,7 +426,6 @@ export async function reserveAssistantExecution(input: {
       if (error instanceof AuthorizationError) return { error } as const;
       throw error;
     }
-    await requireProjectAssistantProfile(tx, input.modelProfileId);
     const thread = await ownedThread(
       tx,
       input.principal,
@@ -456,6 +456,7 @@ export async function reserveAssistantExecution(input: {
       } as const;
     }
 
+    const incomingQuestionHash = questionHash(input.question);
     const [existing] = await tx
       .select()
       .from(aiExecution)
@@ -469,6 +470,38 @@ export async function reserveAssistantExecution(input: {
       )
       .limit(1);
     if (existing) {
+      const modelProfileMatched =
+        existing.modelProfileId === input.modelProfileId;
+      if (
+        existing.questionSha256 !== incomingQuestionHash ||
+        !modelProfileMatched
+      ) {
+        await writeAuditEvent(
+          {
+            actorUserId: input.principal.user.id,
+            projectId: input.projectId,
+            eventType: "ai_execution_idempotency_conflict",
+            entityType: "ai_execution",
+            entityId: existing.id,
+            result: "denied",
+            metadata: {
+              existingExecutionId: existing.id,
+              existingQuestionHash: existing.questionSha256,
+              incomingQuestionHash,
+              modelProfileMatched,
+            },
+            ...getRequestAuditContext(input.requestHeaders),
+          },
+          tx,
+        );
+        return {
+          error: new ProjectAssistantError(
+            409,
+            "AI_IDEMPOTENCY_CONFLICT",
+            "Idempotency-Key 已用于不同请求",
+          ),
+        } as const;
+      }
       await writeAuditEvent(
         {
           actorUserId: input.principal.user.id,
@@ -484,6 +517,7 @@ export async function reserveAssistantExecution(input: {
       );
       return { execution: existing, replayed: true } as const;
     }
+    await requireProjectAssistantProfile(tx, input.modelProfileId);
 
     const minuteBoundary = new Date(Date.now() - 60_000);
     const dayBoundary = new Date();
@@ -520,7 +554,7 @@ export async function reserveAssistantExecution(input: {
         ), 0) as project_tokens
       from ai_executions
       where created_at >= ${dayBoundary}
-        and status = 'succeeded'
+        and total_token_count is not null
     `);
     const usage = dailyUsage.rows[0];
     if (!limitCode && Number(usage?.user_tokens ?? 0) >= limits.userDailyTokens) {
@@ -536,6 +570,76 @@ export async function reserveAssistantExecution(input: {
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended('projectai-ai-global-concurrency', 0))`,
     );
+    const staleBefore = new Date(Date.now() - input.executionStaleAfterMs);
+    const staleExecutions = await tx
+      .select()
+      .from(aiExecution)
+      .where(
+        and(
+          inArray(aiExecution.status, RUNNING_EXECUTION_STATUSES),
+          sql`${aiExecution.startedAt} <= ${staleBefore}`,
+        ),
+      )
+      .for("update", { of: aiExecution });
+    const recoveredAt = new Date();
+    for (const staleExecution of staleExecutions) {
+      const [failedMessage] = await tx
+        .update(aiMessage)
+        .set({
+          status: "failed",
+          content: "上一次回答因服务中断未完成，请重新发送问题。",
+        })
+        .where(
+          and(
+            eq(aiMessage.id, staleExecution.assistantMessageId),
+            eq(aiMessage.projectId, staleExecution.projectId),
+            eq(aiMessage.threadId, staleExecution.threadId),
+            eq(aiMessage.status, "pending"),
+          ),
+        )
+        .returning({ id: aiMessage.id });
+      if (!failedMessage) {
+        throw new ProjectAssistantError(
+          503,
+          "AI_EXECUTION_FAILED",
+          "AI 回答状态暂时不可用",
+        );
+      }
+      await tx
+        .update(aiExecution)
+        .set({
+          status: "failed",
+          failureCode: "AI_EXECUTION_STALE",
+          completedAt: recoveredAt,
+        })
+        .where(eq(aiExecution.id, staleExecution.id));
+      await tx
+        .update(aiThread)
+        .set({ updatedAt: recoveredAt })
+        .where(
+          and(
+            eq(aiThread.id, staleExecution.threadId),
+            eq(aiThread.projectId, staleExecution.projectId),
+            eq(aiThread.createdBy, staleExecution.actorUserId),
+          ),
+        );
+      await writeAuditEvent(
+        {
+          actorUserId: staleExecution.actorUserId,
+          projectId: staleExecution.projectId,
+          eventType: "ai_execution_stale_recovered",
+          entityType: "ai_execution",
+          entityId: staleExecution.id,
+          result: "succeeded",
+          metadata: {
+            previousStatus: staleExecution.status,
+            staleAfterMs: input.executionStaleAfterMs,
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+    }
     const [concurrency] = await tx
       .select({ value: count(aiExecution.id).mapWith(Number) })
       .from(aiExecution)
@@ -602,7 +706,7 @@ export async function reserveAssistantExecution(input: {
         promptVersion: PROJECT_ASSISTANT_PROMPT_VERSION,
         retrievalVersion: PROJECT_ASSISTANT_RETRIEVAL_VERSION,
         gatewayVersion: AI_GATEWAY_VERSION,
-        questionSha256: questionHash(input.question),
+        questionSha256: incomingQuestionHash,
         idempotencyKey: input.idempotencyKey,
       })
       .returning();
@@ -843,6 +947,8 @@ export async function finalizeSuccessfulExecution(input: {
 export async function finalizeFailedExecution(input: {
   executionId: string;
   failureCode: string;
+  gateway: AiGatewayResult | null;
+  evidenceCount: number;
   requestHeaders: Headers;
 }): Promise<void> {
   const completedAt = new Date();
@@ -866,7 +972,23 @@ export async function finalizeFailedExecution(input: {
     await tx
       .update(aiExecution)
       .set({
+        provider: input.gateway?.provider ?? locked.provider,
+        actualModel: input.gateway?.actualModel ?? locked.actualModel,
+        fallbackUsed: input.gateway?.fallbackUsed ?? locked.fallbackUsed,
         status: "failed",
+        evidenceCount: input.evidenceCount,
+        inputTokenCount: input.gateway
+          ? input.gateway.inputTokens
+          : locked.inputTokenCount,
+        outputTokenCount: input.gateway
+          ? input.gateway.outputTokens
+          : locked.outputTokenCount,
+        totalTokenCount: input.gateway
+          ? input.gateway.totalTokens
+          : locked.totalTokenCount,
+        latencyMs: input.gateway?.latencyMs ?? locked.latencyMs,
+        providerRequestId:
+          input.gateway?.providerRequestId ?? locked.providerRequestId,
         failureCode: input.failureCode.slice(0, 80),
         completedAt,
       })
@@ -883,7 +1005,17 @@ export async function finalizeFailedExecution(input: {
         entityType: "ai_execution",
         entityId: locked.id,
         result: "failed",
-        metadata: { failureCode: input.failureCode },
+        metadata: {
+          failureCode: input.failureCode,
+          provider: input.gateway?.provider ?? locked.provider,
+          actualModel: input.gateway?.actualModel ?? locked.actualModel,
+          fallbackUsed: input.gateway?.fallbackUsed ?? locked.fallbackUsed,
+          evidenceCount: input.evidenceCount,
+          inputTokenCount: input.gateway?.inputTokens ?? null,
+          outputTokenCount: input.gateway?.outputTokens ?? null,
+          totalTokenCount: input.gateway?.totalTokens ?? null,
+          latencyMs: input.gateway?.latencyMs ?? null,
+        },
         ...getRequestAuditContext(input.requestHeaders),
       },
       tx,

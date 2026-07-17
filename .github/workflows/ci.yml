@@ -40,6 +40,7 @@ jobs:
       NEXT_PUBLIC_COMMIT_SHA: ${{ github.sha }}
       AI_REGION: cn-beijing
       AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v1
+      AI_EXECUTION_STALE_AFTER_MS: "900000"
       AI_GATEWAY_VERSION: "1"
       SEED_ADMIN_EMAIL: admin.ci@projectai.invalid
       SEED_MANAGER_A_EMAIL: manager-a.ci@projectai.invalid

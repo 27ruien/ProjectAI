@@ -45,6 +45,12 @@ export class FakeProjectAssistantProvider
       "current_question_json",
     );
     const answerToRepair = taggedJsonString(request.userPrompt, "answer_json");
+    if (
+      request.purpose === "repair" &&
+      answerToRepair.includes("引用修复供应商失败验证")
+    ) {
+      throw new AiProviderError("SERVER_ERROR", false);
+    }
     if (request.userPrompt.includes("FAKE_401")) {
       throw new AiProviderError("UNAUTHORIZED", false);
     }
@@ -83,6 +89,7 @@ export class FakeProjectAssistantProvider
     } else if (
       request.userPrompt.includes("FAKE_REPAIR_FAIL") ||
       currentQuestion.includes("引用修复失败验证") ||
+      currentQuestion.includes("引用修复供应商失败验证") ||
       answerToRepair.includes("引用修复失败验证") ||
       (request.purpose === "answer" &&
         (request.userPrompt.includes("FAKE_INVALID_CITATION") ||
@@ -90,8 +97,9 @@ export class FakeProjectAssistantProvider
     ) {
       text =
         currentQuestion.includes("引用修复失败验证") ||
+        currentQuestion.includes("引用修复供应商失败验证") ||
         answerToRepair.includes("引用修复失败验证")
-        ? "引用修复失败验证。[E99]"
+        ? `${currentQuestion || answerToRepair}。[E99]`
         : "客户要求在 2026 年 10 月 15 日上线。[E99]";
     } else if (request.purpose === "repair") {
       text = "客户要求在 2026 年 10 月 15 日上线。[E1]";

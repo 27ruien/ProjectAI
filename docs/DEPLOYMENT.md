@@ -21,6 +21,7 @@ AI_ASSISTANT_ENABLED=false
 AI_PROVIDER=qwen
 AI_REGION=cn-beijing
 AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1
+AI_EXECUTION_STALE_AFTER_MS=900000
 ```
 
 环境条必须显示 build 元数据。资料页显示异步解析/索引状态；知识页同时提供原始词法搜索和真实 Grounded 项目助手，并明确说明语义向量检索尚未启用。robots 与 Nginx header 均设置 noindex。认证配置继续使用完整 Staging `BETTER_AUTH_URL`、独立 `AUTH_COOKIE_PREFIX` 和 `/tool/projectai-staging` Cookie Path；Cookie 必须 HttpOnly、SameSite=Lax、Secure。
@@ -40,7 +41,7 @@ AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1
 
 AI 配置分为两个受保护文件：
 
-- `/srv/projectai-staging/.env.ai`：普通文件、非 symlink、`deploy:deploy 600`，包含 Feature Flag、Provider、Region、Profile、北京 Qwen Base URL 和容器内 Secret File 路径；不得进入 Artifact 或日志。
+- `/srv/projectai-staging/.env.ai`：普通文件、非 symlink、`deploy:deploy 600`，包含 Feature Flag、Provider、Region、Profile、`AI_EXECUTION_STALE_AFTER_MS=900000`、北京 Qwen Base URL 和容器内 Secret File 路径；不得进入 Artifact 或日志。
 - `/srv/projectai-staging/secrets/qwen_api_key`：普通非空文件、非 symlink、`deploy:deploy 600`；部署只检查状态，禁止读取、打印、复制、编码或导出内容。
 - Compose 只把 `.env.ai` 和只读 `qwen_api_key` 挂载给 App。Worker、Migration、Storage/Document/AI Smoke operations service 都不获得 Qwen Secret；AI Smoke 只能通过 App API 触发真实 Provider。
 

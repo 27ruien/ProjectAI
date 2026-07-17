@@ -6,10 +6,7 @@ import type {
   ProjectAssistantThreadDto,
   ProjectAssistantThreadSummaryDto,
 } from "@/types/project-assistant";
-import {
-  PROJECT_ASSISTANT_PROFILE_ID,
-  requireAiAssistantEnabled,
-} from "./config";
+import { requireAiAssistantEnabled } from "./config";
 import {
   buildCitationRepairPrompt,
   buildGroundedUserPrompt,
@@ -36,7 +33,7 @@ import {
 const questionSchema = z
   .object({
     question: z.string().trim().min(2).max(2_000),
-    modelProfileId: z.literal(PROJECT_ASSISTANT_PROFILE_ID),
+    modelProfileId: z.string().trim().min(1).max(120),
   })
   .strict();
 
@@ -139,6 +136,7 @@ export async function askProjectAssistant(input: {
     question: parsed.data.question,
     modelProfileId: parsed.data.modelProfileId,
     idempotencyKey: idempotencyKey(input.idempotencyKey),
+    executionStaleAfterMs: config.executionStaleAfterMs,
   });
   if (reservation.replayed) {
     return responseForExecution({
@@ -149,6 +147,8 @@ export async function askProjectAssistant(input: {
     });
   }
 
+  let consumedGatewayResult: AiGatewayResult | null = null;
+  let evidenceCount = 0;
   try {
     await updateExecutionPhase(reservation.execution.id, "retrieving");
     const [history, evidence] = await Promise.all([
@@ -168,6 +168,7 @@ export async function askProjectAssistant(input: {
         maxChars: 24_000,
       }),
     ]);
+    evidenceCount = evidence.length;
     if (evidence.length === 0) {
       await finalizeInsufficientEvidence({
         execution: reservation.execution,
@@ -184,7 +185,7 @@ export async function askProjectAssistant(input: {
 
     const gateway = createProjectAssistantGateway(config);
     await updateExecutionPhase(reservation.execution.id, "calling_provider");
-    let gatewayResult = await gateway.generate({
+    consumedGatewayResult = await gateway.generate({
       purpose: "answer",
       systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGroundedUserPrompt({
@@ -194,17 +195,23 @@ export async function askProjectAssistant(input: {
       }),
     });
     await updateExecutionPhase(reservation.execution.id, "validating");
-    let validated = validateAndMapCitations(gatewayResult.text, evidence);
+    let validated = validateAndMapCitations(
+      consumedGatewayResult.text,
+      evidence,
+    );
     if (!validated) {
       const repaired = await gateway.generate({
         purpose: "repair",
         systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
         userPrompt: buildCitationRepairPrompt({
-          answer: gatewayResult.text,
+          answer: consumedGatewayResult.text,
           evidence,
         }),
       });
-      gatewayResult = combinedGatewayResult(gatewayResult, repaired);
+      consumedGatewayResult = combinedGatewayResult(
+        consumedGatewayResult,
+        repaired,
+      );
       validated = validateAndMapCitations(repaired.text, evidence);
     }
     if (!validated) {
@@ -217,7 +224,7 @@ export async function askProjectAssistant(input: {
     await finalizeSuccessfulExecution({
       execution: reservation.execution,
       answer: validated,
-      gateway: gatewayResult,
+      gateway: consumedGatewayResult,
       evidenceCount: evidence.length,
       requestHeaders: input.requestHeaders,
     });
@@ -240,6 +247,8 @@ export async function askProjectAssistant(input: {
     await finalizeFailedExecution({
       executionId: reservation.execution.id,
       failureCode: controlled.code,
+      gateway: consumedGatewayResult,
+      evidenceCount,
       requestHeaders: input.requestHeaders,
     }).catch(() => undefined);
     throw controlled;

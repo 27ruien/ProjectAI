@@ -50,7 +50,7 @@
 | V06-GATEWAY-001 | Secret Reader、Qwen Adapter、重试/Fallback、受控错误与 Usage | 通过 | 单元、Fake Provider 和真实 Staging Probe/Smoke | 已关闭 |
 | V06-GROUNDING-001 | B2 Evidence、Prompt 分区、Prompt Injection、Citation Validation/Repair | 通过 | 单元/集成/Playwright 与真实 Staging Citation | 已关闭 |
 | V06-AUTHZ-001 | 项目读取角色可用、Thread 创建者私有、跨项目/篡改统一 404 | 通过 | Admin/Manager/Member/Viewer、未认证与私有 Thread 回归 | 已关闭 |
-| V06-LIMITS-001 | 幂等、分钟限流、用户/项目日 Token、全局并发 | 通过 | PostgreSQL 集成与限流 Audit | 已关闭 |
+| V06-LIMITS-001 | 请求指纹幂等、分钟限流、失败/成功 Token 日额度、stale 回收与全局并发 | 通过 | PostgreSQL 指纹冲突、并发锁、stale 回收、失败 Usage 与限流 Audit 集成 | 已关闭 |
 | V06-SEC006-001 | AI 不写正式业务数据，无 Tool/Function Calling | 通过 | 架构扫描、模块依赖与 Staging 行为 | 已关闭 |
 | V06-EVIDENCE-001 | 8 张 B3-A 截图、AI Manifest 字段与 Qwen/Prompt 脱敏 | 通过 | 当前 Head Evidence/Provenance；动态 ID/Digest 见 Draft PR | 已关闭 |
 | V06-STAGING-001 | App-only Secret、Flag=false→Probe→App-only enable、真实问答与清理 | 通过 | 受控 Staging 部署证据；Production 前后精确一致 | 已关闭 |

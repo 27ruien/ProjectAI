@@ -22,6 +22,7 @@ export type AiRuntimeConfig = {
   qwenBaseUrl: string | null;
   qwenApiKeyFile: string | null;
   timeoutMs: number;
+  executionStaleAfterMs: number;
   maxOutputTokens: number;
   temperature: number;
 };
@@ -154,7 +155,18 @@ export function getAiRuntimeConfig(): AiRuntimeConfig {
         ? validateQwenBaseUrl(configuredBaseUrl)
         : null,
     qwenApiKeyFile: process.env.QWEN_API_KEY_FILE?.trim() || null,
-    timeoutMs: integerEnvironment("AI_PROVIDER_TIMEOUT_MS", 60_000, 1_000, 120_000),
+    timeoutMs: integerEnvironment(
+      "AI_PROVIDER_TIMEOUT_MS",
+      60_000,
+      1_000,
+      120_000,
+    ),
+    executionStaleAfterMs: integerEnvironment(
+      "AI_EXECUTION_STALE_AFTER_MS",
+      900_000,
+      300_000,
+      3_600_000,
+    ),
     maxOutputTokens: integerEnvironment(
       "AI_MAX_OUTPUT_TOKENS",
       1_800,

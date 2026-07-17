@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeDatabasePool, getPool } from "../lib/db/client";
+import { finalizeFailedExecution } from "../lib/ai/project-assistant/repository";
 import type {
   ProjectDocumentUploadResponse,
   ProjectDocumentVersionsResponse,
@@ -185,8 +186,21 @@ async function ask(
   session: VerificationSession,
   threadId: string,
   question: string,
+  key: string = randomUUID(),
 ): Promise<ProjectAssistantMessageResponse> {
-  const response = await authenticatedFetch(
+  const response = await askResponse(session, threadId, question, key);
+  assert(response.status === 200, `Assistant ask returned ${response.status}.`);
+  return responseJson(response, "Assistant ask");
+}
+
+async function askResponse(
+  session: VerificationSession,
+  threadId: string,
+  question: string,
+  key: string,
+  profileId = modelProfileId,
+): Promise<Response> {
+  return authenticatedFetch(
     environment,
     session,
     threadPath(environment.projectAId, threadId, "/messages"),
@@ -194,13 +208,11 @@ async function ask(
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "idempotency-key": randomUUID(),
+        "idempotency-key": key,
       },
-      body: JSON.stringify({ question, modelProfileId }),
+      body: JSON.stringify({ question, modelProfileId: profileId }),
     },
   );
-  assert(response.status === 200, `Assistant ask returned ${response.status}.`);
-  return responseJson(response, "Assistant ask");
 }
 
 async function waitForIngestion(documentId: string, versionId: string) {
@@ -273,11 +285,15 @@ try {
   );
   assert(version.ingestion.chunkCount > 0, "Grounding fixture has no Chunk.");
 
+  const pool = getPool();
   const managerThread = await createThread(manager);
+  const groundedKey = randomUUID();
+  const groundedQuestion = `${titlePrefix}${runId}：客户要求什么时候上线？`;
   const grounded = await ask(
     manager,
     managerThread.thread.id,
-    `${titlePrefix}${runId}：客户要求什么时候上线？`,
+    groundedQuestion,
+    groundedKey,
   );
   assert(grounded.execution.status === "succeeded", "Grounded ask did not succeed.");
   assert(
@@ -301,7 +317,236 @@ try {
     "Assistant response leaked internal metadata.",
   );
 
-  const pool = getPool();
+  const replay = await ask(
+    manager,
+    managerThread.thread.id,
+    groundedQuestion,
+    groundedKey,
+  );
+  assert(
+    replay.execution.id === grounded.execution.id &&
+      replay.execution.replayed === true,
+    "The same request fingerprint did not replay the original Execution.",
+  );
+  const conflictResponse = await askResponse(
+    manager,
+    managerThread.thread.id,
+    `${titlePrefix}${runId}：这是不同的问题`,
+    groundedKey,
+  );
+  assert(
+    conflictResponse.status === 409,
+    `Idempotency conflict returned ${conflictResponse.status}.`,
+  );
+  const conflictBody = await responseJson<{
+    error: { code: string; message: string };
+  }>(conflictResponse, "Idempotency conflict");
+  assert(
+    conflictBody.error.code === "AI_IDEMPOTENCY_CONFLICT",
+    "Idempotency conflict returned the wrong error code.",
+  );
+  const fingerprintCounts = await pool.query<{
+    executions: number;
+    messages: number;
+  }>(
+    `select
+      (select count(*)::int from ai_executions where thread_id = $1) as executions,
+      (select count(*)::int from ai_messages where thread_id = $1) as messages`,
+    [managerThread.thread.id],
+  );
+  assert(
+    fingerprintCounts.rows[0]?.executions === 1 &&
+      fingerprintCounts.rows[0]?.messages === 2,
+    "Idempotency conflict created extra Messages or Executions.",
+  );
+
+  const concurrentThread = await createThread(manager);
+  const concurrentKey = randomUUID();
+  const concurrentResponses = await Promise.all([
+    askResponse(
+      manager,
+      concurrentThread.thread.id,
+      `${titlePrefix}${runId} 并发 A：客户要求什么时候上线？`,
+      concurrentKey,
+    ),
+    askResponse(
+      manager,
+      concurrentThread.thread.id,
+      `${titlePrefix}${runId} 并发 B：客户上线日期是什么？`,
+      concurrentKey,
+    ),
+  ]);
+  assert(
+    concurrentResponses.map((response) => response.status).sort().join(",") ===
+      "200,409",
+    "Concurrent different fingerprints did not produce one success and one conflict.",
+  );
+  const concurrentSuccessResponse = concurrentResponses.find(
+    (response) => response.status === 200,
+  )!;
+  const concurrentConflictResponse = concurrentResponses.find(
+    (response) => response.status === 409,
+  )!;
+  const concurrentSuccess = await responseJson<ProjectAssistantMessageResponse>(
+    concurrentSuccessResponse,
+    "Concurrent assistant success",
+  );
+  const concurrentConflict = await responseJson<{
+    error: { code: string };
+  }>(concurrentConflictResponse, "Concurrent idempotency conflict");
+  assert(
+    concurrentSuccess.execution.status === "succeeded" &&
+      concurrentSuccess.assistantMessage.citations.length > 0,
+    "Concurrent winning request did not persist a grounded answer.",
+  );
+  assert(
+    concurrentConflict.error.code === "AI_IDEMPOTENCY_CONFLICT",
+    "Concurrent losing request did not return the conflict contract.",
+  );
+  const concurrentCounts = await pool.query<{
+    executions: number;
+    messages: number;
+  }>(
+    `select
+      (select count(*)::int from ai_executions where thread_id = $1) as executions,
+      (select count(*)::int from ai_messages where thread_id = $1) as messages`,
+    [concurrentThread.thread.id],
+  );
+  assert(
+    concurrentCounts.rows[0]?.executions === 1 &&
+      concurrentCounts.rows[0]?.messages === 2,
+    "Concurrent conflict created more than one Execution or Message pair.",
+  );
+
+  const managerUser = await pool.query<{ id: string }>(
+    "select id from users where email = $1",
+    [managerEmail],
+  );
+  const managerUserId = managerUser.rows[0]?.id;
+  assert(managerUserId, "Manager identity was not found for stale verification.");
+  const staleFixtures = ["reserved", "calling_provider", "validating"].map(
+    (status, index) => ({
+      status,
+      executionId: randomUUID(),
+      userMessageId: randomUUID(),
+      assistantMessageId: randomUUID(),
+      key: randomUUID(),
+      question: `${titlePrefix}${runId} stale-${index}`,
+    }),
+  );
+  const staleClient = await pool.connect();
+  try {
+    await staleClient.query("begin");
+    for (const fixture of staleFixtures) {
+      await staleClient.query(
+        `insert into ai_messages (
+          id, project_id, thread_id, created_by, role, status, content,
+          execution_id, created_at
+        ) values
+          ($1, $2, $3, $4, 'user', 'completed', $5, $6,
+            now() - interval '16 minutes'),
+          ($7, $2, $3, $4, 'assistant', 'pending', '', $6,
+            now() - interval '16 minutes')`,
+        [
+          fixture.userMessageId,
+          environment.projectAId,
+          managerThread.thread.id,
+          managerUserId,
+          fixture.question,
+          fixture.executionId,
+          fixture.assistantMessageId,
+        ],
+      );
+      await staleClient.query(
+        `insert into ai_executions (
+          id, project_id, thread_id, user_message_id, assistant_message_id,
+          actor_user_id, model_profile_id, provider, requested_model, status,
+          prompt_version, retrieval_version, gateway_version, question_sha256,
+          idempotency_key, started_at, created_at
+        ) values (
+          $1, $2, $3, $4, $5, $6, $7, 'qwen', 'qwen3.7-plus', $8,
+          '1', 'b2-lexical-1', '1', $9, $10,
+          now() - interval '16 minutes', now() - interval '16 minutes'
+        )`,
+        [
+          fixture.executionId,
+          environment.projectAId,
+          managerThread.thread.id,
+          fixture.userMessageId,
+          fixture.assistantMessageId,
+          managerUserId,
+          modelProfileId,
+          fixture.status,
+          createHash("sha256").update(fixture.question).digest("hex"),
+          fixture.key,
+        ],
+      );
+    }
+    await staleClient.query("commit");
+  } catch (error) {
+    await staleClient.query("rollback");
+    throw error;
+  } finally {
+    staleClient.release();
+  }
+  const staleRecoveryTrigger = await ask(
+    manager,
+    managerThread.thread.id,
+    "土星环样本容器的审批金额是多少？",
+  );
+  assert(
+    staleRecoveryTrigger.execution.status === "insufficient_evidence",
+    "Stale recovery did not release the global concurrency slot.",
+  );
+  const staleState = await pool.query<{
+    executions: number;
+    failed_messages: number;
+    audits: number;
+  }>(
+    `select
+      (
+        select count(*)::int from ai_executions
+        where id = any($1::text[])
+          and status = 'failed'
+          and failure_code = 'AI_EXECUTION_STALE'
+          and completed_at is not null
+      ) as executions,
+      (
+        select count(*)::int from ai_messages
+        where id = any($2::text[])
+          and status = 'failed'
+          and content = '上一次回答因服务中断未完成，请重新发送问题。'
+      ) as failed_messages,
+      (
+        select count(*)::int from audit_events
+        where entity_id = any($1::text[])
+          and event_type = 'ai_execution_stale_recovered'
+          and result = 'succeeded'
+      ) as audits`,
+    [
+      staleFixtures.map((fixture) => fixture.executionId),
+      staleFixtures.map((fixture) => fixture.assistantMessageId),
+    ],
+  );
+  assert(
+    staleState.rows[0]?.executions === 3 &&
+      staleState.rows[0]?.failed_messages === 3 &&
+      staleState.rows[0]?.audits === 3,
+    "Stale Execution recovery did not atomically close all fixtures.",
+  );
+  const staleReplay = await ask(
+    manager,
+    managerThread.thread.id,
+    staleFixtures[0]!.question,
+    staleFixtures[0]!.key,
+  );
+  assert(
+    staleReplay.execution.id === staleFixtures[0]!.executionId &&
+      staleReplay.execution.status === "failed" &&
+      staleReplay.execution.replayed === true,
+    "A recovered stale Idempotency-Key did not replay the failed result.",
+  );
+
   const execution = await pool.query<{
     actual_model: string | null;
     input_token_count: number | null;
@@ -385,12 +630,116 @@ try {
     "Viewer grounded ask failed.",
   );
 
+  const failedUsageExecutionId = randomUUID();
+  const failedUsageUserMessageId = randomUUID();
+  const failedUsageAssistantMessageId = randomUUID();
+  const failedUsageQuestion = `${titlePrefix}${runId} Citation failure quota`;
+  await pool.query(
+    `insert into ai_messages (
+      id, project_id, thread_id, created_by, role, status, content,
+      execution_id, created_at
+    ) values
+      ($1, $2, $3, $4, 'user', 'completed', $5, $6,
+        now() - interval '2 minutes'),
+      ($7, $2, $3, $4, 'assistant', 'pending', '', $6,
+        now() - interval '2 minutes')`,
+    [
+      failedUsageUserMessageId,
+      environment.projectAId,
+      managerThread.thread.id,
+      managerUserId,
+      failedUsageQuestion,
+      failedUsageExecutionId,
+      failedUsageAssistantMessageId,
+    ],
+  );
+  await pool.query(
+    `insert into ai_executions (
+      id, project_id, thread_id, user_message_id, assistant_message_id,
+      actor_user_id, model_profile_id, provider, requested_model, status,
+      prompt_version, retrieval_version, gateway_version, question_sha256,
+      idempotency_key, started_at, created_at
+    ) values (
+      $1, $2, $3, $4, $5, $6, $7, 'qwen', 'qwen3.7-plus', 'validating',
+      '1', 'b2-lexical-1', '1', $8, $9,
+      now() - interval '2 minutes', now() - interval '2 minutes'
+    )`,
+    [
+      failedUsageExecutionId,
+      environment.projectAId,
+      managerThread.thread.id,
+      failedUsageUserMessageId,
+      failedUsageAssistantMessageId,
+      managerUserId,
+      modelProfileId,
+      createHash("sha256").update(failedUsageQuestion).digest("hex"),
+      randomUUID(),
+    ],
+  );
+  await finalizeFailedExecution({
+    executionId: failedUsageExecutionId,
+    failureCode: "AI_CITATION_VALIDATION_FAILED",
+    gateway: {
+      provider: "qwen",
+      requestedModel: "qwen3.7-plus",
+      actualModel: "qwen3.7-plus",
+      fallbackUsed: false,
+      text: "",
+      inputTokens: 60_000,
+      outputTokens: 40_000,
+      totalTokens: 100_000,
+      providerRequestId: `staging-fixture-${runId}`,
+      latencyMs: 123,
+    },
+    evidenceCount: 1,
+    requestHeaders: new Headers({
+      "user-agent": managerUserAgent,
+      "x-real-ip": "198.51.100.82",
+    }),
+  });
+  const failedUsage = await pool.query<{
+    status: string;
+    failure_code: string | null;
+    total_token_count: number | null;
+    latency_ms: number | null;
+  }>(
+    `select status, failure_code, total_token_count, latency_ms
+     from ai_executions where id = $1`,
+    [failedUsageExecutionId],
+  );
+  assert(
+    failedUsage.rows[0]?.status === "failed" &&
+      failedUsage.rows[0]?.failure_code === "AI_CITATION_VALIDATION_FAILED" &&
+      failedUsage.rows[0]?.total_token_count === 100_000 &&
+      failedUsage.rows[0]?.latency_ms === 123,
+    "Known Citation failure usage was not finalized on Staging.",
+  );
+  const failedUsageQuotaResponse = await askResponse(
+    manager,
+    managerThread.thread.id,
+    "失败 Token 日额度验证不应调用 Provider",
+    randomUUID(),
+  );
+  assert(
+    failedUsageQuotaResponse.status === 429,
+    `Failed Token quota returned ${failedUsageQuotaResponse.status}.`,
+  );
+  const failedUsageQuota = await responseJson<{
+    error: { code: string };
+  }>(failedUsageQuotaResponse, "Failed Token quota");
+  assert(
+    failedUsageQuota.error.code === "AI_USER_DAILY_LIMIT_REACHED",
+    "Failed Token usage was not counted in the daily quota.",
+  );
+
   const persisted = await pool.query<{
     threads: number;
     messages: number;
     executions: number;
     citations: number;
     succeeded_audits: number;
+    conflict_audits: number;
+    stale_audits: number;
     raw_question_audits: number;
   }>(
     `select
@@ -407,6 +756,18 @@ try {
       (
         select count(*)::int
         from audit_events
+        where event_type = 'ai_execution_idempotency_conflict'
+          and user_agent = any($2::text[])
+      ) as conflict_audits,
+      (
+        select count(*)::int
+        from audit_events
+        where event_type = 'ai_execution_stale_recovered'
+          and user_agent = any($2::text[])
+      ) as stale_audits,
+      (
+        select count(*)::int
+        from audit_events
         where user_agent = any($2::text[])
           and (
             metadata ? 'question'
@@ -417,11 +778,13 @@ try {
     [[...trackedThreadIds], [managerUserAgent, viewerUserAgent]],
   );
   const counts = persisted.rows[0]!;
-  assert(counts.threads === 2, "Private Threads were not persisted.");
-  assert(counts.messages >= 6, "Messages were not persisted.");
-  assert(counts.executions === 3, "Executions were not persisted.");
-  assert(counts.citations >= 2, "Citations were not persisted.");
-  assert(counts.succeeded_audits >= 2, "AI success Audit was not persisted.");
+  assert(counts.threads === 3, "Private Threads were not persisted.");
+  assert(counts.messages >= 18, "Messages were not persisted.");
+  assert(counts.executions === 9, "Executions were not persisted.");
+  assert(counts.citations >= 3, "Citations were not persisted.");
+  assert(counts.succeeded_audits >= 3, "AI success Audit was not persisted.");
+  assert(counts.conflict_audits >= 2, "Idempotency conflict Audit was not persisted.");
+  assert(counts.stale_audits === 3, "Stale recovery Audit was not persisted.");
   assert(counts.raw_question_audits === 0, "AI Audit stored raw prompt data.");
 
   await signOut(environment, manager);
@@ -443,6 +806,14 @@ try {
       groundedAnswer: true,
       citation: true,
       sourceLocator: true,
+      idempotencyReplay: true,
+      idempotencyConflict: true,
+      concurrentConflict: true,
+      conflictWithoutProvider: true,
+      staleRecovery: true,
+      staleConcurrencyReleased: true,
+      failedCitationKnownUsage: true,
+      failedUsageDailyQuota: true,
       insufficientEvidenceWithoutProvider: true,
       viewer: true,
       crossProject404: true,
