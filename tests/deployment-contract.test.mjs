@@ -397,7 +397,16 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
   const probeIndex = script.indexOf("npm run ai:probe:qwen");
   const enableIndex = script.indexOf('print "AI_ASSISTANT_ENABLED=true"');
   const smokeIndex = script.indexOf("projectai-ai-smoke npm run assistant:smoke");
+  const loginWindowIndex = script.indexOf(
+    "Waiting for one protected login rate-limit window before Lease verification.",
+  );
+  const leaseIndex = script.indexOf("npm run documents:lease-smoke");
   assert.ok(probeIndex >= 0 && enableIndex > probeIndex && smokeIndex > enableIndex);
+  assert.ok(
+    loginWindowIndex > smokeIndex && leaseIndex > loginWindowIndex,
+    "Lease verification must wait for the protected login rate-limit window",
+  );
+  assert.match(script, /for _ in \$\(seq 1 13\); do\n\s+sleep 5\ndone/);
   assert.match(
     script,
     /up --detach --no-deps --force-recreate --no-build --pull never projectai-staging/,

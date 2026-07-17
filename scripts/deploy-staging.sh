@@ -1707,6 +1707,11 @@ printf 'Waiting for the document queue to become idle before Lease verification.
     }
   '
 
+printf 'Waiting for one protected login rate-limit window before Lease verification.\n'
+for _ in $(seq 1 13); do
+  sleep 5
+done
+
 printf 'Stopping the document Worker for exclusive Lease recovery verification.\n'
 "${compose[@]}" stop --timeout 30 projectai-document-worker
 "${compose_run[@]}" \
