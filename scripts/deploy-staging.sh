@@ -1926,6 +1926,11 @@ grep -q ' enabled$' < <(sudo docker exec "$embedding_worker_container_name" sh -
 [[ "$(sudo docker inspect --format '{{.Image}}' "$embedding_worker_container_name")" == "$app_image_id" ]]
 [[ -z "$(sudo docker port "$embedding_worker_container_name")" ]]
 
+printf 'Waiting for one protected login rate-limit window before Embedding verification.\n'
+for _ in $(seq 1 13); do
+  sleep 5
+done
+
 embedding_smoke_run_id="$(sudo docker exec "$container_name" node -e 'process.stdout.write(crypto.randomUUID())')"
 [[ "$embedding_smoke_run_id" =~ ^[0-9a-f-]{36}$ ]]
 printf 'Stopping the Embedding Worker to prepare deterministic incremental and Lease fixtures.\n'
@@ -1964,6 +1969,11 @@ printf 'Verifying real 1024-dimensional vectors, incremental generation, safe Ba
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
   projectai-document-smoke npm run embeddings:smoke:verify
+
+printf 'Waiting for one protected login rate-limit window before the post-Embedding B3-A regression.\n'
+for _ in $(seq 1 13); do
+  sleep 5
+done
 
 printf 'Re-running B3-A grounded Qwen regression while Embedding remains enabled and lexical retrieval remains unchanged.\n'
 "${compose_run[@]}" \

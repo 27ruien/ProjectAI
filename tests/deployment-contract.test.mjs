@@ -432,6 +432,12 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
   const loginWindowIndex = script.indexOf(
     "Waiting for one protected login rate-limit window before Lease verification.",
   );
+  const embeddingLoginWindowIndex = script.indexOf(
+    "Waiting for one protected login rate-limit window before Embedding verification.",
+  );
+  const regressionLoginWindowIndex = script.indexOf(
+    "Waiting for one protected login rate-limit window before the post-Embedding B3-A regression.",
+  );
   const leaseIndex = script.indexOf("npm run documents:lease-smoke");
   assert.ok(
     disableIndex >= 0 &&
@@ -441,10 +447,16 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
       smokeIndex > enableIndex,
   );
   assert.ok(
-    loginWindowIndex > smokeIndex && leaseIndex > loginWindowIndex,
-    "Lease verification must wait for the protected login rate-limit window",
+    embeddingLoginWindowIndex > smokeIndex &&
+      regressionLoginWindowIndex > embeddingLoginWindowIndex &&
+      loginWindowIndex > regressionLoginWindowIndex &&
+      leaseIndex > loginWindowIndex,
+    "Authentication-heavy smoke phases must be separated by protected login rate-limit windows",
   );
-  assert.match(script, /for _ in \$\(seq 1 13\); do\n\s+sleep 5\ndone/);
+  assert.equal(
+    [...script.matchAll(/for _ in \$\(seq 1 13\); do\n\s+sleep 5\ndone/g)].length,
+    3,
+  );
   assert.match(
     script,
     /up --detach --no-deps --force-recreate --no-build --pull never projectai-staging/,
