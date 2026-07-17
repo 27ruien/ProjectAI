@@ -1,6 +1,6 @@
 # Testing
 
-## v0.5 B2 测试分层
+## v0.6 B3-A 测试分层
 
 1. TypeScript：`npm run typecheck`。
 2. ESLint：`npm run lint`。
@@ -9,10 +9,14 @@
 5. 文件校验与对象存储：`npm run test:storage`。
 6. Parser/Chunker 单元：`npm run test:documents`。
 7. PostgreSQL + MinIO + Worker/Queue/Search 集成：`npm run test:document-integration`。
-8. Artifact/Provenance：`npm run test:artifacts`。
-9. Staging/Worker/备份部署契约：`npm run test:deployment`。
-10. Playwright 身份、文件、解析和知识搜索：`npm run test:e2e`。
-11. 完整本地门禁：`npm run qa:mvp`。
+8. Project Assistant 单元/架构：`npm run test:assistant`。
+9. Project Assistant 数据库集成：`npm run test:assistant-integration`。
+10. Artifact/Provenance：`npm run test:artifacts`。
+11. Staging/Worker/AI Secret/Probe/备份部署契约：`npm run test:deployment`。
+12. Playwright 身份、文件、解析、知识搜索和 Grounded Assistant：`npm run test:e2e`。
+13. 完整本地门禁：`npm run qa:mvp`。
+
+B3-A 新增覆盖 Secret File、Profile、私人 Thread、复合归属、幂等、B2 Evidence、Prompt 分区、Prompt Injection、Citation Validation/Repair、无 Evidence 不调用 Provider、Timeout/429/5xx 重试、401/403 不重试、Fallback、Token Usage、速率/日额度/全局并发和 SEC-006 架构扫描。
 
 旧 CI、旧 Staging 和旧截图不能替代当前 Head 的证据。tracked 文档只记录稳定结论；当前 Head、Run、Artifact ID/Digest、tested merge SHA、Staging image 和 Build Time 等动态精确事实记录在 PR 描述与 Provenance Manifest。
 
@@ -33,6 +37,11 @@ sections = 0
 chunks = 0
 objects = 0
 running jobs = 0
+AI threads = 0
+AI messages = 0
+AI executions = 0
+AI citations = 0
+running AI executions = 0
 projectai temporary files = 0
 ```
 
@@ -70,7 +79,7 @@ projectai temporary files = 0
 
 ## Playwright 与截图
 
-浏览器必须监听 `console.error`、`pageerror`、失败请求和 HTTP 500，不能只断言 200。B2 覆盖六格式上传、pending/running/succeeded/failed/needs_ocr、搜索来源、中文/英文/模糊匹配、Viewer、跨项目、新版本、归档和 reindex。
+浏览器必须监听 `console.error`、`pageerror`、失败请求和未允许的 HTTP 5xx，不能只断言 200。除 B2 六格式流程外，B3-A 覆盖 Feature Disabled、Empty、Grounded Answer、Citation、Repair、Insufficient Evidence、Provider Timeout/Retry、Viewer、私人 Thread 和跨项目 404。
 
 成功 Evidence 保留原有 12 张截图，并新增：
 
@@ -85,6 +94,14 @@ knowledge-search-docx-citation.png
 knowledge-search-xlsx-citation.png
 knowledge-search-pptx-citation.png
 viewer-knowledge-search.png
+ai-assistant-disabled.png
+ai-assistant-empty.png
+ai-assistant-grounded-answer.png
+ai-assistant-citation-expanded.png
+ai-assistant-insufficient-evidence.png
+ai-assistant-provider-error.png
+ai-assistant-viewer.png
+ai-assistant-thread-history.png
 ```
 
 截图只显示虚构资料，不显示完整正文、Object Key、Bucket、Endpoint、Lease、Worker ID、Cookie、Session 或凭据。Manifest 不声明统一 viewport，而是读取每张 PNG 的实际宽高。
@@ -107,25 +124,25 @@ buildTime
 workerVersion
 parserVersion
 chunkerVersion
+aiGatewayVersion
+assistantProfileId
 screenshots[{filename,width,height}]
 ```
 
 ## Staging
 
-只部署 Staging。验收必须验证 App/PostgreSQL/MinIO/Document Worker Healthy、同一 immutable App/Worker image、`pg_trgm`、六格式解析、Section/Chunk、搜索/来源、Viewer、跨项目、needs_ocr、版本/归档/reindex、Lease、全量清理和 Production 精确不变。不得部署或修改 Production。
+只部署 Staging。验收必须验证 App/PostgreSQL/MinIO/Document Worker Healthy、同一 immutable App/Worker image、`pg_trgm`、六格式解析、Section/Chunk、搜索/来源、Qwen Probe、真实 Grounded Answer/Citation、资料不足不调用 Provider、Viewer、私人 Thread、Token Usage、Audit、全量清理和 Production 精确不变。不得部署或修改 Production。
 
 部署脚本通过 scoped operations service 自动运行：
 
 ```text
 npm run documents:smoke
 npm run documents:lease-smoke
+npm run assistant:smoke
 ```
 
 前者同时走容器内部上游和公网 Nginx 路径；后者只在队列为空、Worker 暂停期间执行。验收失败必须保留部署失败状态并触发既有 Staging App/Worker 回滚，不得跳过清理或 Production baseline 复核。
 
-## 最近验证事实
+## 动态验证事实
 
-- PR #4 当前 Head 对应完整 CI 全绿：包含空库 Migration、隔离 PostgreSQL/MinIO、15 项 Parser/Chunker、身份/项目隔离、文件存储、文档队列/Lease/搜索集成、16 项部署契约和 18 项 Playwright。
-- 最终 Evidence 包含 22 张实际 PNG；Provenance 绑定 Head、tested merge SHA、Run、Artifact ID/Digest 和 Worker/Parser/Chunker Version。精确名称、ID 与 Digest 记录在 PR 描述。
-- CI 按隔离规则保持 `stagingSha: null`，不连接 Staging。随后同一最终 Head 通过受控部署完成内部和公网六格式 smoke，并验证 App/Worker/Parser/Chunker Version `1`、Lease 恢复、`SKIP LOCKED`、全量清理和 Production 精确不变。
-- 文档事实一致性提交只改变文档；最终 CI 以 PR #4 当前 Head 检查为准，最终 Staging SHA 以 PR 描述、部署证据和 `/api/health` 响应头为准。
+最终 PR Head、CI Run、Evidence/Provenance ID/Digest、Staging image 与 Build Time 不写入 tracked 文档；它们只记录在当前 Draft PR 描述、Provenance Manifest 和受控部署证据中。

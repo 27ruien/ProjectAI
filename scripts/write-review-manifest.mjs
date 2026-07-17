@@ -44,6 +44,14 @@ const requiredScreenshots = [
   "screenshots/knowledge-search-xlsx-citation.png",
   "screenshots/knowledge-search-pptx-citation.png",
   "screenshots/viewer-knowledge-search.png",
+  "screenshots/ai-assistant-disabled.png",
+  "screenshots/ai-assistant-empty.png",
+  "screenshots/ai-assistant-grounded-answer.png",
+  "screenshots/ai-assistant-citation-expanded.png",
+  "screenshots/ai-assistant-insufficient-evidence.png",
+  "screenshots/ai-assistant-provider-error.png",
+  "screenshots/ai-assistant-viewer.png",
+  "screenshots/ai-assistant-thread-history.png",
 ];
 
 const routes = {
@@ -54,6 +62,7 @@ const routes = {
   projectAccessDenied: "/projects/project-002/overview",
   viewerReadonly: "/projects/project-001/overview",
   documents: "/projects/project-001/documents",
+  projectAssistant: "/projects/project-001/knowledge",
 };
 
 const missingScreenshots = requiredScreenshots.filter(
@@ -112,6 +121,10 @@ const evidenceIndex = {
   workerVersion: process.env.DOCUMENT_WORKER_VERSION?.trim() || "1",
   parserVersion: process.env.DOCUMENT_PARSER_VERSION?.trim() || "1",
   chunkerVersion: process.env.DOCUMENT_CHUNKER_VERSION?.trim() || "1",
+  aiGatewayVersion: process.env.AI_GATEWAY_VERSION?.trim() || "1",
+  assistantProfileId:
+    process.env.AI_PROJECT_ASSISTANT_PROFILE_ID?.trim() ||
+    "qwen-project-assistant-cn-v1",
   testedUsers: [
     "system_admin",
     "project_manager_a",

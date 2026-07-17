@@ -7,20 +7,24 @@
 | Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 既有环境，本轮不得修改 | 不增加 Worker/MinIO | `127.0.0.1:3100` |
 | Staging | https://gridworks.cn/tool/projectai-staging/ / `/tool/projectai-staging` | `/srv/projectai-staging` / App `project-ai-os-staging` / Worker `project-ai-os-staging-worker` | `project-ai-os-staging-postgres` + `projectai-staging-postgres` | `project-ai-os-staging-minio` + `projectai-staging-minio` + `projectai-staging-files` | 应用 `127.0.0.1:3101`；Worker/DB/MinIO 无端口 |
 
-v0.5 B2 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 Worker/对象存储、修改环境或重新部署。
+v0.6 B3-A 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 Worker/对象存储、配置 Qwen Secret、修改环境或重新部署。
 
 ## Staging 构建元数据
 
 ```env
 NEXT_PUBLIC_BASE_PATH=/tool/projectai-staging
 NEXT_PUBLIC_APP_ENV=staging
-NEXT_PUBLIC_APP_VERSION=0.5.0-staging
+NEXT_PUBLIC_APP_VERSION=0.6.0-staging
 NEXT_PUBLIC_COMMIT_SHA=<feature branch full sha>
 NEXT_PUBLIC_BUILD_TIME=<ISO-8601>
-AI_PROVIDER=mock
+AI_ASSISTANT_ENABLED=false
+AI_PROVIDER=qwen
+AI_REGION=cn-beijing
+AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1
+AI_EXECUTION_STALE_AFTER_MS=900000
 ```
 
-环境条必须显示 build 元数据。资料页显示异步解析/索引状态；知识页声明当前仅提供真实词法搜索与来源定位，尚未启用 AI 综合回答。robots 与 Nginx header 均设置 noindex。认证配置继续使用完整 Staging `BETTER_AUTH_URL`、独立 `AUTH_COOKIE_PREFIX` 和 `/tool/projectai-staging` Cookie Path；Cookie 必须 HttpOnly、SameSite=Lax、Secure。
+环境条必须显示 build 元数据。资料页显示异步解析/索引状态；知识页同时提供原始词法搜索和真实 Grounded 项目助手，并明确说明语义向量检索尚未启用。robots 与 Nginx header 均设置 noindex。认证配置继续使用完整 Staging `BETTER_AUTH_URL`、独立 `AUTH_COOKIE_PREFIX` 和 `/tool/projectai-staging` Cookie Path；Cookie 必须 HttpOnly、SameSite=Lax、Secure。
 
 ## 受保护环境文件
 
@@ -34,6 +38,12 @@ AI_PROVIDER=mock
 - `DOCUMENT_*` Worker/Parser/Chunker 资源上限及版本必须与 `.env.auth-staging.example` 精确一致。
 
 真实 credential 不进入示例、Git、镜像层、日志或 Artifact。MinIO root/app credential 必须满足长度/字符规则且互不相同。
+
+AI 配置分为两个受保护文件：
+
+- `/srv/projectai-staging/.env.ai`：普通文件、非 symlink、`deploy:deploy 600`，包含 Feature Flag、Provider、Region、Profile、`AI_EXECUTION_STALE_AFTER_MS=900000`、北京 Qwen Base URL 和容器内 Secret File 路径；不得进入 Artifact 或日志。
+- `/srv/projectai-staging/secrets/qwen_api_key`：普通非空文件、非 symlink、`deploy:deploy 600`；部署只检查状态，禁止读取、打印、复制、编码或导出内容。
+- Compose 只把 `.env.ai` 和只读 `qwen_api_key` 挂载给 App。Worker、Migration、Storage/Document/AI Smoke operations service 都不获得 Qwen Secret；AI Smoke 只能通过 App API 触发真实 Provider。
 
 `.env.auth-staging` 是 Compose 插值来源，不代表完整注入每个容器：
 
@@ -65,7 +75,7 @@ published ports: none
 
 使用 `scripts/deploy-staging.sh`。脚本要求：
 
-- 分支精确为 `agent/document-processing-index`，工作区 clean，完整 40 位 Commit。
+- 分支精确为 `agent/grounded-qwen-assistant`，工作区 clean，完整 40 位 Commit。
 - 固定 Compose project `projectai-staging`、目录 `/srv/projectai-staging` 和远端平台。
 - 原子取得 Staging 专属部署锁；发布目录、环境、备份、锁和 marker 均不得是 symlink。
 - 记录 Production 容器 ID、running、restart count、health，进入发布事务后的成功/失败/回滚出口都必须精确一致。
@@ -80,11 +90,13 @@ published ports: none
 6. 生成并验证 PostgreSQL custom-format dump；生成 MinIO JSONL inventory 与 mirror，核对对象数和总字节，再恢复到唯一临时 Bucket 并复核/删除。
 7. 使用短生命周期 migration service 应用已提交 Migration 与 insert-only Seed，不 schema push、不 reset、不覆盖身份/角色/credential；验证 `pg_trgm`，并幂等补排已有 Stored Current Version。
 8. 用 scoped storage operations 执行 `npm run storage:verify`；任何 finding 或存储不可用都失败关闭。
-9. 记录上一 App/Worker immutable image ID；先启动 Worker 并验证心跳 Healthy，再启动 App。验证 App/PostgreSQL/MinIO/Worker、同镜像、网络、资源与无端口。
-10. 再次运行只读 `storage:verify`，然后分别通过 `documents:smoke` 的内部上游与公网路径执行六格式上传、解析状态、Section/Chunk、中文/英文/模糊搜索、来源、Viewer、跨项目、needs_ocr、版本/current、归档和 reindex 冒烟。
-11. 等待队列为空，短暂停止 Worker，通过 `documents:lease-smoke` 验证独占 Lease、过期恢复、旧 Worker 拒绝提交和双 Worker `SKIP LOCKED`，随后恢复同一 immutable image 并重新检查心跳。
-12. 清理本次及失败重试遗留的验证 Session、测试文档、版本、Job、Section、Chunk、对象和审计；确认 running Job、解析临时文件、恢复 Bucket、partial backup、init 容器和 marker/lock 均为 0。
-13. `nginx -t`、公网 canonical/Host/MIME/noindex 验证以及 Production 精确不变复核；脚本不自动编辑或 reload Nginx。
+9. 记录上一 App/Worker immutable image ID；先启动 Worker并验证心跳 Healthy，再以 `AI_ASSISTANT_ENABLED=false` 启动 App。验证四服务、同镜像、网络、资源、App-only Secret 和无新增端口。
+10. Health 必须显示 AI disabled 但 Provider configured；在 App 容器执行固定虚构 `ai:probe:qwen`，不访问数据库或客户资料。
+11. Probe 成功后原子把 `.env.ai` 的 Flag 改为 true，只 `--no-deps --force-recreate` App；重新验证 Health enabled/configured/Gateway Version，Worker 不重启。
+12. 再次运行只读 `storage:verify`；通过 `documents:smoke` 验证 B2，并通过 `assistant:smoke` 的内部上游和公网路径验证真实 Qwen、Citation、资料不足不调用模型、Viewer、私人 Thread、跨项目 404、Token Usage、Audit 和全量清理。
+13. 等待队列为空，短暂停止 Worker，通过 `documents:lease-smoke` 验证独占 Lease、过期恢复、旧 Worker 拒绝提交和双 Worker `SKIP LOCKED`，随后恢复同一 immutable image 并重新检查心跳。
+14. 清理本次及失败重试遗留的验证 Session、测试 AI Thread/Message/Execution/Citation、测试文档、版本、Job、Section、Chunk、对象和审计；确认 running Execution、running Job、解析临时文件、恢复 Bucket、partial backup、init 容器和 marker/lock 均为 0。
+15. `nginx -t`、公网 canonical/Host/MIME/noindex 验证以及 Production 精确不变复核；脚本不自动编辑或 reload Nginx。
 
 任一步骤失败都会触发 Staging App 镜像回滚；若上一版本已有 Worker，则条件恢复其 immutable image，否则移除本轮 Worker。PostgreSQL/MinIO 卷及跨存储备份始终保留，数据库或对象数据恢复不自动执行。
 
@@ -117,13 +129,15 @@ npm run storage:verify
 npm run storage:reconcile
 npm run documents:smoke
 npm run documents:lease-smoke
+npm run ai:probe:qwen
+npm run assistant:smoke
 ```
 
 `storage:verify` 只读核对 stored object、size、ETag、SHA-256 metadata、单 current、active/current、stale pending 和 orphan。输出不含 Key 或 Secret。部署前后均必须为 `ok: true`。
 
 `storage:reconcile` 默认 dry-run。apply 只能在非 Production 且同时提供 `ALLOW_STORAGE_RECONCILE_APPLY=1`、`OBJECT_STORAGE_BUCKET_CONFIRM=<exact bucket>` 和合法最小 orphan 年龄时运行；删除前再次查数据库引用。本轮正常部署不自动 apply。
 
-`documents:smoke` 只生成虚构 PDF/DOCX/XLSX/PPTX/TXT/Markdown、扫描 PDF 和损坏 PDF，验证真实解析/搜索闭环后按固定前缀清理。`documents:lease-smoke` 只允许在部署脚本已确认队列为空并暂停 Worker 时运行；两者都不得独立指向 Production。
+`documents:smoke` 只生成虚构 PDF/DOCX/XLSX/PPTX/TXT/Markdown、扫描 PDF 和损坏 PDF，验证真实解析/搜索闭环后按固定前缀清理。`ai:probe:qwen` 只发送固定字符串，不读数据库。`assistant:smoke` 生成一份虚构 TXT，通过应用 API 验证真实 Grounded Answer/Citation/权限/Token/Audit 后清理全部 AI 与文档数据；operations 容器没有 Qwen Secret。所有命令都不得独立指向 Production。
 
 ## Nginx
 
@@ -150,6 +164,8 @@ https://gridworks.cn/tool/projectai-staging/
 - `storage:verify` 为零 finding；无 orphan、stale pending、临时 Bucket 或 partial backup。
 - Cookie、canonical HTTPS、恶意 Host、CSS/JS/font/image MIME、noindex 和 Nginx 新错误检查。
 - `/api/health` 的 `x-projectai-commit-sha`、App/Worker/Parser/Chunker Version Header 必须等于部署合同。
+- `/api/health` 只公开 AI enabled/configured/Gateway Version，不公开 Base URL、Secret 路径或模型配置；Probe 前 false/true/`1`，启用后 true/true/`1`。
+- 真实 Qwen 回答有服务端 Citation；无 Evidence 的 Execution 没有 actual model、Provider Request ID 或 Token Usage；Viewer 只读自己的 Thread，其他用户 Thread 和跨项目访问统一 404。
 - Production 根路径/dashboard 可用，容器 ID、running、restart count、health 与基线精确一致。
 
 ## 回滚与恢复
@@ -165,8 +181,8 @@ https://gridworks.cn/tool/projectai-staging/
 
 - Staging 总览：`docker compose -p projectai-staging -f /srv/projectai-staging/docker-compose.staging.yml logs --tail=200`。
 - PostgreSQL/MinIO 只检查必要健康和当前时间窗；不要记录完整 `docker inspect` 环境或 `mc alias` 配置。
-- 日志不得输出文件正文、完整 Object Key、Bucket 内部地址、密码、Cookie、Session、数据库 URL 或存储凭据。
+- 日志不得输出文件正文、完整 Object Key、Bucket 内部地址、密码、Cookie、Session、数据库 URL、Qwen Base URL、Authorization、System Prompt、Evidence Set、Provider 原始响应或任何凭据。
 
 ## 当前发布状态
 
-v0.5 B2 已于 2026-07-16 通过受控脚本部署并验证 Staging。App、PostgreSQL、MinIO、Document Worker 均 Healthy，App/Worker 使用同一 immutable image；`pg_trgm`、内部与公网六格式解析/搜索、来源定位、Viewer/跨项目边界、版本/归档/reindex、Lease 恢复与 `SKIP LOCKED` 全部通过。测试 Session、文档、版本、Job、Section、Chunk、对象、running Job 和解析临时文件均清零，Production 容器身份、运行状态、restart count 与 health 前后精确一致。tracked 文档只保留稳定结论；精确 Commit、CI、Artifact、image digest 和构建时间记录在 Draft PR #4 描述、Provenance Manifest 及受控部署证据中。本轮仍禁止 Production 发布。
+v0.6 B3-A 的稳定发布合同是：App、PostgreSQL、MinIO、Document Worker Healthy；App-only Qwen Secret；Flag=false → Probe → 只重建 App启用；内部/公网真实 Qwen 与 Citation Smoke；AI/文档测试数据和 running work 清零；Production 基线精确不变。精确 Commit、CI、Artifact、image digest 和构建时间不写入 tracked 文档，只记录在当前 Draft PR、Provenance Manifest 及受控部署证据中。本轮仍禁止 Production 发布。

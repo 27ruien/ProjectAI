@@ -112,6 +112,8 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
     ["workerVersion", index.workerVersion],
     ["parserVersion", index.parserVersion],
     ["chunkerVersion", index.chunkerVersion],
+    ["aiGatewayVersion", index.aiGatewayVersion],
+    ["assistantProfileId", index.assistantProfileId],
   ]) {
     if (
       typeof value !== "string" ||

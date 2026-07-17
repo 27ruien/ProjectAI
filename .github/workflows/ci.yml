@@ -38,7 +38,10 @@ jobs:
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
       NEXT_PUBLIC_APP_ENV: test
       NEXT_PUBLIC_COMMIT_SHA: ${{ github.sha }}
-      AI_PROVIDER: mock
+      AI_REGION: cn-beijing
+      AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v1
+      AI_EXECUTION_STALE_AFTER_MS: "900000"
+      AI_GATEWAY_VERSION: "1"
       SEED_ADMIN_EMAIL: admin.ci@projectai.invalid
       SEED_MANAGER_A_EMAIL: manager-a.ci@projectai.invalid
       SEED_MANAGER_B_EMAIL: manager-b.ci@projectai.invalid
@@ -269,6 +272,13 @@ jobs:
           mkdir -p test-logs
           npm run test:documents 2>&1 | tee test-logs/document-processing-unit.log
 
+      - name: Project assistant unit and architecture tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:assistant 2>&1 | tee test-logs/assistant-unit.log
+
       - name: Authentication and project-isolation integration tests
         shell: bash
         run: |
@@ -289,6 +299,13 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:document-integration 2>&1 | tee test-logs/document-processing-integration.log
+
+      - name: Project assistant permissions, grounding, and limit integration tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:assistant-integration 2>&1 | tee test-logs/assistant-integration.log
 
       - name: Verify database and object-storage consistency
         shell: bash

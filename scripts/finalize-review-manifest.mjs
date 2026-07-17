@@ -65,6 +65,8 @@ const manifest = {
   workerVersion: evidenceIndex.workerVersion,
   parserVersion: evidenceIndex.parserVersion,
   chunkerVersion: evidenceIndex.chunkerVersion,
+  aiGatewayVersion: evidenceIndex.aiGatewayVersion,
+  assistantProfileId: evidenceIndex.assistantProfileId,
   testedUsers: evidenceIndex.testedUsers,
   routes: evidenceIndex.routes,
   screenshotFiles: evidenceIndex.screenshotFiles,

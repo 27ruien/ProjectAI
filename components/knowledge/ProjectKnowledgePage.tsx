@@ -35,6 +35,7 @@ import type {
   KnowledgeSearchResponse,
   KnowledgeSearchResultDto,
 } from "@/types/knowledge-search";
+import { ProjectAssistantPanel } from "./ProjectAssistantPanel";
 
 interface ProjectKnowledgePageProps {
   project: AuthorizedProjectSummary;
@@ -184,14 +185,14 @@ export function ProjectKnowledgePage({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-xl font-semibold tracking-tight text-foreground">
-                项目知识搜索
+                项目 AI 助手与知识搜索
               </h2>
               <span className="rounded-full border border-success/20 bg-success-soft px-2 py-0.5 text-[10px] font-medium text-success">
                 真实全文索引
               </span>
             </div>
             <p className="mt-1 text-sm text-muted-foreground">
-              搜索当前项目的有效资料，定位原始片段、页面、章节、Sheet 或 Slide。
+              先用带引用的 AI 助手回答项目问题，也可直接定位原始片段、页面、章节、Sheet 或 Slide。
             </p>
           </div>
           <div className="rounded-lg border border-border bg-card px-3 py-2 text-right">
@@ -205,9 +206,11 @@ export function ProjectKnowledgePage({
         <aside className="mt-4 flex items-start gap-2 rounded-xl border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">
           <BookOpen className="mt-0.5 size-4 shrink-0" />
           <p>
-            当前提供资料搜索与来源定位，尚未启用 AI 综合回答。结果是原始资料片段，不代表 AI 结论。
+            AI 回答只使用当前项目有效资料，并在返回前校验引用；下方搜索结果仍是原始资料片段。
           </p>
         </aside>
+
+        <ProjectAssistantPanel project={project} />
 
         <section className="mt-5 rounded-xl border border-border bg-card p-5">
           <form onSubmit={submit} className="space-y-3">
@@ -387,7 +390,7 @@ export function ProjectKnowledgePage({
                 其他项目管理模块仍为 Mock
               </h3>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                当前项目的需求、Scope、Action 和风险共 {mockRecordCount} 条演示记录不参与本页真实资料搜索；AI 问答将在 B3 经独立审查后接入。
+                当前项目的需求、Scope、Action 和风险共 {mockRecordCount} 条演示记录仍不参与真实检索或 AI 回答；项目助手只读取 B2 文档知识索引，也不会写入这些正式业务模块。
               </p>
             </div>
           </div>

@@ -312,6 +312,52 @@ services:
         max-file: "2"
     command: npm run documents:smoke
 
+  projectai-ai-smoke:
+    profiles:
+      - operations
+    image: ${STAGING_DB_TOOLS_IMAGE:-project-ai-os-staging-db-tools:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    build:
+      context: .
+      target: db-tools
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: staging
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      SEED_MANAGER_A_EMAIL: ${SEED_MANAGER_A_EMAIL:?SEED_MANAGER_A_EMAIL is required}
+      SEED_MANAGER_A_PASSWORD: ${SEED_MANAGER_A_PASSWORD:?SEED_MANAGER_A_PASSWORD is required}
+      SEED_VIEWER_A_EMAIL: ${SEED_VIEWER_A_EMAIL:?SEED_VIEWER_A_EMAIL is required}
+      SEED_VIEWER_A_PASSWORD: ${SEED_VIEWER_A_PASSWORD:?SEED_VIEWER_A_PASSWORD is required}
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+      projectai-document-worker:
+        condition: service_healthy
+      projectai-staging:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    command: npm run assistant:smoke
+
   projectai-staging:
     image: ${STAGING_APP_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     build:
@@ -320,7 +366,7 @@ services:
       args:
         NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
         NEXT_PUBLIC_APP_ENV: staging
-        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.5.0-staging}
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.6.0-staging}
         NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     container_name: project-ai-os-staging
@@ -334,6 +380,8 @@ services:
       options:
         max-size: 10m
         max-file: "3"
+    env_file:
+      - /srv/projectai-staging/.env.ai
     environment:
       <<: *document-processing-environment
       NODE_ENV: production
@@ -357,10 +405,11 @@ services:
       STAGING_HEALTHCHECK_PATH: ${STAGING_HEALTHCHECK_PATH:-/api/health}
       NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.5.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.6.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
-      AI_PROVIDER: mock
+    secrets:
+      - qwen_api_key
     depends_on:
       projectai-postgres:
         condition: service_healthy
@@ -415,7 +464,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
       UPLOAD_ALLOWED_EXTENSIONS: ${UPLOAD_ALLOWED_EXTENSIONS:-pdf,docx,xlsx,pptx,txt,md}
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.5.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.6.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     command:
@@ -454,3 +503,7 @@ networks:
   projectai-staging-internal:
     name: projectai-staging-internal
     driver: bridge
+
+secrets:
+  qwen_api_key:
+    file: /srv/projectai-staging/secrets/qwen_api_key

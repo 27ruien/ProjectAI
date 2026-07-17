@@ -5,6 +5,11 @@ import {
   DOCUMENT_WORKER_VERSION,
   getDocumentProcessingConfig,
 } from "@/lib/documents/processing/config";
+import {
+  AI_GATEWAY_VERSION,
+  getAiRuntimeConfig,
+  isAiProviderConfigured,
+} from "@/lib/ai/project-assistant";
 
 export async function GET(): Promise<Response> {
   try {
@@ -19,6 +24,9 @@ export async function GET(): Promise<Response> {
         (select count(*) from document_ingestion_jobs limit 1) as ingestion_jobs_count,
         (select count(*) from document_sections limit 1) as sections_count,
         (select count(*) from document_chunks limit 1) as chunks_count,
+        (select count(*) from ai_model_profiles limit 1) as ai_profiles_count,
+        (select count(*) from ai_threads limit 1) as ai_threads_count,
+        (select count(*) from ai_executions limit 1) as ai_executions_count,
         exists(select 1 from pg_extension where extname = 'pg_trgm') as pg_trgm_enabled
     `);
     const row = databaseHealth.rows[0] as
@@ -41,7 +49,20 @@ export async function GET(): Promise<Response> {
     headers.set("x-projectai-worker-version", DOCUMENT_WORKER_VERSION);
     headers.set("x-projectai-parser-version", processingConfig.parserVersion);
     headers.set("x-projectai-chunker-version", processingConfig.chunkerVersion);
-    return jsonResponse({ status: "ok" }, { headers });
+    const aiConfig = getAiRuntimeConfig();
+    const aiProviderConfigured = await isAiProviderConfigured();
+    if (aiConfig.enabled && !aiProviderConfigured) {
+      throw new Error("Enabled AI provider is not configured.");
+    }
+    return jsonResponse(
+      {
+        status: "ok",
+        aiAssistantEnabled: aiConfig.enabled,
+        aiProviderConfigured,
+        aiGatewayVersion: AI_GATEWAY_VERSION,
+      },
+      { headers },
+    );
   } catch {
     return jsonResponse(
       { status: "unavailable" },

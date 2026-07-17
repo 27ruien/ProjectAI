@@ -299,6 +299,12 @@ export const documentChunk = pgTable(
       table.generation,
       table.chunkIndex,
     ),
+    unique("document_chunks_citation_scope_unique").on(
+      table.id,
+      table.projectId,
+      table.documentId,
+      table.versionId,
+    ),
     index("document_chunks_effective_project_idx").on(
       table.projectId,
       table.isEffective,

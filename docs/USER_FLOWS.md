@@ -53,9 +53,9 @@ flowchart LR
 | Project Member | 是 | 是 | 否 | 否 | 否 |
 | Viewer | 是 | 否 | 否 | 否 | 否 |
 
-## 项目知识搜索（v0.5 真实流程）
+## 项目知识搜索（v0.5 真实流程，B3-A 继续保留）
 
-项目知识页读取真实文件的当前有效词法索引，只返回原始片段和来源，不生成 AI 综合答案。
+项目知识页读取真实文件的当前有效词法索引，继续提供原始片段和来源；B3-A 的 AI 回答通过独立服务端流程复用该索引，不替代原始搜索。
 
 ```mermaid
 flowchart LR
@@ -68,7 +68,32 @@ flowchart LR
   G --> H["下载原文件"]
 ```
 
-PDF 显示页码，DOCX 显示标题路径/段落，XLSX 显示 Sheet/行列，PPTX 显示 Slide，TXT/Markdown 显示行号或标题。页面必须明确声明“尚未启用 AI 综合回答”。
+PDF 显示页码，DOCX 显示标题路径/段落，XLSX 显示 Sheet/行列，PPTX 显示 Slide，TXT/Markdown 显示行号或标题。
+
+## Grounded 项目助手（v0.6 B3-A 真实流程）
+
+```mermaid
+flowchart LR
+  A["进入授权项目"] --> B["打开私人 Thread"]
+  B --> C["输入问题 + Idempotency-Key"]
+  C --> D["Session / Project / Thread Owner 校验"]
+  D --> E["B2 Active + Current + Stored + Succeeded + Effective Evidence"]
+  E -->|"无合格 Evidence"| F["insufficient_evidence，不调用 Qwen"]
+  E -->|"有 Evidence"| G["Grounded Prompt"]
+  G --> H["AI Gateway → Qwen"]
+  H --> I["服务端 Citation Validation"]
+  I -->|"非法标记"| J["一次 Citation Repair"]
+  I -->|"合法"| K["持久化 Answer + Citation + Execution + Audit"]
+  J -->|"仍非法"| L["受控失败，不返回回答"]
+  J -->|"合法"| K
+  K --> M["显示 [1]、来源卡片与原文件下载"]
+```
+
+- Admin、Manager、Member、Viewer 都可使用自己的 Thread；同项目其他成员不能读取该 Thread。
+- 最近最多 6 条已完成消息仅用于理解上下文，每次提问都重新检索，旧回答不能替代 Evidence。
+- 页面包含 Loading、Empty、Disabled、Insufficient、Provider Error、Retry、Fallback、历史、引用和免责声明。
+- 回答只写 AI Thread/Message/Execution/Citation/Audit，不写正式 Requirement、Scope、Action、Risk 或 Meeting。
+- 页面必须准确提示“基于项目全文知识索引”；不得宣称向量 RAG、Hybrid Search 或 Rerank。
 
 ## 需求提取与审核（目标流程，当前 Mock）
 
@@ -81,7 +106,7 @@ flowchart LR
   E --> F["正式需求写入（未实现）"]
 ```
 
-v0.5 B2 不会把真实上传文件交给 Mock AI，也不实现 RAG、真实模型或正式需求数据层。已有审核交互仍只产生 Mock 状态反馈。
+B3-A 项目助手不等于需求提取。已有审核交互仍只产生 Mock 状态反馈，正式需求数据层和 AI 写入尚未实现。
 
 ## 会议到 Action Plan（目标流程，当前 Mock）
 

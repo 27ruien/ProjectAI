@@ -183,6 +183,11 @@ test("operations use scoped Compose services and storage verification stays read
   const documentSmoke = serviceBlock(
     compose,
     "projectai-document-smoke",
+    "projectai-ai-smoke",
+  );
+  const aiSmoke = serviceBlock(
+    compose,
+    "projectai-ai-smoke",
     "projectai-staging",
   );
   assert.match(fileSmoke, /SEED_MANAGER_A_EMAIL/);
@@ -195,6 +200,10 @@ test("operations use scoped Compose services and storage verification stays read
   assert.match(documentSmoke, /<<: \*document-processing-environment/);
   assert.match(documentSmoke, /mem_limit: 768m/);
   assert.doesNotMatch(documentSmoke, /MINIO_ROOT_/);
+  assert.match(aiSmoke, /SEED_MANAGER_A_EMAIL/);
+  assert.match(aiSmoke, /SEED_VIEWER_A_EMAIL/);
+  assert.match(aiSmoke, /npm run assistant:smoke/);
+  assert.doesNotMatch(aiSmoke, /QWEN_|qwen_api_key|secrets:/);
   assert.equal(
     [...script.matchAll(/projectai-file-smoke npm run storage:smoke/g)].length,
     2,
@@ -212,8 +221,13 @@ test("operations use scoped Compose services and storage verification stays read
     ].length,
     1,
   );
+  assert.equal(
+    [...script.matchAll(/projectai-ai-smoke npm run assistant:smoke/g)].length,
+    2,
+  );
   assert.match(script, /real Staging upload, download integrity, versioning, and lifecycle cleanup/);
   assert.match(script, /six-format document processing, lexical search, citations, permissions, and cleanup/);
+  assert.match(script, /real Staging Qwen grounding, citations, private Threads, Viewer access, Token Usage, Audit, and cleanup/);
   assert.match(script, /Stopping the document Worker for exclusive Lease recovery verification/);
   assert.match(script, /Restarting the document Worker after Lease verification/);
   assert.match(script, /status in \(\$1, \$2\)/);
@@ -282,7 +296,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/document-processing-index"/);
+  assert.match(script, /EXPECTED_BRANCH="agent\/grounded-qwen-assistant"/);
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -346,8 +360,64 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(script, /projectai-document-worker[\s\S]+?projectai-staging/);
   assert.match(script, /pg_extension where extname = \$1/);
   assert.match(script, /npm run documents:enqueue/);
-  assert.match(dockerfile, /COPY --from=deps --chown=nextjs:nodejs \/app\/node_modules/);
-  assert.match(dockerfile, /COPY --chown=nextjs:nodejs lib \.\/lib/);
+  assert.match(dockerfile, /COPY --from=deps --chown=node:node \/app\/node_modules/);
+  assert.match(dockerfile, /COPY --chown=node:node lib \.\/lib/);
+  assert.match(dockerfile, /USER node/);
+});
+
+test("Staging Qwen Secret is App-only and activation is gated by a successful Probe", async () => {
+  const [script, compose, production] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(stagingCompose, "utf8"),
+    readFile(productionCompose, "utf8"),
+  ]);
+  const app = serviceBlock(
+    compose,
+    "projectai-staging",
+    "projectai-document-worker",
+  );
+  const worker = compose.match(
+    /\n  projectai-document-worker:\n([\s\S]*?)\nvolumes:/,
+  )?.[1];
+  assert.ok(worker);
+  assert.match(app, /env_file:\n\s+- \/srv\/projectai-staging\/\.env\.ai/);
+  assert.match(app, /secrets:\n\s+- qwen_api_key/);
+  assert.match(
+    compose,
+    /secrets:\n\s+qwen_api_key:\n\s+file: \/srv\/projectai-staging\/secrets\/qwen_api_key/,
+  );
+  assert.doesNotMatch(worker, /QWEN_|qwen_api_key|secrets:/);
+  assert.match(script, /sudo test -s "\$qwen_secret_file"/);
+  assert.match(script, /stat -c '%a' "\$qwen_secret_file"/);
+  assert.match(script, /stat -c '%U:%G' "\$qwen_secret_file"/);
+  assert.match(script, /stat -c '%u:%g' "\$qwen_secret_file"/);
+  assert.match(script, /id -u deploy/);
+  assert.match(script, /id -g deploy/);
+  assert.doesNotMatch(script, /cat [^\n]*qwen_api_key/);
+  const probeIndex = script.indexOf("npm run ai:probe:qwen");
+  const enableIndex = script.indexOf('print "AI_ASSISTANT_ENABLED=true"');
+  const smokeIndex = script.indexOf("projectai-ai-smoke npm run assistant:smoke");
+  const loginWindowIndex = script.indexOf(
+    "Waiting for one protected login rate-limit window before Lease verification.",
+  );
+  const leaseIndex = script.indexOf("npm run documents:lease-smoke");
+  assert.ok(probeIndex >= 0 && enableIndex > probeIndex && smokeIndex > enableIndex);
+  assert.ok(
+    loginWindowIndex > smokeIndex && leaseIndex > loginWindowIndex,
+    "Lease verification must wait for the protected login rate-limit window",
+  );
+  assert.match(script, /for _ in \$\(seq 1 13\); do\n\s+sleep 5\ndone/);
+  assert.match(
+    script,
+    /up --detach --no-deps --force-recreate --no-build --pull never projectai-staging/,
+  );
+  assert.match(script, /"aiAssistantEnabled":false/);
+  assert.match(script, /"aiAssistantEnabled":true/);
+  assert.match(script, /stale_after \+= 0/);
+  assert.match(script, /stale_after < 300000 \|\| stale_after > 3600000/);
+  assert.match(script, /running AI Execution/);
+  assert.match(script, /Staging application logs contain prohibited AI request or Secret markers/);
+  assert.doesNotMatch(production, /qwen_api_key|QWEN_API_KEY|QWEN_BASE_URL|secrets:/);
 });
 
 test("Staging proxy accepts multipart framing without exposing object storage", async () => {

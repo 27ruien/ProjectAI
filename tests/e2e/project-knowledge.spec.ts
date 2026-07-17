@@ -295,7 +295,10 @@ test.describe.serial("文档处理与真实项目知识索引", () => {
   }) => {
     await page.goto(appPath(`/projects/${projectA}/knowledge`));
     await expect(
-      page.getByRole("heading", { name: "项目知识搜索", exact: true }),
+      page.getByRole("heading", {
+        name: "项目 AI 助手与知识搜索",
+        exact: true,
+      }),
     ).toBeVisible();
 
     const pdf = uploaded.get("pdf")!;
@@ -426,7 +429,9 @@ test.describe.serial("文档处理与真实项目知识索引", () => {
       fixtures.pptx.displayName,
     );
     await expect(result.getByRole("button", { name: "下载原文件" })).toBeVisible();
-    await expect(page.getByText("尚未启用 AI 综合回答")).toBeVisible();
+    await expect(
+      page.getByText("我的对话 · 默认仅自己可见", { exact: true }),
+    ).toBeVisible();
     await reviewScreenshot(page, "viewer-knowledge-search.png");
 
     const forbidden = await page.request.post(

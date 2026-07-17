@@ -1,6 +1,6 @@
 # Architecture
 
-## v0.5 请求、身份、文件与知识边界
+## v0.6 请求、身份、文件、知识与项目助手边界
 
 ```mermaid
 flowchart LR
@@ -19,7 +19,7 @@ flowchart LR
 
 身份、角色、`projectId`、`documentId` 和 `versionId` 均不可信。受保护页面和 Route Handler 从数据库 Session 恢复用户，再由集中授权层查询项目成员关系。文件服务继续验证 `project → document → version` 复合归属；不存在和跨项目资源统一 404，只有已经确认项目可见但写角色不足时返回 403。`system_admin` 绕过项目成员关系只存在于集中授权层。
 
-项目资料和项目知识搜索均不再走 `data/mock`：列表、版本、current、归档、下载、处理状态和词法命中来自 PostgreSQL 与私有对象存储。需求、Scope、Action、会议、风险和 AI execution 仍是授权后按精确 `projectId` 过滤的 Mock；真实文件正文不会交给 Mock AI。
+项目资料、项目知识搜索和项目助手均不再走 `data/mock`：列表、版本、current、归档、下载、处理状态、词法命中、AI Thread/Message/Execution/Citation 来自 PostgreSQL 与私有对象存储边界。需求、Scope、Action、会议和风险仍是授权后按精确 `projectId` 过滤的 Mock。
 
 ## PostgreSQL 与对象存储职责
 
@@ -45,6 +45,10 @@ flowchart LR
 | `document_ingestion_jobs` | project/document/version/Generation、Parser/Chunker Version、状态、Attempt、Lease、Heartbeat 与脱敏失败 |
 | `document_sections` | 文件自然结构与 PDF Page、DOCX Paragraph、XLSX Range、PPTX Slide、文本行 Source Locator |
 | `document_chunks` | 确定性分块、内容 Hash、generated `tsvector`、`pg_trgm` 搜索字段和 `is_effective` |
+| `ai_model_profiles` | 服务端只读 Profile、Provider/Primary/Fallback/Region/Gateway Version；不保存 Secret 或 Base URL |
+| `ai_threads` / `ai_messages` | 项目和创建者私有 Thread；用户/助手业务消息与状态，不保存 System Prompt |
+| `ai_executions` | 幂等、阶段状态、Profile/模型/Fallback、Token Usage、Latency、问题 Hash 与受控失败码 |
+| `ai_message_citations` | 服务端来源快照，以复合外键绑定同项目 Message 与 B2 Chunk |
 | `audit_events` | actor、project、event/entity/result、脱敏 metadata、请求上下文与时间 |
 
 文件版本约束包括：
@@ -126,19 +130,22 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-  A["Business Page"] --> B["Workflow / Skill"]
-  B --> C["modelProfileId"]
-  C --> D["AI Gateway"]
-  D --> E["Mock Provider"]
-  E --> F["AI Draft"]
-  F --> G["Human Review"]
+  A["Project Knowledge Page"] --> B["Project Assistant Service"]
+  B --> C["B2 Lexical Evidence"]
+  C --> D["Grounded Prompt"]
+  D --> E["AI Gateway"]
+  E --> F["Qwen Provider Adapter"]
+  F --> G["Citation Validation / Repair"]
+  G --> H["Thread / Message / Execution / Citation"]
 ```
 
-`ProjectKnowledgeService` 与 `AIGateway` 保持稳定边界，页面和 Skill 不保存具体 Provider 模型名。v0.5 B2 只有 Parser、Section/Chunk 与词法搜索，没有 OCR、Embedding、RAG、Reranker、真实模型或 Provider Key；词法结果不是 AI 结论。
+`ProjectKnowledgeService` 与 `AIGateway` 保持稳定边界，页面只能提交 `modelProfileId`。B3-A 复用 B2 `Active + Current + Stored + Succeeded + Effective` 词法检索，Evidence 与 System Prompt 分区；模型标记由服务端验证并映射为公开 Citation。没有 Evidence 时不调用模型。
+
+Qwen Adapter 只在 Node 服务端使用 `/chat/completions`，Secret File 优先；Staging/Production 不允许环境变量 Key。主模型重试和 Fallback 在 Gateway 内部完成，浏览器不会获得 Base URL、Authorization、Provider 原始错误、Prompt、Evidence ID 或 Chunk ID。当前仍没有 OCR、Embedding、pgvector、Hybrid Retrieval 或 Reranker。
 
 ## Staging 环境与备份
 
-- Production：`/tool/projectai`、`/srv/projectai`、`project-ai-os`、`127.0.0.1:3100`；v0.5 B2 不得修改或增加 Worker。
+- Production：`/tool/projectai`、`/srv/projectai`、`project-ai-os`、`127.0.0.1:3100`；v0.6 B3-A 不得修改、部署或配置 Qwen Secret。
 - Staging 应用/Worker/数据库：`project-ai-os-staging`、`project-ai-os-staging-worker`、`project-ai-os-staging-postgres`、卷 `projectai-staging-postgres`、App `127.0.0.1:3101`；Worker/DB 无端口。
 - Staging MinIO：`project-ai-os-staging-minio`、卷 `projectai-staging-minio`、Bucket `projectai-staging-files`；仅连接 `projectai-staging-internal`，不发布 API/Console 端口，不允许匿名访问。
 - `projectai-minio-init` 使用 root credential 幂等创建私有 Bucket 和受 `projects/*` 限制的应用用户；应用只得到 scoped app credential。root/app credential 必须不同并只存在于 `root:root 600` 环境文件。
@@ -153,9 +160,9 @@ CI 使用 PostgreSQL 17 和运行时创建的 MinIO：每次生成随机 root/ap
 产品 Evidence 采用强 allowlist。Payload A 只可包含：
 
 - `evidence-index.json`、`sanitization-report.json`。
-- 22 张约定 PNG 截图（原有 12 张 + 10 张解析/搜索截图），每张记录实际宽高。
+- 30 张约定 PNG 截图（原有 12 张 + 10 张解析/搜索截图 + 8 张项目助手截图），每张记录实际宽高。
 - 固定名称的 UTF-8 纯文本测试日志。
 
-`playwright-report/`、`test-results/`、trace/video、任意归档/PDF、上传测试原件、数据库/对象备份和未列名文件均不进入 Payload A。sanitizer 对数据库/认证/MinIO/object-storage Secret、Bucket/Endpoint/Object Key、Cookie/Session 和编码变体做删除/脱敏并失败关闭。
+`playwright-report/`、`test-results/`、trace/video、任意归档/PDF、上传测试原件、数据库/对象备份和未列名文件均不进入 Payload A。sanitizer 对数据库/认证/MinIO/object-storage/Qwen Secret、Qwen Base URL、Bucket/Endpoint/Object Key、Cookie/Session、System Prompt、Provider Request/Response 和编码变体做删除/脱敏并失败关闭。
 
-GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v3 记录 Worker/Parser/Chunker Version 和 PNG 实际尺寸。`MVP_STATUS.md` 记录稳定交付结论；当前 v0.5 最终 Head、CI、Artifact 与 Staging 动态精确事实以 Draft PR #4 描述、Provenance Manifest 和受控部署证据为准。
+GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v3 记录 Worker/Parser/Chunker/AI Gateway Version、Assistant Profile 和 PNG 实际尺寸。`MVP_STATUS.md` 只记录稳定交付结论；最终 Head、CI、Artifact 与 Staging 动态精确事实只进入 Draft PR、Provenance Manifest 和受控部署证据。

@@ -119,8 +119,8 @@
 ## ADR-019：CI 只上传经过独立脱敏与复核的产品证据副本
 
 - 状态：Accepted。
-- 决策：CI 原始 Playwright report、test results、trace/video 和运行时上传 fixture 永不直接进入 Evidence。Payload A 采用强 allowlist，只接受 `evidence-index.json`、脱敏报告、22 张约定 PNG 及固定名称/大小的 UTF-8 文本日志；PDF、归档、未知二进制、未列名路径和上传原件必须拒绝/移除。
-- 两阶段发布：成功运行必须具备 22 张截图。Manifest schema v3 从 PNG 读取实际尺寸，并记录 Worker/Parser/Chunker Version；GitHub 返回 Payload A 的真实 Artifact ID 与 SHA-256 digest 后才生成独立 Provenance B。
+- 决策：CI 原始 Playwright report、test results、trace/video 和运行时上传 fixture 永不直接进入 Evidence。Payload A 采用强 allowlist，只接受 `evidence-index.json`、脱敏报告、30 张约定 PNG 及固定名称/大小的 UTF-8 文本日志；PDF、归档、未知二进制、未列名路径和上传原件必须拒绝/移除。
+- 两阶段发布：成功运行必须具备 30 张截图。Manifest schema v3 从 PNG 读取实际尺寸，并记录 Worker/Parser/Chunker/AI Gateway Version 与 Assistant Profile；GitHub 返回 Payload A 的真实 Artifact ID 与 SHA-256 digest 后才生成独立 Provenance B。
 - 原因：trace、network、HAR、上传原件和失败日志可能携带 HttpOnly Session、文件正文、Object Key 或临时凭据；“测试数据是虚构/临时值”不能替代最小发布边界。GitHub Artifact ID 在上传前不存在且上传后不可变，占位或自指 ID 无法形成自洽 provenance。
 - 失败策略：数据库 Session 无法核验、任一 allowlist 违规、Secret/对象元数据残留、成功截图不完整、index 自相矛盾或上传后 ID/name/digest/Run 绑定失败都会使 CI 失败并阻止后续发布。Staging 不可观测时只能记录 `stagingSha: null`。
 
@@ -183,3 +183,27 @@
 - 状态：Accepted。
 - 决策：`project-ai-os-staging-worker` 与 App 使用同一 immutable image，独立 command、无端口、内部网络、scoped credential、资源限制、日志轮转、优雅退出与心跳健康。Migration 前同时停止 App/Worker；回滚按发布前 Worker 是否存在条件恢复或移除。
 - 原因：同镜像保证 Parser/Schema/Version 与 App 创建的 Job 合同一致，独立进程避免解析资源影响请求服务；共同 quiesce 保持 PostgreSQL/MinIO 备份边界。
+
+## ADR-029：B3-A 使用非流式 Grounded Qwen Gateway
+
+- 状态：Accepted。
+- 决策：项目助手通过服务端 AI Gateway 调用 OpenAI-compatible Qwen Chat Completions，主模型 `qwen3.7-plus`、Fallback `qwen3.6-flash`，第一版不 Streaming。
+- 原因：回答返回浏览器前必须完整验证 Evidence 引用；流式 Token 会破坏失败闭合、幂等和 Citation 安全边界。
+
+## ADR-030：Thread 私有，Citation 由服务端来源生成
+
+- 状态：Accepted。
+- 决策：Thread 默认只对创建者可见；模型只返回 Evidence 标记，文件名、版本、Source Locator 和 Excerpt 必须来自服务端本次检索快照。
+- 原因：项目成员关系只证明项目读取权，不代表可读取其他用户对话；模型返回的来源元数据不可信。
+
+## ADR-031：无 Evidence 不调用 Provider，引用失败只 Repair 一次
+
+- 状态：Accepted。
+- 决策：检索为空或低于相关性门槛时直接进入 `insufficient_evidence`；非法 Evidence 标记只允许一次不新增事实的 Repair。
+- 原因：这是防幻觉和成本控制的最小 fail-closed 合同，不能用重复调用掩盖不可靠回答。
+
+## ADR-032：B3-A 不引入向量或正式业务 Mutation
+
+- 状态：Accepted。
+- 决策：B3-A 继续使用 B2 PostgreSQL 词法检索，禁止 Embedding、pgvector、Hybrid Retrieval、Rerank、Tool/Function Calling 和正式业务写入。
+- 原因：先闭环项目隔离、来源、Secret、幂等、限流、审计和真实 Provider，再由 B3-B 独立评审检索质量扩展。

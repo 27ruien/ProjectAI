@@ -50,7 +50,7 @@ function ciEnvironment(overrides = {}) {
   return isolatedEnvironment({
     CI: "true",
     NEXT_PUBLIC_APP_ENV: "test",
-    NEXT_PUBLIC_APP_VERSION: "0.5.0-staging",
+    NEXT_PUBLIC_APP_VERSION: "0.6.0-staging",
     NEXT_PUBLIC_BUILD_TIME: buildTime,
     REVIEW_ARTIFACT_STATUS: "failure",
     REVIEW_BRANCH: "agent/document-processing-index",
@@ -86,10 +86,12 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     assert.equal(index.stagingSha, stagingSha);
     assert.equal(index.branch, "agent/document-processing-index");
     assert.equal(index.workflowRunId, "29310000000");
-    assert.equal(index.version, "0.5.0-staging");
+    assert.equal(index.version, "0.6.0-staging");
     assert.equal(index.workerVersion, "1");
     assert.equal(index.parserVersion, "1");
     assert.equal(index.chunkerVersion, "1");
+    assert.equal(index.aiGatewayVersion, "1");
+    assert.equal(index.assistantProfileId, "qwen-project-assistant-cn-v1");
     assert.deepEqual(index.screenshots, []);
     assert.equal(Object.hasOwn(index, "viewport"), false);
     assert.ok(index.requiredScreenshots.includes("screenshots/documents-empty.png"));
@@ -103,7 +105,7 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
         "screenshots/knowledge-search-results.png",
       ),
     );
-    assert.equal(index.requiredScreenshots.length, 22);
+    assert.equal(index.requiredScreenshots.length, 30);
     assert.equal(index.buildTime, buildTime);
     assert.equal(Object.hasOwn(index, "commit"), false);
     assert.equal(Object.hasOwn(index, "artifactId"), false);
@@ -260,7 +262,7 @@ test("publishes a separate authoritative manifest after payload upload", async (
         branch: "agent/document-processing-index",
         workflowRunId: "29310000000",
         artifactId,
-        version: "0.5.0-staging",
+        version: "0.6.0-staging",
         buildTime,
       },
     );
@@ -268,6 +270,11 @@ test("publishes a separate authoritative manifest after payload upload", async (
     assert.equal(manifest.workerVersion, "1");
     assert.equal(manifest.parserVersion, "1");
     assert.equal(manifest.chunkerVersion, "1");
+    assert.equal(manifest.aiGatewayVersion, "1");
+    assert.equal(
+      manifest.assistantProfileId,
+      "qwen-project-assistant-cn-v1",
+    );
     assert.deepEqual(manifest.screenshots, []);
     assert.equal(Object.hasOwn(manifest, "viewport"), false);
     assert.equal(Object.hasOwn(manifest, "commit"), false);
