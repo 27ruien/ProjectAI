@@ -65,6 +65,33 @@ export const documentIngestionStatusEnum = pgEnum(
   ["pending", "running", "succeeded", "failed", "needs_ocr", "cancelled"],
 );
 
+export const aiThreadStatusEnum = pgEnum("ai_thread_status", [
+  "active",
+  "archived",
+]);
+
+export const aiMessageRoleEnum = pgEnum("ai_message_role", [
+  "user",
+  "assistant",
+]);
+
+export const aiMessageStatusEnum = pgEnum("ai_message_status", [
+  "pending",
+  "completed",
+  "failed",
+  "insufficient_evidence",
+]);
+
+export const aiExecutionStatusEnum = pgEnum("ai_execution_status", [
+  "reserved",
+  "retrieving",
+  "calling_provider",
+  "validating",
+  "succeeded",
+  "failed",
+  "insufficient_evidence",
+]);
+
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];
@@ -77,3 +104,8 @@ export type DocumentStorageStatus =
   (typeof documentStorageStatusEnum.enumValues)[number];
 export type DocumentIngestionStatus =
   (typeof documentIngestionStatusEnum.enumValues)[number];
+export type AiThreadStatus = (typeof aiThreadStatusEnum.enumValues)[number];
+export type AiMessageRole = (typeof aiMessageRoleEnum.enumValues)[number];
+export type AiMessageStatus = (typeof aiMessageStatusEnum.enumValues)[number];
+export type AiExecutionStatus =
+  (typeof aiExecutionStatusEnum.enumValues)[number];

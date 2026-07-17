@@ -28,6 +28,8 @@ const sourceRoots = [
 ];
 const allowedTestLogs = new Set([
   "artifact-sanitizer.log",
+  "assistant-integration.log",
+  "assistant-unit.log",
   "build-and-ssr.log",
   "deployment-contract.log",
   "document-processing-integration.log",
@@ -83,6 +85,14 @@ const requiredReviewScreenshots = [
   "screenshots/knowledge-search-xlsx-citation.png",
   "screenshots/knowledge-search-pptx-citation.png",
   "screenshots/viewer-knowledge-search.png",
+  "screenshots/ai-assistant-disabled.png",
+  "screenshots/ai-assistant-empty.png",
+  "screenshots/ai-assistant-grounded-answer.png",
+  "screenshots/ai-assistant-citation-expanded.png",
+  "screenshots/ai-assistant-insufficient-evidence.png",
+  "screenshots/ai-assistant-provider-error.png",
+  "screenshots/ai-assistant-viewer.png",
+  "screenshots/ai-assistant-thread-history.png",
 ];
 const metrics = {
   copiedRoots: [],
@@ -102,7 +112,7 @@ const metrics = {
 };
 
 const sensitivePropertyName =
-  /^(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey)$/i;
+  /^(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey|qwen_api_key|qwenApiKey|qwen_base_url|qwenBaseUrl|api_key|apiKey|authorizationHeader|system_prompt|systemPrompt|provider_request|providerRequest|provider_response|providerResponse|raw_provider_request|rawProviderRequest|raw_provider_response|rawProviderResponse)$/i;
 
 function isSensitiveStructuredName(value) {
   return (
@@ -286,6 +296,8 @@ async function collectSecrets() {
     "OBJECT_STORAGE_BUCKET",
     "OBJECT_STORAGE_ACCESS_KEY",
     "OBJECT_STORAGE_SECRET_KEY",
+    "QWEN_API_KEY",
+    "QWEN_BASE_URL",
     "SEED_ADMIN_PASSWORD",
     "SEED_MANAGER_A_PASSWORD",
     "SEED_MANAGER_B_PASSWORD",
@@ -351,11 +363,11 @@ function redactStructuredValues(input) {
     )
     .replace(/^(cookie|set-cookie|authorization):.*$/gim, `$1: ${redacted}`)
     .replace(
-      /("(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey)"\s*:\s*")[^"]*(")/gi,
+      /("(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey|qwen_api_key|qwenApiKey|qwen_base_url|qwenBaseUrl|api_key|apiKey|authorizationHeader|system_prompt|systemPrompt|provider_request|providerRequest|provider_response|providerResponse|raw_provider_request|rawProviderRequest|raw_provider_response|rawProviderResponse)"\s*:\s*")[^"]*(")/gi,
       `$1${redacted}$2`,
     )
     .replace(
-      /\b(objectKey|object_key|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET)=(?!\[REDACTED\])[^\s,;]+/gi,
+      /\b(objectKey|object_key|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET|QWEN_API_KEY|QWEN_BASE_URL|QWEN_API_KEY_FILE)=(?!\[REDACTED\])[^\s,;]+/gi,
       `$1=${redacted}`,
     );
 }
@@ -366,7 +378,7 @@ function containsUnsafeStorageMetadata(input) {
     /"(?:objectKey|object_key|objectStorageEndpoint|storageEndpoint|object_storage_endpoint|objectStorageBucket|object_storage_bucket|bucket)"\s*:\s*"(?!\[REDACTED\]")[^"]+"/i.test(
       input,
     ) ||
-    /\b(?:objectKey|object_key|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET)=(?!\[REDACTED\])[^\s,;]+/i.test(
+    /\b(?:objectKey|object_key|OBJECT_STORAGE_ENDPOINT|OBJECT_STORAGE_BUCKET|QWEN_API_KEY|QWEN_BASE_URL|QWEN_API_KEY_FILE)=(?!\[REDACTED\])[^\s,;]+/i.test(
       input,
     )
   );

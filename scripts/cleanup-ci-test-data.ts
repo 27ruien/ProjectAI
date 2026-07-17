@@ -38,6 +38,10 @@ try {
   `);
 
   await db.transaction(async (tx) => {
+    await tx.execute(sql`delete from ai_message_citations`);
+    await tx.execute(sql`delete from ai_executions`);
+    await tx.execute(sql`delete from ai_messages`);
+    await tx.execute(sql`delete from ai_threads`);
     await tx.execute(sql`delete from document_chunks`);
     await tx.execute(sql`delete from document_sections`);
     await tx.execute(sql`delete from document_ingestion_jobs`);
@@ -68,6 +72,11 @@ try {
     sections: number;
     chunks: number;
     running_jobs: number;
+    ai_threads: number;
+    ai_messages: number;
+    ai_executions: number;
+    ai_citations: number;
+    running_executions: number;
   }>(sql`
     select
       (select count(*)::int from sessions) as sessions,
@@ -76,11 +85,20 @@ try {
       (select count(*)::int from document_ingestion_jobs) as jobs,
       (select count(*)::int from document_sections) as sections,
       (select count(*)::int from document_chunks) as chunks,
+      (select count(*)::int from ai_threads) as ai_threads,
+      (select count(*)::int from ai_messages) as ai_messages,
+      (select count(*)::int from ai_executions) as ai_executions,
+      (select count(*)::int from ai_message_citations) as ai_citations,
       (
         select count(*)::int
         from document_ingestion_jobs
         where status = 'running'
-      ) as running_jobs
+      ) as running_jobs,
+      (
+        select count(*)::int
+        from ai_executions
+        where status in ('reserved', 'retrieving', 'calling_provider', 'validating')
+      ) as running_executions
   `);
   const objects = (await storage.listObjects("projects/")).length;
   const temporaryFiles = (await readdir("/tmp")).filter((entry) =>

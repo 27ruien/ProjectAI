@@ -46,8 +46,26 @@ export async function ensureIngestionJob(input: {
   db?: DatabaseExecutor;
   config?: DocumentProcessingConfig;
 }): Promise<DocumentIngestionJobRecord> {
-  const db = input.db ?? getDb();
+  if (!input.db) {
+    return getDb().transaction((tx) =>
+      ensureIngestionJob({
+        ...input,
+        db: tx,
+      }),
+    );
+  }
+  const db = input.db;
   const config = input.config ?? getDocumentProcessingConfig();
+  const creationScope = [
+    input.projectId,
+    input.documentId,
+    input.versionId,
+    config.parserVersion,
+    config.chunkerVersion,
+  ].join(":");
+  await db.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${creationScope}, 0))`,
+  );
   const existing = await db
     .select()
     .from(documentIngestionJob)

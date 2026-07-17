@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   account,
+  aiModelProfile,
   project,
   projectMember,
   user,
@@ -154,6 +155,20 @@ async function seedIdentity(spec: SeedUserSpec): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  await getDb()
+    .insert(aiModelProfile)
+    .values({
+      id: "qwen-project-assistant-cn-v1",
+      provider: "qwen",
+      purpose: "project_assistant",
+      primaryModel: "qwen3.7-plus",
+      fallbackModel: "qwen3.6-flash",
+      region: "cn-beijing",
+      enabled: true,
+      gatewayVersion: "1",
+    })
+    .onConflictDoNothing({ target: aiModelProfile.id });
+
   const userIds = new Map<SeedUserKey, string>();
   for (const spec of seedUsers) {
     userIds.set(spec.key, await seedIdentity(spec));

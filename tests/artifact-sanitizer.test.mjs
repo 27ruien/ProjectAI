@@ -38,6 +38,14 @@ const requiredScreenshots = [
   "screenshots/knowledge-search-xlsx-citation.png",
   "screenshots/knowledge-search-pptx-citation.png",
   "screenshots/viewer-knowledge-search.png",
+  "screenshots/ai-assistant-disabled.png",
+  "screenshots/ai-assistant-empty.png",
+  "screenshots/ai-assistant-grounded-answer.png",
+  "screenshots/ai-assistant-citation-expanded.png",
+  "screenshots/ai-assistant-insufficient-evidence.png",
+  "screenshots/ai-assistant-provider-error.png",
+  "screenshots/ai-assistant-viewer.png",
+  "screenshots/ai-assistant-thread-history.png",
 ];
 const headSha = "a".repeat(40);
 const testedMergeSha = "b".repeat(40);
@@ -57,6 +65,8 @@ function reviewEvidenceIndex(overrides = {}) {
     workerVersion: "1",
     parserVersion: "1",
     chunkerVersion: "1",
+    aiGatewayVersion: "1",
+    assistantProfileId: "qwen-project-assistant-cn-v1",
     status: "failure",
     requiredScreenshots,
     screenshotFiles: [],
@@ -226,6 +236,56 @@ test("redacts whitespace-folded storage secrets and raw object keys", async () =
     assert.match(sanitized, /\[REDACTED\]/);
     assert.equal(sanitized.includes(foldedBase64), false);
     assert.equal(sanitized.includes(objectKey), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("redacts Qwen configuration, prompts, and provider payloads", async () => {
+  const { root } = await fixture();
+  const logsRoot = path.join(root, "test-logs");
+  const apiKey = "qwen-test-only-secret-Aa1-0123456789";
+  const baseUrl = "https://example.invalid/compatible-mode/v1";
+  const secretFile = "/run/secrets/qwen_api_key";
+  const systemPrompt = "test-only-system-prompt-that-must-not-be-published";
+  const providerResponse = "test-only-provider-response-that-must-not-be-published";
+  try {
+    await mkdir(logsRoot);
+    await writeFile(
+      path.join(logsRoot, "assistant-unit.log"),
+      [
+        `QWEN_API_KEY=${apiKey}`,
+        `QWEN_BASE_URL=${baseUrl}`,
+        `QWEN_API_KEY_FILE=${secretFile}`,
+        JSON.stringify({
+          qwenApiKey: apiKey,
+          qwenBaseUrl: baseUrl,
+          systemPrompt,
+          providerResponse,
+        }),
+      ].join("\n"),
+    );
+    await execFileAsync(process.execPath, [sanitizer.pathname], {
+      cwd: root,
+      env: sanitizerEnvironment({
+        QWEN_API_KEY: apiKey,
+        QWEN_BASE_URL: baseUrl,
+      }),
+    });
+    const sanitized = await readFile(
+      path.join(root, "product-review-evidence/test-logs/assistant-unit.log"),
+      "utf8",
+    );
+    for (const unsafe of [
+      apiKey,
+      baseUrl,
+      secretFile,
+      systemPrompt,
+      providerResponse,
+    ]) {
+      assert.equal(sanitized.includes(unsafe), false);
+    }
+    assert.match(sanitized, /\[REDACTED\]/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

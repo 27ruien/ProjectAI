@@ -20,6 +20,10 @@ type ConsoleErrorAllowance = {
 
 type RuntimeMonitor = {
   allowConsoleErrorOnce: (allowance: ConsoleErrorAllowance) => void;
+  allowHttpStatusOnce: (allowance: {
+    status: number;
+    pathname: string;
+  }) => void;
 };
 
 async function attachJson(testInfo: TestInfo, name: string, value: unknown) {
@@ -79,10 +83,17 @@ export const test = base.extend<ProjectAIFixtures>({
       const consoleLogs: RuntimeLog[] = [];
       const networkFailures: RuntimeIssue[] = [];
       const consoleErrorAllowances: ConsoleErrorAllowance[] = [];
+      const httpStatusAllowances: Array<{
+        status: number;
+        pathname: string;
+      }> = [];
 
       const runtimeMonitor: RuntimeMonitor = {
         allowConsoleErrorOnce: (allowance) => {
           consoleErrorAllowances.push(allowance);
+        },
+        allowHttpStatusOnce: (allowance) => {
+          httpStatusAllowances.push(allowance);
         },
       };
 
@@ -118,6 +129,16 @@ export const test = base.extend<ProjectAIFixtures>({
 
       page.on("response", (response) => {
         if (response.status() < 500) return;
+        const pathname = new URL(response.url()).pathname;
+        const allowanceIndex = httpStatusAllowances.findIndex(
+          (allowance) =>
+            allowance.status === response.status() &&
+            allowance.pathname === pathname,
+        );
+        if (allowanceIndex >= 0) {
+          httpStatusAllowances.splice(allowanceIndex, 1);
+          return;
+        }
         const issue: RuntimeIssue = {
           kind: "http500",
           message: `HTTP ${response.status()} ${response.statusText()}`,

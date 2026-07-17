@@ -52,6 +52,13 @@ export default defineConfig({
           PORT: String(port),
           HOST: "127.0.0.1",
           NEXT_PUBLIC_BASE_PATH: basePath,
+          NODE_ENV: "test",
+          NEXT_PUBLIC_APP_ENV: "test",
+          AI_PROVIDER: "fake",
+          AI_ASSISTANT_ENABLED: "true",
+          AI_REGION: "cn-beijing",
+          AI_PROJECT_ASSISTANT_PROFILE_ID:
+            "qwen-project-assistant-cn-v1",
           // The complete serial suite intentionally exercises several actors
           // through the real credential endpoint. Production keeps the strict
           // limit; only this guarded test runtime raises the allowance.

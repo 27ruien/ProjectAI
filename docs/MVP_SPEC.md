@@ -8,21 +8,53 @@
 
 ```text
 登录 → 选择授权项目 → 上传项目资料 → 安全持久化与版本管理
-→ 文档解析与项目知识搜索 → 后续 AI 问答与来源引用
+→ 文档解析与项目知识搜索 → Grounded AI 问答与来源引用
 → AI 提取需求草稿 → 人工修改与审核 → 写入正式需求
 ```
 
-v0.4 已完成真实文件存储边界。v0.5 B2 只完成下一层基础能力：
+v0.4 已完成真实文件存储边界，v0.5 B2 已完成解析与词法索引。v0.6 B3-A 完成下一层受控问答：
 
 ```text
 Stored Current Version → Durable Job → Independent Worker
 → Parser → Section → Chunk → Lexical Index
 → Project-scoped Search → Source Locator
+→ Grounded Evidence → Qwen Answer → Validated Citation
 ```
 
-本轮不接入 AI 综合回答、Embedding、RAG、Qwen 或正式需求写入。
+本轮接入 Qwen Grounded Answer，但不接入 Embedding、pgvector、Hybrid Retrieval、Rerank、Tool Calling 或正式需求写入。
 
-## v0.5 — Document Processing and Knowledge Index Foundation
+## v0.6 — Grounded Qwen Project Assistant / B3-A
+
+### 服务端闭环
+
+`Session Principal → Project/Thread 授权 → B2 词法 Evidence → Grounded Prompt → AI Gateway → Qwen → Citation Validation/一次 Repair → AI 持久化 → 公开来源 DTO`。
+
+- 固定 Profile：`qwen-project-assistant-cn-v1`。
+- 主模型：`qwen3.7-plus`；主模型初始调用加最多 2 次网络/Timeout/429/5xx 重试。
+- Fallback：主模型耗尽后仅调用一次 `qwen3.6-flash`。
+- 非 Streaming；未经引用验证的 Token 不发送到浏览器。
+- 无 Evidence 时不调用 Provider，返回 `insufficient_evidence`。
+
+### 数据与权限
+
+- `ai_model_profiles` 是服务端只读配置；`ai_threads` 默认创建者私有。
+- `ai_messages` 只保存用户/助手业务消息，不保存 System Prompt 或原始 Provider Payload。
+- `ai_executions` 保存状态、Profile、模型、Fallback、Token Usage、Latency、问题 Hash、幂等键和受控失败码。
+- `ai_message_citations` 保存服务端来源快照，并以复合外键绑定 Project、Thread、Message 和 B2 Chunk。
+- Admin、Manager、Member、Viewer 均可在有项目读取权限时使用自己的助手；跨项目和他人 Thread 统一 404。
+
+### 安全和成本
+
+- Staging/Production 只能从 Secret File 读取 Qwen Key；Secret 只挂 App。
+- 每用户每分钟 6 次、用户每日 100000 Token、项目每日 500000 Token、全局同时运行 3 个 Execution。
+- Evidence 是不可信文本，不能改变 System 规则、读取文件、访问 URL、调用工具或泄露 Secret。
+- SEC-006 已关闭：B3-A 只能写 AI 表和 Audit，不能写正式 Requirement、Scope、Action、Risk、Meeting、Project Setting 或 Document。
+
+### B3-B 边界
+
+Embedding、`text-embedding-v4`、pgvector、向量索引、Hybrid Retrieval、`qwen3-rerank` 和 Reranker 均不在 B3-A。
+
+## v0.5 — Document Processing and Knowledge Index Foundation（历史已完成范围）
 
 ### 持久化任务与 Worker
 
@@ -90,12 +122,12 @@ DOCUMENT_CHUNKER_VERSION=1
 - Manager/Admin 可 reindex；Member/Viewer 由服务端返回 403。
 - 不存在或跨项目的 project/document/version/filter 统一返回 404。
 
-### UI 合同
+### v0.5 当时的 UI 合同
 
 - 资料页和版本抽屉显示 `not_started`、`pending`、`running`、`succeeded`、`failed`、`needs_ocr`，具备 Loading、Error、Retry、Polling 和 reindex。
 - 项目知识页是真实搜索：查询、资料筛选、空态、加载、错误重试、结果片段、文件/版本和精确来源。
-- 页面必须声明当前没有 AI 综合回答；不得把词法命中包装成 AI 结论。
-- 需求、Scope、Action、会议、风险及 AI execution 仍为 Mock，且不参与真实文件搜索。
+- v0.5 交付时页面声明尚无 AI 综合回答；v0.6 B3-A 已以独立项目助手替换该历史边界，公开词法搜索仍不得伪装成 AI 结论。
+- 需求、Scope、Action、会议和风险仍为 Mock，且不参与真实文件搜索；AI Execution 已由 v0.6 B3-A 真实化。
 
 ## 权限矩阵
 
@@ -108,7 +140,7 @@ DOCUMENT_CHUNKER_VERSION=1
 
 前端隐藏按钮不承担授权；写限制和项目归属必须由服务端执行。
 
-## 明确不在 v0.5 B2 范围
+## 明确不在 v0.5 B2 范围（历史）
 
 - OCR、图片理解、音视频、压缩包通用文件管理。
 - Embedding、pgvector、Hybrid Search、Reranker、RAG。
@@ -117,9 +149,9 @@ DOCUMENT_CHUNKER_VERSION=1
 - AI 草稿写入正式业务数据。
 - Production Migration、Worker、MinIO 变更、构建、重启或部署。
 
-## 交付门禁
+## v0.5 历史交付门禁
 
-开发分支固定为 `agent/document-processing-index`，版本固定为 `0.5.0-staging`，Draft PR 不得自动合并。最终必须提供：
+v0.5 当时的开发分支为 `agent/document-processing-index`、版本为 `0.5.0-staging`。该阶段已通过 PR #4 完成交付；以下保留为历史证据合同：
 
 - 从空 PostgreSQL 17 执行 Migration 和 `pg_trgm` 验证。
 - PostgreSQL + MinIO + Worker 的解析、Lease、并发、版本、归档、权限和搜索集成证据。

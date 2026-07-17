@@ -51,10 +51,167 @@ type SearchRow = {
   version_number: number;
   mime_type: string;
   content: string;
+  content_sha256: string;
   heading_path: unknown;
   source_locator: unknown;
   raw_score: number | string;
 };
+
+export type ProjectKnowledgeEvidence = {
+  label: string;
+  chunkId: string;
+  documentId: string;
+  versionId: string;
+  displayName: string;
+  versionNumber: number;
+  mimeType: string;
+  content: string;
+  contentSha256: string;
+  headingPath: string[];
+  source: ReturnType<typeof validateSourceLocator>;
+  score: number;
+};
+
+async function queryProjectKnowledgeRows(input: {
+  projectId: string;
+  query: string;
+  documentIds: string[];
+  limit: number;
+}): Promise<SearchRow[]> {
+  const documentFilter = input.documentIds.length
+    ? sql`and c.document_id in (${sql.join(
+        input.documentIds.map((id) => sql`${id}`),
+        sql`, `,
+      )})`
+    : sql``;
+  const contains = `%${input.query.replace(/[\\%_]/g, "\\$&")}%`;
+  const escapeCharacter = "\\";
+  const result = await getDb().transaction(async (tx) => {
+    await tx.execute(sql`set local statement_timeout = '3000ms'`);
+    return tx.execute<SearchRow>(sql`
+      with ranked as (
+        select
+          c.id as chunk_id,
+          c.document_id,
+          c.version_id,
+          d.display_name,
+          v.version_number,
+          v.detected_mime_type as mime_type,
+          c.content,
+          c.content_sha256,
+          c.heading_path,
+          c.source_locator,
+          (
+            ts_rank_cd(c.search_vector, websearch_to_tsquery('english', ${input.query})) * 2.0
+            + case when lower(c.search_text) like lower(${contains}) escape ${escapeCharacter} then 2.5 else 0 end
+            + case when lower(d.display_name) like lower(${contains}) escape ${escapeCharacter} then 1.5 else 0 end
+            + case when lower(c.heading_path::text) like lower(${contains}) escape ${escapeCharacter} then 1.25 else 0 end
+            + similarity(c.search_text, ${input.query})
+            + similarity(d.display_name, ${input.query}) * 0.75
+            + word_similarity(${input.query}, c.search_text) * 1.5
+            + word_similarity(${input.query}, d.display_name) * 0.5
+          ) as raw_score
+        from document_chunks c
+        inner join document_ingestion_jobs j on j.id = c.ingestion_job_id
+        inner join project_document_versions v
+          on v.id = c.version_id
+          and v.document_id = c.document_id
+          and v.project_id = c.project_id
+        inner join project_documents d
+          on d.id = c.document_id
+          and d.project_id = c.project_id
+        where c.project_id = ${input.projectId}
+          and c.is_effective = true
+          and d.document_status = 'active'
+          and v.storage_status = 'stored'
+          and v.is_current = true
+          and j.status = 'succeeded'
+          ${documentFilter}
+          and (
+            c.search_vector @@ websearch_to_tsquery('english', ${input.query})
+            or lower(c.search_text) like lower(${contains}) escape ${escapeCharacter}
+            or lower(d.display_name) like lower(${contains}) escape ${escapeCharacter}
+            or similarity(c.search_text, ${input.query}) >= 0.08
+            or similarity(d.display_name, ${input.query}) >= 0.12
+            or word_similarity(${input.query}, c.search_text) >= 0.3
+            or word_similarity(${input.query}, d.display_name) >= 0.35
+          )
+      )
+      select *
+      from ranked
+      order by raw_score desc, document_id asc, version_number desc, chunk_id asc
+      limit ${input.limit}
+    `);
+  });
+  return result.rows;
+}
+
+function normalizedScore(rawScore: number | string): number {
+  const value = Math.max(0, Number(rawScore));
+  return Number((value / (value + 1)).toFixed(4));
+}
+
+export async function retrieveProjectEvidence(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  requestHeaders: Headers;
+  query: string;
+  candidateLimit?: number;
+  evidenceLimit?: number;
+  maxChars?: number;
+  minimumScore?: number;
+}): Promise<ProjectKnowledgeEvidence[]> {
+  await requireProjectAccess(
+    input.principal,
+    input.projectId,
+    input.requestHeaders,
+  );
+  const query = input.query.trim().slice(0, 2_000);
+  if (query.length < 2) return [];
+  const candidateLimit = Math.min(Math.max(input.candidateLimit ?? 30, 1), 30);
+  const evidenceLimit = Math.min(Math.max(input.evidenceLimit ?? 10, 1), 10);
+  const maxChars = Math.min(Math.max(input.maxChars ?? 24_000, 1), 24_000);
+  const minimumScore = Math.min(Math.max(input.minimumScore ?? 0.12, 0), 1);
+  const rows = await queryProjectKnowledgeRows({
+    projectId: input.projectId,
+    query,
+    documentIds: [],
+    limit: candidateLimit,
+  });
+  const evidence: ProjectKnowledgeEvidence[] = [];
+  let characterCount = 0;
+  for (const row of rows) {
+    const score = normalizedScore(row.raw_score);
+    if (score < minimumScore) continue;
+    const content = row.content.trim();
+    if (!content) continue;
+    const remaining = maxChars - characterCount;
+    if (remaining <= 0) break;
+    const boundedContent = content.slice(0, remaining);
+    if (!boundedContent.trim()) break;
+    evidence.push({
+      label: `E${evidence.length + 1}`,
+      chunkId: row.chunk_id,
+      documentId: row.document_id,
+      versionId: row.version_id,
+      displayName: row.display_name,
+      versionNumber: row.version_number,
+      mimeType: row.mime_type,
+      content: boundedContent,
+      contentSha256: row.content_sha256,
+      headingPath: Array.isArray(row.heading_path)
+        ? row.heading_path.filter(
+            (item): item is string => typeof item === "string",
+          )
+        : [],
+      source: validateSourceLocator(row.source_locator),
+      score,
+    });
+    characterCount += boundedContent.length;
+    if (evidence.length >= evidenceLimit) break;
+  }
+  return evidence;
+}
 
 export async function searchProjectKnowledge(input: {
   principal: AuthenticatedPrincipal;
@@ -110,72 +267,13 @@ export async function searchProjectKnowledge(input: {
       );
     }
   }
-  const documentFilter = documentIds.length
-    ? sql`and c.document_id in (${sql.join(
-        documentIds.map((id) => sql`${id}`),
-        sql`, `,
-      )})`
-    : sql``;
-  const contains = `%${query.replace(/[\\%_]/g, "\\$&")}%`;
-  const escapeCharacter = "\\";
-  const result = await getDb().transaction(async (tx) => {
-    await tx.execute(sql`set local statement_timeout = '3000ms'`);
-    return tx.execute<SearchRow>(sql`
-      with ranked as (
-        select
-          c.id as chunk_id,
-          c.document_id,
-          c.version_id,
-          d.display_name,
-          v.version_number,
-          v.detected_mime_type as mime_type,
-          c.content,
-          c.heading_path,
-          c.source_locator,
-          (
-            ts_rank_cd(c.search_vector, websearch_to_tsquery('english', ${query})) * 2.0
-            + case when lower(c.search_text) like lower(${contains}) escape ${escapeCharacter} then 2.5 else 0 end
-            + case when lower(d.display_name) like lower(${contains}) escape ${escapeCharacter} then 1.5 else 0 end
-            + case when lower(c.heading_path::text) like lower(${contains}) escape ${escapeCharacter} then 1.25 else 0 end
-            + similarity(c.search_text, ${query})
-            + similarity(d.display_name, ${query}) * 0.75
-            + word_similarity(${query}, c.search_text) * 1.5
-            + word_similarity(${query}, d.display_name) * 0.5
-          ) as raw_score
-        from document_chunks c
-        inner join document_ingestion_jobs j on j.id = c.ingestion_job_id
-        inner join project_document_versions v
-          on v.id = c.version_id
-          and v.document_id = c.document_id
-          and v.project_id = c.project_id
-        inner join project_documents d
-          on d.id = c.document_id
-          and d.project_id = c.project_id
-        where c.project_id = ${input.projectId}
-          and c.is_effective = true
-          and d.document_status = 'active'
-          and v.storage_status = 'stored'
-          and v.is_current = true
-          and j.status = 'succeeded'
-          ${documentFilter}
-          and (
-            c.search_vector @@ websearch_to_tsquery('english', ${query})
-            or lower(c.search_text) like lower(${contains}) escape ${escapeCharacter}
-            or lower(d.display_name) like lower(${contains}) escape ${escapeCharacter}
-            or similarity(c.search_text, ${query}) >= 0.08
-            or similarity(d.display_name, ${query}) >= 0.12
-            or word_similarity(${query}, c.search_text) >= 0.3
-            or word_similarity(${query}, d.display_name) >= 0.35
-          )
-      )
-      select *
-      from ranked
-      order by raw_score desc, document_id asc, version_number desc, chunk_id asc
-      limit ${limit}
-    `);
+  const rows = await queryProjectKnowledgeRows({
+    projectId: input.projectId,
+    query,
+    documentIds,
+    limit,
   });
-  const results: KnowledgeSearchResultDto[] = result.rows.map((row) => {
-    const rawScore = Math.max(0, Number(row.raw_score));
+  const results: KnowledgeSearchResultDto[] = rows.map((row) => {
     return {
       chunkId: row.chunk_id,
       documentId: row.document_id,
@@ -190,7 +288,7 @@ export async function searchProjectKnowledge(input: {
           )
         : [],
       source: validateSourceLocator(row.source_locator),
-      score: Number((rawScore / (rawScore + 1)).toFixed(4)),
+      score: normalizedScore(row.raw_score),
     };
   });
   await writeAuditEvent({

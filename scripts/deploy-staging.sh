@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/document-processing-index"
+readonly EXPECTED_BRANCH="agent/grounded-qwen-assistant"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
@@ -15,6 +15,8 @@ MINIO_BUCKET_NAME="projectai-staging-files"
 readonly MINIO_IMAGE_REF="quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
 readonly MINIO_CLIENT_IMAGE_REF="quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"
 REMOTE_ENV_FILE="${REMOTE_DIR}/.env.auth-staging"
+REMOTE_AI_ENV_FILE="${REMOTE_DIR}/.env.ai"
+REMOTE_QWEN_SECRET_FILE="${REMOTE_DIR}/secrets/qwen_api_key"
 DEPLOY_MARKER="${REMOTE_DIR}/.staging-deploy-in-progress"
 DEPLOY_LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
 readonly BACKUP_RETENTION=10
@@ -167,22 +169,25 @@ LOCK_ACQUIRED=1
 
 log "Checking isolated remote prerequisites and protected environment file"
 "${SSH[@]}" bash -s -- \
-  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
+  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
+  "$REMOTE_QWEN_SECRET_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
   "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
   "$COMPOSE_PROJECT" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
-container_name="$3"
-worker_container_name="$4"
-db_container_name="$5"
-minio_container_name="$6"
-minio_volume_name="$7"
-minio_bucket_name="$8"
-compose_project="$9"
-deploy_marker="${10}"
-deploy_lock="${11}"
-deploy_id="${12}"
+ai_env_file="$3"
+qwen_secret_file="$4"
+container_name="$5"
+worker_container_name="$6"
+db_container_name="$7"
+minio_container_name="$8"
+minio_volume_name="$9"
+minio_bucket_name="${10}"
+compose_project="${11}"
+deploy_marker="${12}"
+deploy_lock="${13}"
+deploy_id="${14}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
@@ -197,6 +202,8 @@ fi
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$env_file" == "$remote_dir/.env.auth-staging" ]]
+[[ "$ai_env_file" == "$remote_dir/.env.ai" ]]
+[[ "$qwen_secret_file" == "$remote_dir/secrets/qwen_api_key" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 [[ "$deploy_lock" == "$remote_dir/.staging-deploy-lock" ]]
@@ -213,6 +220,37 @@ sudo test ! -L "$env_file"
 sudo chmod 600 "$env_file"
 [[ "$(sudo stat -c '%a' "$env_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$env_file")" == "root:root" ]]
+sudo test -f "$ai_env_file"
+sudo test ! -L "$ai_env_file"
+sudo chmod 600 "$ai_env_file"
+[[ "$(sudo stat -c '%a' "$ai_env_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
+sudo test -f "$qwen_secret_file"
+sudo test ! -L "$qwen_secret_file"
+sudo test -s "$qwen_secret_file"
+sudo chmod 600 "$qwen_secret_file"
+[[ "$(sudo stat -c '%a' "$qwen_secret_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$qwen_secret_file")" == "deploy:deploy" ]]
+sudo awk -F= '
+  /^[[:space:]]*($|#)/ { next }
+  {
+    key = $1
+    value = substr($0, index($0, "=") + 1)
+    count[key] += 1
+    values[key] = value
+  }
+  END {
+    if (count["AI_ASSISTANT_ENABLED"] != 1 || values["AI_ASSISTANT_ENABLED"] != "false") exit 1
+    if (count["AI_PROVIDER"] != 1 || values["AI_PROVIDER"] != "qwen") exit 1
+    if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
+    if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v1") exit 1
+    if (count["QWEN_API_KEY_FILE"] != 1 || values["QWEN_API_KEY_FILE"] != "/run/secrets/qwen_api_key") exit 1
+    if (count["QWEN_BASE_URL"] != 1 || values["QWEN_BASE_URL"] !~ /^https:\/\/dashscope\.aliyuncs\.com\/compatible-mode\/v1\/?$/) exit 1
+  }
+' "$ai_env_file" || {
+  printf 'Protected Staging AI configuration is invalid or was enabled before the Provider Probe.\n' >&2
+  exit 1
+}
 if sudo test -e "$remote_dir/backups"; then
   sudo test -d "$remote_dir/backups"
   sudo test ! -L "$remote_dir/backups"
@@ -570,7 +608,8 @@ fi
 
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
-    "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
+    "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
+    "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
     "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$DB_CONTAINER_NAME" \
     "$BASE_PATH" "$DEPLOY_MARKER" \
     "${PREVIOUS_STAGING_IMAGE:-__projectai_empty__}" "$PREVIOUS_STAGING_HEALTH_PATH" \
@@ -582,20 +621,21 @@ rollback_staging_if_marked() {
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
-compose_project="$3"
-compose_file="$4"
-container_name="$5"
-worker_container_name="$6"
-db_container_name="$7"
-base_path="$8"
-deploy_marker="$9"
-previous_image="${10}"
-previous_health_path="${11}"
-previous_commit_sha="${12}"
-previous_app_version="${13}"
-previous_build_time="${14}"
-previous_worker_image="${15}"
-previous_worker_running="${16}"
+ai_env_file="$3"
+compose_project="$4"
+compose_file="$5"
+container_name="$6"
+worker_container_name="$7"
+db_container_name="$8"
+base_path="$9"
+deploy_marker="${10}"
+previous_image="${11}"
+previous_health_path="${12}"
+previous_commit_sha="${13}"
+previous_app_version="${14}"
+previous_build_time="${15}"
+previous_worker_image="${16}"
+previous_worker_running="${17}"
 [[ "$previous_image" != "__projectai_empty__" ]] || previous_image=""
 [[ "$previous_commit_sha" != "__projectai_empty__" ]] || previous_commit_sha=""
 [[ "$previous_app_version" != "__projectai_empty__" ]] || previous_app_version=""
@@ -603,6 +643,7 @@ previous_worker_running="${16}"
 [[ "$previous_worker_image" != "__projectai_empty__" ]] || previous_worker_image=""
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
+[[ "$ai_env_file" == "$remote_dir/.env.ai" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$previous_health_path" == "/login" || "$previous_health_path" == "/api/health" ]]
 if [[ -n "$previous_image" ]]; then
@@ -612,6 +653,21 @@ if [[ -n "$previous_image" ]]; then
 fi
 sudo test -e "$deploy_marker" || exit 0
 cd "$remote_dir"
+if sudo test -f "$ai_env_file"; then
+  ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.rollback.XXXXXX")"
+  sudo awk -F= '
+    BEGIN { updated = 0 }
+    $1 == "AI_ASSISTANT_ENABLED" {
+      print "AI_ASSISTANT_ENABLED=false"
+      updated += 1
+      next
+    }
+    { print }
+    END { if (updated != 1) exit 1 }
+  ' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null
+  sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
+  sudo rm -f "$ai_env_temp"
+fi
 
 rollback_health_path="$previous_health_path"
 previous_requires_database="0"
@@ -807,6 +863,8 @@ log "Syncing tracked release ${SHORT_SHA} to ${REMOTE_HOST}:${REMOTE_DIR}"
 rsync --archive --compress --delete \
   --filter='protect /backups/***' \
   --filter='protect /.env.auth-staging' \
+  --filter='protect /.env.ai' \
+  --filter='protect /secrets/***' \
   --filter='protect /.staging-deploy-in-progress' \
   --filter='protect /.staging-deploy-lock/***' \
   --exclude '/.git/' \
@@ -823,6 +881,8 @@ rsync --archive --compress --delete \
   --exclude '/.env' \
   --exclude '/.env.*' \
   --exclude '/.env.auth-staging' \
+  --exclude '/.env.ai' \
+  --exclude '/secrets/' \
   --exclude '*.log' \
   --rsh='ssh -o BatchMode=yes' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
@@ -849,7 +909,8 @@ REMOTE_IMAGE_VERIFY
 
 log "Starting the isolated Staging services from preloaded images"
 "${SSH[@]}" bash -s -- \
-  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
+  "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
+  "$REMOTE_QWEN_SECRET_FILE" "$COMPOSE_PROJECT" "$COMPOSE_FILE" \
   "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$DB_CONTAINER_NAME" \
   "$MINIO_CONTAINER_NAME" \
   "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" "$BASE_PATH" "$COMMIT_SHA" \
@@ -859,30 +920,34 @@ log "Starting the isolated Staging services from preloaded images"
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
-compose_project="$3"
-compose_file="$4"
-container_name="$5"
-worker_container_name="$6"
-db_container_name="$7"
-minio_container_name="$8"
-minio_volume_name="$9"
-minio_bucket_name="${10}"
-base_path="${11}"
-commit_sha="${12}"
-app_version="${13}"
-build_time="${14}"
-deploy_marker="${15}"
-backup_retention="${16}"
-app_image_ref="${17}"
-app_image_id="${18}"
-db_tools_image_ref="${19}"
-db_tools_image_id="${20}"
-minio_image_ref="${21}"
-minio_client_image_ref="${22}"
+ai_env_file="$3"
+qwen_secret_file="$4"
+compose_project="$5"
+compose_file="$6"
+container_name="$7"
+worker_container_name="$8"
+db_container_name="$9"
+minio_container_name="${10}"
+minio_volume_name="${11}"
+minio_bucket_name="${12}"
+base_path="${13}"
+commit_sha="${14}"
+app_version="${15}"
+build_time="${16}"
+deploy_marker="${17}"
+backup_retention="${18}"
+app_image_ref="${19}"
+app_image_id="${20}"
+db_tools_image_ref="${21}"
+db_tools_image_id="${22}"
+minio_image_ref="${23}"
+minio_client_image_ref="${24}"
 origin='http://127.0.0.1:3101'
 
 cd "$remote_dir"
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
+[[ "$ai_env_file" == "$remote_dir/.env.ai" ]]
+[[ "$qwen_secret_file" == "$remote_dir/secrets/qwen_api_key" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$worker_container_name" == "project-ai-os-staging-worker" ]]
 [[ "$minio_container_name" == "project-ai-os-staging-minio" ]]
@@ -898,6 +963,22 @@ cd "$remote_dir"
 [[ "$minio_client_image_ref" == quay.io/minio/mc:RELEASE.* ]]
 sudo test -e "$deploy_marker"
 [[ "$(sudo stat -c '%a' "$env_file")" == "600" ]]
+sudo test -f "$ai_env_file"
+sudo test ! -L "$ai_env_file"
+sudo test -f "$qwen_secret_file"
+sudo test ! -L "$qwen_secret_file"
+sudo test -s "$qwen_secret_file"
+[[ "$(sudo stat -c '%a' "$ai_env_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
+[[ "$(sudo stat -c '%a' "$qwen_secret_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$qwen_secret_file")" == "deploy:deploy" ]]
+sudo awk -F= '
+  $1 == "AI_ASSISTANT_ENABLED" {
+    found += 1
+    if (substr($0, index($0, "=") + 1) != "false") exit 1
+  }
+  END { exit(found == 1 ? 0 : 1) }
+' "$ai_env_file"
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$app_image_ref")" == "$app_image_id" ]]
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
 export NEXT_PUBLIC_COMMIT_SHA="$commit_sha"
@@ -1470,6 +1551,14 @@ done
   exit 1
 }
 
+initial_ai_health="$(
+  curl --fail --silent --show-error --max-time 10 \
+    "${origin}${base_path}/api/health"
+)"
+grep -q '"aiAssistantEnabled":false' <<<"$initial_ai_health"
+grep -q '"aiProviderConfigured":true' <<<"$initial_ai_health"
+grep -q '"aiGatewayVersion":"1"' <<<"$initial_ai_health"
+
 health_headers="$(
   curl --fail --silent --show-error --max-time 10 \
     --dump-header - --output /dev/null "${origin}${base_path}/api/health" \
@@ -1482,6 +1571,9 @@ grep -qi '^x-projectai-chunker-version: 1$' <<<"$health_headers"
 
 [[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/secrets/qwen_api_key"}}{{.RW}}|{{.Destination}}{{end}}{{end}}' "$container_name")" == "false|/run/secrets/qwen_api_key" ]]
+[[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/secrets/qwen_api_key"}}{{.Destination}}{{end}}{{end}}' "$worker_container_name")" ]]
+[[ -z "$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$worker_container_name" | grep -E '^(QWEN_|AI_PROVIDER=|AI_ASSISTANT_ENABLED=)' || true)" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$worker_container_name")" == "healthy" ]]
 [[ -z "$(sudo docker port "$worker_container_name")" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$db_container_name")" == "healthy" ]]
@@ -1489,6 +1581,56 @@ grep -qi '^x-projectai-chunker-version: 1$' <<<"$health_headers"
 [[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$minio_container_name")" == "volume|${minio_volume_name}|/data" ]]
 [[ -z "$(sudo docker port "$minio_container_name")" ]]
 curl --fail --silent --max-time 10 "${origin}${base_path}/login" >/dev/null
+
+printf 'Running the fixed Qwen Provider Probe while the assistant Feature Flag remains disabled.\n'
+sudo docker exec "$container_name" npm run ai:probe:qwen
+
+printf 'Enabling the Staging assistant only after the Qwen Provider Probe succeeded.\n'
+ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.enable.XXXXXX")"
+sudo awk -F= '
+  BEGIN { updated = 0 }
+  $1 == "AI_ASSISTANT_ENABLED" {
+    print "AI_ASSISTANT_ENABLED=true"
+    updated += 1
+    next
+  }
+  { print }
+  END { if (updated != 1) exit 1 }
+' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null
+sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
+sudo rm -f "$ai_env_temp"
+
+printf 'Recreating only the Staging application with the enabled Feature Flag.\n'
+"${compose[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+enabled_ready=0
+for _ in $(seq 1 60); do
+  container_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container_name")"
+  if [[ "$container_health" == "unhealthy" || "$container_health" == "exited" || "$container_health" == "dead" ]]; then
+    printf 'Staging application failed after enabling the AI assistant.\n' >&2
+    exit 1
+  fi
+  if [[ "$container_health" == "healthy" ]]; then
+    enabled_ai_health="$(
+      curl --fail --silent --show-error --max-time 5 \
+        "${origin}${base_path}/api/health" || true
+    )"
+    if grep -q '"status":"ok"' <<<"$enabled_ai_health" \
+      && grep -q '"aiAssistantEnabled":true' <<<"$enabled_ai_health" \
+      && grep -q '"aiProviderConfigured":true' <<<"$enabled_ai_health" \
+      && grep -q '"aiGatewayVersion":"1"' <<<"$enabled_ai_health"; then
+      enabled_ready=1
+      break
+    fi
+  fi
+  sleep 2
+done
+[[ "$enabled_ready" == "1" ]] || {
+  printf 'Staging AI assistant readiness timed out.\n' >&2
+  exit 1
+}
+[[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.RestartCount}}' "$worker_container_name")" =~ ^[0-9]+$ ]]
 
 for route in /dashboard /projects /projects/project-002/overview /reviews /settings/ai-models; do
   response="$(curl --silent --show-error --head --max-time 10 "${origin}${base_path}${route}" | tr -d '\r')"
@@ -1523,6 +1665,12 @@ printf 'Verifying six-format document processing, lexical search, citations, per
   --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-document-smoke npm run documents:smoke
+
+printf 'Verifying real Staging Qwen grounding, citations, private Threads, Viewer access, Token Usage, Audit, and cleanup.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-ai-smoke npm run assistant:smoke
 
 printf 'Rechecking PostgreSQL and MinIO consistency after application verification.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
@@ -1587,6 +1735,29 @@ unexpected_worker_temp="$(
 
 printf 'Rechecking storage consistency after Lease verification cleanup.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
+
+"${compose_run[@]}" projectai-migrate node --input-type=module -e '
+    import pg from "pg";
+    const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+    await client.connect();
+    try {
+      const result = await client.query(
+        "select count(*)::int as count from ai_executions where status in ($1, $2, $3, $4)",
+        ["reserved", "retrieving", "calling_provider", "validating"],
+      );
+      if (result.rows[0]?.count !== 0) {
+        throw new Error("Staging retains a running AI Execution");
+      }
+    } finally {
+      await client.end();
+    }
+  '
+
+if sudo docker logs "$container_name" 2>&1 \
+  | grep -Eiq 'authorization:|bearer[[:space:]]|QWEN_API_KEY|QWEN_BASE_URL|<evidence_set>|<conversation_history_json>|<current_question_json>|<answer_json>'; then
+  printf 'Staging application logs contain prohibited AI request or Secret markers.\n' >&2
+  exit 1
+fi
 
 css_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.css" <<<"$html" | sed -n '1p')"
 js_path="$(grep -oE "${base_path}/assets/[A-Za-z0-9._/-]+\\.js" <<<"$html" | sed -n '1p')"
@@ -1744,7 +1915,7 @@ log "Validating public login, Session lifecycle, roles, and cross-project isolat
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$PUBLIC_STAGING_URL" "$BASE_PATH" \
   "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$COMMIT_SHA" "$APP_VERSION" \
   "$BUILD_TIME" "$DB_TOOLS_IMAGE_REF" "$DEPLOY_MARKER" \
-  "$WORKER_CONTAINER_NAME" <<'REMOTE_PUBLIC_AUTH'
+  "$WORKER_CONTAINER_NAME" "$CONTAINER_NAME" <<'REMOTE_PUBLIC_AUTH'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -1758,6 +1929,7 @@ build_time="$9"
 db_tools_image_ref="${10}"
 deploy_marker="${11}"
 worker_container_name="${12}"
+container_name="${13}"
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$public_base_url" == "https://gridworks.cn/tool/projectai-staging" ]]
@@ -1765,6 +1937,7 @@ worker_container_name="${12}"
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 [[ "$worker_container_name" == "project-ai-os-staging-worker" ]]
+[[ "$container_name" == "project-ai-os-staging" ]]
 cd "$remote_dir"
 sudo test -e "$deploy_marker"
 compose_run=(
@@ -1806,6 +1979,12 @@ printf 'Verifying the public six-format document processing and search flow.\n'
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-document-smoke npm run documents:smoke
 
+printf 'Verifying the public real-Qwen grounded assistant flow.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=$public_base_url" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-ai-smoke npm run assistant:smoke
+
 printf 'Rechecking PostgreSQL and MinIO consistency after public verification.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
 
@@ -1815,11 +1994,20 @@ printf 'Rechecking PostgreSQL and MinIO consistency after public verification.\n
     await client.connect();
     try {
       const result = await client.query(
-        "select count(*)::int as count from document_ingestion_jobs where status = $1",
-        ["running"],
+        `select
+          (select count(*)::int from document_ingestion_jobs where status = $1) as running_jobs,
+          (
+            select count(*)::int
+            from ai_executions
+            where status in ($2, $3, $4, $5)
+          ) as running_executions`,
+        ["running", "reserved", "retrieving", "calling_provider", "validating"],
       );
-      if (result.rows[0]?.count !== 0) {
-        throw new Error("Staging retains a running document Job");
+      if (
+        result.rows[0]?.running_jobs !== 0 ||
+        result.rows[0]?.running_executions !== 0
+      ) {
+        throw new Error("Staging retains running document or AI work");
       }
     } finally {
       await client.end();
@@ -1830,6 +2018,11 @@ unexpected_worker_temp="$(
     "find /tmp -maxdepth 1 -type f -name 'projectai-*' ! -name 'projectai-document-worker-heartbeat' -print"
 )"
 [[ -z "$unexpected_worker_temp" ]]
+if sudo docker logs "$container_name" 2>&1 \
+  | grep -Eiq 'authorization:|bearer[[:space:]]|QWEN_API_KEY|QWEN_BASE_URL|<evidence_set>|<conversation_history_json>|<current_question_json>|<answer_json>'; then
+  printf 'Staging application logs contain prohibited AI request or Secret markers.\n' >&2
+  exit 1
+fi
 REMOTE_PUBLIC_AUTH
 
 log "Confirming Production remains healthy"

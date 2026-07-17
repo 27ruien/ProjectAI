@@ -305,7 +305,12 @@ describe("database constraints", () => {
     try {
       const response = await getHealth();
       assert.equal(response.status, 200);
-      assert.deepEqual(await response.json(), { status: "ok" });
+      assert.deepEqual(await response.json(), {
+        status: "ok",
+        aiAssistantEnabled: false,
+        aiProviderConfigured: false,
+        aiGatewayVersion: "1",
+      });
       assert.equal(response.headers.get("x-projectai-commit-sha"), runtimeSha);
     } finally {
       if (previousSha === undefined) delete process.env.NEXT_PUBLIC_COMMIT_SHA;

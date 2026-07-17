@@ -7,6 +7,7 @@ export * from "./project-members";
 export * from "./audit-events";
 export * from "./project-documents";
 export * from "./document-ingestion";
+export * from "./ai-assistant";
 
 import { account, rateLimit, verification } from "./auth-support";
 import { session } from "./sessions";

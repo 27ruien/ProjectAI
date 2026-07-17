@@ -65,6 +65,17 @@
 - B2 只允许部署 Staging；App 与 Worker 使用同一 immutable image、独立 command，Worker 无端口、仅使用 scoped 对象凭据并有资源/日志/健康限制。不得修改或部署 Production。
 - CI、Staging 冒烟和 Evidence 只能使用运行时生成的虚构文件；结束必须清理测试 Session、文档、版本、Job、Section、Chunk、对象和临时解析文件，不得上传原始文件、正文/Chunk 导出、Trace、Video、数据库 Dump 或 MinIO Mirror。
 
+## v0.6 B3-A 范围规则
+
+- v0.6 B3-A 只在 B2 词法索引之上实现 Grounded Project Assistant：服务端授权、B2 Evidence 检索、受控 Prompt、Qwen 调用、引用验证/一次 Repair、Thread/Message/Execution/Citation 持久化和可审核来源 UI。
+- 固定只读 Profile 为 `qwen-project-assistant-cn-v1`，主模型 `qwen3.7-plus`、Fallback `qwen3.6-flash`、区域 `cn-beijing`。客户端只能提交 `modelProfileId`，不得提交 Provider、模型、Region、Base URL、Secret、Evidence 或 Prompt。
+- 所有真实调用必须经过服务端 AI Gateway；Staging/Production 只允许 Secret File。Qwen Secret 只挂载到 App，Worker、镜像、浏览器、日志、错误 DTO、Evidence 和 Provenance 均不得获得 Secret、Authorization、Base URL、完整 Prompt 或原始 Provider Response。
+- Thread 默认由创建者私有。所有项目读取角色可创建并使用自己的 Thread；跨项目、他人 Thread、篡改 `projectId`/`threadId` 统一返回 404。幂等、每用户分钟限制、用户/项目日 Token 限制与全局并发限制必须在 PostgreSQL 中执行。
+- 没有合格 Evidence 时不得调用 Provider，必须持久化 `insufficient_evidence`。有 Evidence 的回答必须只使用本次 `[E1]`–`[E10]`，服务端验证并映射成公开 Citation；非法引用只允许一次受控 Repair，仍失败则不得返回回答。
+- B3-A 关闭 SEC-006：AI 只可写 AI Thread、Message、Execution、Citation 和 Audit，不得写 Requirement、Scope、Action、Risk、Meeting、Project Setting、Document 或其他正式业务数据；禁止 Tool Calling、Function Calling、Web Search 与 Agent 自主执行。
+- CI 只能在 `NODE_ENV=test` 使用 Fake Provider。Staging 必须先以 `AI_ASSISTANT_ENABLED=false` 部署并健康，再执行固定虚构 Provider Probe；成功后只重建 App 启用 Flag，并用虚构资料完成真实 Qwen、Citation、Viewer、私有 Thread、Token Usage、Audit 和清理验证。
+- B3-A 仍禁止 OCR、Embedding、`text-embedding-v4`、pgvector、向量字段/索引、Hybrid Retrieval、`qwen3-rerank`、Reranker 和 B3-B。只允许部署 Staging，Production 不得修改或获得 Qwen Secret。
+
 ## Review Guidelines
 
 - P0：跨项目数据泄露；密钥或客户资料暴露。
