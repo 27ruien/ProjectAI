@@ -233,6 +233,23 @@ sudo test ! -L "$ai_env_file"
 sudo chmod 600 "$ai_env_file"
 [[ "$(sudo stat -c '%a' "$ai_env_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
+ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.preflight.XXXXXX")"
+if ! sudo awk -F= '
+  BEGIN { updated = 0 }
+  $1 == "AI_ASSISTANT_ENABLED" {
+    print "AI_ASSISTANT_ENABLED=false"
+    updated += 1
+    next
+  }
+  { print }
+  END { if (updated != 1) exit 1 }
+' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null; then
+  sudo rm -f "$ai_env_temp"
+  printf 'Protected Staging AI configuration must contain exactly one Assistant Feature Flag.\n' >&2
+  exit 1
+fi
+sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
+sudo rm -f "$ai_env_temp"
 embedding_env_temp="$(sudo mktemp "$remote_dir/.env.embedding.preflight.XXXXXX")"
 sudo tee "$embedding_env_temp" >/dev/null <<'EMBEDDING_ENV'
 AI_EMBEDDING_ENABLED=false

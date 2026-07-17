@@ -420,8 +420,13 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
   assert.match(script, /id -u deploy/);
   assert.match(script, /id -g deploy/);
   assert.doesNotMatch(script, /cat [^\n]*qwen_api_key/);
+  assert.match(
+    script,
+    /\.env\.ai\.preflight\.XXXXXX[\s\S]+?print "AI_ASSISTANT_ENABLED=false"[\s\S]+?install -m 0600 -o deploy -g deploy "\$ai_env_temp" "\$ai_env_file"/,
+  );
   const probeIndex = script.indexOf("npm run ai:probe:qwen");
   const embeddingProbeIndex = script.indexOf("npm run embeddings:probe");
+  const disableIndex = script.indexOf('print "AI_ASSISTANT_ENABLED=false"');
   const enableIndex = script.indexOf('print "AI_ASSISTANT_ENABLED=true"');
   const smokeIndex = script.indexOf("projectai-ai-smoke npm run assistant:smoke");
   const loginWindowIndex = script.indexOf(
@@ -429,7 +434,8 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
   );
   const leaseIndex = script.indexOf("npm run documents:lease-smoke");
   assert.ok(
-    probeIndex >= 0 &&
+    disableIndex >= 0 &&
+      probeIndex > disableIndex &&
       embeddingProbeIndex > probeIndex &&
       enableIndex > embeddingProbeIndex &&
       smokeIndex > enableIndex,
