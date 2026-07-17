@@ -247,7 +247,9 @@ sudo awk -F= '
     if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
     if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v1") exit 1
     stale_after = values["AI_EXECUTION_STALE_AFTER_MS"]
-    if (count["AI_EXECUTION_STALE_AFTER_MS"] != 1 || stale_after !~ /^[0-9]+$/ || stale_after < 300000 || stale_after > 3600000) exit 1
+    if (count["AI_EXECUTION_STALE_AFTER_MS"] != 1 || stale_after !~ /^[0-9]+$/) exit 1
+    stale_after += 0
+    if (stale_after < 300000 || stale_after > 3600000) exit 1
     if (count["QWEN_API_KEY_FILE"] != 1 || values["QWEN_API_KEY_FILE"] != "/run/secrets/qwen_api_key") exit 1
     base_url = values["QWEN_BASE_URL"]
     host = base_url

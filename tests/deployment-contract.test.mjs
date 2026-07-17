@@ -413,6 +413,8 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
   );
   assert.match(script, /"aiAssistantEnabled":false/);
   assert.match(script, /"aiAssistantEnabled":true/);
+  assert.match(script, /stale_after \+= 0/);
+  assert.match(script, /stale_after < 300000 \|\| stale_after > 3600000/);
   assert.match(script, /running AI Execution/);
   assert.match(script, /Staging application logs contain prohibited AI request or Secret markers/);
   assert.doesNotMatch(production, /qwen_api_key|QWEN_API_KEY|QWEN_BASE_URL|secrets:/);
