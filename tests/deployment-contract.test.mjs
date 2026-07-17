@@ -360,8 +360,9 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(script, /projectai-document-worker[\s\S]+?projectai-staging/);
   assert.match(script, /pg_extension where extname = \$1/);
   assert.match(script, /npm run documents:enqueue/);
-  assert.match(dockerfile, /COPY --from=deps --chown=nextjs:nodejs \/app\/node_modules/);
-  assert.match(dockerfile, /COPY --chown=nextjs:nodejs lib \.\/lib/);
+  assert.match(dockerfile, /COPY --from=deps --chown=node:node \/app\/node_modules/);
+  assert.match(dockerfile, /COPY --chown=node:node lib \.\/lib/);
+  assert.match(dockerfile, /USER node/);
 });
 
 test("Staging Qwen Secret is App-only and activation is gated by a successful Probe", async () => {
@@ -389,6 +390,9 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
   assert.match(script, /sudo test -s "\$qwen_secret_file"/);
   assert.match(script, /stat -c '%a' "\$qwen_secret_file"/);
   assert.match(script, /stat -c '%U:%G' "\$qwen_secret_file"/);
+  assert.match(script, /stat -c '%u:%g' "\$qwen_secret_file"/);
+  assert.match(script, /id -u deploy/);
+  assert.match(script, /id -g deploy/);
   assert.doesNotMatch(script, /cat [^\n]*qwen_api_key/);
   const probeIndex = script.indexOf("npm run ai:probe:qwen");
   const enableIndex = script.indexOf('print "AI_ASSISTANT_ENABLED=true"');

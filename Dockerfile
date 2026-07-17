@@ -51,17 +51,17 @@ ENV NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}
 ENV NEXT_PUBLIC_COMMIT_SHA=${NEXT_PUBLIC_COMMIT_SHA}
 ENV NEXT_PUBLIC_BUILD_TIME=${NEXT_PUBLIC_BUILD_TIME}
 
-RUN addgroup --system --gid 1001 nodejs \
-  && adduser --system --uid 1001 --ingroup nodejs nextjs
+COPY --from=builder --chown=node:node /app/dist/standalone/ ./
+COPY --from=deps --chown=node:node /app/node_modules ./node_modules
+COPY --chown=node:node package.json tsconfig.json ./
+COPY --chown=node:node lib ./lib
+COPY --chown=node:node scripts ./scripts
+COPY --chown=node:node types ./types
 
-COPY --from=builder --chown=nextjs:nodejs /app/dist/standalone/ ./
-COPY --from=deps --chown=nextjs:nodejs /app/node_modules ./node_modules
-COPY --chown=nextjs:nodejs package.json tsconfig.json ./
-COPY --chown=nextjs:nodejs lib ./lib
-COPY --chown=nextjs:nodejs scripts ./scripts
-COPY --chown=nextjs:nodejs types ./types
-
-USER nextjs
+# The protected Staging Secret is owned by deploy:deploy (UID/GID 1000) with
+# mode 0600. Keep the runtime non-root while matching that numeric identity so
+# the App can read its App-only, read-only Compose Secret bind mount.
+USER node
 
 EXPOSE 3000
 

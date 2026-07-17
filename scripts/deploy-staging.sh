@@ -231,6 +231,8 @@ sudo test -s "$qwen_secret_file"
 sudo chmod 600 "$qwen_secret_file"
 [[ "$(sudo stat -c '%a' "$qwen_secret_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$qwen_secret_file")" == "deploy:deploy" ]]
+[[ "$(sudo stat -c '%u:%g' "$qwen_secret_file")" == "1000:1000" ]]
+[[ "$(id -u deploy):$(id -g deploy)" == "1000:1000" ]]
 sudo awk -F= '
   /^[[:space:]]*($|#)/ { next }
   {
