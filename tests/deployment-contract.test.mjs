@@ -23,6 +23,10 @@ const fileStorageVerifier = new URL(
   import.meta.url,
 );
 const requestProxy = new URL("../proxy.ts", import.meta.url);
+const environmentBanner = new URL(
+  "../components/layout/environment-banner.tsx",
+  import.meta.url,
+);
 
 function serviceBlock(compose, service, nextService) {
   const pattern = new RegExp(
@@ -110,7 +114,7 @@ test("pre-migration PostgreSQL backup streams and validates a custom archive", a
 
 test("MinIO backup uses inventory, atomic mirror validation, and an isolated restore drill", async () => {
   const script = await readFile(deployScript, "utf8");
-  assert.match(script, /Stopping the Staging application and document Worker briefly for a cross-store snapshot/);
+  assert.match(script, /Stopping the Staging application and both Workers briefly for a cross-store snapshot/);
   assert.match(script, /projectai-staging-objects-\$\{backup_timestamp\}-\$\{commit_sha\}/);
   assert.match(script, /inventory_name="\$\{object_backup_stem\}\.inventory\.jsonl"/);
   assert.match(script, /inventory_partial="\$\{object_backup_root\}\/\$\{inventory_name\}\.partial"/);
@@ -197,7 +201,7 @@ test("operations use scoped Compose services and storage verification stays read
   assert.match(documentSmoke, /SEED_MANAGER_A_PASSWORD/);
   assert.match(documentSmoke, /SEED_VIEWER_A_EMAIL/);
   assert.match(documentSmoke, /SEED_VIEWER_A_PASSWORD/);
-  assert.match(documentSmoke, /<<: \*document-processing-environment/);
+  assert.match(documentSmoke, /<<: \[\*document-processing-environment, \*embedding-environment\]/);
   assert.match(documentSmoke, /mem_limit: 768m/);
   assert.doesNotMatch(documentSmoke, /MINIO_ROOT_/);
   assert.match(aiSmoke, /SEED_MANAGER_A_EMAIL/);
@@ -223,7 +227,19 @@ test("operations use scoped Compose services and storage verification stays read
   );
   assert.equal(
     [...script.matchAll(/projectai-ai-smoke npm run assistant:smoke/g)].length,
-    2,
+    3,
+  );
+  assert.equal(
+    [...script.matchAll(/projectai-document-smoke npm run embeddings:smoke:prepare/g)].length,
+    1,
+  );
+  assert.equal(
+    [...script.matchAll(/projectai-document-smoke npm run embeddings:lease-smoke/g)].length,
+    1,
+  );
+  assert.equal(
+    [...script.matchAll(/projectai-document-smoke npm run embeddings:smoke:verify/g)].length,
+    1,
   );
   assert.match(script, /real Staging upload, download integrity, versioning, and lifecycle cleanup/);
   assert.match(script, /six-format document processing, lexical search, citations, permissions, and cleanup/);
@@ -296,7 +312,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/grounded-qwen-assistant"/);
+  assert.match(script, /EXPECTED_BRANCH="agent\/vector-embedding-foundation"/);
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -338,7 +354,7 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
     readFile(new URL("../Dockerfile", import.meta.url), "utf8"),
   ]);
   const workerMatch = compose.match(
-    /\n  projectai-document-worker:\n([\s\S]*?)\nvolumes:/,
+    /\n  projectai-document-worker:\n([\s\S]*?)\n  projectai-embedding-worker:/,
   );
   assert.ok(workerMatch, "missing Compose service projectai-document-worker");
   const worker = workerMatch[1];
@@ -365,7 +381,7 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(dockerfile, /USER node/);
 });
 
-test("Staging Qwen Secret is App-only and activation is gated by a successful Probe", async () => {
+test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker", async () => {
   const [script, compose, production] = await Promise.all([
     readFile(deployScript, "utf8"),
     readFile(stagingCompose, "utf8"),
@@ -376,10 +392,15 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
     "projectai-staging",
     "projectai-document-worker",
   );
-  const worker = compose.match(
-    /\n  projectai-document-worker:\n([\s\S]*?)\nvolumes:/,
+  const worker = serviceBlock(
+    compose,
+    "projectai-document-worker",
+    "projectai-embedding-worker",
+  );
+  const embeddingWorker = compose.match(
+    /\n  projectai-embedding-worker:\n([\s\S]*?)\nvolumes:/,
   )?.[1];
-  assert.ok(worker);
+  assert.ok(embeddingWorker);
   assert.match(app, /env_file:\n\s+- \/srv\/projectai-staging\/\.env\.ai/);
   assert.match(app, /secrets:\n\s+- qwen_api_key/);
   assert.match(
@@ -387,6 +408,11 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
     /secrets:\n\s+qwen_api_key:\n\s+file: \/srv\/projectai-staging\/secrets\/qwen_api_key/,
   );
   assert.doesNotMatch(worker, /QWEN_|qwen_api_key|secrets:/);
+  assert.match(embeddingWorker, /env_file:\n\s+- \/srv\/projectai-staging\/\.env\.ai/);
+  assert.match(embeddingWorker, /secrets:\n\s+- qwen_api_key/);
+  assert.match(embeddingWorker, /npm[\s\S]+worker:embeddings/);
+  assert.doesNotMatch(embeddingWorker, /OBJECT_STORAGE_|MINIO_ROOT_/);
+  assert.doesNotMatch(embeddingWorker, /^\s+ports:/m);
   assert.match(script, /sudo test -s "\$qwen_secret_file"/);
   assert.match(script, /stat -c '%a' "\$qwen_secret_file"/);
   assert.match(script, /stat -c '%U:%G' "\$qwen_secret_file"/);
@@ -395,13 +421,19 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
   assert.match(script, /id -g deploy/);
   assert.doesNotMatch(script, /cat [^\n]*qwen_api_key/);
   const probeIndex = script.indexOf("npm run ai:probe:qwen");
+  const embeddingProbeIndex = script.indexOf("npm run embeddings:probe");
   const enableIndex = script.indexOf('print "AI_ASSISTANT_ENABLED=true"');
   const smokeIndex = script.indexOf("projectai-ai-smoke npm run assistant:smoke");
   const loginWindowIndex = script.indexOf(
     "Waiting for one protected login rate-limit window before Lease verification.",
   );
   const leaseIndex = script.indexOf("npm run documents:lease-smoke");
-  assert.ok(probeIndex >= 0 && enableIndex > probeIndex && smokeIndex > enableIndex);
+  assert.ok(
+    probeIndex >= 0 &&
+      embeddingProbeIndex > probeIndex &&
+      enableIndex > embeddingProbeIndex &&
+      smokeIndex > enableIndex,
+  );
   assert.ok(
     loginWindowIndex > smokeIndex && leaseIndex > loginWindowIndex,
     "Lease verification must wait for the protected login rate-limit window",
@@ -413,11 +445,46 @@ test("Staging Qwen Secret is App-only and activation is gated by a successful Pr
   );
   assert.match(script, /"aiAssistantEnabled":false/);
   assert.match(script, /"aiAssistantEnabled":true/);
+  assert.match(script, /"aiEmbeddingEnabled":false/);
+  assert.match(script, /"aiEmbeddingEnabled":true/);
   assert.match(script, /stale_after \+= 0/);
   assert.match(script, /stale_after < 300000 \|\| stale_after > 3600000/);
   assert.match(script, /running AI Execution/);
   assert.match(script, /Staging application logs contain prohibited AI request or Secret markers/);
   assert.doesNotMatch(production, /qwen_api_key|QWEN_API_KEY|QWEN_BASE_URL|secrets:/);
+});
+
+test("B3-B1 deployment pins pgvector and gates the dedicated Embedding pipeline", async () => {
+  const [script, compose, workflow, production] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(stagingCompose, "utf8"),
+    readFile(ciWorkflow, "utf8"),
+    readFile(productionCompose, "utf8"),
+  ]);
+  assert.match(compose, /pgvector\/pgvector:0\.8\.1-pg17/);
+  assert.match(workflow, /pgvector\/pgvector:0\.8\.1-pg17/);
+  assert.match(script, /POSTGRES_IMAGE_REF="pgvector\/pgvector:0\.8\.1-pg17@sha256:[0-9a-f]{64}"/);
+  assert.match(script, /Recreating Staging PostgreSQL with the pinned PostgreSQL 17 pgvector image after backups completed/);
+  assert.match(script, /vector_type !== "vector\(1024\)"/);
+  assert.match(script, /qwen-text-embedding-cn-v1/);
+  assert.match(script, /text-embedding-v4/);
+  assert.match(script, /AI_EMBEDDING_ENABLED=false/);
+  assert.match(script, /print "AI_EMBEDDING_ENABLED=true"/);
+  assert.match(script, /npm run embeddings:probe/);
+  assert.match(script, /npm run embeddings:smoke:prepare/);
+  assert.match(script, /npm run embeddings:lease-smoke/);
+  assert.match(script, /npm run embeddings:smoke:verify/);
+  assert.match(script, /Re-running B3-A grounded Qwen regression while Embedding remains enabled and lexical retrieval remains unchanged/);
+  assert.doesNotMatch(production, /pgvector|AI_EMBEDDING|embedding-worker|document_chunk_embeddings/i);
+});
+
+test("Staging banner states the B3-B1 lexical retrieval boundary accurately", async () => {
+  const banner = await readFile(environmentBanner, "utf8");
+  assert.match(banner, /v0\.7 向量生成与 pgvector 基础/);
+  assert.match(banner, /后台仅构建受保护的文本向量基础/);
+  assert.match(banner, /当前知识搜索和项目助手仍使用词法检索/);
+  assert.match(banner, /Hybrid Retrieval、Rerank/);
+  assert.doesNotMatch(banner, /AI 综合回答尚未启用/);
 });
 
 test("Staging proxy accepts multipart framing without exposing object storage", async () => {

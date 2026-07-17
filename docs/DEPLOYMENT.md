@@ -4,17 +4,17 @@
 
 | 环境 | URL / basePath | 目录与应用 | PostgreSQL | Object Storage | 宿主机端口 |
 | --- | --- | --- | --- | --- | --- |
-| Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 既有环境，本轮不得修改 | 不增加 Worker/MinIO | `127.0.0.1:3100` |
-| Staging | https://gridworks.cn/tool/projectai-staging/ / `/tool/projectai-staging` | `/srv/projectai-staging` / App `project-ai-os-staging` / Worker `project-ai-os-staging-worker` | `project-ai-os-staging-postgres` + `projectai-staging-postgres` | `project-ai-os-staging-minio` + `projectai-staging-minio` + `projectai-staging-files` | 应用 `127.0.0.1:3101`；Worker/DB/MinIO 无端口 |
+| Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 既有环境，本轮不得修改 | 不增加 pgvector/Worker/MinIO | `127.0.0.1:3100` |
+| Staging | https://gridworks.cn/tool/projectai-staging/ / `/tool/projectai-staging` | `/srv/projectai-staging` / App + Document Worker + Embedding Worker | PostgreSQL 17 + pgvector 0.8.1 / `projectai-staging-postgres` | 私有 MinIO + `projectai-staging-files` | 应用 `127.0.0.1:3101`；Worker/DB/MinIO 无端口 |
 
-v0.6 B3-A 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 Worker/对象存储、配置 Qwen Secret、修改环境或重新部署。
+v0.7 B3-B1 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 pgvector/Embedding Worker、配置 Qwen Secret、修改环境或重新部署。
 
 ## Staging 构建元数据
 
 ```env
 NEXT_PUBLIC_BASE_PATH=/tool/projectai-staging
 NEXT_PUBLIC_APP_ENV=staging
-NEXT_PUBLIC_APP_VERSION=0.6.0-staging
+NEXT_PUBLIC_APP_VERSION=0.7.0-staging
 NEXT_PUBLIC_COMMIT_SHA=<feature branch full sha>
 NEXT_PUBLIC_BUILD_TIME=<ISO-8601>
 AI_ASSISTANT_ENABLED=false
@@ -22,6 +22,9 @@ AI_PROVIDER=qwen
 AI_REGION=cn-beijing
 AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1
 AI_EXECUTION_STALE_AFTER_MS=900000
+AI_EMBEDDING_ENABLED=false
+AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1
+AI_EMBEDDING_DIMENSIONS=1024
 ```
 
 环境条必须显示 build 元数据。资料页显示异步解析/索引状态；知识页同时提供原始词法搜索和真实 Grounded 项目助手，并明确说明语义向量检索尚未启用。robots 与 Nginx header 均设置 noindex。认证配置继续使用完整 Staging `BETTER_AUTH_URL`、独立 `AUTH_COOKIE_PREFIX` 和 `/tool/projectai-staging` Cookie Path；Cookie 必须 HttpOnly、SameSite=Lax、Secure。
@@ -39,11 +42,12 @@ AI_EXECUTION_STALE_AFTER_MS=900000
 
 真实 credential 不进入示例、Git、镜像层、日志或 Artifact。MinIO root/app credential 必须满足长度/字符规则且互不相同。
 
-AI 配置分为两个受保护文件：
+AI/Embedding 配置分为三个受保护文件：
 
 - `/srv/projectai-staging/.env.ai`：普通文件、非 symlink、`deploy:deploy 600`，包含 Feature Flag、Provider、Region、Profile、`AI_EXECUTION_STALE_AFTER_MS=900000`、北京 Qwen Base URL 和容器内 Secret File 路径；不得进入 Artifact 或日志。
+- `/srv/projectai-staging/.env.embedding`：部署脚本生成的 `root:root 600` 非密钥配置，只保存 Embedding Flag、固定 Profile/Dimensions、Worker/Batch 与每日上限；每次发布先重置为 false，Probe 通过后原子启用。
 - `/srv/projectai-staging/secrets/qwen_api_key`：普通非空文件、非 symlink、`deploy:deploy 600`；部署只检查状态，禁止读取、打印、复制、编码或导出内容。
-- Compose 只把 `.env.ai` 和只读 `qwen_api_key` 挂载给 App。Worker、Migration、Storage/Document/AI Smoke operations service 都不获得 Qwen Secret；AI Smoke 只能通过 App API 触发真实 Provider。
+- Compose 只把 `.env.ai` 和只读 `qwen_api_key` 挂载给 App 与专用 Embedding Worker。Document Worker、Migration 和 operations service 都不获得 Qwen Base URL 或 Secret；AI Smoke 只能通过 App API 触发 Chat Provider，Embedding Probe 只在专用 Worker 容器执行。
 
 `.env.auth-staging` 是 Compose 插值来源，不代表完整注入每个容器：
 
@@ -51,7 +55,7 @@ AI 配置分为两个受保护文件：
 - MinIO server 只接收 root credential。
 - init 任务短期得到 root + app credential，创建私有 Bucket、应用用户和 `projects/*` 最小权限策略。
 - App 只接收 `DATABASE_URL`、认证运行参数和 app-level object credential，不接收 PostgreSQL 密码、Seed 密码或 MinIO root credential。
-- Worker 只接收 `DATABASE_URL`、app-level object credential、文件限制、`DOCUMENT_*` 配置与非敏感构建版本；不接收认证/Seed/MinIO root credential。
+- Document Worker 只接收 `DATABASE_URL`、app-level object credential、文件/Embedding 入队配置与构建版本；不接收 Qwen 或认证/Seed/MinIO root credential。Embedding Worker 只接收 `DATABASE_URL`、Embedding 配置与 Qwen Secret，不接收对象存储 credential。
 - Migration 与 storage operations 使用独立短生命周期 Compose service，各自只获取任务需要的变量。
 
 ## Staging MinIO
@@ -75,7 +79,7 @@ published ports: none
 
 使用 `scripts/deploy-staging.sh`。脚本要求：
 
-- 分支精确为 `agent/grounded-qwen-assistant`，工作区 clean，完整 40 位 Commit。
+- 分支精确为 `agent/vector-embedding-foundation`，工作区 clean，完整 40 位 Commit。
 - 固定 Compose project `projectai-staging`、目录 `/srv/projectai-staging` 和远端平台。
 - 原子取得 Staging 专属部署锁；发布目录、环境、备份、锁和 marker 均不得是 symlink。
 - 记录 Production 容器 ID、running、restart count、health，进入发布事务后的成功/失败/回滚出口都必须精确一致。
@@ -84,14 +88,14 @@ published ports: none
 
 1. 使用当前 Commit 的 tracked-file `git archive` 构造临时 release；拒绝 `.env`、私钥与 reserved overrides。
 2. 在本地按远端平台构建 immutable App 和 DB-tools 镜像，通过 `docker save/load` 传输并核对 image ID/OS/architecture；共享服务器不执行应用构建。
-3. 拉取固定 MinIO server/client release；检查现有 PostgreSQL/MinIO 挂载必须分别为预期命名卷，MinIO 不得有 published port。
+3. 拉取固定 `pgvector/pgvector:0.8.1-pg17` digest 与 MinIO release；检查现有 PostgreSQL/MinIO 挂载必须分别为预期命名卷，且均不得有 published port。
 4. 启动 PostgreSQL 与 MinIO并等待 Healthy；强制重建 init 任务并等待 exit 0，失败即停止。
-5. 在 rollback trap 与事务 marker 已建立后，短暂停止当前 Staging App 和文档 Worker，取得 PostgreSQL/MinIO 同一静默写入边界。
+5. 在 rollback trap 与事务 marker 已建立后，短暂停止当前 Staging App、Document Worker 和 Embedding Worker，取得 PostgreSQL/MinIO 同一静默写入边界。
 6. 生成并验证 PostgreSQL custom-format dump；生成 MinIO JSONL inventory 与 mirror，核对对象数和总字节，再恢复到唯一临时 Bucket 并复核/删除。
-7. 使用短生命周期 migration service 应用已提交 Migration 与 insert-only Seed，不 schema push、不 reset、不覆盖身份/角色/credential；验证 `pg_trgm`，并幂等补排已有 Stored Current Version。
+7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；应用已提交 `0004` 与 insert-only Seed，不 schema push/reset；验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)` 和只读 Profile。
 8. 用 scoped storage operations 执行 `npm run storage:verify`；任何 finding 或存储不可用都失败关闭。
-9. 记录上一 App/Worker immutable image ID；先启动 Worker并验证心跳 Healthy，再以 `AI_ASSISTANT_ENABLED=false` 启动 App。验证四服务、同镜像、网络、资源、App-only Secret 和无新增端口。
-10. Health 必须显示 AI disabled 但 Provider configured；在 App 容器执行固定虚构 `ai:probe:qwen`，不访问数据库或客户资料。
+9. 先启动 Document Worker 与 disabled Embedding Worker，再以两个 AI Flag=false 启动 App；验证 App、两个 Worker、PostgreSQL、MinIO 健康，同一 immutable image、Secret 最小化和无新增端口。
+10. Health 必须显示 Assistant/Embedding disabled 但 Provider configured；在 App 执行 Chat Probe，在专用 Worker 执行固定 `Project AI embedding probe`，均不读取项目资料或输出向量。
 11. Probe 成功后原子把 `.env.ai` 的 Flag 改为 true，只 `--no-deps --force-recreate` App；重新验证 Health enabled/configured/Gateway Version，Worker 不重启。
 12. 再次运行只读 `storage:verify`；通过 `documents:smoke` 验证 B2，并通过 `assistant:smoke` 的内部上游和公网路径验证真实 Qwen、Citation、资料不足不调用模型、Viewer、私人 Thread、跨项目 404、Token Usage、Audit 和全量清理。
 13. 等待队列为空，短暂停止 Worker，通过 `documents:lease-smoke` 验证独占 Lease、过期恢复、旧 Worker 拒绝提交和双 Worker `SKIP LOCKED`，随后恢复同一 immutable image 并重新检查心跳。
@@ -135,9 +139,9 @@ npm run assistant:smoke
 
 `storage:verify` 只读核对 stored object、size、ETag、SHA-256 metadata、单 current、active/current、stale pending 和 orphan。输出不含 Key 或 Secret。部署前后均必须为 `ok: true`。
 
-`storage:reconcile` 默认 dry-run。apply 只能在非 Production 且同时提供 `ALLOW_STORAGE_RECONCILE_APPLY=1`、`OBJECT_STORAGE_BUCKET_CONFIRM=<exact bucket>` 和合法最小 orphan 年龄时运行；删除前再次查数据库引用。本轮正常部署不自动 apply。
+`storage:reconcile` 与 `embeddings:backfill` 默认 dry-run。Embedding Backfill 只有显式 `--apply` 才入队，并支持 project/limit/current/effective 范围；所有命令只输出计数，不输出正文、向量或 Secret。
 
-`documents:smoke` 只生成虚构 PDF/DOCX/XLSX/PPTX/TXT/Markdown、扫描 PDF 和损坏 PDF，验证真实解析/搜索闭环后按固定前缀清理。`ai:probe:qwen` 只发送固定字符串，不读数据库。`assistant:smoke` 生成一份虚构 TXT，通过应用 API 验证真实 Grounded Answer/Citation/权限/Token/Audit 后清理全部 AI 与文档数据；operations 容器没有 Qwen Secret。所有命令都不得独立指向 Production。
+`documents:smoke`、`assistant:smoke` 与 `embeddings:smoke:*` 只生成运行时虚构资料。Embedding 验收覆盖增量入队、真实 1024 维向量、Usage、Stale Lease、旧 Worker 拒绝、同 Hash 不重复计费、project-scoped Backfill、精确 cosine 范围 Probe、旧版本排除和清理；operations 容器没有 Qwen Secret。
 
 ## Nginx
 
@@ -185,4 +189,4 @@ https://gridworks.cn/tool/projectai-staging/
 
 ## 当前发布状态
 
-v0.6 B3-A 的稳定发布合同是：App、PostgreSQL、MinIO、Document Worker Healthy；App-only Qwen Secret；Flag=false → Probe → 只重建 App启用；内部/公网真实 Qwen 与 Citation Smoke；AI/文档测试数据和 running work 清零；Production 基线精确不变。精确 Commit、CI、Artifact、image digest 和构建时间不写入 tracked 文档，只记录在当前 Draft PR、Provenance Manifest 及受控部署证据中。本轮仍禁止 Production 发布。
+v0.7 B3-B1 的稳定发布合同是：App、PostgreSQL/pgvector、MinIO、两个 Worker Healthy；Qwen Secret 仅 App/Embedding Worker；Flag=false → Migration/Profile/Probe → 分阶段启用；真实虚构向量、Backfill、Lease、范围 Probe与 B3-A 词法回归；测试数据和 running work 清零；Production 基线精确不变。动态 SHA、CI、Artifact 和 image 事实只记录在 Draft PR、Provenance 与受控部署证据中。

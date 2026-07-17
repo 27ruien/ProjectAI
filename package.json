@@ -1,6 +1,6 @@
 {
   "name": "project-ai-os",
-  "version": "0.6.0-staging",
+  "version": "0.7.0-staging",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -17,7 +17,7 @@
     "test:deployment": "node --test tests/deployment-contract.test.mjs",
     "review:sanitize": "node scripts/sanitize-test-artifacts.mjs",
     "review:finalize": "node scripts/finalize-review-manifest.mjs",
-    "qa:mvp": "npm run typecheck && npm run lint && npm test && npm run test:assistant && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:assistant-integration && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
+    "qa:mvp": "npm run typecheck && npm run lint && npm test && npm run test:assistant && npm run test:embeddings && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:embedding-integration && npm run test:assistant-integration && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern playwright-report --ignore-pattern review-artifacts --ignore-pattern product-review-evidence --ignore-pattern test-results --ignore-pattern test-logs",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -36,11 +36,21 @@
     "documents:lease-smoke": "tsx scripts/verify-document-worker-lease.ts",
     "worker:documents": "tsx scripts/document-worker.ts",
     "worker:documents:once": "tsx scripts/document-worker.ts --once",
+    "worker:embeddings": "tsx scripts/embedding-worker.ts",
+    "worker:embeddings:once": "tsx scripts/embedding-worker.ts --once",
     "documents:enqueue": "tsx scripts/enqueue-document-ingestion.ts",
     "test:assistant": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 node --import tsx --test --test-concurrency=1 tests/project-assistant.test.ts",
     "test:assistant-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 node --import tsx --test --test-concurrency=1 tests/integration/project-assistant.test.ts",
     "ai:probe:qwen": "tsx scripts/probe-qwen.ts",
     "assistant:smoke": "tsx scripts/verify-grounded-ai-flow.ts",
+    "embeddings:backfill": "tsx scripts/embedding-backfill.ts",
+    "embeddings:status": "tsx scripts/embedding-status.ts",
+    "embeddings:probe": "tsx scripts/probe-embeddings.ts",
+    "embeddings:smoke:prepare": "tsx scripts/verify-embedding-flow.ts --prepare",
+    "embeddings:smoke:verify": "tsx scripts/verify-embedding-flow.ts --verify",
+    "embeddings:lease-smoke": "tsx scripts/verify-embedding-worker-lease.ts",
+    "test:embeddings": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1 AI_EMBEDDING_DIMENSIONS=1024 node --import tsx --test --test-concurrency=1 tests/embeddings.test.ts",
+    "test:embedding-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1 AI_EMBEDDING_DIMENSIONS=1024 node --import tsx --test --test-concurrency=1 tests/integration/embeddings.test.ts",
     "test:cleanup": "tsx scripts/cleanup-ci-test-data.ts"
   },
   "dependencies": {

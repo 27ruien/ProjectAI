@@ -207,3 +207,11 @@
 - 状态：Accepted。
 - 决策：B3-A 继续使用 B2 PostgreSQL 词法检索，禁止 Embedding、pgvector、Hybrid Retrieval、Rerank、Tool/Function Calling 和正式业务写入。
 - 原因：先闭环项目隔离、来源、Secret、幂等、限流、审计和真实 Provider，再由 B3-B 独立评审检索质量扩展。
+
+## ADR-033：B3-B1 只建立 pgvector Embedding 基础，不改变用户检索
+
+- 状态：Accepted。
+- 决策：CI/Staging 使用 PostgreSQL 17 + pgvector 0.8.1；固定只读 Profile `qwen-text-embedding-cn-v1`、模型 `text-embedding-v4`、1024 维 cosine。Chunk 向量通过独立 PostgreSQL Job/Batch、专用 Worker、Lease/Heartbeat/Retry/Recovery 与安全 Backfill 生成，普通浏览器 API 不返回向量。
+- 隔离：Job 和向量都以 project/document/version/chunk 复合约束绑定，且只处理 Active/Current/Stored/Succeeded/Effective Chunk。Document Worker 不获得 Qwen Secret；专用 Embedding Worker 不获得对象存储凭据。Secret 只读挂载到 Staging App 与专用 Worker。
+- 检索：B2 搜索和 B3-A Evidence 继续使用原有词法 SQL。B3-B1 只提供自动测试/受保护运维的精确 cosine Probe，不建立 ANN 索引，不实现 Hybrid Retrieval、RRF 或 Rerank。
+- 原因：先验证向量定义、数据有效性、项目隔离、成本和运维恢复，再由 B3-B2 以真实数据量、Recall 与延迟评测决定融合与索引策略。

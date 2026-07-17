@@ -76,6 +76,21 @@
 - CI 只能在 `NODE_ENV=test` 使用 Fake Provider。Staging 必须先以 `AI_ASSISTANT_ENABLED=false` 部署并健康，再执行固定虚构 Provider Probe；成功后只重建 App 启用 Flag，并用虚构资料完成真实 Qwen、Citation、Viewer、私有 Thread、Token Usage、Audit 和清理验证。
 - B3-A 仍禁止 OCR、Embedding、`text-embedding-v4`、pgvector、向量字段/索引、Hybrid Retrieval、`qwen3-rerank`、Reranker 和 B3-B。只允许部署 Staging，Production 不得修改或获得 Qwen Secret。
 
+## v0.7 B3-B1 范围规则
+
+- v0.7 B3-B1 只在 B3-A 之上建立文本向量生成与存储基础：固定只读 Profile `qwen-text-embedding-cn-v1`、`text-embedding-v4`、1024 维、cosine、pgvector、Chunk Embedding、持久化 Job、专用 Worker、Lease/Retry/Recovery、增量生成、安全回填、Probe、审计与成本上限。
+- B3-A 项目助手与 B2 知识搜索必须继续使用原有词法检索；本轮不得把向量接入用户搜索、回答 Evidence、Prompt 或 Citation，不得宣称已支持 Semantic Search、Hybrid Retrieval、Vector RAG、RRF 或 Rerank。
+- Embedding 只处理同一精确 `projectId` 下 `Document active + Version current/stored + Ingestion succeeded + Chunk effective/non-empty` 的数据；跨项目复合约束必须由数据库拒绝，归档、旧版本、`needs_ocr`、未完成解析和无效 Chunk 必须排除。
+- 所有 Embedding 调用必须经过服务端 Provider-neutral Gateway。客户端不得提交 Provider、模型、Region、Dimensions、Base URL、Secret、Batch、Prompt、Evidence 或向量；普通浏览器 API 不得返回向量、Worker/Lease、Provider Payload 或存储凭据。
+- Staging/Production 的 Qwen 凭据只允许 Secret File。Staging App 与专用 Embedding Worker可以挂载；Document Worker、Migration、普通运维容器、镜像、浏览器、日志、错误 DTO、Artifact、Evidence 和 Provenance 不得获得 Secret、Authorization、完整输入或完整向量。Production 继续不得获得 Qwen Secret。
+- `AI_EMBEDDING_ENABLED` 默认必须为 `false`。关闭时不得创建新 Job、调用 Provider 或产生计费；专用 Worker 必须明确报告 disabled。CI 仅可在 `NODE_ENV=test` 使用 Fake Embedding Provider，真实 Qwen 只允许 Staging 固定虚构 Probe 和虚构文档验证。
+- 单次 Provider Batch 最多 10 条且必须有总输入上限；返回数量、顺序和每条 1024 维有限数值必须严格校验。Timeout、网络错误、429、5xx 可重试；400、401、403、Secret/配置错误、错误维度不得重试。Provider 未返回 Usage 时保存 `null`，不得估算。
+- Embedding Job 必须复用 B2 的 `FOR UPDATE SKIP LOCKED`、Lease、Heartbeat、最大尝试次数、失败重试、Stale Recovery 和旧 Worker 拒绝提交模式；同一 Chunk/Profile/内容 Hash 必须幂等，失败或重放不得重复写向量或计费记录。
+- 回填默认 dry-run，只有显式 apply 才能入队，并支持 project scope、limit、current/effective 过滤和重复执行；命令与审计不得输出文档正文、完整向量、Secret 或 Provider 原始 Payload。必须设置每日 Job/Token 上限，防止无限回填或调用。
+- CI 与 Staging 必须使用 PostgreSQL 17 兼容且明确锁定版本的 pgvector 环境；Migration 只能新增 `drizzle/0004_*.sql` 并受控执行，禁止修改历史 Migration、禁止对 Production 执行 Migration 或部署。
+- B3-B1 只允许部署 Staging。必须先以 Flag=false 部署并健康，再备份、Migration、验证 Extension、执行固定虚构 Embedding Probe、启用专用 Worker、执行虚构增量与小批量回填、精确向量范围 Probe、B3-A 回归和清理；Production 必须保持完全不变。
+- B3-B1 的 PR 必须保持 Draft，不得自动 Ready 或合并；本轮不得开始 B3-B2、ANN 索引选型、Hybrid Retrieval 或 `qwen3-rerank`。
+
 ## Review Guidelines
 
 - P0：跨项目数据泄露；密钥或客户资料暴露。

@@ -4,19 +4,29 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前开发版本 | `0.6.0-staging`（Grounded Qwen Project Assistant / B3-A） |
-| `main` 基线 | `672218bc0c2bfe8cf53f0da69749221419307f73`（已合并 v0.5 B2） |
-| 开发分支 | `agent/grounded-qwen-assistant` |
-| Draft PR | 标题 `Add grounded Qwen project assistant`；保持 Draft、未 Ready、未合并 |
+| 当前开发版本 | `0.7.0-staging`（Embedding and pgvector Foundation / B3-B1） |
+| `main` 基线 | `3bc724a3b0c61455b15768719442e38dee50e012`（已合并 v0.6 B3-A） |
+| 开发分支 | `agent/vector-embedding-foundation` |
+| Draft PR | 标题 `Add vector embedding foundation`；保持 Draft、未 Ready、未合并 |
 | 动态交付事实 | PR Head、CI Run、Artifact ID/Digest、Staging image 与 Build Time 只记录在 Draft PR、Provenance Manifest 和受控部署证据 |
-| Staging | https://gridworks.cn/tool/projectai-staging/；B3-A 只允许受控部署此环境 |
-| Production | https://gridworks.cn/tool/projectai/；B3-A 不部署、不迁移、不重启、不配置 Qwen Secret |
+| Staging | https://gridworks.cn/tool/projectai-staging/；B3-B1 只允许受控部署此环境 |
+| Production | https://gridworks.cn/tool/projectai/；B3-B1 不部署、不迁移、不重启、不增加 pgvector/Worker/Secret |
 
 ## 当前结论
 
-v0.6 B3-A 在已合并 B2 词法索引之上实现真实 Grounded Project Assistant：服务端 AI Gateway、Qwen Adapter、只读 Model Profile、Secret File、Feature Flag、私人 Thread、Message/Execution/Citation 持久化、B2 Evidence、Grounded Prompt、Citation Validation/一次 Repair、资料不足、Prompt Injection 防护、幂等、速率/日 Token/并发限制和审计。
+v0.7 B3-B1 在已合并 B3-A 之上建立文本向量生成与存储基础：固定 Embedding Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch、专用 Worker、Lease/Retry/Recovery、增量生成、安全 Backfill、Probe、Usage 与每日成本上限。
 
-B3-A 关闭 SEC-006：AI 模块只能写入 AI Thread、Message、Execution、Citation 和 Audit，不直接写正式 Requirement、Scope、Action、Risk、Meeting、Project Setting 或 Document，也没有 Tool Calling、Function Calling、Web Search 或 Agent 自主执行。
+B3-A 的 Grounded Assistant、Citation 与 SEC-006 边界保持不变。用户知识搜索和回答 Evidence 继续使用 B2 词法检索；本轮不实现 Semantic/Hybrid Search、RRF、Rerank 或正式业务写入。
+
+## v0.7 B3-B1 真实能力
+
+- 固定只读 Profile `qwen-text-embedding-cn-v1`：Provider `qwen`、Region `cn-beijing`、Model `text-embedding-v4`、Dimensions `1024`、Distance `cosine`、Profile Version `1`。
+- Migration `drizzle/0004_groovy_nightcrawler.sql` 新增 pgvector Extension、Profile、Embedding Job/Batch/Vector 表、跨项目复合约束和 Chunk 失效触发器；不修改历史 Migration。
+- 专用 Embedding Worker 与 App 使用同一 immutable image，独立 command、无端口、Lease/Heartbeat/Retry/Stale Recovery/优雅退出；Document Worker 不获得 Qwen Secret，Embedding Worker 不获得对象存储 credential。
+- Gateway 单批最多 10 条并限制总字符；严格验证返回数量/顺序/1024 维/有限值。网络、Timeout、429、5xx 可重试；400/401/403、Secret/配置/维度错误不重试。
+- 只处理 Active Document + Current/Stored Version + Succeeded Ingestion + Effective/non-empty Chunk；同 Chunk/Profile/Hash 幂等，归档/旧版本/needs_ocr/未完成解析排除。
+- Backfill 默认 dry-run，支持 project/limit/current/effective 范围；Profile Version 或内容 Hash 变化生成新 Job。Provider Usage 原样记录，缺失保持 null，成本不估算，并有每日 Job/Token 上限。
+- 只提供测试/受保护运维的精确 cosine Probe，普通浏览器 API 不返回向量，项目知识页和 B3-A Evidence 不接入该函数。
 
 ## v0.6 B3-A 真实能力
 
@@ -34,16 +44,16 @@ B3-A 关闭 SEC-006：AI 模块只能写入 AI Thread、Message、Execution、Ci
 ## Staging 与 Secret 合同
 
 - `/srv/projectai-staging/.env.ai` 保存非密钥 AI 配置；`/srv/projectai-staging/secrets/qwen_api_key` 保存真实 Key。
-- Qwen Secret 只读挂载到 App；Worker、DB-tools、Migration 和 operations smoke 不获得 Secret。
-- 启用顺序固定为：Flag=false 部署并健康 → 固定虚构 Provider Probe → 只重建 App 启用 → 内部/公网真实问答 Smoke。
-- Smoke 只使用虚构文件，并验证真实 Qwen、Citation、资料不足、Viewer、私人 Thread、Token Usage、Audit、AI/文档数据清理和 running Execution=0。
+- Qwen Secret 只读挂载到 App 与专用 Embedding Worker；Document Worker、DB-tools、Migration 和 operations smoke 不获得 Secret。
+- 启用顺序固定为：Flag=false 部署 → PostgreSQL/MinIO 备份 → pgvector Migration/Profile 校验 → Chat/Embedding Probe → 分阶段启用 → 虚构向量/Backfill/Lease/范围 Probe → B3-A 词法回归与清理。
+- Smoke 只使用虚构文件，并验证真实 Qwen、1024 维向量、Usage、同 Hash 幂等、旧版本/跨项目排除、队列清零和 Production 精确不变。
 - 发布前后精确比对 Production 容器身份、running、restart count 和 health；任何变化都使发布失败。
 
 ## 明确未实现
 
 - OCR、图片理解、宏/公式执行和外部 URL 抓取。
-- Embedding、`text-embedding-v4`、pgvector、向量字段/索引、语义向量检索、Hybrid Retrieval。
-- `qwen3-rerank`、Reranker 和 B3-B。
+- 用户语义向量检索、Hybrid Retrieval、RRF、HNSW/IVFFlat 与 Vector RAG。
+- `qwen3-rerank`、Reranker 和 B3-B2。
 - Tool Calling、Function Calling、Web Search、Agent 自主执行。
 - 自动总结、需求提取、Scope/Action/风险生成和任何 AI 正式业务写入。
 - Production Qwen Secret、Production Worker 变更、Production Migration 或 Production 部署。
@@ -53,15 +63,15 @@ B3-A 关闭 SEC-006：AI 模块只能写入 AI Thread、Message、Execution、Ci
 | 门禁 | 稳定要求 |
 | --- | --- |
 | TypeScript / ESLint / Build | 当前 PR Head 全绿 |
-| 单元与架构 | Secret、Qwen Adapter、Gateway、Grounding、Citation、SEC-006 全绿 |
-| PostgreSQL 集成 | 权限、私有 Thread、持久化、约束、Retrieval、Repair、幂等、限流/额度/并发全绿 |
+| 单元与架构 | Chat 回归；Embedding Adapter/Gateway/维度/有限值/重试/Secret 边界全绿 |
+| PostgreSQL 集成 | pgvector/Profile/复合约束、Worker/Lease/Recovery、部分失败、Backfill、幂等、成本上限与项目范围全绿 |
 | Playwright | B1/B2 回归和 8 个 B3-A 安全截图流程全绿 |
 | Evidence / Provenance | Manifest schema v3，记录实际 PNG 尺寸、AI Gateway Version 与 Profile；强 allowlist 和脱敏通过 |
-| Staging | 四服务 Healthy，Probe、真实问答/Citation、Viewer/私有 Thread、Token/Audit、清理全绿 |
+| Staging | App、两个 Worker、PostgreSQL/pgvector、MinIO Healthy；两个 Probe、真实向量、Backfill/Lease/范围、B3-A 回归与清理全绿 |
 | Production | 精确不变 |
 
 ## 后续
 
 1. 当前 PR 必须保持 Draft，不自动 Ready 或合并。
 2. 完成产品与安全人工复审后才可决定合并。
-3. B3-B 必须独立立项和分支；不得在 B3-A 中加入 Embedding、pgvector、Hybrid Retrieval 或 Reranker。
+3. B3-B2 必须独立立项和分支；不得在 B3-B1 中加入 Hybrid Retrieval、ANN 或 Reranker。

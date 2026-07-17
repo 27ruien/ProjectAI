@@ -1,12 +1,12 @@
 # MVP Acceptance
 
-状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.6 B3-A 证据。最终 PR Head、CI Run、Artifact ID/Digest、tested merge SHA 和 Staging image 等动态事实只记录在 Draft PR、Provenance Manifest 与受控部署证据。
+状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.7 B3-B1 证据。最终 PR Head、CI Run、Artifact ID/Digest、tested merge SHA 和 Staging image 等动态事实只记录在 Draft PR、Provenance Manifest 与受控部署证据。
 
 | ID | 优先级 | 描述 | 当前状态 | 验证方式 | 自动化覆盖 | 负责人 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | SEC-001 | P0 | 不同项目数据不得互相访问 | 通过 | PostgreSQL/授权集成、最终 CI 与 v0.4 Staging | 文件 API 的 project/document/version URL 与 body 篡改、上传/下载/版本切换均返回统一 404 | Backend | 集中式服务端授权和复合项目归属链已通过；无未授权 Mock 或真实文件 payload 序列化 |
 | SEC-002 | P0 | 未认证用户不能访问真实项目数据 | 通过 | 页面/API/下载未认证测试 | v0.4 真实文件 API 纳入最终回归 | Backend | Session 与服务端守卫来自已合并 v0.3 |
-| SEC-003 | P0 | API Key 不进入浏览器 | 通过 | Secret/Bundle/DTO/Health/日志/Artifact 扫描 | Qwen Secret File 优先、App-only mount、公开 DTO 与 Evidence 脱敏 | AI Platform | 真实 Qwen Key 只在 Staging Secret File；浏览器、Worker、Git、日志和 Artifact 均不可见 |
+| SEC-003 | P0 | API Key 不进入浏览器 | 通过 | Secret/Bundle/DTO/Health/日志/Artifact 扫描 | Qwen Secret File、App/Embedding Worker-only mount、公开 DTO 与 Evidence 脱敏 | AI Platform | 真实 Qwen Key 只在 Staging Secret File；浏览器、Document Worker、Git、日志和 Artifact 均不可见 |
 | SEC-004 | P0 | API Key 不进入 Git | 通过 | Git 与工作区扫描 | CI Secret/Artifact 检查 | DevOps | 示例变量无真实值，受保护环境文件不跟踪 |
 | SEC-005 | P0 | 客户文件不进入 Git | 通过 | Git 状态、fixture 与 evidence allowlist 检查 | 测试文件运行时生成，上传原件不发布 | DevOps | 正文只进入私有对象存储；当前验收只使用虚构文件 |
 | SEC-006 | P0 | AI 草稿不能直接覆盖正式数据 | 通过 | AI 写入边界、Schema、导入/Tool 架构扫描 | B3-A 只写 AI Thread/Message/Execution/Citation/Audit；无 Tool/Function Calling | Product/Backend | Requirement、Scope、Action、Risk、Meeting、Project Setting、Document 均不可由 AI 模块写入 |
@@ -30,7 +30,7 @@
 | MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 部分 | 契约与页面审查 | Mock Workflow E2E | Product/Backend | 数据层未实现 |
 | MVP-017 | P1 | 有审计记录 | 通过 | PostgreSQL 审计集成与最终 CI/Staging 操作链 | AI Thread/Execution success/failure/insufficient/rate-limit/denial 与原文件链路均审计 | AI/Backend | AI 审计保存 Hash/长度/模型/Token/Latency，不保存完整问题、Prompt、Secret 或 Provider Response |
 | MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 页面流程与可恢复失败 | 文档处理/搜索 + Assistant Disabled/Empty/Loading/Insufficient/Error/Retry/Fallback | Frontend/AI | 未经 Citation Validation 的回答不显示 |
-| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | B3-A 公网 Staging、App/DB/MinIO/Worker 健康 | Flag/Probe/真实问答/Citation/清理/noindex 与四服务 Healthy | DevOps | Production 精确不变 |
+| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | B3-B1 公网 Staging、App/DB/MinIO/两个 Worker 健康 | 双 Flag/Probe、真实问答/向量、清理/noindex 与五服务 Healthy | DevOps | Production 精确不变 |
 | MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | 当前 Head 完整 CI | B1/B2 回归 + 8 个 B3-A 截图流程；实际 PNG 尺寸进入 Manifest | QA | 无 Trace/Video、Prompt、Provider Response 或 Secret 进入 Evidence |
 | MVP-021 | P1 | Production build 通过 | 通过 | 最终 CI `npm run build`（由 `npm test` 执行） | production build + SSR `7/7` 通过 | Frontend | 仅本地/CI 构建并部署 Staging；未在 Production 主机执行 |
 | OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 资料页有 active/archived 和搜索基础 |
@@ -41,6 +41,19 @@
 | OPT-006 | P2 | 自动生成 Action Plan | 部分 | Action 页面检查 | 持久化 E2E | Product/AI | Mock |
 | OPT-007 | P2 | 自动测试业务模块 | 未完成 | 产品能力验收 | 无 | Product | v0.4 不实现 |
 | OPT-008 | P2 | 原型和页面生成 | 未完成 | 产品能力验收 | 无 | Product | 当前不实现 |
+
+## v0.7 B3-B1 交付门禁
+
+| ID | 描述 | 当前状态 | 稳定证据 | 关闭条件 |
+| --- | --- | --- | --- | --- |
+| V07-DATA-001 | `0004`、pgvector 0.8.1、`vector(1024)`、Profile/Job/Batch/Embedding 与复合约束 | 部分 | 空库 Migration、本地 PostgreSQL 17/pgvector 集成、错误维度/Hash/跨项目拒绝 | 当前 Head CI 与 Staging catalog 复核 |
+| V07-GATEWAY-001 | `text-embedding-v4` Adapter、Batch≤10、数量/顺序/维度/有限值校验、Usage 与重试分类 | 部分 | Fake/Qwen 单元测试、Secret/Provider body 不泄露 | 当前 Head CI 与真实 Staging Probe |
+| V07-WORKER-001 | 专用 Worker、SKIP LOCKED、Lease/Heartbeat/Retry/Stale Recovery、旧 Worker 拒绝、部分失败收口 | 部分 | PostgreSQL 集成覆盖成功、并发、恢复、最大尝试与仅缺失 Chunk 重试 | 当前 Head CI 与 Staging Lease smoke |
+| V07-SCOPE-001 | 只处理 Active/Current/Stored/Succeeded/Effective，Profile/Hash 幂等和跨项目隔离 | 部分 | 归档/旧版本/needs_ocr/non-effective 排除、同 Hash 无重复 Batch、精确 Probe 项目范围 | 当前 Head CI 与 Staging 虚构双项目验证 |
+| V07-OPS-001 | Backfill 默认 dry-run、project/limit、Status/Probe、每日 Job/Token 上限和无正文/向量输出 | 部分 | 运维命令与集成测试；cost 未知保持 null、不估算 | 当前 Head CI 与 Staging 小批量 Backfill |
+| V07-REGRESSION-001 | B2 搜索和 B3-A Evidence/Citation 保持词法检索，不接入向量 | 部分 | 未修改 Search/Grounding/Citation 路径；Assistant 回归门禁保留 | 当前 Head CI、Playwright 与 Staging 真实 Qwen 回归 |
+| V07-STAGING-001 | Flag=false、备份、pgvector 切换/Migration、双 Probe、专用 Worker、虚构向量、清理、Production 不变 | 部分 | 部署脚本与契约测试 | 精确 PR Head 受控部署证据 |
+| V07-PR-001 | 唯一 PR 保持 Draft、未 Ready、未合并 | 部分 | 目标标题 `Add vector embedding foundation` | Draft PR 创建并完成当前 Head 门禁 |
 
 ## v0.6 B3-A 交付门禁
 
@@ -92,4 +105,4 @@
 - P1：21 条；通过 15，部分 5，未完成 1。
 - P2：8 条；通过 0，部分 5，未完成 3。
 
-统计只计算第一张长期 MVP 表。v0.6 B3-A、v0.5 B2 与 v0.4 历史门禁单独跟踪；MVP-007/008 已由 Grounded Qwen + 服务端 Citation 闭环，但仍不代表 Embedding、pgvector、Hybrid Retrieval、Rerank 或正式业务写入已实现。
+统计只计算第一张长期 MVP 表。v0.7 B3-B1、v0.6 B3-A、v0.5 B2 与 v0.4 历史门禁单独跟踪；MVP-007/008 已由 Grounded Qwen + 服务端 Citation 闭环。B3-B1 只代表向量生成/存储基础，不代表用户向量检索、Hybrid Retrieval、Rerank 或正式业务写入。

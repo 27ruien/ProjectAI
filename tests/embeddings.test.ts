@@ -1,0 +1,314 @@
+import assert from "node:assert/strict";
+import { afterEach, describe, it } from "node:test";
+import {
+  EMBEDDING_MODEL,
+  type EmbeddingRuntimeConfig,
+  getEmbeddingRuntimeConfig,
+} from "../lib/ai/embeddings/config";
+import {
+  EmbeddingPipelineError,
+  EmbeddingProviderError,
+} from "../lib/ai/embeddings/errors";
+import { FakeEmbeddingProvider } from "../lib/ai/embeddings/fake-provider";
+import { EmbeddingGateway } from "../lib/ai/embeddings/gateway";
+import type {
+  EmbeddingProvider,
+  EmbeddingProviderResult,
+} from "../lib/ai/embeddings/provider-types";
+import { QwenEmbeddingProvider } from "../lib/ai/embeddings/qwen-provider";
+import { runEmbeddingWorker } from "../lib/ai/embeddings/worker";
+import { readFile, readdir, rm } from "node:fs/promises";
+
+const originalEnvironment = { ...process.env };
+
+afterEach(async () => {
+  for (const key of Object.keys(process.env)) {
+    if (!(key in originalEnvironment)) delete process.env[key];
+  }
+  Object.assign(process.env, originalEnvironment);
+  await rm("/tmp/projectai-embedding-worker-unit-heartbeat", { force: true });
+});
+
+function config(overrides: Partial<EmbeddingRuntimeConfig> = {}): EmbeddingRuntimeConfig {
+  return {
+    enabled: true,
+    provider: "fake",
+    profileId: "qwen-text-embedding-cn-v1",
+    model: "text-embedding-v4",
+    region: "cn-beijing",
+    dimensions: 1024,
+    qwenBaseUrl: null,
+    timeoutMs: 1_000,
+    pollMs: 250,
+    leaseSeconds: 30,
+    maxAttempts: 3,
+    batchSize: 10,
+    batchMaxCharacters: 30_000,
+    dailyJobLimit: 500,
+    dailyTokenLimit: 5_000_000,
+    ...overrides,
+  };
+}
+
+class SequenceProvider implements EmbeddingProvider {
+  readonly provider = "fake" as const;
+  calls = 0;
+
+  constructor(private readonly sequence: Array<EmbeddingProviderResult | Error>) {}
+
+  async embed(): Promise<EmbeddingProviderResult> {
+    const item = this.sequence[Math.min(this.calls, this.sequence.length - 1)]!;
+    this.calls += 1;
+    if (item instanceof Error) throw item;
+    return item;
+  }
+}
+
+function providerResult(vectorCount = 1): EmbeddingProviderResult {
+  return {
+    vectors: Array.from({ length: vectorCount }, () => Array(1024).fill(0.25)),
+    actualModel: EMBEDDING_MODEL,
+    inputTokens: 4,
+    totalTokens: 4,
+    providerRequestId: "safe-request-id",
+    latencyMs: 12,
+  };
+}
+
+describe("embedding configuration and Gateway", () => {
+  it("pins the read-only profile, dimensions, batch size, and fake-provider boundary", () => {
+    Reflect.set(process.env, "NODE_ENV", "test");
+    process.env.NEXT_PUBLIC_APP_ENV = "test";
+    process.env.AI_EMBEDDING_PROVIDER = "fake";
+    process.env.AI_EMBEDDING_PROFILE_ID = "qwen-text-embedding-cn-v1";
+    process.env.AI_EMBEDDING_DIMENSIONS = "1024";
+    process.env.AI_EMBEDDING_BATCH_SIZE = "10";
+    const parsed = getEmbeddingRuntimeConfig();
+    assert.equal(parsed.profileId, "qwen-text-embedding-cn-v1");
+    assert.equal(parsed.model, "text-embedding-v4");
+    assert.equal(parsed.dimensions, 1024);
+    assert.equal(parsed.batchSize, 10);
+
+    process.env.AI_EMBEDDING_DIMENSIONS = "1536";
+    assert.throws(() => getEmbeddingRuntimeConfig(), EmbeddingPipelineError);
+    process.env.AI_EMBEDDING_DIMENSIONS = "1024";
+    Reflect.set(process.env, "NODE_ENV", "production");
+    assert.throws(() => getEmbeddingRuntimeConfig(), EmbeddingPipelineError);
+  });
+
+  it("accepts ordered 1024-dimensional batches and rejects count, dimension, and finite-value failures", async () => {
+    const valid = new EmbeddingGateway(
+      config(),
+      new FakeEmbeddingProvider(),
+      async () => undefined,
+    );
+    const result = await valid.embed(["first", "second"]);
+    assert.equal(result.vectors.length, 2);
+    assert.equal(result.vectors[0]?.length, 1024);
+    assert.ok(result.vectors.flat().every(Number.isFinite));
+
+    for (const invalid of [
+      providerResult(1),
+      { ...providerResult(2), vectors: [Array(1023).fill(0), Array(1024).fill(0)] },
+      { ...providerResult(2), vectors: [Array(1024).fill(Number.NaN), Array(1024).fill(0)] },
+      { ...providerResult(2), vectors: [Array(1024).fill(Number.POSITIVE_INFINITY), Array(1024).fill(0)] },
+    ]) {
+      const gateway = new EmbeddingGateway(
+        config(),
+        new SequenceProvider([invalid]),
+        async () => undefined,
+      );
+      await assert.rejects(
+        gateway.embed(["first", "second"]),
+        (error: unknown) =>
+          error instanceof EmbeddingPipelineError &&
+          error.code === "INVALID_RESPONSE" &&
+          !error.retryable,
+      );
+    }
+  });
+
+  it("retries only retryable failures and enforces the bounded aggregate input", async () => {
+    const retrying = new SequenceProvider([
+      new EmbeddingProviderError("RATE_LIMITED", true),
+      new EmbeddingProviderError("SERVER_ERROR", true),
+      providerResult(),
+    ]);
+    const gateway = new EmbeddingGateway(config(), retrying, async () => undefined);
+    const result = await gateway.embed(["retryable"]);
+    assert.equal(retrying.calls, 3);
+    assert.equal(result.attemptCount, 3);
+
+    for (const code of ["BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN"] as const) {
+      const provider = new SequenceProvider([
+        new EmbeddingProviderError(code, false),
+        providerResult(),
+      ]);
+      await assert.rejects(
+        new EmbeddingGateway(config(), provider, async () => undefined).embed([
+          "non-retryable",
+        ]),
+      );
+      assert.equal(provider.calls, 1);
+    }
+    await assert.rejects(
+      gateway.embed(Array.from({ length: 11 }, () => "too many")),
+      /Embedding operation failed/,
+    );
+    await assert.rejects(
+      new EmbeddingGateway(config({ batchMaxCharacters: 1_000 }), retrying).embed([
+        "x".repeat(1_001),
+      ]),
+    );
+  });
+});
+
+describe("Qwen embedding Adapter", () => {
+  it("calls only /embeddings, preserves index order and Usage, and never exposes the Secret", async () => {
+    Reflect.set(process.env, "NODE_ENV", "test");
+    process.env.NEXT_PUBLIC_APP_ENV = "test";
+    process.env.QWEN_API_KEY = "unit-test-secret-value";
+    let requestedUrl = "";
+    let requestBody: Record<string, unknown> = {};
+    const vectorA = Array(1024).fill(0.1);
+    const vectorB = Array(1024).fill(0.2);
+    const provider = new QwenEmbeddingProvider(
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      async (url, init) => {
+        requestedUrl = String(url);
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            id: "provider-id",
+            model: "text-embedding-v4",
+            data: [
+              { index: 1, embedding: vectorB },
+              { index: 0, embedding: vectorA },
+            ],
+            usage: { prompt_tokens: 7, total_tokens: 7 },
+          }),
+          { status: 200, headers: { "x-request-id": "request-id" } },
+        );
+      },
+    );
+    const result = await provider.embed({
+      model: "text-embedding-v4",
+      dimensions: 1024,
+      inputs: ["first", "second"],
+      timeoutMs: 1_000,
+    });
+    assert.equal(requestedUrl.endsWith("/embeddings"), true);
+    assert.equal(requestedUrl.includes("chat/completions"), false);
+    assert.deepEqual(requestBody.input, ["first", "second"]);
+    assert.equal(requestBody.model, "text-embedding-v4");
+    assert.equal(requestBody.dimensions, 1024);
+    assert.equal(result.vectors[0]?.[0], 0.1);
+    assert.equal(result.vectors[1]?.[0], 0.2);
+    assert.equal(result.inputTokens, 7);
+    assert.equal(result.totalTokens, 7);
+    assert.equal(JSON.stringify(result).includes("unit-test-secret-value"), false);
+  });
+
+  it("maps HTTP failures without returning response bodies or credentials", async () => {
+    Reflect.set(process.env, "NODE_ENV", "test");
+    process.env.NEXT_PUBLIC_APP_ENV = "test";
+    process.env.QWEN_API_KEY = "never-print-this-secret";
+    for (const [status, code, retryable] of [
+      [429, "RATE_LIMITED", true],
+      [500, "SERVER_ERROR", true],
+      [401, "UNAUTHORIZED", false],
+      [403, "FORBIDDEN", false],
+      [400, "BAD_REQUEST", false],
+    ] as const) {
+      const provider = new QwenEmbeddingProvider(
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        async () => new Response("sensitive provider body", { status }),
+      );
+      await assert.rejects(
+        provider.embed({
+          model: "text-embedding-v4",
+          dimensions: 1024,
+          inputs: ["safe text"],
+          timeoutMs: 1_000,
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof EmbeddingProviderError);
+          assert.equal(error.code, code);
+          assert.equal(error.retryable, retryable);
+          assert.equal(error.message.includes("sensitive provider body"), false);
+          assert.equal(error.message.includes("never-print-this-secret"), false);
+          return true;
+        },
+      );
+    }
+  });
+
+  it("classifies aborted and network requests as retryable without leaking request details", async () => {
+    process.env.QWEN_API_KEY = "timeout-test-secret";
+    for (const [failure, code] of [
+      [Object.assign(new Error("aborted"), { name: "AbortError" }), "TIMEOUT"],
+      [new Error("network detail"), "NETWORK"],
+    ] as const) {
+      const provider = new QwenEmbeddingProvider(
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        async () => {
+          throw failure;
+        },
+      );
+      await assert.rejects(
+        provider.embed({
+          model: "text-embedding-v4",
+          dimensions: 1024,
+          inputs: ["safe text"],
+          timeoutMs: 1_000,
+        }),
+        (error: unknown) =>
+          error instanceof EmbeddingProviderError &&
+          error.code === code &&
+          error.retryable &&
+          !error.message.includes("timeout-test-secret") &&
+          !error.message.includes("network detail"),
+      );
+    }
+  });
+});
+
+describe("disabled Embedding Worker", () => {
+  it("reports disabled without constructing or calling a Provider", async () => {
+    process.env.AI_EMBEDDING_WORKER_HEARTBEAT_FILE =
+      "/tmp/projectai-embedding-worker-unit-heartbeat";
+    await runEmbeddingWorker({ once: true, config: config({ enabled: false }) });
+    const heartbeat = await readFile(
+      "/tmp/projectai-embedding-worker-unit-heartbeat",
+      "utf8",
+    );
+    assert.match(heartbeat, / disabled\n$/);
+  });
+});
+
+describe("B3-B1 retrieval boundary", () => {
+  it("does not expose vectors from browser routes or connect Embeddings to B2/B3-A retrieval", async () => {
+    const routeEntries = await readdir(new URL("../app/api", import.meta.url), {
+      recursive: true,
+    });
+    const routeFiles = routeEntries.filter((entry) => entry.endsWith("route.ts"));
+    for (const entry of routeFiles) {
+      const source = await readFile(
+        new URL(`../app/api/${entry}`, import.meta.url),
+        "utf8",
+      );
+      assert.doesNotMatch(
+        source,
+        /documentChunkEmbedding|findNearestEmbeddedChunksForProbe|\.embedding\b|vector\(1024\)/,
+      );
+    }
+    for (const relativePath of [
+      "../lib/documents/processing/search-service.ts",
+      "../lib/ai/project-assistant/grounding.ts",
+      "../lib/ai/project-assistant/service.ts",
+    ]) {
+      const source = await readFile(new URL(relativePath, import.meta.url), "utf8");
+      assert.doesNotMatch(source, /ai\/embeddings|document_chunk_embeddings|<=>|vector\(/i);
+    }
+  });
+});

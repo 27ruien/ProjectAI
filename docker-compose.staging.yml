@@ -20,9 +20,21 @@ x-document-processing-environment: &document-processing-environment
   DOCUMENT_PARSER_VERSION: ${DOCUMENT_PARSER_VERSION:-1}
   DOCUMENT_CHUNKER_VERSION: ${DOCUMENT_CHUNKER_VERSION:-1}
 
+x-embedding-environment: &embedding-environment
+  AI_EMBEDDING_ENABLED: ${AI_EMBEDDING_ENABLED:-false}
+  AI_EMBEDDING_PROFILE_ID: ${AI_EMBEDDING_PROFILE_ID:-qwen-text-embedding-cn-v1}
+  AI_EMBEDDING_DIMENSIONS: ${AI_EMBEDDING_DIMENSIONS:-1024}
+  AI_EMBEDDING_WORKER_POLL_MS: ${AI_EMBEDDING_WORKER_POLL_MS:-2000}
+  AI_EMBEDDING_WORKER_LEASE_SECONDS: ${AI_EMBEDDING_WORKER_LEASE_SECONDS:-120}
+  AI_EMBEDDING_WORKER_MAX_ATTEMPTS: ${AI_EMBEDDING_WORKER_MAX_ATTEMPTS:-3}
+  AI_EMBEDDING_BATCH_SIZE: ${AI_EMBEDDING_BATCH_SIZE:-10}
+  AI_EMBEDDING_BATCH_MAX_CHARACTERS: ${AI_EMBEDDING_BATCH_MAX_CHARACTERS:-30000}
+  AI_EMBEDDING_DAILY_JOB_LIMIT: ${AI_EMBEDDING_DAILY_JOB_LIMIT:-500}
+  AI_EMBEDDING_DAILY_TOKEN_LIMIT: ${AI_EMBEDDING_DAILY_TOKEN_LIMIT:-5000000}
+
 services:
   projectai-postgres:
-    image: postgres:17-alpine
+    image: ${STAGING_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17}
     container_name: project-ai-os-staging-postgres
     restart: unless-stopped
     cpus: 1.0
@@ -150,7 +162,7 @@ services:
       context: .
       target: db-tools
     environment:
-      <<: *document-processing-environment
+      <<: [*document-processing-environment, *embedding-environment]
       NODE_ENV: production
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
@@ -273,7 +285,7 @@ services:
       context: .
       target: db-tools
     environment:
-      <<: *document-processing-environment
+      <<: [*document-processing-environment, *embedding-environment]
       NODE_ENV: production
       NEXT_PUBLIC_APP_ENV: staging
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -286,6 +298,8 @@ services:
       OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
       SEED_MANAGER_A_EMAIL: ${SEED_MANAGER_A_EMAIL:?SEED_MANAGER_A_EMAIL is required}
       SEED_MANAGER_A_PASSWORD: ${SEED_MANAGER_A_PASSWORD:?SEED_MANAGER_A_PASSWORD is required}
+      SEED_MANAGER_B_EMAIL: ${SEED_MANAGER_B_EMAIL:?SEED_MANAGER_B_EMAIL is required}
+      SEED_MANAGER_B_PASSWORD: ${SEED_MANAGER_B_PASSWORD:?SEED_MANAGER_B_PASSWORD is required}
       SEED_VIEWER_A_EMAIL: ${SEED_VIEWER_A_EMAIL:?SEED_VIEWER_A_EMAIL is required}
       SEED_VIEWER_A_PASSWORD: ${SEED_VIEWER_A_PASSWORD:?SEED_VIEWER_A_PASSWORD is required}
     depends_on:
@@ -366,7 +380,7 @@ services:
       args:
         NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
         NEXT_PUBLIC_APP_ENV: staging
-        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.6.0-staging}
+        NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.7.0-staging}
         NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
         NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     container_name: project-ai-os-staging
@@ -383,7 +397,7 @@ services:
     env_file:
       - /srv/projectai-staging/.env.ai
     environment:
-      <<: *document-processing-environment
+      <<: [*document-processing-environment, *embedding-environment]
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
@@ -405,7 +419,7 @@ services:
       STAGING_HEALTHCHECK_PATH: ${STAGING_HEALTHCHECK_PATH:-/api/health}
       NEXT_PUBLIC_BASE_PATH: /tool/projectai-staging
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.6.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.7.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     secrets:
@@ -418,6 +432,8 @@ services:
       projectai-minio-init:
         condition: service_completed_successfully
       projectai-document-worker:
+        condition: service_healthy
+      projectai-embedding-worker:
         condition: service_healthy
     networks:
       - projectai-staging-internal
@@ -451,7 +467,7 @@ services:
         max-size: 10m
         max-file: "3"
     environment:
-      <<: *document-processing-environment
+      <<: [*document-processing-environment, *embedding-environment]
       NODE_ENV: production
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
@@ -464,7 +480,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-52428800}
       UPLOAD_ALLOWED_EXTENSIONS: ${UPLOAD_ALLOWED_EXTENSIONS:-pdf,docx,xlsx,pptx,txt,md}
       NEXT_PUBLIC_APP_ENV: staging
-      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.6.0-staging}
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.7.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     command:
@@ -487,6 +503,54 @@ services:
           "node",
           "-e",
           "const fs=require('node:fs');const age=Date.now()-fs.statSync('/tmp/projectai-document-worker-heartbeat').mtimeMs;if(age>60000)process.exit(1)"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  projectai-embedding-worker:
+    image: ${STAGING_EMBEDDING_WORKER_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    container_name: project-ai-os-staging-embedding-worker
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    env_file:
+      - /srv/projectai-staging/.env.ai
+    environment:
+      <<: *embedding-environment
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NEXT_PUBLIC_APP_ENV: staging
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.7.0-staging}
+      NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
+      NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
+    secrets:
+      - qwen_api_key
+    command:
+      - npm
+      - run
+      - worker:embeddings
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs');const p='/tmp/projectai-embedding-worker-heartbeat';const age=Date.now()-fs.statSync(p).mtimeMs;const mode=fs.readFileSync(p,'utf8').trim().split(/\\s+/).at(-1);if(age>60000||!['enabled','disabled'].includes(mode))process.exit(1)"
         ]
       interval: 20s
       timeout: 5s

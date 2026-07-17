@@ -10,6 +10,11 @@ import {
   getAiRuntimeConfig,
   isAiProviderConfigured,
 } from "@/lib/ai/project-assistant";
+import {
+  EMBEDDING_GATEWAY_VERSION,
+  EMBEDDING_MODEL,
+  getEmbeddingRuntimeConfig,
+} from "@/lib/ai/embeddings";
 
 export async function GET(): Promise<Response> {
   try {
@@ -27,13 +32,25 @@ export async function GET(): Promise<Response> {
         (select count(*) from ai_model_profiles limit 1) as ai_profiles_count,
         (select count(*) from ai_threads limit 1) as ai_threads_count,
         (select count(*) from ai_executions limit 1) as ai_executions_count,
-        exists(select 1 from pg_extension where extname = 'pg_trgm') as pg_trgm_enabled
+        (select count(*) from ai_embedding_profiles limit 1) as embedding_profiles_count,
+        (select count(*) from document_embedding_jobs limit 1) as embedding_jobs_count,
+        (select count(*) from document_chunk_embeddings limit 1) as chunk_embeddings_count,
+        exists(select 1 from pg_extension where extname = 'pg_trgm') as pg_trgm_enabled,
+        exists(select 1 from pg_extension where extname = 'vector') as pgvector_enabled,
+        (select extversion from pg_extension where extname = 'vector') as pgvector_version
     `);
     const row = databaseHealth.rows[0] as
-      | { pg_trgm_enabled?: boolean }
+      | {
+          pg_trgm_enabled?: boolean;
+          pgvector_enabled?: boolean;
+          pgvector_version?: string;
+        }
       | undefined;
     if (row?.pg_trgm_enabled !== true) {
       throw new Error("Required pg_trgm extension is unavailable.");
+    }
+    if (row.pgvector_enabled !== true) {
+      throw new Error("Required pgvector extension is unavailable.");
     }
 
     const headers = new Headers({ "cache-control": "no-store" });
@@ -54,12 +71,25 @@ export async function GET(): Promise<Response> {
     if (aiConfig.enabled && !aiProviderConfigured) {
       throw new Error("Enabled AI provider is not configured.");
     }
+    const embeddingConfig = getEmbeddingRuntimeConfig();
+    if (embeddingConfig.enabled && !aiProviderConfigured) {
+      throw new Error("Enabled Embedding provider is not configured.");
+    }
+    headers.set("x-projectai-pgvector-version", row.pgvector_version || "unknown");
+    headers.set("x-projectai-embedding-model", EMBEDDING_MODEL);
+    headers.set(
+      "x-projectai-embedding-dimensions",
+      String(embeddingConfig.dimensions),
+    );
     return jsonResponse(
       {
         status: "ok",
         aiAssistantEnabled: aiConfig.enabled,
         aiProviderConfigured,
         aiGatewayVersion: AI_GATEWAY_VERSION,
+        aiEmbeddingEnabled: embeddingConfig.enabled,
+        embeddingGatewayVersion: EMBEDDING_GATEWAY_VERSION,
+        pgvectorEnabled: true,
       },
       { headers },
     );

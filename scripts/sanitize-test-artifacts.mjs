@@ -34,6 +34,8 @@ const allowedTestLogs = new Set([
   "deployment-contract.log",
   "document-processing-integration.log",
   "document-processing-unit.log",
+  "embedding-integration.log",
+  "embedding-unit.log",
   "integration.log",
   "lint.log",
   "playwright.log",
@@ -112,7 +114,7 @@ const metrics = {
 };
 
 const sensitivePropertyName =
-  /^(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey|qwen_api_key|qwenApiKey|qwen_base_url|qwenBaseUrl|api_key|apiKey|authorizationHeader|system_prompt|systemPrompt|provider_request|providerRequest|provider_response|providerResponse|raw_provider_request|rawProviderRequest|raw_provider_response|rawProviderResponse)$/i;
+  /^(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey|qwen_api_key|qwenApiKey|qwen_base_url|qwenBaseUrl|api_key|apiKey|authorizationHeader|system_prompt|systemPrompt|provider_request|providerRequest|provider_response|providerResponse|raw_provider_request|rawProviderRequest|raw_provider_response|rawProviderResponse|embedding|vector)$/i;
 
 function isSensitiveStructuredName(value) {
   return (
@@ -180,7 +182,7 @@ function transformJsonValue(value, mode) {
     const sensitiveValue =
       sensitivePropertyName.test(key) ||
       (key.toLowerCase() === "value" && isSensitiveStructuredName(structuredName));
-    if (sensitiveValue && typeof entry === "string" && entry !== redacted) {
+    if (sensitiveValue && entry !== redacted) {
       if (mode === "verify") return { value: transformed, changed: true };
       transformed[key] = redacted;
       changed = true;
@@ -363,7 +365,7 @@ function redactStructuredValues(input) {
     )
     .replace(/^(cookie|set-cookie|authorization):.*$/gim, `$1: ${redacted}`)
     .replace(
-      /("(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey|qwen_api_key|qwenApiKey|qwen_base_url|qwenBaseUrl|api_key|apiKey|authorizationHeader|system_prompt|systemPrompt|provider_request|providerRequest|provider_response|providerResponse|raw_provider_request|rawProviderRequest|raw_provider_response|rawProviderResponse)"\s*:\s*")[^"]*(")/gi,
+      /("(?:password|database_url|databaseUrl|better_auth_secret|betterAuthSecret|sessionToken|session_token|minio_root_user|minioRootUser|minio_root_password|minioRootPassword|object_storage_access_key|objectStorageAccessKey|object_storage_secret_key|objectStorageSecretKey|object_storage_endpoint|objectStorageEndpoint|storageEndpoint|object_storage_bucket|objectStorageBucket|bucket|object_key|objectKey|qwen_api_key|qwenApiKey|qwen_base_url|qwenBaseUrl|api_key|apiKey|authorizationHeader|system_prompt|systemPrompt|provider_request|providerRequest|provider_response|providerResponse|raw_provider_request|rawProviderRequest|raw_provider_response|rawProviderResponse|embedding|vector)"\s*:\s*")[^"]*(")/gi,
       `$1${redacted}$2`,
     )
     .replace(

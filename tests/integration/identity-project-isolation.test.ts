@@ -310,8 +310,14 @@ describe("database constraints", () => {
         aiAssistantEnabled: false,
         aiProviderConfigured: false,
         aiGatewayVersion: "1",
+        aiEmbeddingEnabled: false,
+        embeddingGatewayVersion: "1",
+        pgvectorEnabled: true,
       });
       assert.equal(response.headers.get("x-projectai-commit-sha"), runtimeSha);
+      assert.equal(response.headers.get("x-projectai-embedding-model"), "text-embedding-v4");
+      assert.equal(response.headers.get("x-projectai-embedding-dimensions"), "1024");
+      assert.equal(response.headers.get("x-projectai-pgvector-version"), "0.8.1");
     } finally {
       if (previousSha === undefined) delete process.env.NEXT_PUBLIC_COMMIT_SHA;
       else process.env.NEXT_PUBLIC_COMMIT_SHA = previousSha;

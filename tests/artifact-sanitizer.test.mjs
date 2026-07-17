@@ -262,6 +262,7 @@ test("redacts Qwen configuration, prompts, and provider payloads", async () => {
           qwenBaseUrl: baseUrl,
           systemPrompt,
           providerResponse,
+          embedding: [0.123456, 0.654321],
         }),
       ].join("\n"),
     );
@@ -282,6 +283,7 @@ test("redacts Qwen configuration, prompts, and provider payloads", async () => {
       secretFile,
       systemPrompt,
       providerResponse,
+      "0.123456",
     ]) {
       assert.equal(sanitized.includes(unsafe), false);
     }

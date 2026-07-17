@@ -1,6 +1,6 @@
 # Architecture
 
-## v0.6 请求、身份、文件、知识与项目助手边界
+## v0.7 请求、身份、文件、知识、项目助手与向量基础边界
 
 ```mermaid
 flowchart LR
@@ -45,6 +45,10 @@ flowchart LR
 | `document_ingestion_jobs` | project/document/version/Generation、Parser/Chunker Version、状态、Attempt、Lease、Heartbeat 与脱敏失败 |
 | `document_sections` | 文件自然结构与 PDF Page、DOCX Paragraph、XLSX Range、PPTX Slide、文本行 Source Locator |
 | `document_chunks` | 确定性分块、内容 Hash、generated `tsvector`、`pg_trgm` 搜索字段和 `is_effective` |
+| `ai_embedding_profiles` | 服务端只读 Embedding Profile；Provider/Model/Region/Dimensions/Distance/Profile Version，不保存 Secret |
+| `document_embedding_jobs` | project/document/version/Profile/Generation、Attempt、Lease、Heartbeat、Usage、Latency 与受控失败 |
+| `document_embedding_batches` | 每次最多 10 条的 Provider Batch、模型/维度、Usage、Latency、失败码和不估算的成本字段 |
+| `document_chunk_embeddings` | 与 Chunk 内容 Hash 和复合项目范围绑定的 `vector(1024)`；只允许 current/invalid，不进入普通浏览器 API |
 | `ai_model_profiles` | 服务端只读 Profile、Provider/Primary/Fallback/Region/Gateway Version；不保存 Secret 或 Base URL |
 | `ai_threads` / `ai_messages` | 项目和创建者私有 Thread；用户/助手业务消息与状态，不保存 System Prompt |
 | `ai_executions` | 幂等、阶段状态、Profile/模型/Fallback、Token Usage、Latency、问题 Hash 与受控失败码 |
@@ -141,21 +145,37 @@ flowchart LR
 
 `ProjectKnowledgeService` 与 `AIGateway` 保持稳定边界，页面只能提交 `modelProfileId`。B3-A 复用 B2 `Active + Current + Stored + Succeeded + Effective` 词法检索，Evidence 与 System Prompt 分区；模型标记由服务端验证并映射为公开 Citation。没有 Evidence 时不调用模型。
 
-Qwen Adapter 只在 Node 服务端使用 `/chat/completions`，Secret File 优先；Staging/Production 不允许环境变量 Key。主模型重试和 Fallback 在 Gateway 内部完成，浏览器不会获得 Base URL、Authorization、Provider 原始错误、Prompt、Evidence ID 或 Chunk ID。当前仍没有 OCR、Embedding、pgvector、Hybrid Retrieval 或 Reranker。
+Qwen Chat Adapter 只在 Node 服务端使用 `/chat/completions`。B3-B1 另有 Provider-neutral Embedding Gateway，固定调用 `/embeddings`、`text-embedding-v4` 和 1024 维；返回数量、顺序、维度及有限数值均失败关闭。两条链路都使用 Secret File，不向浏览器暴露 Base URL、Authorization、Provider Payload、Prompt、正文或向量。
+
+## Embedding 队列与检索隔离
+
+```mermaid
+flowchart LR
+  A["Active + Current + Stored + Succeeded + Effective Chunk"] --> B["Embedding Job"]
+  B --> C["FOR UPDATE SKIP LOCKED"]
+  C --> D["Dedicated Embedding Worker + Lease"]
+  D --> E["Embedding Gateway"]
+  E --> F["text-embedding-v4 / 1024"]
+  F --> G["Batch + vector(1024) atomic commit"]
+  G --> H["Protected exact cosine Probe only"]
+  G -. "not connected" .-> I["B2 Lexical Search / B3-A Evidence"]
+```
+
+Job 只为同一精确项目中 Active/Current/Stored/Succeeded/Effective 的非空 Chunk 创建。Profile Version、Chunk Hash 或显式安全回填可以产生新 Generation；同 Profile + Chunk + Hash 的 current 向量直接复用。Chunk 失效触发向量 invalid，恢复后由 Job 在不调用 Provider 的情况下重新激活同 Hash 向量。B3-B1 只允许受保护运维执行精确 cosine Probe，不建立 HNSW/IVFFlat，也不接入用户搜索或项目助手 Evidence。
 
 ## Staging 环境与备份
 
-- Production：`/tool/projectai`、`/srv/projectai`、`project-ai-os`、`127.0.0.1:3100`；v0.6 B3-A 不得修改、部署或配置 Qwen Secret。
-- Staging 应用/Worker/数据库：`project-ai-os-staging`、`project-ai-os-staging-worker`、`project-ai-os-staging-postgres`、卷 `projectai-staging-postgres`、App `127.0.0.1:3101`；Worker/DB 无端口。
+- Production：`/tool/projectai`、`/srv/projectai`、`project-ai-os`、`127.0.0.1:3100`；v0.7 B3-B1 不得修改、迁移、部署、增加 pgvector/Worker 或配置 Qwen Secret。
+- Staging 应用/Worker/数据库：App、Document Worker、专用 Embedding Worker、PostgreSQL 17 + pgvector 0.8.1 与命名卷；只有 App 发布 `127.0.0.1:3101`。
 - Staging MinIO：`project-ai-os-staging-minio`、卷 `projectai-staging-minio`、Bucket `projectai-staging-files`；仅连接 `projectai-staging-internal`，不发布 API/Console 端口，不允许匿名访问。
 - `projectai-minio-init` 使用 root credential 幂等创建私有 Bucket 和受 `projects/*` 限制的应用用户；应用只得到 scoped app credential。root/app credential 必须不同并只存在于 `root:root 600` 环境文件。
-- Worker 与 App 使用同一 immutable image；Worker 独立 command、心跳健康、scoped credential、优雅退出。所有服务有 CPU、内存、PID 与滚动日志边界。
+- 两个 Worker 与 App 使用同一 immutable image、独立 command、心跳健康和优雅退出。Document Worker 只得到对象存储 scoped credential；Embedding Worker 只得到数据库与 Qwen Secret，不得到对象存储 credential。
 
-部署在 Migration 前同时停止 Staging App/Worker，创建 PostgreSQL custom dump 与 MinIO inventory/mirror；Migration 后验证 `pg_trgm`，先启动 Worker再启动 App。普通部署、失败和镜像回滚均保留两个命名卷和备份。
+部署在 Migration 前同时停止 Staging App 与两个 Worker，创建 PostgreSQL custom dump 与 MinIO inventory/mirror；备份完成后才把 Staging PostgreSQL 切换到锁定的 pgvector 镜像并执行 `0004`。Migration 后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)` 和 Profile，再以 Flag=false 启动、Probe、分阶段启用、虚构 Smoke、B3-A 回归与清理。
 
 ## CI 与产品审查证据边界
 
-CI 使用 PostgreSQL 17 和运行时创建的 MinIO：每次生成随机 root/app credential 与唯一 Bucket，Secret 全部 mask，MinIO 数据放在 tmpfs，结束时 `if: always()` 删除容器、网络和 root-only 临时凭据文件。CI 不连接 Staging/Production 或远程 Bucket。
+CI 使用 `pgvector/pgvector:0.8.1-pg17` 和运行时创建的 MinIO；Embedding 测试只在 `NODE_ENV=test` 使用 Fake Provider。CI 不连接 Qwen、Staging/Production 或远程 Bucket。
 
 产品 Evidence 采用强 allowlist。Payload A 只可包含：
 

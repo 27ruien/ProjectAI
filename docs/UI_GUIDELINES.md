@@ -20,7 +20,7 @@
 
 - Staging 全局显示醒目的 `STAGING` 标识。
 - 同时显示环境、版本、Commit 短码和构建时间，并保留完整 SHA 的可查询信息。
-- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存并建立词法索引，项目助手会调用真实 Qwen，但 OCR、Embedding、向量 RAG、Hybrid Retrieval 和 Rerank 仍未启用。
+- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存并建立词法索引，后台仅构建受保护的文本向量基础，项目助手会调用真实 Qwen，但用户语义向量检索、向量 RAG、Hybrid Retrieval 和 Rerank 仍未启用。
 - Staging 设置 robots noindex，并由 Nginx 添加 `X-Robots-Tag`。
 
 ## 文档处理与知识搜索
