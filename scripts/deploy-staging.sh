@@ -2104,6 +2104,11 @@ printf 'Verifying concurrent UTC Token reservation and Usage-null accounting wit
   --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
   projectai-migrate npm run embeddings:safety-smoke -- --budget
 
+printf 'Verifying injected Timeout, Network, invalid-success response, immutable unknown history, and manual Retry double-budget accounting.\n'
+"${compose_run[@]}" \
+  --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
+  projectai-migrate npm run embeddings:safety-smoke -- --cost-consistency
+
 printf 'Restarting the dedicated Embedding Worker after durable-call safety validation.\n'
 "${compose[@]}" up --detach --no-build --pull never projectai-embedding-worker
 embedding_safety_worker_ready=0

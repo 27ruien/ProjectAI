@@ -4,8 +4,11 @@ import {
   commitEmbeddingBatch,
   completeEmbeddingJob,
   createEmbeddingGateway,
+  EMBEDDING_BUDGET_RULE_VERSION,
+  EmbeddingGateway,
   embeddingBatchReservedInputTokens,
   EmbeddingPipelineError,
+  EmbeddingProviderError,
   ensureEmbeddingJob,
   getEmbeddingRuntimeConfig,
   prepareEmbeddingJob,
@@ -14,6 +17,9 @@ import {
   recordEmbeddingFailure,
   reserveEmbeddingBatch,
   retryUnknownEmbeddingJob,
+  type EmbeddingProvider,
+  type EmbeddingProviderRequest,
+  type EmbeddingProviderResult,
 } from "../lib/ai/embeddings";
 import { closeDatabasePool, getDb } from "../lib/db/client";
 import {
@@ -33,9 +39,12 @@ const runId = process.env.EMBEDDING_SMOKE_RUN_ID?.trim() || "";
 if (!/^[0-9a-f-]{36}$/i.test(runId)) {
   throw new Error("Embedding safety Run ID is invalid.");
 }
-const modes = ["--crash-window", "--shutdown", "--budget"].filter((mode) =>
-  process.argv.includes(mode),
-);
+const modes = [
+  "--crash-window",
+  "--shutdown",
+  "--budget",
+  "--cost-consistency",
+].filter((mode) => process.argv.includes(mode));
 if (modes.length !== 1) throw new Error("Select one Embedding safety mode.");
 const mode = modes[0]!;
 const displayPrefix = `B3-B1 虚构 Embedding 安全验收 ${runId}`;
@@ -231,6 +240,147 @@ async function claimedFixture(fixture: Fixture, workerId: string) {
   const prepared = await prepareEmbeddingJob({ jobId: fixture.jobId, workerId });
   assert(prepared?.chunks.length, "Embedding safety fixture has no eligible Chunk.");
   return prepared;
+}
+
+async function currentDailyTokenBudget(): Promise<number> {
+  const usage = await getDb().execute<{ used: number | string }>(sql`
+    select coalesce(sum(case
+      when status = 'succeeded' then coalesce(input_token_count, reserved_input_tokens)
+      when status in ('reserved', 'calling', 'unknown') then reserved_input_tokens
+      else 0 end), 0) as used
+    from document_embedding_provider_calls
+    where created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+      and created_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
+  `);
+  return Number(usage.rows[0]?.used ?? 0);
+}
+
+type InjectedProviderOutcome = "timeout" | "network" | "invalid_response" | "success";
+
+class InjectedEmbeddingProvider implements EmbeddingProvider {
+  readonly provider = "fake" as const;
+  calls = 0;
+
+  constructor(
+    private readonly outcome: InjectedProviderOutcome,
+    private readonly actualInputTokens = 17,
+  ) {}
+
+  async embed(
+    request: EmbeddingProviderRequest,
+  ): Promise<EmbeddingProviderResult> {
+    await request.onRequestStarted?.();
+    this.calls += 1;
+    if (this.outcome === "timeout") {
+      throw new EmbeddingProviderError("TIMEOUT", true, "post_dispatch");
+    }
+    if (this.outcome === "network") {
+      throw new EmbeddingProviderError("NETWORK", true, "post_dispatch");
+    }
+    const vectorLength =
+      this.outcome === "invalid_response"
+        ? request.dimensions - 1
+        : request.dimensions;
+    return {
+      vectors: request.inputs.map(() => Array(vectorLength).fill(0.01)),
+      actualModel: request.model,
+      inputTokens: this.actualInputTokens,
+      totalTokens: this.actualInputTokens,
+      providerRequestId: null,
+      latencyMs: 0,
+      dispatchClassification: "successful_response",
+    };
+  }
+}
+
+async function injectUnknownProviderResult(
+  label: string,
+  outcome: Exclude<InjectedProviderOutcome, "success">,
+): Promise<{
+  fixture: Fixture;
+  provider: InjectedEmbeddingProvider;
+  reservedInputTokens: number;
+}> {
+  const fixture = await createFixture(label, [
+    `Project AI fictional ${label} cost consistency verification.`,
+  ]);
+  const workerId = `embedding-${outcome}-${crypto.randomUUID()}`;
+  const config = getEmbeddingRuntimeConfig();
+  const prepared = await claimedFixture(fixture, workerId);
+  const reservation = await reserveEmbeddingBatch({
+    jobId: fixture.jobId,
+    workerId,
+    batchIndex: 0,
+    chunks: prepared.chunks,
+    config,
+  });
+  assert(reservation.action === "call", `${label} Batch was not callable.`);
+  const provider = new InjectedEmbeddingProvider(outcome);
+  let thrown: unknown;
+  try {
+    await new EmbeddingGateway(config, provider).embed(
+      prepared.chunks.map((chunk) => chunk.content),
+      {
+        onProviderRequestStarted: () =>
+          markEmbeddingProviderCallDispatched({
+            jobId: fixture.jobId,
+            workerId,
+            batchId: reservation.batchId,
+            providerCallId: reservation.providerCallId,
+          }),
+      },
+    );
+  } catch (error) {
+    thrown = error;
+  }
+  assert(
+    thrown instanceof EmbeddingPipelineError &&
+      thrown.code === "PROVIDER_RESULT_UNKNOWN" &&
+      !thrown.retryable,
+    `${label} did not fail as a non-retryable unknown result.`,
+  );
+  await recordEmbeddingFailure({
+    jobId: fixture.jobId,
+    workerId,
+    batchId: reservation.batchId,
+    providerCallId: reservation.providerCallId,
+    chunks: prepared.chunks,
+    error: thrown,
+    latencyMs: 0,
+  });
+  const terminal = await getDb().execute<{
+    job_status: string;
+    job_failure: string | null;
+    batch_status: string;
+    call_status: string;
+    call_failure: string | null;
+    reserved_input_tokens: number;
+  }>(sql`
+    select j.status as job_status, j.failure_code as job_failure,
+      b.status as batch_status, c.status as call_status,
+      c.failure_code as call_failure,
+      c.reserved_input_tokens
+    from document_embedding_jobs j
+    inner join document_embedding_batches b on b.job_id = j.id
+    inner join document_embedding_provider_calls c on c.batch_id = b.id
+    where j.id = ${fixture.jobId}
+  `);
+  const row = terminal.rows[0];
+  assert(
+    row?.job_status === "failed" &&
+      row.job_failure === "PROVIDER_RESULT_UNKNOWN" &&
+      row.batch_status === "unknown" &&
+      row.call_status === "unknown" &&
+      row.call_failure === "PROVIDER_RESULT_UNKNOWN" &&
+      row.reserved_input_tokens === reservation.reservedInputTokens &&
+      provider.calls === 1,
+    `${label} did not preserve one immutable unknown Call and its Reservation.`,
+  );
+  return {
+    fixture,
+    provider,
+    reservedInputTokens: reservation.reservedInputTokens,
+  };
 }
 
 async function crashWindow(): Promise<Record<string, unknown>> {
@@ -544,6 +694,157 @@ async function budget(): Promise<Record<string, unknown>> {
   };
 }
 
+async function costConsistency(): Promise<Record<string, unknown>> {
+  const config = getEmbeddingRuntimeConfig();
+  const initialBudget = await currentDailyTokenBudget();
+  const timeout = await injectUnknownProviderResult("Timeout", "timeout");
+  const budgetAfterUnknown = await currentDailyTokenBudget();
+  assert(
+    budgetAfterUnknown === initialBudget + timeout.reservedInputTokens,
+    "Timeout unknown did not hold its full conservative Reservation.",
+  );
+
+  const insufficientConfig = {
+    ...config,
+    dailyTokenLimit: budgetAfterUnknown,
+  };
+  const insufficientDryRun = await retryUnknownEmbeddingJob({
+    jobId: timeout.fixture.jobId,
+    acceptPossibleDuplicateCharge: true,
+    config: insufficientConfig,
+  });
+  assert(
+    !insufficientDryRun.canApply &&
+      insufficientDryRun.unknownCallCount === 1 &&
+      insufficientDryRun.oldReservedInputTokens === timeout.reservedInputTokens &&
+      insufficientDryRun.newReservedInputTokens === timeout.reservedInputTokens,
+    "Insufficient manual Retry dry-run did not include both Reservations.",
+  );
+  await assertRejectsDailyLimit(
+    retryUnknownEmbeddingJob({
+      jobId: timeout.fixture.jobId,
+      acceptPossibleDuplicateCharge: true,
+      apply: true,
+      config: insufficientConfig,
+    }),
+  );
+  const callsAfterRejectedRetry = await getDb().execute<{ count: number }>(sql`
+    select count(*)::int as count
+    from document_embedding_provider_calls
+    where job_id = ${timeout.fixture.jobId}
+  `);
+  assert(
+    callsAfterRejectedRetry.rows[0]?.count === 1 && timeout.provider.calls === 1,
+    "Insufficient manual Retry created or dispatched a second Call.",
+  );
+
+  const applied = await retryUnknownEmbeddingJob({
+    jobId: timeout.fixture.jobId,
+    acceptPossibleDuplicateCharge: true,
+    apply: true,
+    config,
+  });
+  assert(
+    applied.requeued &&
+      applied.oldReservedInputTokens === timeout.reservedInputTokens &&
+      applied.newReservedInputTokens === timeout.reservedInputTokens,
+    "Manual Retry did not preserve the old unknown and reserve a new Call.",
+  );
+  const budgetAfterApply = await currentDailyTokenBudget();
+  assert(
+    budgetAfterApply === budgetAfterUnknown + timeout.reservedInputTokens,
+    "Manual Retry did not account for old and new Reservations together.",
+  );
+  const manualWorkerId = `embedding-manual-${crypto.randomUUID()}`;
+  const manualPrepared = await claimedFixture(timeout.fixture, manualWorkerId);
+  const manualReservation = await reserveEmbeddingBatch({
+    jobId: timeout.fixture.jobId,
+    workerId: manualWorkerId,
+    batchIndex: 0,
+    chunks: manualPrepared.chunks,
+    config,
+  });
+  assert(manualReservation.action === "call", "Manual Retry Batch was not callable.");
+  const successfulProvider = new InjectedEmbeddingProvider("success");
+  const result = await new EmbeddingGateway(config, successfulProvider).embed(
+    manualPrepared.chunks.map((chunk) => chunk.content),
+    {
+      onProviderRequestStarted: () =>
+        markEmbeddingProviderCallDispatched({
+          jobId: timeout.fixture.jobId,
+          workerId: manualWorkerId,
+          batchId: manualReservation.batchId,
+          providerCallId: manualReservation.providerCallId,
+        }),
+    },
+  );
+  await commitEmbeddingBatch({
+    jobId: timeout.fixture.jobId,
+    workerId: manualWorkerId,
+    batchId: manualReservation.batchId,
+    providerCallId: manualReservation.providerCallId,
+    batchIndex: 0,
+    chunks: manualPrepared.chunks,
+    result,
+  });
+  await completeEmbeddingJob({
+    jobId: timeout.fixture.jobId,
+    workerId: manualWorkerId,
+  });
+  const recovered = await getDb().execute<{
+    provider_call_count: number;
+    statuses: string[];
+    budget_rules: string[];
+  }>(sql`
+    select j.provider_call_count,
+      array_agg(c.status::text order by c.call_sequence) as statuses,
+      array_agg(c.budget_rule_version order by c.call_sequence) as budget_rules
+    from document_embedding_jobs j
+    inner join document_embedding_provider_calls c on c.job_id = j.id
+    where j.id = ${timeout.fixture.jobId}
+    group by j.provider_call_count
+  `);
+  const recoveredRow = recovered.rows[0];
+  assert(
+    recoveredRow?.provider_call_count === 2 &&
+      recoveredRow.statuses.join(",") === "unknown,succeeded" &&
+      recoveredRow.budget_rules.every(
+        (rule) => rule === EMBEDDING_BUDGET_RULE_VERSION,
+      ) &&
+      timeout.provider.calls + successfulProvider.calls === 2,
+    "Manual Retry overwrote the old unknown or miscounted Provider Calls.",
+  );
+  const budgetAfterSuccess = await currentDailyTokenBudget();
+  assert(
+    budgetAfterSuccess === budgetAfterUnknown + 17,
+    "Successful manual Retry did not reconcile only the new Call to actual Usage.",
+  );
+
+  const network = await injectUnknownProviderResult("Network", "network");
+  const invalidResponse = await injectUnknownProviderResult(
+    "Invalid-200",
+    "invalid_response",
+  );
+  assert(
+    network.provider.calls === 1 && invalidResponse.provider.calls === 1,
+    "Post-dispatch fault injection performed an automatic second Call.",
+  );
+
+  return {
+    timeoutUnknown: true,
+    networkUnknown: true,
+    invalidSuccessfulResponseUnknown: true,
+    postDispatchAutomaticRetries: 0,
+    immutableCallHistory: ["unknown", "succeeded"],
+    manualRetryProviderCalls: 2,
+    manualRetryOldReservation: timeout.reservedInputTokens,
+    manualRetryNewReservation: timeout.reservedInputTokens,
+    manualRetryActualUsage: 17,
+    insufficientRetryRejectedBeforeDispatch: true,
+    budgetRuleVersion: EMBEDDING_BUDGET_RULE_VERSION,
+  };
+}
+
 async function assertRejectsDailyLimit(promise: Promise<unknown>): Promise<void> {
   try {
     await promise;
@@ -567,7 +868,9 @@ try {
       ? await crashWindow()
       : mode === "--shutdown"
         ? await shutdown()
-        : await budget();
+        : mode === "--budget"
+          ? await budget()
+          : await costConsistency();
   process.stdout.write(`${JSON.stringify({ verified: true, mode, ...result })}\n`);
 } catch (error) {
   failure = error;

@@ -515,6 +515,7 @@ test("B3-B1 deployment pins pgvector and gates the dedicated Embedding pipeline"
   assert.match(script, /embeddings:safety-smoke -- --crash-window/);
   assert.match(script, /embeddings:safety-smoke -- --shutdown/);
   assert.match(script, /embeddings:safety-smoke -- --budget/);
+  assert.match(script, /embeddings:safety-smoke -- --cost-consistency/);
   assert.match(compose, /projectai-embedding-worker:[\s\S]+?stop_grace_period: 45s/);
   assert.match(compose, /AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS:[^\n]+25000/);
   assert.match(script, /Re-running B3-A grounded Qwen regression while Embedding remains enabled and lexical retrieval remains unchanged/);

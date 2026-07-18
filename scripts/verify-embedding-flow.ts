@@ -1,5 +1,6 @@
 import { closeDatabasePool, getPool } from "../lib/db/client";
 import {
+  EMBEDDING_BUDGET_RULE_VERSION,
   enqueueEmbeddingBackfill,
   ensureEmbeddingJob,
 } from "../lib/ai/embeddings";
@@ -173,14 +174,14 @@ try {
     const first = await uploadFixture({
       session: managerA,
       projectId: environment.projectAId,
-      label: "Project-A",
-      text: "Project AI embedding alpha milestone is October 15. This is fictional verification data.",
+      label: "Project-A-Chinese",
+      text: "这是完全虚构的向量验收资料：灯塔计划的里程碑日期是十月十五日。",
     });
     const second = await uploadFixture({
       session: managerB,
       projectId: environment.projectBId,
-      label: "Project-B",
-      text: "Project AI embedding beta milestone is November 20. This is fictional verification data.",
+      label: "Project-B-Mixed",
+      text: "Project AI 虚构 mixed-language 验收：beta milestone 是 November 20，状态为 ready ✅。",
     });
     await Promise.all([
       waitForIngestion(first.document.id, first.version.id),
@@ -224,6 +225,8 @@ try {
       model_valid: boolean;
       batch_size_valid: boolean;
       cost_unestimated: boolean;
+      reservation_covers_usage: boolean;
+      budget_rule_valid: boolean;
     }>(
       `select
          j.project_id,
@@ -231,14 +234,17 @@ try {
          bool_and(vector_dims(e.embedding) = 1024) as valid_dimensions,
          bool_and(b.model = 'text-embedding-v4' and b.dimensions = 1024) as model_valid,
          bool_and(b.chunk_count between 1 and 10) as batch_size_valid,
-         bool_and(b.cost_micro_cny is null) as cost_unestimated
+         bool_and(b.cost_micro_cny is null) as cost_unestimated,
+         bool_and(c.reserved_input_tokens >= coalesce(c.input_token_count, 0)) as reservation_covers_usage,
+         bool_and(c.budget_rule_version = $2) as budget_rule_valid
        from document_embedding_jobs j
        inner join document_embedding_batches b on b.job_id = j.id and b.status = 'succeeded'
+       inner join document_embedding_provider_calls c on c.batch_id = b.id and c.status = 'succeeded'
        inner join document_chunk_embeddings e on e.embedding_job_id = j.id and e.status = 'current'
        where j.id = any($1::text[])
        group by j.project_id
        order by j.project_id`,
-      [[jobA.id, jobB.id]],
+      [[jobA.id, jobB.id], EMBEDDING_BUDGET_RULE_VERSION],
     );
     assert(
       vectorState.rows.length === 2 &&
@@ -248,7 +254,9 @@ try {
             row.valid_dimensions &&
             row.model_valid &&
             row.batch_size_valid &&
-            row.cost_unestimated,
+            row.cost_unestimated &&
+            row.reservation_covers_usage &&
+            row.budget_rule_valid,
         ),
       "Stored Embedding metadata failed validation.",
     );
@@ -338,7 +346,7 @@ try {
       session: managerA,
       projectId: environment.projectAId,
       label: "Project-A-v2",
-      text: "Project AI embedding alpha milestone moved to October 22. This is fictional verification data.",
+      text: "这是完全虚构的 Project AI 增量验收资料：alpha milestone 已调整到 October 22。",
       documentId: projectA.document_id,
     });
     await waitForIngestion(versionTwo.document.id, versionTwo.version.id);
@@ -391,6 +399,8 @@ try {
         realProviderJobs: 3,
         dimensions: 1024,
         exactScopeProbe: true,
+        chineseAndMixedLanguageReservationVerified: true,
+        budgetRuleVersion: EMBEDDING_BUDGET_RULE_VERSION,
         staleLeaseRecovered: true,
         backfillIdempotent: true,
         oldVersionExcluded: true,
