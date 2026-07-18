@@ -1698,16 +1698,16 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
           ,(
             select count(*)::int
             from information_schema.columns
-            where table_schema = 'public' and table_name = $10
+            where table_schema = $14 and table_name = $10
               and column_name = any($11::text[])
           ) as durable_column_count
           ,to_regclass($12) is not null as worker_heartbeat_ready
           ,(
             select count(*)::int
             from pg_indexes
-            where schemaname = 'public' and tablename = $10
+            where schemaname = $14 and tablename = $10
               and indexname = $13
-              and indexdef like '%(job_id, request_sha256)%'
+              and indexdef like $15
           ) as request_unique_count
       `, [
         "vector",
@@ -1723,6 +1723,8 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
         ["leased_by", "lease_expires_at", "started_at", "completed_at", "provider_attempt_count", "reserved_input_tokens"],
         "embedding_worker_heartbeats",
         "document_embedding_batches_request_uidx",
+        "public",
+        "%(job_id, request_sha256)%",
       ]);
       const row = result.rows[0];
       if (

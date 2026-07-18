@@ -494,6 +494,10 @@ test("B3-B1 deployment pins pgvector and gates the dedicated Embedding pipeline"
   assert.match(script, /POSTGRES_IMAGE_REF="pgvector\/pgvector:0\.8\.1-pg17@sha256:[0-9a-f]{64}"/);
   assert.match(script, /Recreating Staging PostgreSQL with the pinned PostgreSQL 17 pgvector image after backups completed/);
   assert.match(script, /vector_type !== "vector\(1024\)"/);
+  assert.match(script, /where table_schema = \$14 and table_name = \$10/);
+  assert.match(script, /where schemaname = \$14 and tablename = \$10/);
+  assert.match(script, /and indexdef like \$15/);
+  assert.doesNotMatch(script, /table_schema = 'public'|schemaname = 'public'/);
   assert.match(script, /qwen-text-embedding-cn-v1/);
   assert.match(script, /text-embedding-v4/);
   assert.match(script, /AI_EMBEDDING_ENABLED=false/);
@@ -596,4 +600,10 @@ test("internal file smoke preserves the reviewed public proxy origin", async () 
 
 test("Staging deployment shell is syntactically valid", async () => {
   await execFileAsync("bash", ["-n", deployScript.pathname]);
+  const script = await readFile(deployScript, "utf8");
+  const remoteDeploy = script.match(
+    /<<'REMOTE_DEPLOY'\n([\s\S]+?)\nREMOTE_DEPLOY/,
+  )?.[1];
+  assert.ok(remoteDeploy);
+  await execFileAsync("bash", ["-n", "-c", remoteDeploy]);
 });
