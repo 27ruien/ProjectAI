@@ -498,6 +498,9 @@ test("B3-B1 deployment pins pgvector and gates the dedicated Embedding pipeline"
   assert.match(script, /where table_schema = \$14 and table_name = \$10/);
   assert.match(script, /where schemaname = \$14 and tablename = \$10/);
   assert.match(script, /and indexdef like \$15/);
+  assert.match(script, /document_embedding_provider_calls/);
+  assert.match(script, /document_embedding_provider_call_status/);
+  assert.match(script, /document_embedding_provider_calls_terminal_immutable/);
   assert.doesNotMatch(script, /table_schema = 'public'|schemaname = 'public'/);
   assert.match(script, /qwen-text-embedding-cn-v1/);
   assert.match(script, /text-embedding-v4/);
