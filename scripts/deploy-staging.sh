@@ -2145,8 +2145,8 @@ printf 'Re-running B3-A grounded Qwen regression while Embedding remains enabled
       const result = await client.query(`
         select
           (select count(*)::int from document_embedding_jobs where status in ($1, $2)) as active_jobs,
-          (select count(*)::int from document_embedding_batches where status in ($4, $5, $6)) as active_batches,
-          (select count(*)::int from document_embedding_provider_calls where status in ($4, $5, $6)) as active_provider_calls,
+          (select count(*)::int from document_embedding_batches where status::text in ($4, $5, $6)) as active_batches,
+          (select count(*)::int from document_embedding_provider_calls where status::text in ($4, $5, $6)) as active_provider_calls,
           (select count(*)::int from document_chunk_embeddings e
              inner join document_chunks c on c.id = e.chunk_id
              where e.status = $3 and c.is_effective = false) as invalid_scope
