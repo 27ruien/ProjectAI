@@ -607,4 +607,15 @@ test("Staging deployment shell is syntactically valid", async () => {
   )?.[1];
   assert.ok(remoteDeploy);
   await execFileAsync("bash", ["-n", "-c", remoteDeploy]);
+  const inlineModules = [
+    ...script.matchAll(/node --input-type=module -e '\n([\s\S]*?)\n  '/g),
+  ];
+  assert.ok(inlineModules.length > 0);
+  for (const inlineModule of inlineModules) {
+    assert.doesNotMatch(
+      inlineModule[1],
+      /'/,
+      "single-quoted Node -e payloads must not contain raw apostrophes",
+    );
+  }
 });
