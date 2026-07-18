@@ -1709,6 +1709,20 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
               and indexname = $13
               and indexdef like $15
           ) as request_unique_count
+          ,to_regclass($16) is not null as provider_calls_ready
+          ,(
+            select array_agg(e.enumlabel::text order by e.enumsortorder)
+            from pg_enum e
+            inner join pg_type t on t.oid = e.enumtypid
+            where t.typname = $17
+          ) as provider_call_statuses
+          ,(
+            select count(*)::int
+            from pg_trigger
+            where tgrelid = $16::regclass
+              and tgname = $18
+              and not tgisinternal
+          ) as immutable_trigger_count
       `, [
         "vector",
         "document_chunk_embeddings",
@@ -1725,6 +1739,9 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
         "document_embedding_batches_request_uidx",
         "public",
         "%(job_id, request_sha256)%",
+        "document_embedding_provider_calls",
+        "document_embedding_provider_call_status",
+        "document_embedding_provider_calls_terminal_immutable",
       ]);
       const row = result.rows[0];
       if (
@@ -1734,7 +1751,10 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
         JSON.stringify(row?.batch_statuses) !== JSON.stringify(["reserved", "calling", "succeeded", "failed", "unknown"]) ||
         row?.durable_column_count !== 6 ||
         row?.worker_heartbeat_ready !== true ||
-        row?.request_unique_count !== 1
+        row?.request_unique_count !== 1 ||
+        row?.provider_calls_ready !== true ||
+        JSON.stringify(row?.provider_call_statuses) !== JSON.stringify(["reserved", "calling", "succeeded", "failed_confirmed_no_charge", "unknown"]) ||
+        row?.immutable_trigger_count !== 1
       ) {
         throw new Error("pgvector or Embedding Profile verification failed");
       }
@@ -2121,11 +2141,12 @@ printf 'Re-running B3-A grounded Qwen regression while Embedding remains enabled
         select
           (select count(*)::int from document_embedding_jobs where status in ($1, $2)) as active_jobs,
           (select count(*)::int from document_embedding_batches where status in ($4, $5, $6)) as active_batches,
+          (select count(*)::int from document_embedding_provider_calls where status in ($4, $5, $6)) as active_provider_calls,
           (select count(*)::int from document_chunk_embeddings e
              inner join document_chunks c on c.id = e.chunk_id
              where e.status = $3 and c.is_effective = false) as invalid_scope
       `, ["pending", "running", "current", "reserved", "calling", "unknown"]);
-      if (result.rows[0]?.active_jobs !== 0 || result.rows[0]?.active_batches !== 0 || result.rows[0]?.invalid_scope !== 0) {
+      if (result.rows[0]?.active_jobs !== 0 || result.rows[0]?.active_batches !== 0 || result.rows[0]?.active_provider_calls !== 0 || result.rows[0]?.invalid_scope !== 0) {
         throw new Error("Embedding cleanup or effective-state verification failed");
       }
     } finally {
@@ -2219,9 +2240,10 @@ printf 'Rechecking storage consistency after Lease verification cleanup.\n'
         select
           (select count(*)::int from ai_executions where status in ($1, $2, $3, $4)) as ai_count,
           (select count(*)::int from document_embedding_jobs where status in ($5, $6)) as embedding_count,
-          (select count(*)::int from document_embedding_batches where status in ($7, $8, $9)) as embedding_batch_count
+          (select count(*)::int from document_embedding_batches where status in ($7, $8, $9)) as embedding_batch_count,
+          (select count(*)::int from document_embedding_provider_calls where status in ($7, $8, $9)) as embedding_provider_call_count
       `, ["reserved", "retrieving", "calling_provider", "validating", "pending", "running", "reserved", "calling", "unknown"]);
-      if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0 || result.rows[0]?.embedding_batch_count !== 0) {
+      if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0 || result.rows[0]?.embedding_batch_count !== 0 || result.rows[0]?.embedding_provider_call_count !== 0) {
         throw new Error("Staging retains a running AI Execution or Embedding Job");
       }
     } finally {

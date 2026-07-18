@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import {
+  EMBEDDING_BUDGET_RULE_VERSION,
   EMBEDDING_MODEL,
+  TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM,
+  TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
   type EmbeddingRuntimeConfig,
   getEmbeddingRuntimeConfig,
 } from "../lib/ai/embeddings/config";
@@ -18,6 +21,7 @@ import type {
 } from "../lib/ai/embeddings/provider-types";
 import { QwenEmbeddingProvider } from "../lib/ai/embeddings/qwen-provider";
 import { runEmbeddingWorker } from "../lib/ai/embeddings/worker";
+import { embeddingBatchReservedInputTokens } from "../lib/ai/embeddings/jobs";
 import { readFile, readdir, rm } from "node:fs/promises";
 
 const originalEnvironment = { ...process.env };
@@ -74,6 +78,7 @@ function providerResult(vectorCount = 1): EmbeddingProviderResult {
     totalTokens: 4,
     providerRequestId: "safe-request-id",
     latencyMs: 12,
+    dispatchClassification: "successful_response",
   };
 }
 
@@ -122,13 +127,14 @@ describe("embedding configuration and Gateway", () => {
         gateway.embed(["first", "second"]),
         (error: unknown) =>
           error instanceof EmbeddingPipelineError &&
-          error.code === "INVALID_RESPONSE" &&
-          !error.retryable,
+          error.code === "PROVIDER_RESULT_UNKNOWN" &&
+          !error.retryable &&
+          error.dispatchClassification === "successful_response",
       );
     }
   });
 
-  it("returns retryable failures to the durable job state machine and enforces the bounded aggregate input", async () => {
+  it("never retries post-dispatch failures and enforces the bounded aggregate input", async () => {
     const retrying = new SequenceProvider([
       new EmbeddingProviderError("RATE_LIMITED", true),
       new EmbeddingProviderError("SERVER_ERROR", true),
@@ -139,8 +145,9 @@ describe("embedding configuration and Gateway", () => {
       gateway.embed(["retryable"]),
       (error: unknown) =>
         error instanceof EmbeddingPipelineError &&
-        error.code === "RATE_LIMITED" &&
-        error.retryable,
+        error.code === "PROVIDER_RESULT_UNKNOWN" &&
+        !error.retryable &&
+        error.dispatchClassification === "post_dispatch",
     );
     assert.equal(retrying.calls, 1);
 
@@ -164,6 +171,54 @@ describe("embedding configuration and Gateway", () => {
       new EmbeddingGateway(config({ batchMaxCharacters: 1_000 }), retrying).embed([
         "x".repeat(1_001),
       ]),
+    );
+  });
+});
+
+describe("text-embedding-v4 hard budget reservation", () => {
+  it("covers Chinese, mixed language, emoji, code, English, and ten-item batches", async () => {
+    assert.equal(TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM, 8_192);
+    assert.equal(TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST, 33_000);
+    assert.equal(
+      EMBEDDING_BUDGET_RULE_VERSION,
+      "text-embedding-v4-hard-limit-cn-beijing-v1",
+    );
+    const inputs = [
+      "这是一个没有空格的中文项目说明",
+      "Project 计划 mixed language 内容",
+      "🚀🧪📚✅",
+      "const result = items.map((item) => item.id);",
+      "A concise English project requirement.",
+    ];
+    for (const input of inputs) {
+      const chunks = [
+        {
+          id: crypto.randomUUID(),
+          content: input,
+          contentSha256: "a".repeat(64),
+          chunkIndex: 0,
+          estimatedTokenCount: 0,
+        },
+      ];
+      const reservation = embeddingBatchReservedInputTokens(chunks);
+      const result = await new EmbeddingGateway(
+        config(),
+        new FakeEmbeddingProvider(),
+      ).embed([input]);
+      assert.equal(reservation, 8_192);
+      assert.ok((result.inputTokens ?? 0) <= reservation);
+      assert.ok((result.inputTokens ?? 0) > chunks[0]!.estimatedTokenCount);
+    }
+    const tenChunks = Array.from({ length: 10 }, (_, index) => ({
+      id: crypto.randomUUID(),
+      content: inputs[index % inputs.length]!,
+      contentSha256: index.toString(16).padStart(64, "0"),
+      chunkIndex: index,
+      estimatedTokenCount: 0,
+    }));
+    assert.equal(
+      embeddingBatchReservedInputTokens(tenChunks),
+      TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
     );
   });
 });
@@ -214,17 +269,11 @@ describe("Qwen embedding Adapter", () => {
     assert.equal(JSON.stringify(result).includes("unit-test-secret-value"), false);
   });
 
-  it("maps HTTP failures without returning response bodies or credentials", async () => {
+  it("marks every explicit HTTP rejection unknown when billing certainty is undocumented", async () => {
     Reflect.set(process.env, "NODE_ENV", "test");
     process.env.NEXT_PUBLIC_APP_ENV = "test";
     process.env.QWEN_API_KEY = "never-print-this-secret";
-    for (const [status, code, retryable] of [
-      [429, "RATE_LIMITED", true],
-      [500, "SERVER_ERROR", true],
-      [401, "UNAUTHORIZED", false],
-      [403, "FORBIDDEN", false],
-      [400, "BAD_REQUEST", false],
-    ] as const) {
+    for (const status of [429, 500, 401, 403, 400] as const) {
       const provider = new QwenEmbeddingProvider(
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
         async () => new Response("sensitive provider body", { status }),
@@ -238,8 +287,9 @@ describe("Qwen embedding Adapter", () => {
         }),
         (error: unknown) => {
           assert.ok(error instanceof EmbeddingProviderError);
-          assert.equal(error.code, code);
-          assert.equal(error.retryable, retryable);
+          assert.equal(error.code, "PROVIDER_RESULT_UNKNOWN");
+          assert.equal(error.retryable, false);
+          assert.equal(error.dispatchClassification, "explicit_http_rejection");
           assert.equal(error.message.includes("sensitive provider body"), false);
           assert.equal(error.message.includes("never-print-this-secret"), false);
           return true;
@@ -248,15 +298,17 @@ describe("Qwen embedding Adapter", () => {
     }
   });
 
-  it("classifies aborted and network requests as retryable without leaking request details", async () => {
+  it("marks timeout and network failures unknown after one dispatch", async () => {
     process.env.QWEN_API_KEY = "timeout-test-secret";
-    for (const [failure, code] of [
-      [Object.assign(new Error("aborted"), { name: "AbortError" }), "TIMEOUT"],
-      [new Error("network detail"), "NETWORK"],
-    ] as const) {
+    for (const failure of [
+      Object.assign(new Error("aborted"), { name: "AbortError" }),
+      new Error("network detail"),
+    ]) {
+      let calls = 0;
       const provider = new QwenEmbeddingProvider(
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
         async () => {
+          calls += 1;
           throw failure;
         },
       );
@@ -269,11 +321,52 @@ describe("Qwen embedding Adapter", () => {
         }),
         (error: unknown) =>
           error instanceof EmbeddingProviderError &&
-          error.code === code &&
-          error.retryable &&
+          error.code === "PROVIDER_RESULT_UNKNOWN" &&
+          !error.retryable &&
+          error.dispatchClassification === "post_dispatch" &&
           !error.message.includes("timeout-test-secret") &&
           !error.message.includes("network detail"),
       );
+      assert.equal(calls, 1);
+    }
+  });
+
+  it("marks 200 parse and validation failures unknown after one dispatch", async () => {
+    process.env.QWEN_API_KEY = "invalid-response-test-secret";
+    const responses = [
+      new Response("not-json", { status: 200 }),
+      new Response(JSON.stringify({ data: [] }), { status: 200 }),
+      new Response(
+        JSON.stringify({
+          model: "text-embedding-v4",
+          data: [{ index: 0, embedding: [1] }],
+        }),
+        { status: 200 },
+      ),
+    ];
+    for (const response of responses) {
+      let calls = 0;
+      const provider = new QwenEmbeddingProvider(
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        async () => {
+          calls += 1;
+          return response;
+        },
+      );
+      await assert.rejects(
+        provider.embed({
+          model: "text-embedding-v4",
+          dimensions: 1024,
+          inputs: ["safe text"],
+          timeoutMs: 1_000,
+        }),
+        (error: unknown) =>
+          error instanceof EmbeddingProviderError &&
+          error.code === "PROVIDER_RESULT_UNKNOWN" &&
+          !error.retryable &&
+          error.dispatchClassification === "post_dispatch",
+      );
+      assert.equal(calls, 1);
     }
   });
 
@@ -370,6 +463,7 @@ describe("Embedding health gate", () => {
           profileReady: true,
           jobsSchemaReady: true,
           batchesSchemaReady: true,
+          providerCallsSchemaReady: true,
           vectorsSchemaReady: true,
           workerReady: false,
         }),

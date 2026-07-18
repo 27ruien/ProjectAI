@@ -46,11 +46,11 @@
 
 | ID | 描述 | 当前状态 | 稳定证据 | 关闭条件 |
 | --- | --- | --- | --- | --- |
-| V07-DATA-001 | `0004` + 非破坏性 `0005`、pgvector 0.8.1、`vector(1024)`、Profile/Job/Durable Batch/Embedding 与复合约束 | 部分 | 非空 0004→0005 Upgrade、本地 PostgreSQL 17/pgvector 集成、错误维度/Hash/跨项目拒绝 | 当前 Head CI 与 Staging catalog 复核 |
-| V07-GATEWAY-001 | `text-embedding-v4` Adapter、Batch≤10、数量/顺序/维度/有限值校验、Usage 与重试分类 | 部分 | Fake/Qwen 单元测试、Secret/Provider body 不泄露 | 当前 Head CI 与真实 Staging Probe |
-| V07-WORKER-001 | 专用 Worker、SKIP LOCKED、Lease/Heartbeat/Retry/Stale Recovery、旧 Worker 拒绝、部分失败收口 | 部分 | PostgreSQL 集成覆盖成功、并发、恢复、最大尝试与仅缺失 Chunk 重试 | 当前 Head CI 与 Staging Lease smoke |
+| V07-DATA-001 | 历史 `0004/0005` + 非破坏性 `0006`、pgvector 0.8.1、`vector(1024)`、Profile/Job/Batch/不可变 Provider Call/Embedding 与复合约束 | 部分 | 非空 0004→0005→0006 Upgrade、本地 PostgreSQL 17/pgvector 集成、错误维度/Hash/跨项目拒绝 | 当前 Head CI 与 Staging catalog 复核 |
+| V07-GATEWAY-001 | `text-embedding-v4` Adapter、Batch≤10、每条≤8192/每请求≤33000 的版本化硬预算、数量/顺序/维度/有限值/Usage 校验 | 部分 | Timeout/网络/HTTP 拒绝/2xx 非法响应在发送后统一 unknown 且不自动重试；Secret/Provider body 不泄露 | 当前 Head CI 与真实 Staging Probe |
+| V07-WORKER-001 | 专用 Worker、SKIP LOCKED、Lease/Heartbeat/Retry/Stale Recovery、旧 Worker 拒绝、发送前/发送后收口 | 部分 | 只有 confirmed-no-charge 发送前失败可安全重试；发送后 unknown 保留预算并阻断普通 Worker | 当前 Head CI 与 Staging Lease smoke |
 | V07-SCOPE-001 | 只处理 Active/Current/Stored/Succeeded/Effective，Profile/Hash 幂等和跨项目隔离 | 部分 | 归档/旧版本/needs_ocr/non-effective 排除、同 Hash 无重复 Batch、精确 Probe 项目范围 | 当前 Head CI 与 Staging 虚构双项目验证 |
-| V07-OPS-001 | Backfill 默认 dry-run、project/limit、Status/Probe、每日 Job/Token 上限和无正文/向量输出 | 部分 | 运维命令与集成测试；cost 未知保持 null、不估算 | 当前 Head CI 与 Staging 小批量 Backfill |
+| V07-OPS-001 | Backfill 默认 dry-run、project/limit、Status/Probe、调用级每日 Job/Token 上限和无正文/向量输出 | 部分 | Unknown 手工恢复保留旧调用与预算、新增预留、预算不足拒绝；Usage null/unknown 使用硬预留 | 当前 Head CI 与 Staging 小批量 Backfill |
 | V07-REGRESSION-001 | B2 搜索和 B3-A Evidence/Citation 保持词法检索，不接入向量 | 部分 | 未修改 Search/Grounding/Citation 路径；Assistant 回归门禁保留 | 当前 Head CI、Playwright 与 Staging 真实 Qwen 回归 |
 | V07-STAGING-001 | Flag=false、备份、pgvector 切换/Migration、双 Probe、专用 Worker、虚构向量、清理、Production 不变 | 部分 | 部署脚本与契约测试 | 精确 PR Head 受控部署证据 |
 | V07-PR-001 | 唯一 PR 保持 Draft、未 Ready、未合并 | 部分 | 目标标题 `Add vector embedding foundation` | Draft PR 创建并完成当前 Head 门禁 |

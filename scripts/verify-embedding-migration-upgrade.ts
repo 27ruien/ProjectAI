@@ -80,13 +80,25 @@ async function main(): Promise<void> {
           'text-embedding-v4', 1024, 1, null, null, null, 3, null,
           null, now());
     `);
-    const migration = await readFile(
+    const migration0005 = await readFile(
       new URL("../drizzle/0005_durable_embedding_calls.sql", import.meta.url),
+      "utf8",
+    );
+    const migration0006 = await readFile(
+      new URL("../drizzle/0006_closed_genesis.sql", import.meta.url),
       "utf8",
     );
     await upgrade.query("begin");
     try {
-      for (const statement of migration.split("--> statement-breakpoint")) {
+      for (const statement of migration0005.split("--> statement-breakpoint")) {
+        if (statement.trim()) await upgrade.query(statement);
+      }
+      await upgrade.query(`
+        update document_embedding_batches
+        set status = 'unknown', failure_code = 'PROVIDER_RESULT_UNKNOWN'
+        where id = 'legacy-failed'
+      `);
+      for (const statement of migration0006.split("--> statement-breakpoint")) {
         if (statement.trim()) await upgrade.query(statement);
       }
       await upgrade.query("commit");
@@ -100,6 +112,9 @@ async function main(): Promise<void> {
       terminal_timestamps: string;
       preserved_statuses: string;
       null_usage_reservation: string;
+      provider_call_count: string;
+      unknown_call_count: string;
+      hard_reservation_count: string;
     }>(`
       select
         count(*)::text as row_count,
@@ -107,10 +122,16 @@ async function main(): Promise<void> {
         count(*) filter (
           where started_at is not null and completed_at is not null
         )::text as terminal_timestamps,
-        count(*) filter (where status in ('succeeded', 'failed'))::text
+        count(*) filter (where status in ('succeeded', 'unknown'))::text
           as preserved_statuses,
         max(reserved_input_tokens) filter (where id = 'legacy-null-usage')::text
-          as null_usage_reservation
+          as null_usage_reservation,
+        (select count(*)::text from document_embedding_provider_calls)
+          as provider_call_count,
+        (select count(*)::text from document_embedding_provider_calls
+          where status = 'unknown') as unknown_call_count,
+        (select count(*)::text from document_embedding_provider_calls
+          where reserved_input_tokens = 8192) as hard_reservation_count
       from document_embedding_batches
     `);
     const row = result.rows[0];
@@ -119,11 +140,16 @@ async function main(): Promise<void> {
       row.distinct_requests !== "3" ||
       row.terminal_timestamps !== "3" ||
       row.preserved_statuses !== "3" ||
-      row.null_usage_reservation !== "2"
+      row.null_usage_reservation !== "2" ||
+      row.provider_call_count !== "3" ||
+      row.unknown_call_count !== "1" ||
+      row.hard_reservation_count !== "3"
     ) {
-      throw new Error("The non-empty 0004 to 0005 upgrade contract failed.");
+      throw new Error("The non-empty 0004 to 0005 to 0006 upgrade contract failed.");
     }
-    process.stdout.write("Non-empty 0004 to 0005 Embedding migration upgrade verified.\n");
+    process.stdout.write(
+      "Non-empty 0004 to 0005 to 0006 Embedding migration upgrade verified.\n",
+    );
   } finally {
     if (upgrade) await upgrade.end();
     await admin.query(`drop database if exists "${databaseName}" with (force)`);

@@ -24,6 +24,11 @@ export class EmbeddingPipelineError extends Error {
     public readonly code: EmbeddingFailureCode,
     public readonly retryable: boolean,
     message = "Embedding operation failed.",
+    public readonly dispatchClassification:
+      | "pre_dispatch"
+      | "post_dispatch"
+      | "explicit_http_rejection"
+      | "successful_response" = "pre_dispatch",
   ) {
     super(message);
     this.name = "EmbeddingPipelineError";
@@ -31,8 +36,21 @@ export class EmbeddingPipelineError extends Error {
 }
 
 export class EmbeddingProviderError extends EmbeddingPipelineError {
-  constructor(code: EmbeddingFailureCode, retryable: boolean) {
-    super(code, retryable, "Embedding provider request failed.");
+  constructor(
+    code: EmbeddingFailureCode,
+    retryable: boolean,
+    dispatchClassification:
+      | "pre_dispatch"
+      | "post_dispatch"
+      | "explicit_http_rejection"
+      | "successful_response" = "post_dispatch",
+  ) {
+    super(
+      code,
+      retryable,
+      "Embedding provider request failed.",
+      dispatchClassification,
+    );
     this.name = "EmbeddingProviderError";
   }
 }

@@ -25,12 +25,14 @@ function nullableUsage(value: unknown): number | null {
     : null;
 }
 
-function httpFailure(status: number): EmbeddingProviderError {
-  if (status === 429) return new EmbeddingProviderError("RATE_LIMITED", true);
-  if (status >= 500) return new EmbeddingProviderError("SERVER_ERROR", true);
-  if (status === 401) return new EmbeddingProviderError("UNAUTHORIZED", false);
-  if (status === 403) return new EmbeddingProviderError("FORBIDDEN", false);
-  return new EmbeddingProviderError("BAD_REQUEST", false);
+function unknownProviderResult(
+  classification: "post_dispatch" | "explicit_http_rejection",
+): EmbeddingProviderError {
+  return new EmbeddingProviderError(
+    "PROVIDER_RESULT_UNKNOWN",
+    false,
+    classification,
+  );
 }
 
 function isAbortError(error: unknown): boolean {
@@ -52,32 +54,36 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
     request: EmbeddingProviderRequest,
   ): Promise<EmbeddingProviderResult> {
     if (request.signal?.aborted) {
-      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true);
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true, "pre_dispatch");
     }
     let apiKey: string;
     try {
       apiKey = await readQwenApiKey();
     } catch {
-      throw new EmbeddingProviderError("SECRET_NOT_CONFIGURED", false);
+      throw new EmbeddingProviderError(
+        "SECRET_NOT_CONFIGURED",
+        false,
+        "pre_dispatch",
+      );
     }
     if (request.signal?.aborted) {
-      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true);
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true, "pre_dispatch");
+    }
+    await request.onRequestStarted?.();
+    if (request.signal?.aborted) {
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true, "pre_dispatch");
     }
     const controller = new AbortController();
-    let abortKind: "timeout" | "shutdown" | null = null;
     const timeout = setTimeout(() => {
-      abortKind = "timeout";
       controller.abort();
     }, request.timeoutMs);
     const onShutdown = () => {
-      abortKind = "shutdown";
       controller.abort();
     };
     request.signal?.addEventListener("abort", onShutdown, { once: true });
     const started = performance.now();
     let response: Response;
     try {
-      request.onRequestStarted?.();
       response = await this.fetchImplementation(`${this.baseUrl}/embeddings`, {
         method: "POST",
         headers: {
@@ -94,26 +100,23 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
       });
     } catch (error) {
       if (isAbortError(error)) {
-        if (abortKind === "shutdown") {
-          throw new EmbeddingProviderError("PROVIDER_RESULT_UNKNOWN", false);
-        }
-        throw new EmbeddingProviderError("TIMEOUT", true);
+        throw unknownProviderResult("post_dispatch");
       }
-      throw new EmbeddingProviderError("NETWORK", true);
+      throw unknownProviderResult("post_dispatch");
     } finally {
       clearTimeout(timeout);
       request.signal?.removeEventListener("abort", onShutdown);
     }
-    if (!response.ok) throw httpFailure(response.status);
+    if (!response.ok) throw unknownProviderResult("explicit_http_rejection");
 
     let body: QwenEmbeddingResponse;
     try {
       body = (await response.json()) as QwenEmbeddingResponse;
     } catch {
-      throw new EmbeddingProviderError("INVALID_RESPONSE", false);
+      throw unknownProviderResult("post_dispatch");
     }
     if (!Array.isArray(body.data) || body.data.length !== request.inputs.length) {
-      throw new EmbeddingProviderError("INVALID_RESPONSE", false);
+      throw unknownProviderResult("post_dispatch");
     }
     const ordered = [...body.data].sort((left, right) => {
       const leftIndex = typeof left.index === "number" ? left.index : -1;
@@ -122,7 +125,7 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
     });
     const vectors = ordered.map((item, index) => {
       if (item.index !== index || !Array.isArray(item.embedding)) {
-        throw new EmbeddingProviderError("INVALID_RESPONSE", false);
+        throw unknownProviderResult("post_dispatch");
       }
       const vector = item.embedding;
       if (
@@ -131,7 +134,7 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
           (value) => typeof value !== "number" || !Number.isFinite(value),
         )
       ) {
-        throw new EmbeddingProviderError("INVALID_RESPONSE", false);
+        throw unknownProviderResult("post_dispatch");
       }
       return vector as number[];
     });
@@ -147,6 +150,7 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
         response.headers.get("x-request-id")?.trim().slice(0, 240) ||
         (typeof body.id === "string" ? body.id.slice(0, 240) : null),
       latencyMs: Math.max(0, Math.round(performance.now() - started)),
+      dispatchClassification: "successful_response",
     };
   }
 }

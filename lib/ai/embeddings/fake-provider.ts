@@ -26,9 +26,12 @@ export class FakeEmbeddingProvider implements EmbeddingProvider {
     request: EmbeddingProviderRequest,
   ): Promise<EmbeddingProviderResult> {
     if (request.signal?.aborted) {
-      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true);
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true, "pre_dispatch");
     }
-    request.onRequestStarted?.();
+    await request.onRequestStarted?.();
+    if (request.signal?.aborted) {
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true, "pre_dispatch");
+    }
     const inputTokens = request.inputs.reduce(
       (total, input) => total + Math.max(1, input.trim().split(/\s+/u).length),
       0,
@@ -46,6 +49,7 @@ export class FakeEmbeddingProvider implements EmbeddingProvider {
       totalTokens: inputTokens,
       providerRequestId: `fake-${digest}`,
       latencyMs: 0,
+      dispatchClassification: "successful_response",
     };
   }
 }

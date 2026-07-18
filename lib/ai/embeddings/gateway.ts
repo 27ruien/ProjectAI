@@ -29,7 +29,10 @@ export class EmbeddingGateway {
 
   async embed(
     inputs: string[],
-    options: { signal?: AbortSignal; onProviderRequestStarted?: () => void } = {},
+    options: {
+      signal?: AbortSignal;
+      onProviderRequestStarted?: () => Promise<void>;
+    } = {},
   ): Promise<EmbeddingGatewayResult> {
     const totalCharacters = inputs.reduce((total, input) => total + input.length, 0);
     if (
@@ -60,7 +63,11 @@ export class EmbeddingGateway {
             vector.some((value) => !Number.isFinite(value)),
         )
       ) {
-        throw new EmbeddingProviderError("INVALID_RESPONSE", false);
+        throw new EmbeddingProviderError(
+          "PROVIDER_RESULT_UNKNOWN",
+          false,
+          "successful_response",
+        );
       }
       return {
         provider: this.provider.provider,
@@ -75,7 +82,16 @@ export class EmbeddingGateway {
         attemptCount: 1,
       };
     } catch (error) {
-      const controlled = controlledEmbeddingError(error);
+      const original = controlledEmbeddingError(error);
+      const controlled =
+        original.dispatchClassification === "pre_dispatch" ||
+        original.code === "PROVIDER_RESULT_UNKNOWN"
+          ? original
+          : new EmbeddingProviderError(
+              "PROVIDER_RESULT_UNKNOWN",
+              false,
+              original.dispatchClassification,
+            );
       controlled.providerAttemptCount = 1;
       throw controlled;
     }

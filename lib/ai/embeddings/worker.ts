@@ -17,6 +17,7 @@ import {
   claimEmbeddingJob,
   commitEmbeddingBatch,
   completeEmbeddingJob,
+  markEmbeddingProviderCallDispatched,
   prepareEmbeddingJob,
   recordEmbeddingFailure,
   reserveEmbeddingBatch,
@@ -72,6 +73,7 @@ export async function processEmbeddingJob(input: {
   let activeBatchStartedAt: number | null = null;
   let batchIndex = 0;
   let activeBatchId: string | undefined;
+  let activeProviderCallId: string | undefined;
   try {
     const prepared = await prepareEmbeddingJob({
       jobId: input.jobId,
@@ -99,25 +101,42 @@ export async function processEmbeddingJob(input: {
       });
       if (reservation.action === "call") {
         activeBatchId = reservation.batchId;
+        activeProviderCallId = reservation.providerCallId;
         activeBatchStartedAt = performance.now();
         const result = await input.gateway.embed(
           activeBatch.map((chunk) => chunk.content),
-          { signal: input.signal },
+          {
+            signal: input.signal,
+            onProviderRequestStarted: () =>
+              markEmbeddingProviderCallDispatched({
+                jobId: prepared.job.id,
+                workerId: input.workerId,
+                batchId: reservation.batchId,
+                providerCallId: reservation.providerCallId,
+              }),
+          },
         );
         try {
           await commitEmbeddingBatch({
             jobId: prepared.job.id,
             workerId: input.workerId,
             batchId: reservation.batchId,
+            providerCallId: reservation.providerCallId,
             batchIndex,
             chunks: activeBatch,
             result,
           });
         } catch {
-          throw new EmbeddingPipelineError("PROVIDER_RESULT_UNKNOWN", false);
+          throw new EmbeddingPipelineError(
+            "PROVIDER_RESULT_UNKNOWN",
+            false,
+            "Embedding provider result could not be committed.",
+            "successful_response",
+          );
         }
         activeBatchStartedAt = null;
         activeBatchId = undefined;
+        activeProviderCallId = undefined;
       }
       offset += activeBatch.length;
       batchIndex += 1;
@@ -134,6 +153,7 @@ export async function processEmbeddingJob(input: {
         workerId: input.workerId,
         error,
         batchId: activeBatchId,
+        providerCallId: activeProviderCallId,
         batchIndex,
         chunks: activeBatch,
         latencyMs:

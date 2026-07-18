@@ -171,7 +171,7 @@ export async function getEmbeddingStatus(): Promise<{
       ) as stale_leases,
       (
         select coalesce(sum(input_token_count), 0)
-        from document_embedding_batches
+        from document_embedding_provider_calls
         where status = 'succeeded'
       ) as input_token_usage
   `);

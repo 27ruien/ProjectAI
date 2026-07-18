@@ -28,9 +28,10 @@ Stored Current Version → Durable Job → Independent Worker
 
 - 固定只读 Profile `qwen-text-embedding-cn-v1`：Qwen、`cn-beijing`、`text-embedding-v4`、1024 维 cosine、Profile Version 1。
 - PostgreSQL 17 + pgvector 0.8.1 保存 Chunk Embedding；project/document/version/chunk/content Hash 由复合约束绑定，向量不进入普通浏览器 API。
-- 独立 Embedding Job/Batch 与专用 Worker 复用 B2 的 `FOR UPDATE SKIP LOCKED`、Lease、Heartbeat、Retry、Stale Recovery 和旧 Worker 拒绝提交。
+- 独立 Embedding Job/Batch/不可变 Provider Call 与专用 Worker 复用 B2 的 `FOR UPDATE SKIP LOCKED`、Lease、Heartbeat、Retry、Stale Recovery 和旧 Worker 拒绝提交。
 - 只处理 Active Document、Current/Stored Version、Succeeded Ingestion、Effective/non-empty Chunk；归档、旧版本、needs_ocr、未完成解析和同 Hash current 向量排除。
-- Backfill 默认 dry-run，支持 project/limit/current/effective 范围；Provider Usage 原样记录，缺失保持 null，成本不估算，并有每日 Job/Token 上限。
+- Backfill 默认 dry-run，支持 project/limit/current/effective 范围；Provider Usage 原样记录，缺失/unknown 按 `min(itemCount × 8192, 33000)` 版本化硬上限持有预算，只有发送前 confirmed-no-charge 释放，并有每日 Job/Token 上限。
+- 一旦进入 Provider `fetch`，Timeout、网络、HTTP 拒绝、2xx 解析/校验失败或本地提交失败都必须终止为不可自动重试的 `PROVIDER_RESULT_UNKNOWN`；人工恢复保留旧 Call/预算并新增调用级预留。
 - B2 知识搜索和 B3-A Grounded Assistant 继续使用词法检索；B3-B1 只允许测试/受保护运维的精确 cosine Probe，不实现 ANN、Hybrid Retrieval、RRF 或 Rerank。
 
 ## v0.6 — Grounded Qwen Project Assistant / B3-A

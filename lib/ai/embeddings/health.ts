@@ -7,6 +7,7 @@ export type EmbeddingDependencyHealth = {
   profileReady: boolean;
   jobsSchemaReady: boolean;
   batchesSchemaReady: boolean;
+  providerCallsSchemaReady: boolean;
   vectorsSchemaReady: boolean;
   workerReady: boolean;
 };
@@ -29,6 +30,7 @@ export async function inspectEmbeddingDependencies(): Promise<EmbeddingDependenc
       ) as profile_ready,
       (select count(*) >= 0 from document_embedding_jobs) as jobs_schema_ready,
       (select count(*) >= 0 from document_embedding_batches) as batches_schema_ready,
+      (select count(*) >= 0 from document_embedding_provider_calls) as provider_calls_schema_ready,
       (select count(*) >= 0 from document_chunk_embeddings) as vectors_schema_ready,
       exists(
         select 1
@@ -44,6 +46,7 @@ export async function inspectEmbeddingDependencies(): Promise<EmbeddingDependenc
         profile_ready?: boolean;
         jobs_schema_ready?: boolean;
         batches_schema_ready?: boolean;
+        provider_calls_schema_ready?: boolean;
         vectors_schema_ready?: boolean;
         worker_ready?: boolean;
       }
@@ -53,6 +56,7 @@ export async function inspectEmbeddingDependencies(): Promise<EmbeddingDependenc
     profileReady: row?.profile_ready === true,
     jobsSchemaReady: row?.jobs_schema_ready === true,
     batchesSchemaReady: row?.batches_schema_ready === true,
+    providerCallsSchemaReady: row?.provider_calls_schema_ready === true,
     vectorsSchemaReady: row?.vectors_schema_ready === true,
     workerReady: row?.worker_ready === true,
   };

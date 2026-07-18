@@ -16,6 +16,7 @@ import {
 import {
   documentEmbeddingBatchStatusEnum,
   documentEmbeddingJobStatusEnum,
+  documentEmbeddingProviderCallStatusEnum,
   documentEmbeddingStatusEnum,
 } from "./enums";
 import { documentChunk } from "./document-ingestion";
@@ -249,6 +250,14 @@ export const documentEmbeddingBatch = pgTable(
       table.jobId,
       table.requestSha256,
     ),
+    unique("document_embedding_batches_call_scope_unique").on(
+      table.id,
+      table.jobId,
+      table.projectId,
+      table.documentId,
+      table.versionId,
+      table.embeddingProfileId,
+    ),
     index("document_embedding_batches_created_idx").on(table.createdAt),
     foreignKey({
       name: "document_embedding_batches_job_scope_fk",
@@ -319,6 +328,147 @@ export const documentEmbeddingBatch = pgTable(
         and ${table.leasedBy} is null
         and ${table.leaseExpiresAt} is null
         and ${table.startedAt} is not null
+        and ${table.completedAt} is not null
+      )
+    `),
+  ],
+);
+
+export const documentEmbeddingProviderCall = pgTable(
+  "document_embedding_provider_calls",
+  {
+    id: text("id").primaryKey(),
+    batchId: text("batch_id").notNull(),
+    jobId: text("job_id").notNull(),
+    projectId: text("project_id").notNull(),
+    documentId: text("document_id").notNull(),
+    versionId: text("version_id").notNull(),
+    embeddingProfileId: text("embedding_profile_id").notNull(),
+    callSequence: integer("call_sequence").notNull(),
+    status: documentEmbeddingProviderCallStatusEnum("status")
+      .notNull()
+      .default("reserved"),
+    dispatchClassification: varchar("dispatch_classification", { length: 40 }),
+    budgetRuleVersion: varchar("budget_rule_version", { length: 80 }).notNull(),
+    reservedInputTokens: integer("reserved_input_tokens").notNull(),
+    inputTokenCount: integer("input_token_count"),
+    totalTokenCount: integer("total_token_count"),
+    costMicroCny: integer("cost_micro_cny"),
+    latencyMs: integer("latency_ms").notNull().default(0),
+    providerRequestId: varchar("provider_request_id", { length: 240 }),
+    failureCode: varchar("failure_code", { length: 80 }),
+    leasedBy: varchar("leased_by", { length: 128 }),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    dispatchedAt: timestamp("dispatched_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("document_embedding_provider_calls_sequence_uidx").on(
+      table.batchId,
+      table.callSequence,
+    ),
+    index("document_embedding_provider_calls_budget_idx").on(
+      table.createdAt,
+      table.status,
+    ),
+    index("document_embedding_provider_calls_active_idx").on(
+      table.status,
+      table.leaseExpiresAt,
+    ),
+    foreignKey({
+      name: "document_embedding_provider_calls_batch_scope_fk",
+      columns: [
+        table.batchId,
+        table.jobId,
+        table.projectId,
+        table.documentId,
+        table.versionId,
+        table.embeddingProfileId,
+      ],
+      foreignColumns: [
+        documentEmbeddingBatch.id,
+        documentEmbeddingBatch.jobId,
+        documentEmbeddingBatch.projectId,
+        documentEmbeddingBatch.documentId,
+        documentEmbeddingBatch.versionId,
+        documentEmbeddingBatch.embeddingProfileId,
+      ],
+    }).onDelete("restrict"),
+    check("document_embedding_provider_calls_values_check", sql`
+      ${table.callSequence} > 0
+      and length(btrim(${table.budgetRuleVersion})) > 0
+      and ${table.reservedInputTokens} between 1 and 33000
+      and (${table.inputTokenCount} is null or ${table.inputTokenCount} >= 0)
+      and (${table.totalTokenCount} is null or ${table.totalTokenCount} >= 0)
+      and (${table.costMicroCny} is null or ${table.costMicroCny} >= 0)
+      and ${table.latencyMs} >= 0
+      and (
+        ${table.dispatchClassification} is null
+        or ${table.dispatchClassification} in (
+          'pre_dispatch', 'post_dispatch', 'explicit_http_rejection',
+          'successful_response'
+        )
+      )
+    `),
+    check("document_embedding_provider_calls_status_check", sql`
+      (
+        ${table.status} = 'reserved'
+        and ${table.dispatchClassification} is null
+        and ${table.failureCode} is null
+        and ${table.dispatchedAt} is null
+        and ${table.completedAt} is null
+      )
+      or (
+        ${table.status} = 'calling'
+        and ${table.dispatchClassification} = 'post_dispatch'
+        and ${table.failureCode} is null
+        and ${table.leasedBy} is not null
+        and ${table.leaseExpiresAt} is not null
+        and ${table.dispatchedAt} is not null
+        and ${table.completedAt} is null
+      )
+      or (
+        ${table.status} = 'succeeded'
+        and ${table.dispatchClassification} = 'successful_response'
+        and ${table.failureCode} is null
+        and ${table.leasedBy} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.dispatchedAt} is not null
+        and ${table.completedAt} is not null
+      )
+      or (
+        ${table.status} = 'failed_confirmed_no_charge'
+        and ${table.dispatchClassification} = 'pre_dispatch'
+        and ${table.failureCode} is not null
+        and length(btrim(${table.failureCode})) > 0
+        and ${table.leasedBy} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.completedAt} is not null
+      )
+      or (
+        ${table.status} = 'unknown'
+        and ${table.dispatchClassification} in (
+          'post_dispatch', 'explicit_http_rejection', 'successful_response'
+        )
+        and ${table.failureCode} = 'PROVIDER_RESULT_UNKNOWN'
+        and ${table.leasedBy} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.dispatchedAt} is not null
         and ${table.completedAt} is not null
       )
     `),
@@ -444,5 +594,7 @@ export const documentChunkEmbedding = pgTable(
 export type AiEmbeddingProfileRecord = typeof aiEmbeddingProfile.$inferSelect;
 export type DocumentEmbeddingJobRecord = typeof documentEmbeddingJob.$inferSelect;
 export type DocumentEmbeddingBatchRecord = typeof documentEmbeddingBatch.$inferSelect;
+export type DocumentEmbeddingProviderCallRecord =
+  typeof documentEmbeddingProviderCall.$inferSelect;
 export type DocumentChunkEmbeddingRecord = typeof documentChunkEmbedding.$inferSelect;
 export type EmbeddingWorkerHeartbeatRecord = typeof embeddingWorkerHeartbeat.$inferSelect;

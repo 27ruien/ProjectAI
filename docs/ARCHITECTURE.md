@@ -48,6 +48,7 @@ flowchart LR
 | `ai_embedding_profiles` | 服务端只读 Embedding Profile；Provider/Model/Region/Dimensions/Distance/Profile Version，不保存 Secret |
 | `document_embedding_jobs` | project/document/version/Profile/Generation、Attempt、Lease、Heartbeat、Usage、Latency 与受控失败 |
 | `document_embedding_batches` | 每次最多 10 条的 Provider Batch、模型/维度、Usage、Latency、失败码和不估算的成本字段 |
+| `document_embedding_provider_calls` | Batch 下逐次不可变 Call Attempt；dispatch 分类、硬预算规则/预留、Usage、Latency、请求 ID 与 succeeded/confirmed-no-charge/unknown 终态 |
 | `document_chunk_embeddings` | 与 Chunk 内容 Hash 和复合项目范围绑定的 `vector(1024)`；只允许 current/invalid，不进入普通浏览器 API |
 | `ai_model_profiles` | 服务端只读 Profile、Provider/Primary/Fallback/Region/Gateway Version；不保存 Secret 或 Base URL |
 | `ai_threads` / `ai_messages` | 项目和创建者私有 Thread；用户/助手业务消息与状态，不保存 System Prompt |
@@ -171,9 +172,9 @@ Job 只为同一精确项目中 Active/Current/Stored/Succeeded/Effective 的非
 - `projectai-minio-init` 使用 root credential 幂等创建私有 Bucket 和受 `projects/*` 限制的应用用户；应用只得到 scoped app credential。root/app credential 必须不同并只存在于 `root:root 600` 环境文件。
 - 两个 Worker 与 App 使用同一 immutable image、独立 command、心跳健康和优雅退出。Document Worker 只得到对象存储 scoped credential；Embedding Worker 只得到数据库与 Qwen Secret，不得到对象存储 credential。
 
-部署在 Migration 前同时停止 Staging App 与两个 Worker，创建 PostgreSQL custom dump 与 MinIO inventory/mirror；备份完成后把 Staging PostgreSQL 切换到锁定的 pgvector 镜像。新代码必须先以 `AI_EMBEDDING_ENABLED=false` 在旧 Schema 上健康运行，再执行 `0005_durable_embedding_calls.sql`，验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、Profile 与 durable Batch/Worker heartbeat Schema，之后才允许 Probe、分阶段启用、虚构 Smoke、B3-A 回归与清理。
+部署在 Migration 前同时停止 Staging App 与两个 Worker，创建 PostgreSQL custom dump 与 MinIO inventory/mirror。新代码必须先以 `AI_EMBEDDING_ENABLED=false` 在旧 Schema 上健康运行，再只执行新增 `0006_closed_genesis.sql`，验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、Profile、不可变 Provider Call 与 Worker heartbeat Schema，之后才允许 Probe、分阶段启用、虚构 Smoke、B3-A 回归与清理。
 
-Embedding Provider 调用使用数据库先行状态机：Batch 依次为 `reserved → calling → succeeded/failed/unknown`，`(job_id, request_sha256)` 唯一。调用前事务同时校验 Job Lease、按 `ceil(sum(estimated_token_count) × 1.25)` 取得 UTC 日预算 advisory lock 并预留 Token，再提交 `calling`。只有成功结果、向量、Usage、Batch 与 Job 能在同一事务提交；`calling` 租约过期或请求发出后的关停统一写为 `PROVIDER_RESULT_UNKNOWN`，普通 Worker 不得重试。
+Embedding Provider 调用使用数据库先行状态机：Batch 保持 `(job_id, request_sha256)` 唯一，每次真实尝试新增 Call Attempt。调用前事务校验 Job Lease，并按 `min(itemCount × 8192, 33000)` 与版本化规则取得 UTC 日预算锁、写入 `reserved`；进入 `fetch` 前持久化 `calling`。成功结果、向量、Usage、Batch 与 Call 在同一事务提交。已发送但无法确认的 Timeout、网络、HTTP 拒绝、2xx 解析/校验、提交窗口或 stale call 都终止为不可变 `unknown` 并保留预留；只有发送前 confirmed-no-charge 终态释放预算并允许普通重试。人工接受潜在重复计费时保留旧 Unknown Call，另建新 Call 与预算。
 
 `unknown` 继续占用调用当日的预留预算。人工确认可能重复计费后，先运行 `npm run embeddings:retry-unknown -- --job=<id> --accept-possible-duplicate-charge` 查看 dry-run；只有再加 `--apply` 才会重新入队。该命令不输出正文、向量、Provider Payload 或 Secret。
 

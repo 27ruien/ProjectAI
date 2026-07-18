@@ -4,7 +4,10 @@ import { EmbeddingPipelineError } from "./errors";
 
 export const EMBEDDING_GATEWAY_VERSION = "2";
 export const EMBEDDING_WORKER_VERSION = "2";
-export const EMBEDDING_TOKEN_RESERVATION_MULTIPLIER = 1.25;
+export const TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM = 8_192;
+export const TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST = 33_000;
+export const EMBEDDING_BUDGET_RULE_VERSION =
+  "text-embedding-v4-hard-limit-cn-beijing-v1";
 export const EMBEDDING_PROFILE_ID = "qwen-text-embedding-cn-v1";
 export const EMBEDDING_PROVIDER = "qwen";
 export const EMBEDDING_MODEL = "text-embedding-v4";

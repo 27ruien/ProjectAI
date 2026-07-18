@@ -173,6 +173,7 @@ type CleanupCounts = {
   jobs: number;
   embeddingJobs: number;
   embeddingBatches: number;
+  embeddingProviderCalls: number;
   embeddings: number;
   sections: number;
   chunks: number;
@@ -188,6 +189,7 @@ function zeroCleanupCounts(): CleanupCounts {
     jobs: 0,
     embeddingJobs: 0,
     embeddingBatches: 0,
+    embeddingProviderCalls: 0,
     embeddings: 0,
     sections: 0,
     chunks: 0,
@@ -309,6 +311,11 @@ export async function cleanupDocumentVerification(input: {
         [input.projectId, documentIds],
       );
       await client.query(
+        `delete from document_embedding_provider_calls
+         where project_id = $1 and document_id = any($2::text[])`,
+        [input.projectId, documentIds],
+      );
+      await client.query(
         `delete from document_embedding_batches
          where project_id = $1 and document_id = any($2::text[])`,
         [input.projectId, documentIds],
@@ -409,6 +416,7 @@ export async function cleanupDocumentVerification(input: {
       jobs: string;
       embedding_jobs: string;
       embedding_batches: string;
+      embedding_provider_calls: string;
       embeddings: string;
       sections: string;
       chunks: string;
@@ -418,6 +426,7 @@ export async function cleanupDocumentVerification(input: {
          (select count(*) from document_ingestion_jobs where document_id = any($1::text[]))::text as jobs,
          (select count(*) from document_embedding_jobs where document_id = any($1::text[]))::text as embedding_jobs,
          (select count(*) from document_embedding_batches where document_id = any($1::text[]))::text as embedding_batches,
+         (select count(*) from document_embedding_provider_calls where document_id = any($1::text[]))::text as embedding_provider_calls,
          (select count(*) from document_chunk_embeddings where document_id = any($1::text[]))::text as embeddings,
          (select count(*) from document_sections where document_id = any($1::text[]))::text as sections,
          (select count(*) from document_chunks where document_id = any($1::text[]))::text as chunks`,
@@ -427,6 +436,9 @@ export async function cleanupDocumentVerification(input: {
     counts.jobs = Number(remaining.rows[0]?.jobs ?? 0);
     counts.embeddingJobs = Number(remaining.rows[0]?.embedding_jobs ?? 0);
     counts.embeddingBatches = Number(remaining.rows[0]?.embedding_batches ?? 0);
+    counts.embeddingProviderCalls = Number(
+      remaining.rows[0]?.embedding_provider_calls ?? 0,
+    );
     counts.embeddings = Number(remaining.rows[0]?.embeddings ?? 0);
     counts.sections = Number(remaining.rows[0]?.sections ?? 0);
     counts.chunks = Number(remaining.rows[0]?.chunks ?? 0);

@@ -21,7 +21,7 @@ async function main(): Promise<void> {
     apply,
   });
   process.stdout.write(
-    `${result.dryRun ? "Dry run" : "Applied"}: unknown batches=${result.unknownBatchCount}, requeued=${result.requeued}.\n`,
+    `${result.dryRun ? "Dry run" : "Applied"}: unknown calls=${result.unknownCallCount}, old reservation=${result.oldReservedInputTokens}, new reservation=${result.newReservedInputTokens}, used budget=${result.usedInputTokens}, remaining=${result.remainingInputTokens}, canApply=${result.canApply}, requeued=${result.requeued}.\n`,
   );
 }
 

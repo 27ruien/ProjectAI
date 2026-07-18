@@ -10,6 +10,7 @@ import {
   getEmbeddingRuntimeConfig,
   prepareEmbeddingJob,
   reconcileStaleEmbeddingCalls,
+  markEmbeddingProviderCallDispatched,
   recordEmbeddingFailure,
   reserveEmbeddingBatch,
   retryUnknownEmbeddingJob,
@@ -21,6 +22,7 @@ import {
   documentChunkEmbedding,
   documentEmbeddingBatch,
   documentEmbeddingJob,
+  documentEmbeddingProviderCall,
   documentIngestionJob,
   documentSection,
   projectDocument,
@@ -201,6 +203,9 @@ async function cleanup(): Promise<void> {
       .delete(documentChunkEmbedding)
       .where(inArray(documentChunkEmbedding.documentId, documentIds));
     await tx
+      .delete(documentEmbeddingProviderCall)
+      .where(inArray(documentEmbeddingProviderCall.documentId, documentIds));
+    await tx
       .delete(documentEmbeddingBatch)
       .where(inArray(documentEmbeddingBatch.documentId, documentIds));
     await tx
@@ -245,11 +250,25 @@ async function crashWindow(): Promise<Record<string, unknown>> {
   assert(reservation.action === "call", "Crash window Batch was not callable.");
   await createEmbeddingGateway(config).embed(
     prepared.chunks.map((chunk) => chunk.content),
+    {
+      onProviderRequestStarted: () =>
+        markEmbeddingProviderCallDispatched({
+          jobId: fixture.jobId,
+          workerId,
+          batchId: reservation.batchId,
+          providerCallId: reservation.providerCallId,
+        }),
+    },
   );
   await getDb().execute(sql`
     update document_embedding_batches
     set lease_expires_at = now() - interval '1 second', updated_at = now()
     where id = ${reservation.batchId}
+  `);
+  await getDb().execute(sql`
+    update document_embedding_provider_calls
+    set lease_expires_at = now() - interval '1 second', updated_at = now()
+    where id = ${reservation.providerCallId}
   `);
   await getDb().execute(sql`
     update document_embedding_jobs
@@ -324,8 +343,15 @@ async function shutdown(): Promise<Record<string, unknown>> {
         prepared.chunks.map((chunk) => chunk.content),
         {
           signal: controller.signal,
-          onProviderRequestStarted: () =>
-            setImmediate(() => process.kill(process.pid, "SIGTERM")),
+          onProviderRequestStarted: async () => {
+            await markEmbeddingProviderCallDispatched({
+              jobId: fixture.jobId,
+              workerId,
+              batchId: reservation.batchId,
+              providerCallId: reservation.providerCallId,
+            });
+            setImmediate(() => process.kill(process.pid, "SIGTERM"));
+          },
         },
       );
       await new Promise<void>((resolve) => setImmediate(resolve));
@@ -333,6 +359,7 @@ async function shutdown(): Promise<Record<string, unknown>> {
         jobId: fixture.jobId,
         workerId,
         batchId: reservation.batchId,
+        providerCallId: reservation.providerCallId,
         batchIndex: 0,
         chunks: prepared.chunks,
         result,
@@ -343,6 +370,7 @@ async function shutdown(): Promise<Record<string, unknown>> {
         jobId: fixture.jobId,
         workerId,
         batchId: reservation.batchId,
+        providerCallId: reservation.providerCallId,
         chunks: prepared.chunks,
         error,
         latencyMs: Math.max(0, Math.round(performance.now() - started)),
@@ -400,9 +428,9 @@ async function budget(): Promise<Record<string, unknown>> {
       when status = 'succeeded' then coalesce(input_token_count, reserved_input_tokens)
       when status in ('reserved', 'calling', 'unknown') then reserved_input_tokens
       else 0 end), 0)::int as used
-    from document_embedding_batches
-    where started_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
-      and started_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
+    from document_embedding_provider_calls
+    where created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+      and created_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
   `);
   const limited = {
     ...config,
@@ -443,9 +471,9 @@ async function budget(): Promise<Record<string, unknown>> {
       when status = 'succeeded' then coalesce(input_token_count, reserved_input_tokens)
       when status in ('reserved', 'calling', 'unknown') then reserved_input_tokens
       else 0 end), 0)::int as used
-    from document_embedding_batches
-    where started_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
-      and started_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
+    from document_embedding_provider_calls
+    where created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+      and created_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
   `);
   const nullReservation = embeddingBatchReservedInputTokens(usagePrepared.chunks);
   const nullLimit = {
@@ -460,10 +488,17 @@ async function budget(): Promise<Record<string, unknown>> {
     config: nullLimit,
   });
   assert(reservation.action === "call", "Usage-null Batch was not reserved.");
+  await markEmbeddingProviderCallDispatched({
+    jobId: usageFixture.jobId,
+    workerId: usageWorker,
+    batchId: reservation.batchId,
+    providerCallId: reservation.providerCallId,
+  });
   await commitEmbeddingBatch({
     jobId: usageFixture.jobId,
     workerId: usageWorker,
     batchId: reservation.batchId,
+    providerCallId: reservation.providerCallId,
     batchIndex: 0,
     chunks: usagePrepared.chunks,
     result: {

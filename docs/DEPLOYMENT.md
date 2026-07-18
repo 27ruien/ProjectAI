@@ -92,7 +92,7 @@ published ports: none
 4. 启动 PostgreSQL 与 MinIO并等待 Healthy；强制重建 init 任务并等待 exit 0，失败即停止。
 5. 在 rollback trap 与事务 marker 已建立后，短暂停止当前 Staging App、Document Worker 和 Embedding Worker，取得 PostgreSQL/MinIO 同一静默写入边界。
 6. 生成并验证 PostgreSQL custom-format dump；生成 MinIO JSONL inventory 与 mirror，核对对象数和总字节，再恢复到唯一临时 Bucket 并复核/删除。
-7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；先以新代码和 `AI_EMBEDDING_ENABLED=false` 验证旧 Schema 健康，再执行新增的 `0005_durable_embedding_calls.sql`（不得修改已部署的 `0004`），不 schema push/reset；随后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、只读 Profile、Batch 状态字段与 Worker heartbeat。
+7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；先以新代码和 `AI_EMBEDDING_ENABLED=false` 验证旧 Schema 健康，再只执行新增的 `0006_closed_genesis.sql`（不得修改已部署的 `0004/0005`），不 schema push/reset；随后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、只读 Profile、Batch、不可变 Provider Call 与 Worker heartbeat。
 8. 用 scoped storage operations 执行 `npm run storage:verify`；任何 finding 或存储不可用都失败关闭。
 9. Migration 完成后启动 Document Worker 与 disabled Embedding Worker，并复核已在 Flag=false 下健康的 App；验证 App、两个 Worker、PostgreSQL、MinIO 健康，同一 immutable image、Secret 最小化和无新增端口。
 10. Health 必须显示 Assistant/Embedding disabled 但 Provider configured；在 App 执行 Chat Probe，在专用 Worker 执行固定 `Project AI embedding probe`，均不读取项目资料或输出向量。
@@ -104,7 +104,7 @@ published ports: none
 
 任一步骤失败都会触发 Staging App 镜像回滚；若上一版本已有 Worker，则条件恢复其 immutable image，否则移除本轮 Worker。PostgreSQL/MinIO 卷及跨存储备份始终保留，数据库或对象数据恢复不自动执行。
 
-`0005` 是向前兼容且非破坏性的 Migration：保留既有 succeeded/failed Batch 与向量，只补齐 durable-call 字段、状态和 Worker heartbeat。应用回滚可以继续在 Flag=false 下运行；不得尝试删除 enum value、向量或表。若产品负责人明确要求完整数据回退，必须停止 Staging 的 App 与两个 Worker，保留当前卷与备份，再由受控人工流程从 Migration 前 custom dump 恢复到新的隔离 Staging 数据库并完成一致性验证；本脚本不自动恢复数据库，Production 不得执行该流程。
+`0006` 是向前兼容且非破坏性的 Migration：保留既有 Batch、Job、向量和 unknown，按历史尝试数回填调用级记录并增加硬预算与终态不可变约束。应用回滚可以继续在 Flag=false 下运行；不得尝试删除 enum value、调用、向量或表。若产品负责人明确要求完整数据回退，必须停止 Staging 的 App 与两个 Worker，保留当前卷与备份，再由受控人工流程从 Migration 前 custom dump 恢复到新的隔离 Staging 数据库并完成一致性验证；本脚本不自动恢复数据库，Production 不得执行该流程。
 
 ## PostgreSQL 与 MinIO 备份
 
