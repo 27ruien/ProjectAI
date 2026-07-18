@@ -588,11 +588,13 @@ read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
   || fail "Production container is not healthy before staging deployment"
 
 PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- \
-  "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$BASE_PATH" <<'REMOTE_IMAGE'
+  "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$EMBEDDING_WORKER_CONTAINER_NAME" \
+  "$BASE_PATH" <<'REMOTE_IMAGE'
 set -Eeuo pipefail
 container_name="$1"
 worker_container_name="$2"
-base_path="$3"
+embedding_worker_container_name="$3"
+base_path="$4"
 image=""
 health_path="/login"
 commit_sha=""
@@ -600,6 +602,8 @@ app_version=""
 build_time=""
 worker_image=""
 worker_running="0"
+embedding_worker_image=""
+embedding_worker_running="0"
 if sudo docker container inspect "$container_name" >/dev/null 2>&1; then
   image="$(sudo docker container inspect --format '{{.Image}}' "$container_name")"
   running="$(sudo docker container inspect --format '{{.State.Running}}' "$container_name")"
@@ -644,16 +648,25 @@ if sudo docker container inspect "$worker_container_name" >/dev/null 2>&1; then
   [[ "$running" == "true" && "$health" == "healthy" ]]
   worker_running="1"
 fi
-printf '%s|%s|%s|%s|%s|%s|%s\n' \
+if sudo docker container inspect "$embedding_worker_container_name" >/dev/null 2>&1; then
+  embedding_worker_image="$(sudo docker container inspect --format '{{.Image}}' "$embedding_worker_container_name")"
+  running="$(sudo docker container inspect --format '{{.State.Running}}' "$embedding_worker_container_name")"
+  health="$(sudo docker container inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$embedding_worker_container_name")"
+  [[ "$running" == "true" && "$health" == "healthy" ]]
+  embedding_worker_running="1"
+fi
+printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
   "$image" "$health_path" "$commit_sha" "$app_version" "$build_time" \
-  "$worker_image" "$worker_running"
+  "$worker_image" "$worker_running" "$embedding_worker_image" \
+  "$embedding_worker_running"
 REMOTE_IMAGE
 )" || fail "Unable to inspect the previous Staging image safely"
 IFS='|' read -r \
   PREVIOUS_STAGING_IMAGE PREVIOUS_STAGING_HEALTH_PATH \
   PREVIOUS_STAGING_COMMIT_SHA PREVIOUS_STAGING_APP_VERSION \
   PREVIOUS_STAGING_BUILD_TIME PREVIOUS_STAGING_WORKER_IMAGE \
-  PREVIOUS_STAGING_WORKER_RUNNING <<<"$PREVIOUS_STAGING_STATE"
+  PREVIOUS_STAGING_WORKER_RUNNING PREVIOUS_STAGING_EMBEDDING_WORKER_IMAGE \
+  PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING <<<"$PREVIOUS_STAGING_STATE"
 [[ -z "$PREVIOUS_STAGING_IMAGE" || "$PREVIOUS_STAGING_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
   || fail "Unable to capture the immutable previous Staging image ID"
 [[ "$PREVIOUS_STAGING_HEALTH_PATH" == "/login" || "$PREVIOUS_STAGING_HEALTH_PATH" == "/api/health" ]] \
@@ -672,6 +685,12 @@ if [[ "$PREVIOUS_STAGING_WORKER_RUNNING" == "1" ]]; then
   [[ "$PREVIOUS_STAGING_WORKER_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
     || fail "Unable to capture the immutable previous Staging Worker image ID"
 fi
+[[ "$PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING" == "0" || "$PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING" == "1" ]] \
+  || fail "Unable to determine the previous Staging Embedding Worker state"
+if [[ "$PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING" == "1" ]]; then
+  [[ "$PREVIOUS_STAGING_EMBEDDING_WORKER_IMAGE" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "Unable to capture the immutable previous Staging Embedding Worker image ID"
+fi
 
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
@@ -684,7 +703,9 @@ rollback_staging_if_marked() {
     "${PREVIOUS_STAGING_APP_VERSION:-__projectai_empty__}" \
     "${PREVIOUS_STAGING_BUILD_TIME:-__projectai_empty__}" \
     "${PREVIOUS_STAGING_WORKER_IMAGE:-__projectai_empty__}" \
-    "$PREVIOUS_STAGING_WORKER_RUNNING" "$REMOTE_EMBEDDING_ENV_FILE" \
+    "$PREVIOUS_STAGING_WORKER_RUNNING" \
+    "${PREVIOUS_STAGING_EMBEDDING_WORKER_IMAGE:-__projectai_empty__}" \
+    "$PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING" "$REMOTE_EMBEDDING_ENV_FILE" \
     "$EMBEDDING_WORKER_CONTAINER_NAME" <<'REMOTE_ROLLBACK'
 set -Eeuo pipefail
 remote_dir="$1"
@@ -704,13 +725,16 @@ previous_app_version="${14}"
 previous_build_time="${15}"
 previous_worker_image="${16}"
 previous_worker_running="${17}"
-embedding_env_file="${18}"
-embedding_worker_container_name="${19}"
+previous_embedding_worker_image="${18}"
+previous_embedding_worker_running="${19}"
+embedding_env_file="${20}"
+embedding_worker_container_name="${21}"
 [[ "$previous_image" != "__projectai_empty__" ]] || previous_image=""
 [[ "$previous_commit_sha" != "__projectai_empty__" ]] || previous_commit_sha=""
 [[ "$previous_app_version" != "__projectai_empty__" ]] || previous_app_version=""
 [[ "$previous_build_time" != "__projectai_empty__" ]] || previous_build_time=""
 [[ "$previous_worker_image" != "__projectai_empty__" ]] || previous_worker_image=""
+[[ "$previous_embedding_worker_image" != "__projectai_empty__" ]] || previous_embedding_worker_image=""
 
 [[ "$remote_dir" == "/srv/projectai-staging" ]]
 [[ "$ai_env_file" == "$remote_dir/.env.ai" ]]
@@ -782,7 +806,7 @@ if [[ -n "$previous_image" ]]; then
     "NEXT_PUBLIC_BUILD_TIME=$previous_build_time"
     "STAGING_APP_IMAGE=$previous_image"
     "STAGING_WORKER_IMAGE=${previous_worker_image:-$previous_image}"
-    "STAGING_EMBEDDING_WORKER_IMAGE=${previous_worker_image:-$previous_image}"
+    "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_worker_image:-${previous_worker_image:-$previous_image}}"
     "STAGING_HEALTHCHECK_PATH=$rollback_health_path"
     docker compose
     --env-file "$env_file"
@@ -835,7 +859,24 @@ if [[ -n "$previous_image" ]]; then
     [[ "$worker_restored" == "1" ]]
     [[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$previous_worker_image" ]]
   else
-    "${rollback_compose[@]}" rm --stop --force projectai-embedding-worker projectai-document-worker >/dev/null 2>&1 || true
+    "${rollback_compose[@]}" rm --stop --force projectai-document-worker >/dev/null 2>&1 || true
+  fi
+  if [[ "$previous_embedding_worker_running" == "1" ]]; then
+    [[ "$previous_embedding_worker_image" =~ ^sha256:[0-9a-f]{64}$ ]]
+    "${rollback_compose[@]}" up --detach --no-deps --no-build --pull never projectai-embedding-worker
+    embedding_worker_restored=0
+    for _ in $(seq 1 60); do
+      embedding_worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$embedding_worker_container_name" 2>/dev/null || true)"
+      if [[ "$embedding_worker_health" == "healthy" ]]; then
+        embedding_worker_restored=1
+        break
+      fi
+      sleep 2
+    done
+    [[ "$embedding_worker_restored" == "1" ]]
+    [[ "$(sudo docker inspect --format '{{.Image}}' "$embedding_worker_container_name")" == "$previous_embedding_worker_image" ]]
+  else
+    "${rollback_compose[@]}" rm --stop --force projectai-embedding-worker >/dev/null 2>&1 || true
   fi
 else
   printf 'No previous Staging image exists; stopping the failed application and Worker while preserving PostgreSQL.\n' >&2

@@ -84,8 +84,15 @@ async function main(): Promise<void> {
       new URL("../drizzle/0005_durable_embedding_calls.sql", import.meta.url),
       "utf8",
     );
-    for (const statement of migration.split("--> statement-breakpoint")) {
-      if (statement.trim()) await upgrade.query(statement);
+    await upgrade.query("begin");
+    try {
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        if (statement.trim()) await upgrade.query(statement);
+      }
+      await upgrade.query("commit");
+    } catch (error) {
+      await upgrade.query("rollback");
+      throw error;
     }
     const result = await upgrade.query<{
       row_count: string;

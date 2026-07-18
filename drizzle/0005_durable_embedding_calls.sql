@@ -1,6 +1,10 @@
-ALTER TYPE "public"."document_embedding_batch_status" ADD VALUE 'reserved' BEFORE 'succeeded';--> statement-breakpoint
-ALTER TYPE "public"."document_embedding_batch_status" ADD VALUE 'calling' BEFORE 'succeeded';--> statement-breakpoint
-ALTER TYPE "public"."document_embedding_batch_status" ADD VALUE 'unknown';--> statement-breakpoint
+ALTER TABLE "document_embedding_batches" DROP CONSTRAINT "document_embedding_batches_values_check";--> statement-breakpoint
+ALTER TABLE "document_embedding_batches" DROP CONSTRAINT "document_embedding_batches_status_check";--> statement-breakpoint
+DROP INDEX "document_embedding_batches_request_uidx";--> statement-breakpoint
+ALTER TYPE "public"."document_embedding_batch_status" RENAME TO "document_embedding_batch_status_0004";--> statement-breakpoint
+CREATE TYPE "public"."document_embedding_batch_status" AS ENUM('reserved', 'calling', 'succeeded', 'failed', 'unknown');--> statement-breakpoint
+ALTER TABLE "document_embedding_batches" ALTER COLUMN "status" TYPE "public"."document_embedding_batch_status" USING "status"::text::"public"."document_embedding_batch_status";--> statement-breakpoint
+DROP TYPE "public"."document_embedding_batch_status_0004";--> statement-breakpoint
 CREATE TABLE "embedding_worker_heartbeats" (
 	"worker_id" varchar(128) PRIMARY KEY NOT NULL,
 	"embedding_profile_id" text NOT NULL,
@@ -15,9 +19,6 @@ CREATE TABLE "embedding_worker_heartbeats" (
     )
 );
 --> statement-breakpoint
-ALTER TABLE "document_embedding_batches" DROP CONSTRAINT "document_embedding_batches_values_check";--> statement-breakpoint
-ALTER TABLE "document_embedding_batches" DROP CONSTRAINT "document_embedding_batches_status_check";--> statement-breakpoint
-DROP INDEX "document_embedding_batches_request_uidx";--> statement-breakpoint
 ALTER TABLE "document_embedding_batches" ADD COLUMN "provider_attempt_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "document_embedding_batches" ADD COLUMN "reserved_input_tokens" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "document_embedding_batches" ADD COLUMN "leased_by" varchar(128);--> statement-breakpoint

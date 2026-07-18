@@ -283,6 +283,9 @@ test("rollback preserves the previous application health contract", async () => 
   assert.match(captureBlock, /NEXT_PUBLIC_BUILD_TIME=/);
   assert.match(captureBlock, /worker_container_name/);
   assert.match(captureBlock, /worker_image/);
+  assert.match(captureBlock, /embedding_worker_container_name/);
+  assert.match(captureBlock, /embedding_worker_image/);
+  assert.match(captureBlock, /embedding_worker_running/);
   assert.match(captureBlock, /running.*healthy/);
   assert.match(script, /rollback_health_path="\$previous_health_path"/);
   const rollbackBlock = script.match(
@@ -293,7 +296,9 @@ test("rollback preserves the previous application health contract", async () => 
   assert.match(rollbackBlock, /NEXT_PUBLIC_APP_VERSION=\$previous_app_version/);
   assert.match(rollbackBlock, /NEXT_PUBLIC_BUILD_TIME=\$previous_build_time/);
   assert.match(rollbackBlock, /STAGING_WORKER_IMAGE=/);
+  assert.match(rollbackBlock, /STAGING_EMBEDDING_WORKER_IMAGE=/);
   assert.match(rollbackBlock, /projectai-document-worker/);
+  assert.match(rollbackBlock, /projectai-embedding-worker/);
   assert.match(
     script,
     /\$\{PREVIOUS_STAGING_WORKER_IMAGE:-__projectai_empty__\}/,
@@ -301,6 +306,10 @@ test("rollback preserves the previous application health contract", async () => 
   assert.match(
     rollbackBlock,
     /previous_worker_image" != "__projectai_empty__"/,
+  );
+  assert.match(
+    rollbackBlock,
+    /previous_embedding_worker_image" != "__projectai_empty__"/,
   );
   assert.doesNotMatch(rollbackBlock, /NEXT_PUBLIC_COMMIT_SHA=\$commit_sha/);
   assert.match(rollbackBlock, /restored_environment=/);
