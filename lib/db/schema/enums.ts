@@ -65,6 +65,32 @@ export const documentIngestionStatusEnum = pgEnum(
   ["pending", "running", "succeeded", "failed", "needs_ocr", "cancelled"],
 );
 
+export const documentEmbeddingJobStatusEnum = pgEnum(
+  "document_embedding_job_status",
+  ["pending", "running", "succeeded", "failed", "cancelled"],
+);
+
+export const documentEmbeddingStatusEnum = pgEnum(
+  "document_embedding_status",
+  ["current", "invalid"],
+);
+
+export const documentEmbeddingBatchStatusEnum = pgEnum(
+  "document_embedding_batch_status",
+  ["reserved", "calling", "succeeded", "failed", "unknown"],
+);
+
+export const documentEmbeddingProviderCallStatusEnum = pgEnum(
+  "document_embedding_provider_call_status",
+  [
+    "reserved",
+    "calling",
+    "succeeded",
+    "failed_confirmed_no_charge",
+    "unknown",
+  ],
+);
+
 export const aiThreadStatusEnum = pgEnum("ai_thread_status", [
   "active",
   "archived",
@@ -104,6 +130,14 @@ export type DocumentStorageStatus =
   (typeof documentStorageStatusEnum.enumValues)[number];
 export type DocumentIngestionStatus =
   (typeof documentIngestionStatusEnum.enumValues)[number];
+export type DocumentEmbeddingJobStatus =
+  (typeof documentEmbeddingJobStatusEnum.enumValues)[number];
+export type DocumentEmbeddingStatus =
+  (typeof documentEmbeddingStatusEnum.enumValues)[number];
+export type DocumentEmbeddingBatchStatus =
+  (typeof documentEmbeddingBatchStatusEnum.enumValues)[number];
+export type DocumentEmbeddingProviderCallStatus =
+  (typeof documentEmbeddingProviderCallStatusEnum.enumValues)[number];
 export type AiThreadStatus = (typeof aiThreadStatusEnum.enumValues)[number];
 export type AiMessageRole = (typeof aiMessageRoleEnum.enumValues)[number];
 export type AiMessageStatus = (typeof aiMessageStatusEnum.enumValues)[number];

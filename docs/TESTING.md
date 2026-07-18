@@ -1,6 +1,6 @@
 # Testing
 
-## v0.6 B3-A 测试分层
+## v0.7 B3-B1 测试分层
 
 1. TypeScript：`npm run typecheck`。
 2. ESLint：`npm run lint`。
@@ -10,13 +10,17 @@
 6. Parser/Chunker 单元：`npm run test:documents`。
 7. PostgreSQL + MinIO + Worker/Queue/Search 集成：`npm run test:document-integration`。
 8. Project Assistant 单元/架构：`npm run test:assistant`。
-9. Project Assistant 数据库集成：`npm run test:assistant-integration`。
-10. Artifact/Provenance：`npm run test:artifacts`。
-11. Staging/Worker/AI Secret/Probe/备份部署契约：`npm run test:deployment`。
-12. Playwright 身份、文件、解析、知识搜索和 Grounded Assistant：`npm run test:e2e`。
-13. 完整本地门禁：`npm run qa:mvp`。
+9. Embedding Adapter/Gateway/Worker 单元：`npm run test:embeddings`。
+10. pgvector/Job/Lease/Backfill/隔离集成：`npm run test:embedding-integration`。
+11. Project Assistant 数据库集成：`npm run test:assistant-integration`。
+12. Artifact/Provenance：`npm run test:artifacts`。
+13. Staging/Worker/AI Secret/Probe/备份部署契约：`npm run test:deployment`。
+14. Playwright 身份、文件、解析、知识搜索和 Grounded Assistant：`npm run test:e2e`。
+15. 完整本地门禁：`npm run qa:mvp`。
 
 B3-A 新增覆盖 Secret File、Profile、私人 Thread、复合归属、幂等、B2 Evidence、Prompt 分区、Prompt Injection、Citation Validation/Repair、无 Evidence 不调用 Provider、Timeout/429/5xx 重试、401/403 不重试、Fallback、Token Usage、速率/日额度/全局并发和 SEC-006 架构扫描。
+
+B3-B1 修复额外覆盖：`npm run embeddings:migration-upgrade` 在临时数据库构造含 succeeded/failed 与重复历史请求的非空 0004 Batch，并在同一受控事务执行历史 `0005` 与新增 `0006`。Unit/Integration 验证发送前 `reserved`、发送时 `calling`、Timeout/网络/HTTP 拒绝/2xx 非法响应统一变为不可自动重试的 `unknown`、confirmed-no-charge 发送前失败安全重排、旧 Unknown Call 不可变、手工恢复新增 Call 与预算、预算不足不产生第二次调用、中文/中英混合/Emoji/代码/英文/10 条硬预留、并发 UTC 日预算、Usage=null/unknown 预算保留、关停 Abort 与 Lease renewal 故障。Health 单测证明 Flag=false 不检查 Embedding Schema/pgvector/Worker/Provider，而 Flag=true 缺少任一依赖时失败关闭。
 
 旧 CI、旧 Staging 和旧截图不能替代当前 Head 的证据。tracked 文档只记录稳定结论；当前 Head、Run、Artifact ID/Digest、tested merge SHA、Staging image 和 Build Time 等动态精确事实记录在 PR 描述与 Provenance Manifest。
 
@@ -35,8 +39,13 @@ versions = 0
 ingestion jobs = 0
 sections = 0
 chunks = 0
+embedding jobs = 0
+embedding batches = 0
+embedding provider calls = 0
+chunk embeddings = 0
 objects = 0
 running jobs = 0
+running embedding jobs = 0
 AI threads = 0
 AI messages = 0
 AI executions = 0
@@ -131,7 +140,7 @@ screenshots[{filename,width,height}]
 
 ## Staging
 
-只部署 Staging。验收必须验证 App/PostgreSQL/MinIO/Document Worker Healthy、同一 immutable App/Worker image、`pg_trgm`、六格式解析、Section/Chunk、搜索/来源、Qwen Probe、真实 Grounded Answer/Citation、资料不足不调用 Provider、Viewer、私人 Thread、Token Usage、Audit、全量清理和 Production 精确不变。不得部署或修改 Production。
+只部署 Staging。验收必须验证 App、PostgreSQL 17/pgvector、MinIO、Document Worker、Embedding Worker Healthy；`pg_trgm`、pgvector 0.8.1、`vector(1024)`、Profile、双 Probe、虚构增量向量、Lease Recovery、Backfill 幂等、精确向量项目范围、B3-A 词法 Grounded Answer/Citation、全量清理和 Production 精确不变。不得部署或修改 Production。
 
 部署脚本通过 scoped operations service 自动运行：
 
@@ -139,6 +148,9 @@ screenshots[{filename,width,height}]
 npm run documents:smoke
 npm run documents:lease-smoke
 npm run assistant:smoke
+npm run embeddings:smoke:prepare
+npm run embeddings:lease-smoke
+npm run embeddings:smoke:verify
 ```
 
 前者同时走容器内部上游和公网 Nginx 路径；后者只在队列为空、Worker 暂停期间执行。验收失败必须保留部署失败状态并触发既有 Staging App/Worker 回滚，不得跳过清理或 Production baseline 复核。

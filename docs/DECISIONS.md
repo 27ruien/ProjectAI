@@ -207,3 +207,20 @@
 - 状态：Accepted。
 - 决策：B3-A 继续使用 B2 PostgreSQL 词法检索，禁止 Embedding、pgvector、Hybrid Retrieval、Rerank、Tool/Function Calling 和正式业务写入。
 - 原因：先闭环项目隔离、来源、Secret、幂等、限流、审计和真实 Provider，再由 B3-B 独立评审检索质量扩展。
+
+## ADR-033：B3-B1 只建立 pgvector Embedding 基础，不改变用户检索
+
+- 状态：Accepted。
+- 决策：CI/Staging 使用 PostgreSQL 17 + pgvector 0.8.1；固定只读 Profile `qwen-text-embedding-cn-v1`、模型 `text-embedding-v4`、1024 维 cosine。Chunk 向量通过独立 PostgreSQL Job/Batch、专用 Worker、Lease/Heartbeat/Retry/Recovery 与安全 Backfill 生成，普通浏览器 API 不返回向量。
+- 隔离：Job 和向量都以 project/document/version/chunk 复合约束绑定，且只处理 Active/Current/Stored/Succeeded/Effective Chunk。Document Worker 不获得 Qwen Secret；专用 Embedding Worker 不获得对象存储凭据。Secret 只读挂载到 Staging App 与专用 Worker。
+- 检索：B2 搜索和 B3-A Evidence 继续使用原有词法 SQL。B3-B1 只提供自动测试/受保护运维的精确 cosine Probe，不建立 ANN 索引，不实现 Hybrid Retrieval、RRF 或 Rerank。
+- 原因：先验证向量定义、数据有效性、项目隔离、成本和运维恢复，再由 B3-B2 以真实数据量、Recall 与延迟评测决定融合与索引策略。
+
+## ADR-034：Embedding 发送后结果未知时保守保留计费预算
+
+- 状态：Accepted。
+- 决策：逻辑 Batch 下的每次 Provider 尝试写入独立、终态不可修改的 Call Attempt。`text-embedding-v4` 预算规则固定为 `min(itemCount × 8192, 33000)` 并记录版本；Provider Usage 只结算对应的成功调用。
+- 失败分类：只有进入 `fetch` 前且可确认没有调用 Provider 的失败记为 `failed_confirmed_no_charge` 并释放预留。进入 `fetch` 后的 Timeout、网络、HTTP 拒绝、2xx 解析/校验失败和提交窗口都记为 `unknown`，不自动重试且继续占用完整预留。
+- 人工恢复：必须显式接受潜在重复计费；旧 Unknown Call 与预算原样保留，事务内检查剩余额度并新增一个 Call Attempt。预算不足不得重排 Job 或调用 Provider。
+- 原因：Model Studio 文本 Embedding 文档未承诺任一 HTTP 错误必然不计费；保守处理避免自动重放造成不可见的重复成本。
+- 依据：[Embedding 规格](https://help.aliyun.com/en/model-studio/embedding)、[同步 API](https://help.aliyun.com/en/model-studio/text-embedding-synchronous-api) 与[模型计费](https://www.alibabacloud.com/help/en/model-studio/model-pricing)确认批次/token/按输入计费规则；[错误码](https://www.alibabacloud.com/help/en/model-studio/error-code)提供错误含义和重试建议，但没有给文本 Embedding 错误不计费保证，因此不把 400/401/403/429/5xx 推断为 confirmed-no-charge。

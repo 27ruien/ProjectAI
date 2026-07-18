@@ -305,6 +305,13 @@ export const documentChunk = pgTable(
       table.documentId,
       table.versionId,
     ),
+    unique("document_chunks_embedding_scope_unique").on(
+      table.id,
+      table.projectId,
+      table.documentId,
+      table.versionId,
+      table.contentSha256,
+    ),
     index("document_chunks_effective_project_idx").on(
       table.projectId,
       table.isEffective,

@@ -10,6 +10,11 @@ import {
   getAiRuntimeConfig,
   isAiProviderConfigured,
 } from "@/lib/ai/project-assistant";
+import {
+  EMBEDDING_GATEWAY_VERSION,
+  embeddingReadiness,
+  getEmbeddingRuntimeConfig,
+} from "@/lib/ai/embeddings";
 
 export async function GET(): Promise<Response> {
   try {
@@ -30,12 +35,13 @@ export async function GET(): Promise<Response> {
         exists(select 1 from pg_extension where extname = 'pg_trgm') as pg_trgm_enabled
     `);
     const row = databaseHealth.rows[0] as
-      | { pg_trgm_enabled?: boolean }
+      | {
+          pg_trgm_enabled?: boolean;
+        }
       | undefined;
     if (row?.pg_trgm_enabled !== true) {
       throw new Error("Required pg_trgm extension is unavailable.");
     }
-
     const headers = new Headers({ "cache-control": "no-store" });
     const commitSha = process.env.NEXT_PUBLIC_COMMIT_SHA?.trim();
     if (commitSha && /^[0-9a-f]{40}$/i.test(commitSha)) {
@@ -54,12 +60,20 @@ export async function GET(): Promise<Response> {
     if (aiConfig.enabled && !aiProviderConfigured) {
       throw new Error("Enabled AI provider is not configured.");
     }
+    const embeddingConfig = getEmbeddingRuntimeConfig();
+    const pgvectorReady = await embeddingReadiness(
+      embeddingConfig,
+      aiProviderConfigured,
+    );
     return jsonResponse(
       {
         status: "ok",
         aiAssistantEnabled: aiConfig.enabled,
         aiProviderConfigured,
         aiGatewayVersion: AI_GATEWAY_VERSION,
+        aiEmbeddingEnabled: embeddingConfig.enabled,
+        embeddingGatewayVersion: EMBEDDING_GATEWAY_VERSION,
+        pgvectorReady,
       },
       { headers },
     );

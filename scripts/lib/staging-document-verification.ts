@@ -171,6 +171,10 @@ type CleanupCounts = {
   documents: number;
   versions: number;
   jobs: number;
+  embeddingJobs: number;
+  embeddingBatches: number;
+  embeddingProviderCalls: number;
+  embeddings: number;
   sections: number;
   chunks: number;
   objects: number;
@@ -183,6 +187,10 @@ function zeroCleanupCounts(): CleanupCounts {
     documents: 0,
     versions: 0,
     jobs: 0,
+    embeddingJobs: 0,
+    embeddingBatches: 0,
+    embeddingProviderCalls: 0,
+    embeddings: 0,
     sections: 0,
     chunks: 0,
     objects: 0,
@@ -228,10 +236,33 @@ export async function cleanupDocumentVerification(input: {
     : { rows: [] as Array<{ id: string }> };
   const versionIds = versions.rows.map((row) => row.id);
   const jobIds = jobs.rows.map((row) => row.id);
+  const embeddingJobs = documentIds.length
+    ? await pool.query<{ id: string }>(
+        `select id
+         from document_embedding_jobs
+         where project_id = $1 and document_id = any($2::text[])
+         order by id`,
+        [input.projectId, documentIds],
+      )
+    : { rows: [] as Array<{ id: string }> };
+  const embeddingJobIds = embeddingJobs.rows.map((row) => row.id);
 
   if (documentIds.length) {
     await pool.query(
       `update document_ingestion_jobs
+       set status = 'cancelled',
+           completed_at = coalesce(completed_at, now()),
+           leased_by = null,
+           lease_expires_at = null,
+           heartbeat_at = null,
+           updated_at = now()
+       where project_id = $1
+         and document_id = any($2::text[])
+         and status in ('pending', 'running')`,
+      [input.projectId, documentIds],
+    );
+    await pool.query(
+      `update document_embedding_jobs
        set status = 'cancelled',
            completed_at = coalesce(completed_at, now()),
            leased_by = null,
@@ -256,20 +287,43 @@ export async function cleanupDocumentVerification(input: {
     if (documentIds.length) {
       await client.query(
         `delete from audit_events
-         where (user_agent = any($1::text[]) or user_agent like any($5::text[]))
+         where (user_agent = any($1::text[]) or user_agent like any($6::text[]))
             or entity_id = any($2::text[])
             or entity_id = any($3::text[])
             or entity_id = any($4::text[])
+            or entity_id = any($5::text[])
             or metadata->>'documentId' = any($2::text[])
             or metadata->>'versionId' = any($3::text[])
-            or metadata->>'jobId' = any($4::text[])`,
+            or metadata->>'jobId' = any($4::text[])
+            or metadata->>'embeddingJobId' = any($5::text[])`,
         [
           input.userAgents,
           documentIds,
           versionIds,
           jobIds,
+          embeddingJobIds,
           userAgentPatterns,
         ],
+      );
+      await client.query(
+        `delete from document_chunk_embeddings
+         where project_id = $1 and document_id = any($2::text[])`,
+        [input.projectId, documentIds],
+      );
+      await client.query(
+        `delete from document_embedding_provider_calls
+         where project_id = $1 and document_id = any($2::text[])`,
+        [input.projectId, documentIds],
+      );
+      await client.query(
+        `delete from document_embedding_batches
+         where project_id = $1 and document_id = any($2::text[])`,
+        [input.projectId, documentIds],
+      );
+      await client.query(
+        `delete from document_embedding_jobs
+         where project_id = $1 and document_id = any($2::text[])`,
+        [input.projectId, documentIds],
       );
       await client.query(
         `delete from document_chunks
@@ -360,18 +414,32 @@ export async function cleanupDocumentVerification(input: {
     const remaining = await pool.query<{
       versions: string;
       jobs: string;
+      embedding_jobs: string;
+      embedding_batches: string;
+      embedding_provider_calls: string;
+      embeddings: string;
       sections: string;
       chunks: string;
     }>(
       `select
          (select count(*) from project_document_versions where document_id = any($1::text[]))::text as versions,
          (select count(*) from document_ingestion_jobs where document_id = any($1::text[]))::text as jobs,
+         (select count(*) from document_embedding_jobs where document_id = any($1::text[]))::text as embedding_jobs,
+         (select count(*) from document_embedding_batches where document_id = any($1::text[]))::text as embedding_batches,
+         (select count(*) from document_embedding_provider_calls where document_id = any($1::text[]))::text as embedding_provider_calls,
+         (select count(*) from document_chunk_embeddings where document_id = any($1::text[]))::text as embeddings,
          (select count(*) from document_sections where document_id = any($1::text[]))::text as sections,
          (select count(*) from document_chunks where document_id = any($1::text[]))::text as chunks`,
       [documentIds],
     );
     counts.versions = Number(remaining.rows[0]?.versions ?? 0);
     counts.jobs = Number(remaining.rows[0]?.jobs ?? 0);
+    counts.embeddingJobs = Number(remaining.rows[0]?.embedding_jobs ?? 0);
+    counts.embeddingBatches = Number(remaining.rows[0]?.embedding_batches ?? 0);
+    counts.embeddingProviderCalls = Number(
+      remaining.rows[0]?.embedding_provider_calls ?? 0,
+    );
+    counts.embeddings = Number(remaining.rows[0]?.embeddings ?? 0);
     counts.sections = Number(remaining.rows[0]?.sections ?? 0);
     counts.chunks = Number(remaining.rows[0]?.chunks ?? 0);
   }

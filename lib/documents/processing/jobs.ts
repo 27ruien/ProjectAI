@@ -28,6 +28,7 @@ import {
   DocumentProcessingError,
   publicProcessingFailureMessage,
 } from "./errors";
+import { ensureEmbeddingJob } from "@/lib/ai/embeddings/jobs";
 
 export type CreateIngestionReason =
   | "stored"
@@ -242,6 +243,14 @@ export async function activateOrQueueVersionIndex(input: {
       },
       input.db,
     );
+    await ensureEmbeddingJob({
+      projectId: input.projectId,
+      documentId: input.documentId,
+      versionId: input.versionId,
+      createdBy: input.actorUserId,
+      reason: input.reason === "restored" ? "restored" : "current_version",
+      db: input.db,
+    });
     return;
   }
   await ensureIngestionJob({
@@ -566,6 +575,14 @@ export async function completeIngestionJob(input: {
         },
         tx,
       );
+      await ensureEmbeddingJob({
+        projectId: job.projectId,
+        documentId: job.documentId,
+        versionId: job.versionId,
+        createdBy: job.createdBy,
+        reason: "ingestion_succeeded",
+        db: tx,
+      });
     }
   });
 }

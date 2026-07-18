@@ -12,16 +12,27 @@
 → AI 提取需求草稿 → 人工修改与审核 → 写入正式需求
 ```
 
-v0.4 已完成真实文件存储边界，v0.5 B2 已完成解析与词法索引。v0.6 B3-A 完成下一层受控问答：
+v0.4 已完成真实文件存储边界，v0.5 B2 已完成解析与词法索引，v0.6 B3-A 已完成受控问答。v0.7 B3-B1 在不改变用户检索的前提下建立向量基础：
 
 ```text
 Stored Current Version → Durable Job → Independent Worker
 → Parser → Section → Chunk → Lexical Index
 → Project-scoped Search → Source Locator
 → Grounded Evidence → Qwen Answer → Validated Citation
+→ Embedding Job → Dedicated Worker → text-embedding-v4 → vector(1024)
 ```
 
-本轮接入 Qwen Grounded Answer，但不接入 Embedding、pgvector、Hybrid Retrieval、Rerank、Tool Calling 或正式需求写入。
+本轮只接入 Embedding 生成/存储/调度/回填基础，不把向量接入用户搜索或项目助手 Evidence；Hybrid Retrieval、Rerank、Tool Calling 和正式需求写入仍不在范围。
+
+## v0.7 — Embedding and pgvector Foundation / B3-B1
+
+- 固定只读 Profile `qwen-text-embedding-cn-v1`：Qwen、`cn-beijing`、`text-embedding-v4`、1024 维 cosine、Profile Version 1。
+- PostgreSQL 17 + pgvector 0.8.1 保存 Chunk Embedding；project/document/version/chunk/content Hash 由复合约束绑定，向量不进入普通浏览器 API。
+- 独立 Embedding Job/Batch/不可变 Provider Call 与专用 Worker 复用 B2 的 `FOR UPDATE SKIP LOCKED`、Lease、Heartbeat、Retry、Stale Recovery 和旧 Worker 拒绝提交。
+- 只处理 Active Document、Current/Stored Version、Succeeded Ingestion、Effective/non-empty Chunk；归档、旧版本、needs_ocr、未完成解析和同 Hash current 向量排除。
+- Backfill 默认 dry-run，支持 project/limit/current/effective 范围；Provider Usage 原样记录，缺失/unknown 按 `min(itemCount × 8192, 33000)` 版本化硬上限持有预算，只有发送前 confirmed-no-charge 释放，并有每日 Job/Token 上限。
+- 一旦进入 Provider `fetch`，Timeout、网络、HTTP 拒绝、2xx 解析/校验失败或本地提交失败都必须终止为不可自动重试的 `PROVIDER_RESULT_UNKNOWN`；人工恢复保留旧 Call/预算并新增调用级预留。
+- B2 知识搜索和 B3-A Grounded Assistant 继续使用词法检索；B3-B1 只允许测试/受保护运维的精确 cosine Probe，不实现 ANN、Hybrid Retrieval、RRF 或 Rerank。
 
 ## v0.6 — Grounded Qwen Project Assistant / B3-A
 

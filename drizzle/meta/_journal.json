@@ -29,6 +29,27 @@
       "when": 1784210078073,
       "tag": "0003_tricky_hannibal_king",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1784275467196,
+      "tag": "0004_groovy_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784364564918,
+      "tag": "0005_durable_embedding_calls",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1784374675547,
+      "tag": "0006_closed_genesis",
+      "breakpoints": true
     }
   ]
 }

@@ -42,6 +42,10 @@ try {
     await tx.execute(sql`delete from ai_executions`);
     await tx.execute(sql`delete from ai_messages`);
     await tx.execute(sql`delete from ai_threads`);
+    await tx.execute(sql`delete from document_chunk_embeddings`);
+    await tx.execute(sql`delete from document_embedding_provider_calls`);
+    await tx.execute(sql`delete from document_embedding_batches`);
+    await tx.execute(sql`delete from document_embedding_jobs`);
     await tx.execute(sql`delete from document_chunks`);
     await tx.execute(sql`delete from document_sections`);
     await tx.execute(sql`delete from document_ingestion_jobs`);
@@ -72,6 +76,11 @@ try {
     sections: number;
     chunks: number;
     running_jobs: number;
+    embedding_jobs: number;
+    embedding_batches: number;
+    embedding_provider_calls: number;
+    chunk_embeddings: number;
+    running_embedding_jobs: number;
     ai_threads: number;
     ai_messages: number;
     ai_executions: number;
@@ -85,6 +94,10 @@ try {
       (select count(*)::int from document_ingestion_jobs) as jobs,
       (select count(*)::int from document_sections) as sections,
       (select count(*)::int from document_chunks) as chunks,
+      (select count(*)::int from document_embedding_jobs) as embedding_jobs,
+      (select count(*)::int from document_embedding_batches) as embedding_batches,
+      (select count(*)::int from document_embedding_provider_calls) as embedding_provider_calls,
+      (select count(*)::int from document_chunk_embeddings) as chunk_embeddings,
       (select count(*)::int from ai_threads) as ai_threads,
       (select count(*)::int from ai_messages) as ai_messages,
       (select count(*)::int from ai_executions) as ai_executions,
@@ -94,6 +107,11 @@ try {
         from document_ingestion_jobs
         where status = 'running'
       ) as running_jobs,
+      (
+        select count(*)::int
+        from document_embedding_jobs
+        where status = 'running'
+      ) as running_embedding_jobs,
       (
         select count(*)::int
         from ai_executions
