@@ -1,0 +1,548 @@
+import { inArray, sql } from "drizzle-orm";
+import {
+  claimEmbeddingJob,
+  commitEmbeddingBatch,
+  completeEmbeddingJob,
+  createEmbeddingGateway,
+  embeddingBatchReservedInputTokens,
+  EmbeddingPipelineError,
+  ensureEmbeddingJob,
+  getEmbeddingRuntimeConfig,
+  prepareEmbeddingJob,
+  reconcileStaleEmbeddingCalls,
+  recordEmbeddingFailure,
+  reserveEmbeddingBatch,
+  retryUnknownEmbeddingJob,
+} from "../lib/ai/embeddings";
+import { closeDatabasePool, getDb } from "../lib/db/client";
+import {
+  auditEvent,
+  documentChunk,
+  documentChunkEmbedding,
+  documentEmbeddingBatch,
+  documentEmbeddingJob,
+  documentIngestionJob,
+  documentSection,
+  projectDocument,
+  projectDocumentVersion,
+} from "../lib/db/schema";
+
+const runId = process.env.EMBEDDING_SMOKE_RUN_ID?.trim() || "";
+if (!/^[0-9a-f-]{36}$/i.test(runId)) {
+  throw new Error("Embedding safety Run ID is invalid.");
+}
+const modes = ["--crash-window", "--shutdown", "--budget"].filter((mode) =>
+  process.argv.includes(mode),
+);
+if (modes.length !== 1) throw new Error("Select one Embedding safety mode.");
+const mode = modes[0]!;
+const displayPrefix = `B3-B1 虚构 Embedding 安全验收 ${runId}`;
+
+type Fixture = {
+  projectId: string;
+  documentId: string;
+  versionId: string;
+  chunks: Array<{
+    id: string;
+    content: string;
+    contentSha256: string;
+    chunkIndex: number;
+    estimatedTokenCount: number;
+  }>;
+  jobId: string;
+};
+
+function assert(condition: unknown, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+async function createFixture(label: string, contents: string[]): Promise<Fixture> {
+  const scope = await getDb().execute<{ project_id: string; user_id: string }>(sql`
+    select p.id as project_id, pm.user_id
+    from projects p
+    inner join project_members pm
+      on pm.project_id = p.id and pm.role = 'project_manager'
+    where p.status <> 'cancelled'
+    order by p.id, pm.created_at, pm.user_id
+    limit 1
+  `);
+  const owner = scope.rows[0];
+  assert(owner, "A controlled Staging project manager is required.");
+  const documentId = `embedding-safety-document-${crypto.randomUUID()}`;
+  const versionId = `embedding-safety-version-${crypto.randomUUID()}`;
+  const ingestionJobId = `embedding-safety-ingestion-${crypto.randomUUID()}`;
+  const sectionId = `embedding-safety-section-${crypto.randomUUID()}`;
+  const now = new Date();
+  const chunks: Fixture["chunks"] = [];
+  await getDb().transaction(async (tx) => {
+    await tx.insert(projectDocument).values({
+      id: documentId,
+      projectId: owner.project_id,
+      displayName: `${displayPrefix} ${label}`,
+      status: "active",
+      createdBy: owner.user_id,
+    });
+    await tx.insert(projectDocumentVersion).values({
+      id: versionId,
+      documentId,
+      projectId: owner.project_id,
+      versionNumber: 1,
+      isCurrent: true,
+      uploadId: crypto.randomUUID(),
+      objectKey: `projects/${owner.project_id}/documents/${documentId}/versions/${versionId}/source`,
+      originalFilename: `${label}.txt`,
+      normalizedExtension: "txt",
+      declaredMimeType: "text/plain",
+      detectedMimeType: "text/plain",
+      sizeBytes: Math.max(1, contents.join("\n").length),
+      sha256: "a".repeat(64),
+      storageEtag: `safety-${crypto.randomUUID()}`,
+      storageStatus: "stored",
+      uploadedBy: owner.user_id,
+      storedAt: now,
+    });
+    await tx.insert(documentIngestionJob).values({
+      id: ingestionJobId,
+      projectId: owner.project_id,
+      documentId,
+      versionId,
+      generation: 1,
+      status: "succeeded",
+      parserVersion: "1",
+      chunkerVersion: "1",
+      createdBy: owner.user_id,
+      completedAt: now,
+    });
+    await tx.insert(documentSection).values({
+      id: sectionId,
+      projectId: owner.project_id,
+      documentId,
+      versionId,
+      ingestionJobId,
+      generation: 1,
+      sectionType: "text",
+      sectionIndex: 0,
+      headingPath: [],
+      sourceLocator: { type: "text_lines", lineStart: 1, lineEnd: contents.length },
+      content: contents.join("\n"),
+      contentSha256: "b".repeat(64),
+      characterCount: contents.join("\n").length,
+      parserVersion: "1",
+    });
+    await tx.insert(documentChunk).values(
+      contents.map((content, chunkIndex) => {
+        const contentSha256 = Buffer.from(`${label}:${chunkIndex}:${content}`)
+          .toString("hex")
+          .padEnd(64, "0")
+          .slice(0, 64);
+        const chunk = {
+          id: `embedding-safety-chunk-${crypto.randomUUID()}`,
+          content,
+          contentSha256,
+          chunkIndex,
+          estimatedTokenCount: Math.max(1, content.trim().split(/\s+/u).length),
+        };
+        chunks.push(chunk);
+        return {
+          ...chunk,
+          projectId: owner.project_id,
+          documentId,
+          versionId,
+          sectionId,
+          ingestionJobId,
+          generation: 1,
+          searchText: content,
+          characterCount: content.length,
+          headingPath: [],
+          sourceLocator: {
+            type: "text_lines",
+            lineStart: chunkIndex + 1,
+            lineEnd: chunkIndex + 1,
+          },
+          parserVersion: "1",
+          chunkerVersion: "1",
+          isEffective: true,
+        };
+      }),
+    );
+  });
+  const job = await ensureEmbeddingJob({
+    projectId: owner.project_id,
+    documentId,
+    versionId,
+    createdBy: owner.user_id,
+    reason: "backfill",
+  });
+  assert(job, "Embedding safety fixture did not create a Job.");
+  return {
+    projectId: owner.project_id,
+    documentId,
+    versionId,
+    chunks,
+    jobId: job.id,
+  };
+}
+
+async function cleanup(): Promise<void> {
+  const documents = await getDb()
+    .select({ id: projectDocument.id })
+    .from(projectDocument)
+    .where(sql`${projectDocument.displayName} like ${`${displayPrefix}%`}`);
+  const documentIds = documents.map((item) => item.id);
+  if (!documentIds.length) return;
+  const jobs = await getDb()
+    .select({ id: documentEmbeddingJob.id })
+    .from(documentEmbeddingJob)
+    .where(inArray(documentEmbeddingJob.documentId, documentIds));
+  const entityIds = [...documentIds, ...jobs.map((item) => item.id)];
+  await getDb().transaction(async (tx) => {
+    await tx.delete(auditEvent).where(inArray(auditEvent.entityId, entityIds));
+    await tx
+      .delete(documentChunkEmbedding)
+      .where(inArray(documentChunkEmbedding.documentId, documentIds));
+    await tx
+      .delete(documentEmbeddingBatch)
+      .where(inArray(documentEmbeddingBatch.documentId, documentIds));
+    await tx
+      .delete(documentEmbeddingJob)
+      .where(inArray(documentEmbeddingJob.documentId, documentIds));
+    await tx.delete(documentChunk).where(inArray(documentChunk.documentId, documentIds));
+    await tx
+      .delete(documentSection)
+      .where(inArray(documentSection.documentId, documentIds));
+    await tx
+      .delete(documentIngestionJob)
+      .where(inArray(documentIngestionJob.documentId, documentIds));
+    await tx
+      .delete(projectDocumentVersion)
+      .where(inArray(projectDocumentVersion.documentId, documentIds));
+    await tx.delete(projectDocument).where(inArray(projectDocument.id, documentIds));
+  });
+}
+
+async function claimedFixture(fixture: Fixture, workerId: string) {
+  const claimed = await claimEmbeddingJob(workerId);
+  assert(claimed?.id === fixture.jobId, "Embedding safety claimed an unexpected Job.");
+  const prepared = await prepareEmbeddingJob({ jobId: fixture.jobId, workerId });
+  assert(prepared?.chunks.length, "Embedding safety fixture has no eligible Chunk.");
+  return prepared;
+}
+
+async function crashWindow(): Promise<Record<string, unknown>> {
+  const fixture = await createFixture("Crash-Window", [
+    "Project AI fictional crash window verification for a durable embedding call.",
+  ]);
+  const workerId = `embedding-crash-${crypto.randomUUID()}`;
+  const config = getEmbeddingRuntimeConfig();
+  const prepared = await claimedFixture(fixture, workerId);
+  const reservation = await reserveEmbeddingBatch({
+    jobId: fixture.jobId,
+    workerId,
+    batchIndex: 0,
+    chunks: prepared.chunks,
+    config,
+  });
+  assert(reservation.action === "call", "Crash window Batch was not callable.");
+  await createEmbeddingGateway(config).embed(
+    prepared.chunks.map((chunk) => chunk.content),
+  );
+  await getDb().execute(sql`
+    update document_embedding_batches
+    set lease_expires_at = now() - interval '1 second', updated_at = now()
+    where id = ${reservation.batchId}
+  `);
+  await getDb().execute(sql`
+    update document_embedding_jobs
+    set started_at = now() - interval '10 seconds',
+        lease_expires_at = now() - interval '1 second', updated_at = now()
+    where id = ${fixture.jobId}
+  `);
+  assert((await reconcileStaleEmbeddingCalls()) === 1, "Crash window was not reconciled.");
+  const state = await getDb().execute<{
+    job_status: string;
+    job_failure: string | null;
+    batch_status: string;
+    provider_calls: number;
+    vectors: number;
+  }>(sql`
+    select j.status as job_status, j.failure_code as job_failure,
+      b.status as batch_status, j.provider_call_count as provider_calls,
+      (select count(*)::int from document_chunk_embeddings e
+        where e.embedding_job_id = j.id) as vectors
+    from document_embedding_jobs j
+    inner join document_embedding_batches b on b.job_id = j.id
+    where j.id = ${fixture.jobId}
+  `);
+  const row = state.rows[0];
+  assert(
+    row?.job_status === "failed" &&
+      row.job_failure === "PROVIDER_RESULT_UNKNOWN" &&
+      row.batch_status === "unknown" &&
+      row.provider_calls === 1 &&
+      row.vectors === 0,
+    "Crash window did not fail closed without a duplicate vector.",
+  );
+  const dryRun = await retryUnknownEmbeddingJob({
+    jobId: fixture.jobId,
+    acceptPossibleDuplicateCharge: true,
+  });
+  assert(dryRun.dryRun && !dryRun.requeued, "Unknown recovery was not dry-run safe.");
+  return {
+    crashWindowUnknown: true,
+    providerCallCount: row.provider_calls,
+    vectorsWritten: row.vectors,
+    ordinaryRetryBlocked: true,
+  };
+}
+
+async function shutdown(): Promise<Record<string, unknown>> {
+  const fixture = await createFixture("Shutdown", [
+    "Project AI fictional SIGTERM drain verification for an active embedding request.",
+  ]);
+  const workerId = `embedding-shutdown-${crypto.randomUUID()}`;
+  const config = getEmbeddingRuntimeConfig();
+  const prepared = await claimedFixture(fixture, workerId);
+  const reservation = await reserveEmbeddingBatch({
+    jobId: fixture.jobId,
+    workerId,
+    batchIndex: 0,
+    chunks: prepared.chunks,
+    config,
+  });
+  assert(reservation.action === "call", "Shutdown Batch was not callable.");
+  const controller = new AbortController();
+  let signalReceived = false;
+  const receiveSignal = () => {
+    signalReceived = true;
+    controller.abort(new Error("SIGTERM"));
+  };
+  process.once("SIGTERM", receiveSignal);
+  const started = performance.now();
+  try {
+    try {
+      const result = await createEmbeddingGateway(config).embed(
+        prepared.chunks.map((chunk) => chunk.content),
+        {
+          signal: controller.signal,
+          onProviderRequestStarted: () =>
+            setImmediate(() => process.kill(process.pid, "SIGTERM")),
+        },
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await commitEmbeddingBatch({
+        jobId: fixture.jobId,
+        workerId,
+        batchId: reservation.batchId,
+        batchIndex: 0,
+        chunks: prepared.chunks,
+        result,
+      });
+      await completeEmbeddingJob({ jobId: fixture.jobId, workerId });
+    } catch (error) {
+      await recordEmbeddingFailure({
+        jobId: fixture.jobId,
+        workerId,
+        batchId: reservation.batchId,
+        chunks: prepared.chunks,
+        error,
+        latencyMs: Math.max(0, Math.round(performance.now() - started)),
+      });
+    }
+  } finally {
+    process.removeListener("SIGTERM", receiveSignal);
+  }
+  const terminal = await getDb().execute<{
+    status: string;
+    failure_code: string | null;
+    batch_status: string;
+  }>(sql`
+    select j.status, j.failure_code, b.status as batch_status
+    from document_embedding_jobs j
+    inner join document_embedding_batches b on b.job_id = j.id
+    where j.id = ${fixture.jobId}
+  `);
+  const row = terminal.rows[0];
+  assert(signalReceived, "The SIGTERM fault injection was not delivered.");
+  assert(
+    (row?.status === "succeeded" && row.batch_status === "succeeded") ||
+      (row?.status === "failed" &&
+        row.failure_code === "PROVIDER_RESULT_UNKNOWN" &&
+        row.batch_status === "unknown"),
+    "SIGTERM did not produce a safe terminal Embedding state.",
+  );
+  const elapsedMs = Math.round(performance.now() - started);
+  assert(elapsedMs < config.shutdownDrainMs, "SIGTERM exceeded the configured drain.");
+  return {
+    sigtermDelivered: true,
+    terminalState: row.status,
+    elapsedWithinDrain: true,
+  };
+}
+
+async function budget(): Promise<Record<string, unknown>> {
+  const text = "one two three four five six seven eight";
+  const first = await createFixture("Budget-A", [text]);
+  const second = await createFixture("Budget-B", [text]);
+  const config = getEmbeddingRuntimeConfig();
+  const preparedA = await claimedFixture(first, `budget-a-${crypto.randomUUID()}`);
+  const workerA = (await getDb()
+    .select({ leasedBy: documentEmbeddingJob.leasedBy })
+    .from(documentEmbeddingJob)
+    .where(sql`${documentEmbeddingJob.id} = ${first.jobId}`))[0]!.leasedBy!;
+  const preparedB = await claimedFixture(second, `budget-b-${crypto.randomUUID()}`);
+  const workerB = (await getDb()
+    .select({ leasedBy: documentEmbeddingJob.leasedBy })
+    .from(documentEmbeddingJob)
+    .where(sql`${documentEmbeddingJob.id} = ${second.jobId}`))[0]!.leasedBy!;
+  const reservationTokens = embeddingBatchReservedInputTokens(preparedA.chunks);
+  const usage = await getDb().execute<{ used: number }>(sql`
+    select coalesce(sum(case
+      when status = 'succeeded' then coalesce(input_token_count, reserved_input_tokens)
+      when status in ('reserved', 'calling', 'unknown') then reserved_input_tokens
+      else 0 end), 0)::int as used
+    from document_embedding_batches
+    where started_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+      and started_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
+  `);
+  const limited = {
+    ...config,
+    dailyTokenLimit: Number(usage.rows[0]?.used ?? 0) + reservationTokens,
+  };
+  const concurrent = await Promise.allSettled([
+    reserveEmbeddingBatch({
+      jobId: first.jobId,
+      workerId: workerA,
+      batchIndex: 0,
+      chunks: preparedA.chunks,
+      config: limited,
+    }),
+    reserveEmbeddingBatch({
+      jobId: second.jobId,
+      workerId: workerB,
+      batchIndex: 0,
+      chunks: preparedB.chunks,
+      config: limited,
+    }),
+  ]);
+  const accepted = concurrent.filter((item) => item.status === "fulfilled").length;
+  const rejected = concurrent.filter(
+    (item) =>
+      item.status === "rejected" &&
+      item.reason instanceof EmbeddingPipelineError &&
+      item.reason.code === "DAILY_TOKEN_LIMIT_REACHED",
+  ).length;
+  assert(accepted === 1 && rejected === 1, "Concurrent Token budget was penetrated.");
+
+  await cleanup();
+  const usageFixture = await createFixture("Usage-Null", [text]);
+  const blockedFixture = await createFixture("Usage-Null-Blocked", ["one"]);
+  const usageWorker = `usage-null-${crypto.randomUUID()}`;
+  const usagePrepared = await claimedFixture(usageFixture, usageWorker);
+  const baseline = await getDb().execute<{ used: number }>(sql`
+    select coalesce(sum(case
+      when status = 'succeeded' then coalesce(input_token_count, reserved_input_tokens)
+      when status in ('reserved', 'calling', 'unknown') then reserved_input_tokens
+      else 0 end), 0)::int as used
+    from document_embedding_batches
+    where started_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+      and started_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
+  `);
+  const nullReservation = embeddingBatchReservedInputTokens(usagePrepared.chunks);
+  const nullLimit = {
+    ...config,
+    dailyTokenLimit: Number(baseline.rows[0]?.used ?? 0) + nullReservation,
+  };
+  const reservation = await reserveEmbeddingBatch({
+    jobId: usageFixture.jobId,
+    workerId: usageWorker,
+    batchIndex: 0,
+    chunks: usagePrepared.chunks,
+    config: nullLimit,
+  });
+  assert(reservation.action === "call", "Usage-null Batch was not reserved.");
+  await commitEmbeddingBatch({
+    jobId: usageFixture.jobId,
+    workerId: usageWorker,
+    batchId: reservation.batchId,
+    batchIndex: 0,
+    chunks: usagePrepared.chunks,
+    result: {
+      provider: "fake",
+      requestedModel: config.model,
+      actualModel: config.model,
+      dimensions: 1024,
+      vectors: usagePrepared.chunks.map(() => Array(1024).fill(0.01)),
+      inputTokens: null,
+      totalTokens: null,
+      providerRequestId: null,
+      latencyMs: 0,
+      attemptCount: 1,
+    },
+  });
+  await completeEmbeddingJob({ jobId: usageFixture.jobId, workerId: usageWorker });
+  const blockedWorker = `usage-null-blocked-${crypto.randomUUID()}`;
+  const blockedPrepared = await claimedFixture(blockedFixture, blockedWorker);
+  await assertRejectsDailyLimit(
+    reserveEmbeddingBatch({
+      jobId: blockedFixture.jobId,
+      workerId: blockedWorker,
+      batchIndex: 0,
+      chunks: blockedPrepared.chunks,
+      config: nullLimit,
+    }),
+  );
+  const [nullBatch] = await getDb()
+    .select()
+    .from(documentEmbeddingBatch)
+    .where(sql`${documentEmbeddingBatch.jobId} = ${usageFixture.jobId}`);
+  assert(
+    nullBatch?.inputTokenCount === null &&
+      nullBatch.reservedInputTokens === nullReservation,
+    "Usage-null Reservation was released or copied into real Usage.",
+  );
+  return {
+    concurrentReservationsAccepted: accepted,
+    concurrentReservationsRejected: rejected,
+    usageNullPreserved: true,
+    usageNullReservationHeld: true,
+    externalProviderCalls: 0,
+  };
+}
+
+async function assertRejectsDailyLimit(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise;
+  } catch (error) {
+    if (
+      error instanceof EmbeddingPipelineError &&
+      error.code === "DAILY_TOKEN_LIMIT_REACHED"
+    ) {
+      return;
+    }
+    throw error;
+  }
+  throw new Error("Expected DAILY_TOKEN_LIMIT_REACHED.");
+}
+
+let failure: unknown;
+try {
+  await cleanup();
+  const result =
+    mode === "--crash-window"
+      ? await crashWindow()
+      : mode === "--shutdown"
+        ? await shutdown()
+        : await budget();
+  process.stdout.write(`${JSON.stringify({ verified: true, mode, ...result })}\n`);
+} catch (error) {
+  failure = error;
+} finally {
+  try {
+    await cleanup();
+  } catch (cleanupError) {
+    failure ??= cleanupError;
+  }
+  await closeDatabasePool();
+}
+
+if (failure) throw failure;

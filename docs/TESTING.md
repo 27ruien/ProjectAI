@@ -1,6 +1,6 @@
 # Testing
 
-## v0.6 B3-A 测试分层
+## v0.7 B3-B1 测试分层
 
 1. TypeScript：`npm run typecheck`。
 2. ESLint：`npm run lint`。
@@ -19,6 +19,8 @@
 15. 完整本地门禁：`npm run qa:mvp`。
 
 B3-A 新增覆盖 Secret File、Profile、私人 Thread、复合归属、幂等、B2 Evidence、Prompt 分区、Prompt Injection、Citation Validation/Repair、无 Evidence 不调用 Provider、Timeout/429/5xx 重试、401/403 不重试、Fallback、Token Usage、速率/日额度/全局并发和 SEC-006 架构扫描。
+
+B3-B1 修复额外覆盖：`npm run embeddings:migration-upgrade` 在临时数据库构造含 succeeded/failed 与重复历史请求的非空 0004 Batch，实际执行 `0005`；Integration 验证调用前 `calling`、Provider 成功后提交前崩溃、过期转 `unknown`、普通 Worker 不重试、显式人工确认恢复、429/5xx/网络持久化重试、并发 UTC 日预算、Usage=null/unknown 预算保留、关停 Abort 与 Lease renewal 故障。Health 单测证明 Flag=false 不检查 Embedding Schema/pgvector/Worker/Provider，而 Flag=true 缺少任一依赖时失败关闭。
 
 旧 CI、旧 Staging 和旧截图不能替代当前 Head 的证据。tracked 文档只记录稳定结论；当前 Head、Run、Artifact ID/Digest、tested merge SHA、Staging image 和 Build Time 等动态精确事实记录在 PR 描述与 Provenance Manifest。
 

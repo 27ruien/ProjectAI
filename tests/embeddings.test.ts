@@ -11,6 +11,7 @@ import {
 } from "../lib/ai/embeddings/errors";
 import { FakeEmbeddingProvider } from "../lib/ai/embeddings/fake-provider";
 import { EmbeddingGateway } from "../lib/ai/embeddings/gateway";
+import { embeddingReadiness } from "../lib/ai/embeddings/health";
 import type {
   EmbeddingProvider,
   EmbeddingProviderResult,
@@ -46,6 +47,7 @@ function config(overrides: Partial<EmbeddingRuntimeConfig> = {}): EmbeddingRunti
     batchMaxCharacters: 30_000,
     dailyJobLimit: 500,
     dailyTokenLimit: 5_000_000,
+    shutdownDrainMs: 25_000,
     ...overrides,
   };
 }
@@ -100,7 +102,6 @@ describe("embedding configuration and Gateway", () => {
     const valid = new EmbeddingGateway(
       config(),
       new FakeEmbeddingProvider(),
-      async () => undefined,
     );
     const result = await valid.embed(["first", "second"]);
     assert.equal(result.vectors.length, 2);
@@ -116,7 +117,6 @@ describe("embedding configuration and Gateway", () => {
       const gateway = new EmbeddingGateway(
         config(),
         new SequenceProvider([invalid]),
-        async () => undefined,
       );
       await assert.rejects(
         gateway.embed(["first", "second"]),
@@ -128,16 +128,21 @@ describe("embedding configuration and Gateway", () => {
     }
   });
 
-  it("retries only retryable failures and enforces the bounded aggregate input", async () => {
+  it("returns retryable failures to the durable job state machine and enforces the bounded aggregate input", async () => {
     const retrying = new SequenceProvider([
       new EmbeddingProviderError("RATE_LIMITED", true),
       new EmbeddingProviderError("SERVER_ERROR", true),
       providerResult(),
     ]);
-    const gateway = new EmbeddingGateway(config(), retrying, async () => undefined);
-    const result = await gateway.embed(["retryable"]);
-    assert.equal(retrying.calls, 3);
-    assert.equal(result.attemptCount, 3);
+    const gateway = new EmbeddingGateway(config(), retrying);
+    await assert.rejects(
+      gateway.embed(["retryable"]),
+      (error: unknown) =>
+        error instanceof EmbeddingPipelineError &&
+        error.code === "RATE_LIMITED" &&
+        error.retryable,
+    );
+    assert.equal(retrying.calls, 1);
 
     for (const code of ["BAD_REQUEST", "UNAUTHORIZED", "FORBIDDEN"] as const) {
       const provider = new SequenceProvider([
@@ -145,7 +150,7 @@ describe("embedding configuration and Gateway", () => {
         providerResult(),
       ]);
       await assert.rejects(
-        new EmbeddingGateway(config(), provider, async () => undefined).embed([
+        new EmbeddingGateway(config(), provider).embed([
           "non-retryable",
         ]),
       );
@@ -271,6 +276,57 @@ describe("Qwen embedding Adapter", () => {
       );
     }
   });
+
+  it("distinguishes a shutdown abort after dispatch from a safe pre-dispatch abort", async () => {
+    process.env.QWEN_API_KEY = "shutdown-test-secret";
+    const controller = new AbortController();
+    let dispatched = false;
+    const provider = new QwenEmbeddingProvider(
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      async (_url, init) => {
+        dispatched = true;
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+            { once: true },
+          );
+        });
+      },
+    );
+    const pending = provider.embed({
+      model: "text-embedding-v4",
+      dimensions: 1024,
+      inputs: ["fictional shutdown text"],
+      timeoutMs: 1_000,
+      signal: controller.signal,
+    });
+    while (!dispatched) await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort(new Error("SIGTERM"));
+    await assert.rejects(
+      pending,
+      (error: unknown) =>
+        error instanceof EmbeddingProviderError &&
+        error.code === "PROVIDER_RESULT_UNKNOWN" &&
+        !error.retryable,
+    );
+
+    const preDispatch = new AbortController();
+    preDispatch.abort(new Error("SIGTERM"));
+    await assert.rejects(
+      provider.embed({
+        model: "text-embedding-v4",
+        dimensions: 1024,
+        inputs: ["fictional pre-dispatch text"],
+        timeoutMs: 1_000,
+        signal: preDispatch.signal,
+      }),
+      (error: unknown) =>
+        error instanceof EmbeddingProviderError &&
+        error.code === "SHUTDOWN_ABORTED" &&
+        error.retryable,
+    );
+  });
 });
 
 describe("disabled Embedding Worker", () => {
@@ -283,6 +339,43 @@ describe("disabled Embedding Worker", () => {
       "utf8",
     );
     assert.match(heartbeat, / disabled\n$/);
+  });
+});
+
+describe("Embedding health gate", () => {
+  it("keeps Flag=false healthy without inspecting pre-0004 Embedding schema", async () => {
+    let inspections = 0;
+    const ready = await embeddingReadiness(
+      config({ enabled: false }),
+      false,
+      async () => {
+        inspections += 1;
+        throw new Error("pre-0004 schema must not be queried");
+      },
+    );
+    assert.equal(ready, false);
+    assert.equal(inspections, 0);
+  });
+
+  it("rejects Flag=true when pgvector or the dedicated Worker is not ready", async () => {
+    await assert.rejects(
+      embeddingReadiness(
+        config({
+          provider: "qwen",
+          qwenBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        }),
+        true,
+        async () => ({
+          pgvectorEnabled: false,
+          profileReady: true,
+          jobsSchemaReady: true,
+          batchesSchemaReady: true,
+          vectorsSchemaReady: true,
+          workerReady: false,
+        }),
+      ),
+      /dependencies are unavailable/,
+    );
   });
 });
 

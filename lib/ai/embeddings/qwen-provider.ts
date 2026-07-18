@@ -51,17 +51,33 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
   async embed(
     request: EmbeddingProviderRequest,
   ): Promise<EmbeddingProviderResult> {
+    if (request.signal?.aborted) {
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true);
+    }
     let apiKey: string;
     try {
       apiKey = await readQwenApiKey();
     } catch {
       throw new EmbeddingProviderError("SECRET_NOT_CONFIGURED", false);
     }
+    if (request.signal?.aborted) {
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true);
+    }
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), request.timeoutMs);
+    let abortKind: "timeout" | "shutdown" | null = null;
+    const timeout = setTimeout(() => {
+      abortKind = "timeout";
+      controller.abort();
+    }, request.timeoutMs);
+    const onShutdown = () => {
+      abortKind = "shutdown";
+      controller.abort();
+    };
+    request.signal?.addEventListener("abort", onShutdown, { once: true });
     const started = performance.now();
     let response: Response;
     try {
+      request.onRequestStarted?.();
       response = await this.fetchImplementation(`${this.baseUrl}/embeddings`, {
         method: "POST",
         headers: {
@@ -78,11 +94,15 @@ export class QwenEmbeddingProvider implements EmbeddingProvider {
       });
     } catch (error) {
       if (isAbortError(error)) {
+        if (abortKind === "shutdown") {
+          throw new EmbeddingProviderError("PROVIDER_RESULT_UNKNOWN", false);
+        }
         throw new EmbeddingProviderError("TIMEOUT", true);
       }
       throw new EmbeddingProviderError("NETWORK", true);
     } finally {
       clearTimeout(timeout);
+      request.signal?.removeEventListener("abort", onShutdown);
     }
     if (!response.ok) throw httpFailure(response.status);
 

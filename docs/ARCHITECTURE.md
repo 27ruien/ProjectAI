@@ -171,7 +171,11 @@ Job 只为同一精确项目中 Active/Current/Stored/Succeeded/Effective 的非
 - `projectai-minio-init` 使用 root credential 幂等创建私有 Bucket 和受 `projects/*` 限制的应用用户；应用只得到 scoped app credential。root/app credential 必须不同并只存在于 `root:root 600` 环境文件。
 - 两个 Worker 与 App 使用同一 immutable image、独立 command、心跳健康和优雅退出。Document Worker 只得到对象存储 scoped credential；Embedding Worker 只得到数据库与 Qwen Secret，不得到对象存储 credential。
 
-部署在 Migration 前同时停止 Staging App 与两个 Worker，创建 PostgreSQL custom dump 与 MinIO inventory/mirror；备份完成后才把 Staging PostgreSQL 切换到锁定的 pgvector 镜像并执行 `0004`。Migration 后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)` 和 Profile，再以 Flag=false 启动、Probe、分阶段启用、虚构 Smoke、B3-A 回归与清理。
+部署在 Migration 前同时停止 Staging App 与两个 Worker，创建 PostgreSQL custom dump 与 MinIO inventory/mirror；备份完成后把 Staging PostgreSQL 切换到锁定的 pgvector 镜像。新代码必须先以 `AI_EMBEDDING_ENABLED=false` 在旧 Schema 上健康运行，再执行 `0005_durable_embedding_calls.sql`，验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、Profile 与 durable Batch/Worker heartbeat Schema，之后才允许 Probe、分阶段启用、虚构 Smoke、B3-A 回归与清理。
+
+Embedding Provider 调用使用数据库先行状态机：Batch 依次为 `reserved → calling → succeeded/failed/unknown`，`(job_id, request_sha256)` 唯一。调用前事务同时校验 Job Lease、按 `ceil(sum(estimated_token_count) × 1.25)` 取得 UTC 日预算 advisory lock 并预留 Token，再提交 `calling`。只有成功结果、向量、Usage、Batch 与 Job 能在同一事务提交；`calling` 租约过期或请求发出后的关停统一写为 `PROVIDER_RESULT_UNKNOWN`，普通 Worker 不得重试。
+
+`unknown` 继续占用调用当日的预留预算。人工确认可能重复计费后，先运行 `npm run embeddings:retry-unknown -- --job=<id> --accept-possible-duplicate-charge` 查看 dry-run；只有再加 `--apply` 才会重新入队。该命令不输出正文、向量、Provider Payload 或 Secret。
 
 ## CI 与产品审查证据边界
 

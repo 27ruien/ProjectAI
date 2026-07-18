@@ -3,6 +3,8 @@ export type EmbeddingProviderRequest = {
   dimensions: number;
   inputs: string[];
   timeoutMs: number;
+  signal?: AbortSignal;
+  onRequestStarted?: () => void;
 };
 
 export type EmbeddingProviderResult = {

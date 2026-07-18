@@ -77,7 +77,7 @@ export const documentEmbeddingStatusEnum = pgEnum(
 
 export const documentEmbeddingBatchStatusEnum = pgEnum(
   "document_embedding_batch_status",
-  ["succeeded", "failed"],
+  ["reserved", "calling", "succeeded", "failed", "unknown"],
 );
 
 export const aiThreadStatusEnum = pgEnum("ai_thread_status", [

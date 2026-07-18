@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { EmbeddingProviderError } from "./errors";
 import type {
   EmbeddingProvider,
   EmbeddingProviderRequest,
@@ -24,6 +25,10 @@ export class FakeEmbeddingProvider implements EmbeddingProvider {
   async embed(
     request: EmbeddingProviderRequest,
   ): Promise<EmbeddingProviderResult> {
+    if (request.signal?.aborted) {
+      throw new EmbeddingProviderError("SHUTDOWN_ABORTED", true);
+    }
+    request.onRequestStarted?.();
     const inputTokens = request.inputs.reduce(
       (total, input) => total + Math.max(1, input.trim().split(/\s+/u).length),
       0,

@@ -46,7 +46,7 @@
 
 | ID | 描述 | 当前状态 | 稳定证据 | 关闭条件 |
 | --- | --- | --- | --- | --- |
-| V07-DATA-001 | `0004`、pgvector 0.8.1、`vector(1024)`、Profile/Job/Batch/Embedding 与复合约束 | 部分 | 空库 Migration、本地 PostgreSQL 17/pgvector 集成、错误维度/Hash/跨项目拒绝 | 当前 Head CI 与 Staging catalog 复核 |
+| V07-DATA-001 | `0004` + 非破坏性 `0005`、pgvector 0.8.1、`vector(1024)`、Profile/Job/Durable Batch/Embedding 与复合约束 | 部分 | 非空 0004→0005 Upgrade、本地 PostgreSQL 17/pgvector 集成、错误维度/Hash/跨项目拒绝 | 当前 Head CI 与 Staging catalog 复核 |
 | V07-GATEWAY-001 | `text-embedding-v4` Adapter、Batch≤10、数量/顺序/维度/有限值校验、Usage 与重试分类 | 部分 | Fake/Qwen 单元测试、Secret/Provider body 不泄露 | 当前 Head CI 与真实 Staging Probe |
 | V07-WORKER-001 | 专用 Worker、SKIP LOCKED、Lease/Heartbeat/Retry/Stale Recovery、旧 Worker 拒绝、部分失败收口 | 部分 | PostgreSQL 集成覆盖成功、并发、恢复、最大尝试与仅缺失 Chunk 重试 | 当前 Head CI 与 Staging Lease smoke |
 | V07-SCOPE-001 | 只处理 Active/Current/Stored/Succeeded/Effective，Profile/Hash 幂等和跨项目隔离 | 部分 | 归档/旧版本/needs_ocr/non-effective 排除、同 Hash 无重复 Batch、精确 Probe 项目范围 | 当前 Head CI 与 Staging 虚构双项目验证 |

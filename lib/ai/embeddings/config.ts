@@ -2,8 +2,9 @@ import { validateQwenBaseUrl } from "@/lib/ai/project-assistant/config";
 import { EMBEDDING_VECTOR_DIMENSIONS } from "@/lib/db/schema/document-embeddings";
 import { EmbeddingPipelineError } from "./errors";
 
-export const EMBEDDING_GATEWAY_VERSION = "1";
-export const EMBEDDING_WORKER_VERSION = "1";
+export const EMBEDDING_GATEWAY_VERSION = "2";
+export const EMBEDDING_WORKER_VERSION = "2";
+export const EMBEDDING_TOKEN_RESERVATION_MULTIPLIER = 1.25;
 export const EMBEDDING_PROFILE_ID = "qwen-text-embedding-cn-v1";
 export const EMBEDDING_PROVIDER = "qwen";
 export const EMBEDDING_MODEL = "text-embedding-v4";
@@ -29,6 +30,7 @@ export type EmbeddingRuntimeConfig = {
   batchMaxCharacters: number;
   dailyJobLimit: number;
   dailyTokenLimit: number;
+  shutdownDrainMs: number;
 };
 
 function invalidConfiguration(): never {
@@ -142,6 +144,12 @@ export function getEmbeddingRuntimeConfig(): EmbeddingRuntimeConfig {
       5_000_000,
       1,
       1_000_000_000,
+    ),
+    shutdownDrainMs: integerEnvironment(
+      "AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS",
+      25_000,
+      1_000,
+      40_000,
     ),
   };
 }

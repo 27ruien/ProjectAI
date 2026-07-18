@@ -36,6 +36,13 @@
       "when": 1784275467196,
       "tag": "0004_groovy_nightcrawler",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1784364564918,
+      "tag": "0005_durable_embedding_calls",
+      "breakpoints": true
     }
   ]
 }

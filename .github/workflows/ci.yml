@@ -250,6 +250,9 @@ jobs:
           echo "PostgreSQL readiness timed out." >&2
           exit 1
 
+      - name: Verify non-empty 0004 to 0005 upgrade
+        run: npm run embeddings:migration-upgrade
+
       - name: Apply committed migrations
         run: npm run db:migrate
 

@@ -14,15 +14,14 @@ import {
   type EmbeddingGateway,
 } from "./gateway";
 import {
-  assertDailyEmbeddingTokenBudget,
   claimEmbeddingJob,
   commitEmbeddingBatch,
   completeEmbeddingJob,
-  embeddingBatchRequestSha256,
-  hasSuccessfulEmbeddingBatch,
   prepareEmbeddingJob,
   recordEmbeddingFailure,
+  reserveEmbeddingBatch,
   renewEmbeddingLease,
+  writeEmbeddingWorkerHeartbeat,
   type EligibleEmbeddingChunk,
 } from "./jobs";
 
@@ -66,10 +65,13 @@ export async function processEmbeddingJob(input: {
   workerId: string;
   config: EmbeddingRuntimeConfig;
   gateway: EmbeddingGateway;
+  signal?: AbortSignal;
+  stopStartingBatchesSignal?: AbortSignal;
 }): Promise<void> {
   let activeBatch: EligibleEmbeddingChunk[] | undefined;
   let activeBatchStartedAt: number | null = null;
   let batchIndex = 0;
+  let activeBatchId: string | undefined;
   try {
     const prepared = await prepareEmbeddingJob({
       jobId: input.jobId,
@@ -78,33 +80,44 @@ export async function processEmbeddingJob(input: {
     if (!prepared) return;
     let offset = 0;
     while (offset < prepared.chunks.length) {
+      if (input.stopStartingBatchesSignal?.aborted) {
+        throw new EmbeddingPipelineError("SHUTDOWN_ABORTED", true);
+      }
+      if (input.signal?.aborted) {
+        throw new EmbeddingPipelineError("SHUTDOWN_ABORTED", true);
+      }
       activeBatch = nextBatch(prepared.chunks, offset, input.config);
       if (!activeBatch.length) {
         throw new EmbeddingPipelineError("INPUT_LIMIT_EXCEEDED", false);
       }
-      const requestSha256 = embeddingBatchRequestSha256(
-        prepared.job.embeddingProfileId,
-        activeBatch,
-      );
-      if (
-        !(await hasSuccessfulEmbeddingBatch({
-          jobId: prepared.job.id,
-          requestSha256,
-        }))
-      ) {
-        await assertDailyEmbeddingTokenBudget(input.config);
+      const reservation = await reserveEmbeddingBatch({
+        jobId: prepared.job.id,
+        workerId: input.workerId,
+        batchIndex,
+        chunks: activeBatch,
+        config: input.config,
+      });
+      if (reservation.action === "call") {
+        activeBatchId = reservation.batchId;
         activeBatchStartedAt = performance.now();
         const result = await input.gateway.embed(
           activeBatch.map((chunk) => chunk.content),
+          { signal: input.signal },
         );
-        await commitEmbeddingBatch({
-          jobId: prepared.job.id,
-          workerId: input.workerId,
-          batchIndex,
-          chunks: activeBatch,
-          result,
-        });
+        try {
+          await commitEmbeddingBatch({
+            jobId: prepared.job.id,
+            workerId: input.workerId,
+            batchId: reservation.batchId,
+            batchIndex,
+            chunks: activeBatch,
+            result,
+          });
+        } catch {
+          throw new EmbeddingPipelineError("PROVIDER_RESULT_UNKNOWN", false);
+        }
         activeBatchStartedAt = null;
+        activeBatchId = undefined;
       }
       offset += activeBatch.length;
       batchIndex += 1;
@@ -120,6 +133,7 @@ export async function processEmbeddingJob(input: {
         jobId: input.jobId,
         workerId: input.workerId,
         error,
+        batchId: activeBatchId,
         batchIndex,
         chunks: activeBatch,
         latencyMs:
@@ -146,17 +160,92 @@ export type EmbeddingWorkerOptions = {
   config?: EmbeddingRuntimeConfig;
   gateway?: EmbeddingGateway;
   signal?: AbortSignal;
+  renewLease?: typeof renewEmbeddingLease;
 };
 
 async function waitForPoll(config: EmbeddingRuntimeConfig, signal?: AbortSignal) {
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, config.pollMs);
+    const finish = () => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+    const timer = setTimeout(finish, config.pollMs);
     const onAbort = () => {
       clearTimeout(timer);
-      resolve();
+      finish();
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+function drainingAbortController(
+  signal: AbortSignal | undefined,
+  drainMs: number,
+): {
+  controller: AbortController;
+  detach: () => void;
+} {
+  const controller = new AbortController();
+  let drainTimer: NodeJS.Timeout | undefined;
+  const beginDrain = () => {
+    if (drainTimer || controller.signal.aborted) return;
+    drainTimer = setTimeout(() => controller.abort(signal?.reason), drainMs);
+  };
+  if (signal?.aborted) beginDrain();
+  else signal?.addEventListener("abort", beginDrain, { once: true });
+  return {
+    controller,
+    detach: () => {
+      signal?.removeEventListener("abort", beginDrain);
+      if (drainTimer) clearTimeout(drainTimer);
+    },
+  };
+}
+
+async function maintainActiveLease(input: {
+  jobId: string;
+  workerId: string;
+  config: EmbeddingRuntimeConfig;
+  controller: AbortController;
+  renewLease: typeof renewEmbeddingLease;
+}): Promise<void> {
+  const intervalMs = Math.max(
+    1_000,
+    Math.floor((input.config.leaseSeconds * 1_000) / 3),
+  );
+  while (!input.controller.signal.aborted) {
+    await waitForPoll({ ...input.config, pollMs: intervalMs }, input.controller.signal);
+    if (input.controller.signal.aborted) return;
+    try {
+      const renewed = await input.renewLease(
+        input.jobId,
+        input.workerId,
+        input.config,
+      );
+      if (!renewed) {
+        input.controller.abort(
+          new EmbeddingPipelineError("WORKER_LEASE_LOST", false),
+        );
+        return;
+      }
+      await touchHeartbeat("enabled");
+      await writeEmbeddingWorkerHeartbeat({
+        workerId: input.workerId,
+        profileId: input.config.profileId,
+        workerVersion: EMBEDDING_WORKER_VERSION,
+        state: "running",
+      });
+    } catch (error) {
+      input.controller.abort(controlledLeaseFailure(error));
+      return;
+    }
+  }
+}
+
+function controlledLeaseFailure(error: unknown): EmbeddingPipelineError {
+  return error instanceof EmbeddingPipelineError
+    ? error
+    : new EmbeddingPipelineError("WORKER_LEASE_LOST", false);
 }
 
 export async function runEmbeddingWorker(
@@ -166,6 +255,14 @@ export async function runEmbeddingWorker(
   const workerId = options.workerId ?? `embedding-worker-${randomUUID()}`;
   let gateway = options.gateway;
   await touchHeartbeat(config.enabled ? "enabled" : "disabled");
+  if (config.enabled) {
+    await writeEmbeddingWorkerHeartbeat({
+      workerId,
+      profileId: config.profileId,
+      workerVersion: EMBEDDING_WORKER_VERSION,
+      state: "running",
+    });
+  }
   do {
     if (options.signal?.aborted) break;
     if (!config.enabled) {
@@ -177,30 +274,56 @@ export async function runEmbeddingWorker(
     gateway ??= createEmbeddingGateway(config);
     const job = await claimEmbeddingJob(workerId, config);
     await touchHeartbeat("enabled");
+    await writeEmbeddingWorkerHeartbeat({
+      workerId,
+      profileId: config.profileId,
+      workerVersion: EMBEDDING_WORKER_VERSION,
+      state: "running",
+    });
     if (!job) {
       if (options.once) break;
       await waitForPoll(config, options.signal);
       continue;
     }
-    const heartbeat = setInterval(() => {
-      void renewEmbeddingLease(job.id, workerId, config).then((renewed) => {
-        if (!renewed) clearInterval(heartbeat);
-        return touchHeartbeat("enabled");
-      });
-    }, Math.max(1_000, Math.floor((config.leaseSeconds * 1_000) / 3)));
-    heartbeat.unref();
+    const linked = drainingAbortController(
+      options.signal,
+      config.shutdownDrainMs,
+    );
+    const heartbeat = maintainActiveLease({
+      jobId: job.id,
+      workerId,
+      config,
+      controller: linked.controller,
+      renewLease: options.renewLease ?? renewEmbeddingLease,
+    });
     try {
       await processEmbeddingJob({
         jobId: job.id,
         workerId,
         config,
         gateway,
+        signal: linked.controller.signal,
+        stopStartingBatchesSignal: options.signal,
       });
     } finally {
-      clearInterval(heartbeat);
+      linked.controller.abort();
+      await heartbeat;
+      linked.detach();
       await touchHeartbeat("enabled");
     }
   } while (!options.once);
+  if (config.enabled && options.signal?.aborted) {
+    try {
+      await writeEmbeddingWorkerHeartbeat({
+        workerId,
+        profileId: config.profileId,
+        workerVersion: EMBEDDING_WORKER_VERSION,
+        state: "draining",
+      });
+    } catch {
+      // The durable calling state still lets the next worker reconcile safely.
+    }
+  }
 }
 
 export async function countRunningEmbeddingJobs(): Promise<number> {

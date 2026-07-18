@@ -31,6 +31,7 @@ x-embedding-environment: &embedding-environment
   AI_EMBEDDING_BATCH_MAX_CHARACTERS: ${AI_EMBEDDING_BATCH_MAX_CHARACTERS:-30000}
   AI_EMBEDDING_DAILY_JOB_LIMIT: ${AI_EMBEDDING_DAILY_JOB_LIMIT:-500}
   AI_EMBEDDING_DAILY_TOKEN_LIMIT: ${AI_EMBEDDING_DAILY_TOKEN_LIMIT:-5000000}
+  AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS: ${AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS:-25000}
 
 services:
   projectai-postgres:
@@ -514,7 +515,7 @@ services:
     container_name: project-ai-os-staging-embedding-worker
     restart: unless-stopped
     init: true
-    stop_grace_period: 30s
+    stop_grace_period: 45s
     cpus: 1.0
     mem_limit: 768m
     pids_limit: 256

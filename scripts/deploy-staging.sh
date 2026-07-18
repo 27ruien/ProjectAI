@@ -262,6 +262,7 @@ AI_EMBEDDING_BATCH_SIZE=10
 AI_EMBEDDING_BATCH_MAX_CHARACTERS=30000
 AI_EMBEDDING_DAILY_JOB_LIMIT=500
 AI_EMBEDDING_DAILY_TOKEN_LIMIT=5000000
+AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS=25000
 EMBEDDING_ENV
 sudo install -m 0600 -o root -g root "$embedding_env_temp" "$embedding_env_file"
 sudo rm -f "$embedding_env_temp"
@@ -277,6 +278,7 @@ sudo awk -F= '
     if (count["AI_EMBEDDING_PROFILE_ID"] != 1 || values["AI_EMBEDDING_PROFILE_ID"] != "qwen-text-embedding-cn-v1") exit 1
     if (count["AI_EMBEDDING_DIMENSIONS"] != 1 || values["AI_EMBEDDING_DIMENSIONS"] != "1024") exit 1
     if (count["AI_EMBEDDING_BATCH_SIZE"] != 1 || values["AI_EMBEDDING_BATCH_SIZE"] != "10") exit 1
+    if (count["AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS"] != 1 || values["AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS"] != "25000") exit 1
   }
 ' "$embedding_env_file"
 sudo test -f "$qwen_secret_file"
@@ -788,7 +790,7 @@ if [[ -n "$previous_image" ]]; then
     --project-name "$compose_project"
     --file "$compose_file"
   )
-  "${rollback_compose[@]}" stop --timeout 30 projectai-embedding-worker projectai-document-worker >/dev/null 2>&1 || true
+  "${rollback_compose[@]}" stop --timeout 45 projectai-embedding-worker projectai-document-worker >/dev/null 2>&1 || true
   "${rollback_compose[@]}" up --detach --no-deps --no-build --pull never projectai-staging
 
   restored=0
@@ -1244,7 +1246,7 @@ for writer_container in "$container_name" "$worker_container_name" "$embedding_w
 done
 if [[ "$writers_running" == "1" ]]; then
   printf 'Stopping the Staging application and both Workers briefly for a cross-store snapshot.\n'
-  "${compose[@]}" stop --timeout 30 projectai-embedding-worker projectai-document-worker projectai-staging
+  "${compose[@]}" stop --timeout 45 projectai-embedding-worker projectai-document-worker projectai-staging
 fi
 
 backup_timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
@@ -1568,6 +1570,24 @@ done
 }
 [[ "$(sudo docker inspect --format '{{.Image}}' "$db_container_name")" == "$postgres_image_id" ]]
 
+printf 'Starting the new Staging code with AI_EMBEDDING_ENABLED=false before Migration.\n'
+"${compose[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+pre_migration_app_ready=0
+for _ in $(seq 1 60); do
+  pre_migration_health="$(curl --fail --silent --show-error --max-time 5 "${origin}${base_path}/api/health" || true)"
+  if grep -q '"status":"ok"' <<<"$pre_migration_health" \
+    && grep -q '"aiEmbeddingEnabled":false' <<<"$pre_migration_health" \
+    && grep -q '"pgvectorReady":false' <<<"$pre_migration_health"; then
+    pre_migration_app_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$pre_migration_app_ready" == "1" ]] || {
+  printf 'Flag=false pre-Migration Staging application readiness timed out.\n' >&2
+  exit 1
+}
+
 printf 'Applying committed PostgreSQL migrations.\n'
 "${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";
@@ -1628,6 +1648,26 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
               and dimensions = 1024 and distance_metric = $8
               and profile_version = 1 and enabled = true
           ) as profile_count
+          ,(
+            select array_agg(e.enumlabel order by e.enumsortorder)
+            from pg_enum e
+            inner join pg_type t on t.oid = e.enumtypid
+            where t.typname = $9
+          ) as batch_statuses
+          ,(
+            select count(*)::int
+            from information_schema.columns
+            where table_schema = 'public' and table_name = $10
+              and column_name = any($11::text[])
+          ) as durable_column_count
+          ,to_regclass($12) is not null as worker_heartbeat_ready
+          ,(
+            select count(*)::int
+            from pg_indexes
+            where schemaname = 'public' and tablename = $10
+              and indexname = $13
+              and indexdef like '%(job_id, request_sha256)%'
+          ) as request_unique_count
       `, [
         "vector",
         "document_chunk_embeddings",
@@ -1637,9 +1677,22 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
         "text-embedding-v4",
         "cn-beijing",
         "cosine",
+        "document_embedding_batch_status",
+        "document_embedding_batches",
+        ["leased_by", "lease_expires_at", "started_at", "completed_at", "provider_attempt_count", "reserved_input_tokens"],
+        "embedding_worker_heartbeats",
+        "document_embedding_batches_request_uidx",
       ]);
       const row = result.rows[0];
-      if (row?.vector_version !== "0.8.1" || row?.vector_type !== "vector(1024)" || row?.profile_count !== 1) {
+      if (
+        row?.vector_version !== "0.8.1" ||
+        row?.vector_type !== "vector(1024)" ||
+        row?.profile_count !== 1 ||
+        JSON.stringify(row?.batch_statuses) !== JSON.stringify(["reserved", "calling", "succeeded", "failed", "unknown"]) ||
+        row?.durable_column_count !== 6 ||
+        row?.worker_heartbeat_ready !== true ||
+        row?.request_unique_count !== 1
+      ) {
         throw new Error("pgvector or Embedding Profile verification failed");
       }
     } finally {
@@ -1753,8 +1806,8 @@ grep -q '"aiAssistantEnabled":false' <<<"$initial_ai_health"
 grep -q '"aiProviderConfigured":true' <<<"$initial_ai_health"
 grep -q '"aiGatewayVersion":"1"' <<<"$initial_ai_health"
 grep -q '"aiEmbeddingEnabled":false' <<<"$initial_ai_health"
-grep -q '"embeddingGatewayVersion":"1"' <<<"$initial_ai_health"
-grep -q '"pgvectorEnabled":true' <<<"$initial_ai_health"
+grep -q '"embeddingGatewayVersion":"2"' <<<"$initial_ai_health"
+grep -q '"pgvectorReady":false' <<<"$initial_ai_health"
 
 health_headers="$(
   curl --fail --silent --show-error --max-time 10 \
@@ -1765,9 +1818,9 @@ grep -qi "^x-projectai-app-version: ${app_version}$" <<<"$health_headers"
 grep -qi '^x-projectai-worker-version: 1$' <<<"$health_headers"
 grep -qi '^x-projectai-parser-version: 1$' <<<"$health_headers"
 grep -qi '^x-projectai-chunker-version: 1$' <<<"$health_headers"
-grep -qi '^x-projectai-embedding-model: text-embedding-v4$' <<<"$health_headers"
-grep -qi '^x-projectai-embedding-dimensions: 1024$' <<<"$health_headers"
-grep -qi '^x-projectai-pgvector-version: 0.8.1$' <<<"$health_headers"
+! grep -qi '^x-projectai-embedding-model:' <<<"$health_headers"
+! grep -qi '^x-projectai-embedding-dimensions:' <<<"$health_headers"
+! grep -qi '^x-projectai-pgvector-version:' <<<"$health_headers"
 
 [[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$app_image_id" ]]
@@ -1911,7 +1964,7 @@ for _ in $(seq 1 60); do
     embedding_health_body="$(curl --fail --silent --show-error --max-time 5 "${origin}${base_path}/api/health" || true)"
     if grep -q '"aiAssistantEnabled":true' <<<"$embedding_health_body" \
       && grep -q '"aiEmbeddingEnabled":true' <<<"$embedding_health_body" \
-      && grep -q '"pgvectorEnabled":true' <<<"$embedding_health_body"; then
+      && grep -q '"pgvectorReady":true' <<<"$embedding_health_body"; then
       embedding_enabled_ready=1
       break
     fi
@@ -1934,7 +1987,7 @@ done
 embedding_smoke_run_id="$(sudo docker exec "$container_name" node -e 'process.stdout.write(crypto.randomUUID())')"
 [[ "$embedding_smoke_run_id" =~ ^[0-9a-f-]{36}$ ]]
 printf 'Stopping the Embedding Worker to prepare deterministic incremental and Lease fixtures.\n'
-"${compose[@]}" stop --timeout 30 projectai-embedding-worker
+"${compose[@]}" stop --timeout 45 projectai-embedding-worker
 "${compose_run[@]}" \
   --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
@@ -1970,6 +2023,41 @@ printf 'Verifying real 1024-dimensional vectors, incremental generation, safe Ba
   --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
   projectai-document-smoke npm run embeddings:smoke:verify
 
+printf 'Stopping the dedicated Embedding Worker for deterministic durable-call safety validation.\n'
+"${compose[@]}" stop --timeout 45 projectai-embedding-worker
+
+printf 'Verifying the real Provider success-to-commit crash window closes as unknown without an automatic second call.\n'
+"${compose_run[@]}" \
+  --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
+  projectai-embedding-worker npm run embeddings:safety-smoke -- --crash-window
+
+printf 'Verifying a real SIGTERM during an active Provider request drains to succeeded or unknown.\n'
+"${compose_run[@]}" \
+  --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
+  projectai-embedding-worker npm run embeddings:safety-smoke -- --shutdown
+
+printf 'Verifying concurrent UTC Token reservation and Usage-null accounting without a Provider call.\n'
+"${compose_run[@]}" \
+  --env "EMBEDDING_SMOKE_RUN_ID=$embedding_smoke_run_id" \
+  projectai-migrate npm run embeddings:safety-smoke -- --budget
+
+printf 'Restarting the dedicated Embedding Worker after durable-call safety validation.\n'
+"${compose[@]}" up --detach --no-build --pull never projectai-embedding-worker
+embedding_safety_worker_ready=0
+for _ in $(seq 1 60); do
+  embedding_worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$embedding_worker_container_name")"
+  if [[ "$embedding_worker_health" == "healthy" ]]; then
+    embedding_safety_worker_ready=1
+    break
+  fi
+  if [[ "$embedding_worker_health" == "unhealthy" || "$embedding_worker_health" == "exited" || "$embedding_worker_health" == "dead" ]]; then
+    printf 'Staging Embedding Worker failed after durable-call safety validation: %s\n' "$embedding_worker_health" >&2
+    exit 1
+  fi
+  sleep 2
+done
+[[ "$embedding_safety_worker_ready" == "1" ]]
+
 printf 'Waiting for one protected login rate-limit window before the post-Embedding B3-A regression.\n'
 for _ in $(seq 1 13); do
   sleep 5
@@ -1989,11 +2077,12 @@ printf 'Re-running B3-A grounded Qwen regression while Embedding remains enabled
       const result = await client.query(`
         select
           (select count(*)::int from document_embedding_jobs where status in ($1, $2)) as active_jobs,
+          (select count(*)::int from document_embedding_batches where status in ('reserved', 'calling', 'unknown')) as active_batches,
           (select count(*)::int from document_chunk_embeddings e
              inner join document_chunks c on c.id = e.chunk_id
              where e.status = $3 and c.is_effective = false) as invalid_scope
       `, ["pending", "running", "current"]);
-      if (result.rows[0]?.active_jobs !== 0 || result.rows[0]?.invalid_scope !== 0) {
+      if (result.rows[0]?.active_jobs !== 0 || result.rows[0]?.active_batches !== 0 || result.rows[0]?.invalid_scope !== 0) {
         throw new Error("Embedding cleanup or effective-state verification failed");
       }
     } finally {
@@ -2086,9 +2175,10 @@ printf 'Rechecking storage consistency after Lease verification cleanup.\n'
       const result = await client.query(`
         select
           (select count(*)::int from ai_executions where status in ($1, $2, $3, $4)) as ai_count,
-          (select count(*)::int from document_embedding_jobs where status in ($5, $6)) as embedding_count
+          (select count(*)::int from document_embedding_jobs where status in ($5, $6)) as embedding_count,
+          (select count(*)::int from document_embedding_batches where status in ('reserved', 'calling', 'unknown')) as embedding_batch_count
       `, ["reserved", "retrieving", "calling_provider", "validating", "pending", "running"]);
-      if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0) {
+      if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0 || result.rows[0]?.embedding_batch_count !== 0) {
         throw new Error("Staging retains a running AI Execution or Embedding Job");
       }
     } finally {

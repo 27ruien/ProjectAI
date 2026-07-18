@@ -218,17 +218,29 @@ export const documentEmbeddingBatch = pgTable(
     requestSha256: varchar("request_sha256", { length: 64 }).notNull(),
     batchIndex: integer("batch_index").notNull(),
     attemptCount: integer("attempt_count").notNull(),
+    providerAttemptCount: integer("provider_attempt_count").notNull().default(0),
     status: documentEmbeddingBatchStatusEnum("status").notNull(),
     model: varchar("model", { length: 120 }).notNull(),
     dimensions: integer("dimensions").notNull(),
     chunkCount: integer("chunk_count").notNull(),
+    reservedInputTokens: integer("reserved_input_tokens").notNull().default(0),
     inputTokenCount: integer("input_token_count"),
     totalTokenCount: integer("total_token_count"),
     costMicroCny: integer("cost_micro_cny"),
     latencyMs: integer("latency_ms").notNull(),
     providerRequestId: varchar("provider_request_id", { length: 240 }),
     failureCode: varchar("failure_code", { length: 80 }),
+    leasedBy: varchar("leased_by", { length: 128 }),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },
@@ -236,7 +248,6 @@ export const documentEmbeddingBatch = pgTable(
     uniqueIndex("document_embedding_batches_request_uidx").on(
       table.jobId,
       table.requestSha256,
-      table.attemptCount,
     ),
     index("document_embedding_batches_created_idx").on(table.createdAt),
     foreignKey({
@@ -260,20 +271,88 @@ export const documentEmbeddingBatch = pgTable(
       ${table.requestSha256} ~ '^[0-9a-f]{64}$'
       and ${table.batchIndex} >= 0
       and ${table.attemptCount} > 0
+      and ${table.providerAttemptCount} >= 0
       and ${table.dimensions} = 1024
       and ${table.chunkCount} between 1 and 10
+      and ${table.reservedInputTokens} >= 0
       and (${table.inputTokenCount} is null or ${table.inputTokenCount} >= 0)
       and (${table.totalTokenCount} is null or ${table.totalTokenCount} >= 0)
       and (${table.costMicroCny} is null or ${table.costMicroCny} >= 0)
       and ${table.latencyMs} >= 0
     `),
     check("document_embedding_batches_status_check", sql`
-      (${table.status} = 'succeeded' and ${table.failureCode} is null)
+      (
+        ${table.status} = 'reserved'
+        and ${table.failureCode} is null
+        and ${table.leasedBy} is not null
+        and ${table.leaseExpiresAt} is not null
+        and ${table.startedAt} is null
+        and ${table.completedAt} is null
+      )
+      or (
+        ${table.status} = 'calling'
+        and ${table.failureCode} is null
+        and ${table.leasedBy} is not null
+        and ${table.leaseExpiresAt} is not null
+        and ${table.startedAt} is not null
+        and ${table.completedAt} is null
+      )
+      or (
+        ${table.status} = 'succeeded'
+        and ${table.failureCode} is null
+        and ${table.leasedBy} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.startedAt} is not null
+        and ${table.completedAt} is not null
+      )
       or (
         ${table.status} = 'failed'
         and ${table.failureCode} is not null
         and length(btrim(${table.failureCode})) > 0
+        and ${table.leasedBy} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.completedAt} is not null
       )
+      or (
+        ${table.status} = 'unknown'
+        and ${table.failureCode} = 'PROVIDER_RESULT_UNKNOWN'
+        and ${table.leasedBy} is null
+        and ${table.leaseExpiresAt} is null
+        and ${table.startedAt} is not null
+        and ${table.completedAt} is not null
+      )
+    `),
+  ],
+);
+
+export const embeddingWorkerHeartbeat = pgTable(
+  "embedding_worker_heartbeats",
+  {
+    workerId: varchar("worker_id", { length: 128 }).primaryKey(),
+    embeddingProfileId: text("embedding_profile_id")
+      .notNull()
+      .references(() => aiEmbeddingProfile.id, { onDelete: "cascade" }),
+    workerVersion: varchar("worker_version", { length: 32 }).notNull(),
+    state: varchar("state", { length: 24 }).notNull(),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("embedding_worker_heartbeats_health_idx").on(
+      table.embeddingProfileId,
+      table.state,
+      table.heartbeatAt,
+    ),
+    check("embedding_worker_heartbeats_state_check", sql`
+      ${table.state} in ('running', 'draining')
+      and length(btrim(${table.workerVersion})) > 0
     `),
   ],
 );
@@ -366,3 +445,4 @@ export type AiEmbeddingProfileRecord = typeof aiEmbeddingProfile.$inferSelect;
 export type DocumentEmbeddingJobRecord = typeof documentEmbeddingJob.$inferSelect;
 export type DocumentEmbeddingBatchRecord = typeof documentEmbeddingBatch.$inferSelect;
 export type DocumentChunkEmbeddingRecord = typeof documentChunkEmbedding.$inferSelect;
+export type EmbeddingWorkerHeartbeatRecord = typeof embeddingWorkerHeartbeat.$inferSelect;

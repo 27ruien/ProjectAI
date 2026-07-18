@@ -7,6 +7,7 @@ import {
   documentChunkEmbedding,
   documentEmbeddingBatch,
   documentEmbeddingJob,
+  embeddingWorkerHeartbeat,
   type DocumentEmbeddingJobRecord,
 } from "@/lib/db/schema";
 import {
@@ -15,6 +16,7 @@ import {
   EMBEDDING_PROFILE_VERSION,
   EMBEDDING_PROVIDER,
   EMBEDDING_REGION,
+  EMBEDDING_TOKEN_RESERVATION_MULTIPLIER,
   type EmbeddingRuntimeConfig,
   getEmbeddingRuntimeConfig,
 } from "./config";
@@ -30,6 +32,7 @@ export type EligibleEmbeddingChunk = {
   content: string;
   contentSha256: string;
   chunkIndex: number;
+  estimatedTokenCount: number;
 };
 
 type EligibilityCountRow = {
@@ -249,9 +252,9 @@ export async function ensureEmbeddingJob(input: {
   return created;
 }
 
-export async function failExhaustedEmbeddingJobs(
-  db: DatabaseExecutor = getDb(),
-): Promise<number> {
+export async function failExhaustedEmbeddingJobs(): Promise<number> {
+  await reconcileStaleEmbeddingCalls();
+  const db = getDb();
   const exhausted = await db.execute<{
     id: string;
     project_id: string;
@@ -370,23 +373,80 @@ export async function renewEmbeddingLease(
   workerId: string,
   config: EmbeddingRuntimeConfig = getEmbeddingRuntimeConfig(),
 ): Promise<boolean> {
-  const renewed = await getDb()
-    .update(documentEmbeddingJob)
-    .set({
-      leaseExpiresAt: sql`now() + (${config.leaseSeconds} * interval '1 second')`,
-      heartbeatAt: sql`now()`,
-      updatedAt: sql`now()`,
+  return getDb().transaction(async (tx) => {
+    const renewed = await tx
+      .update(documentEmbeddingJob)
+      .set({
+        leaseExpiresAt: sql`now() + (${config.leaseSeconds} * interval '1 second')`,
+        heartbeatAt: sql`now()`,
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(documentEmbeddingJob.id, jobId),
+          eq(documentEmbeddingJob.status, "running"),
+          eq(documentEmbeddingJob.leasedBy, workerId),
+          sql`${documentEmbeddingJob.leaseExpiresAt} > now()`,
+        ),
+      )
+      .returning({ id: documentEmbeddingJob.id });
+    if (renewed.length !== 1) return false;
+    const renewedBatches = await tx
+      .update(documentEmbeddingBatch)
+      .set({
+        leaseExpiresAt: sql`now() + (${config.leaseSeconds} * interval '1 second')`,
+        updatedAt: sql`now()`,
+      })
+      .where(
+        and(
+          eq(documentEmbeddingBatch.jobId, jobId),
+          eq(documentEmbeddingBatch.status, "calling"),
+          eq(documentEmbeddingBatch.leasedBy, workerId),
+          sql`${documentEmbeddingBatch.leaseExpiresAt} > now()`,
+        ),
+      )
+      .returning({ id: documentEmbeddingBatch.id });
+    const [activeBatch] = await tx
+      .select({ id: documentEmbeddingBatch.id })
+      .from(documentEmbeddingBatch)
+      .where(
+        and(
+          eq(documentEmbeddingBatch.jobId, jobId),
+          eq(documentEmbeddingBatch.status, "calling"),
+        ),
+      )
+      .limit(1);
+    if (activeBatch && renewedBatches.length !== 1) {
+      throw new EmbeddingPipelineError("WORKER_LEASE_LOST", false);
+    }
+    return true;
+  });
+}
+
+export async function writeEmbeddingWorkerHeartbeat(input: {
+  workerId: string;
+  profileId: string;
+  workerVersion: string;
+  state: "running" | "draining";
+}): Promise<void> {
+  await getDb()
+    .insert(embeddingWorkerHeartbeat)
+    .values({
+      workerId: input.workerId,
+      embeddingProfileId: input.profileId,
+      workerVersion: input.workerVersion,
+      state: input.state,
     })
-    .where(
-      and(
-        eq(documentEmbeddingJob.id, jobId),
-        eq(documentEmbeddingJob.status, "running"),
-        eq(documentEmbeddingJob.leasedBy, workerId),
-        sql`${documentEmbeddingJob.leaseExpiresAt} > now()`,
-      ),
-    )
-    .returning({ id: documentEmbeddingJob.id });
-  return renewed.length === 1;
+    .onConflictDoUpdate({
+      target: embeddingWorkerHeartbeat.workerId,
+      set: {
+        embeddingProfileId: input.profileId,
+        workerVersion: input.workerVersion,
+        state: input.state,
+        heartbeatAt: sql`now()`,
+        updatedAt: sql`now()`,
+      },
+    });
 }
 
 export async function prepareEmbeddingJob(input: {
@@ -483,8 +543,10 @@ export async function prepareEmbeddingJob(input: {
       content: string;
       content_sha256: string;
       chunk_index: number;
+      estimated_token_count: number;
     }>(sql`
-      select c.id, c.content, c.content_sha256, c.chunk_index
+      select c.id, c.content, c.content_sha256, c.chunk_index,
+        c.estimated_token_count
       from document_chunks c
       inner join document_ingestion_jobs i
         on i.id = c.ingestion_job_id
@@ -532,6 +594,7 @@ export async function prepareEmbeddingJob(input: {
         content: row.content,
         contentSha256: row.content_sha256,
         chunkIndex: Number(row.chunk_index),
+        estimatedTokenCount: Number(row.estimated_token_count),
       })),
     };
   });
@@ -539,16 +602,64 @@ export async function prepareEmbeddingJob(input: {
 
 export async function assertDailyEmbeddingTokenBudget(
   config: EmbeddingRuntimeConfig,
+  requestedInputTokens = 1,
 ): Promise<void> {
-  const usage = await getDb().execute<{ input_tokens: number | string }>(sql`
-    select coalesce(sum(input_token_count), 0) as input_tokens
-    from document_embedding_batches
-    where status = 'succeeded'
-      and created_at >= now() - interval '1 day'
+  await getDb().transaction(async (tx) => {
+    await lockDailyEmbeddingTokenBudget(tx);
+    const used = await dailyEmbeddingTokenBudgetUsed(tx);
+    if (used + requestedInputTokens > config.dailyTokenLimit) {
+      throw new EmbeddingPipelineError("DAILY_TOKEN_LIMIT_REACHED", false);
+    }
+  });
+}
+
+async function lockDailyEmbeddingTokenBudget(db: DatabaseExecutor): Promise<void> {
+  await db.execute(sql`
+    select pg_advisory_xact_lock(
+      hashtextextended(
+        'embedding-daily-token-budget:' ||
+        to_char(now() at time zone 'UTC', 'YYYY-MM-DD'),
+        0
+      )
+    )
   `);
-  if (Number(usage.rows[0]?.input_tokens ?? 0) >= config.dailyTokenLimit) {
-    throw new EmbeddingPipelineError("DAILY_TOKEN_LIMIT_REACHED", false);
-  }
+}
+
+async function dailyEmbeddingTokenBudgetUsed(
+  db: DatabaseExecutor,
+  excludedBatchId?: string,
+): Promise<number> {
+  const usage = await db.execute<{ input_tokens: number | string }>(sql`
+    select coalesce(sum(
+      case
+        when status = 'succeeded'
+          then coalesce(input_token_count, reserved_input_tokens)
+        when status in ('reserved', 'calling', 'unknown')
+          then reserved_input_tokens
+        else 0
+      end
+    ), 0) as input_tokens
+    from document_embedding_batches
+    where started_at >= (
+      date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+    )
+      and started_at < (
+        date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+        + interval '1 day'
+      )
+      and (${excludedBatchId ?? null}::text is null or id <> ${excludedBatchId ?? null})
+  `);
+  return Number(usage.rows[0]?.input_tokens ?? 0);
+}
+
+export function embeddingBatchReservedInputTokens(
+  chunks: EligibleEmbeddingChunk[],
+): number {
+  const estimated = chunks.reduce(
+    (total, chunk) => total + chunk.estimatedTokenCount,
+    0,
+  );
+  return Math.ceil(estimated * EMBEDDING_TOKEN_RESERVATION_MULTIPLIER);
 }
 
 export function embeddingBatchRequestSha256(
@@ -580,9 +691,144 @@ export async function hasSuccessfulEmbeddingBatch(input: {
   return Boolean(batch);
 }
 
+export type EmbeddingBatchReservation =
+  | {
+      action: "call";
+      batchId: string;
+      requestSha256: string;
+      reservedInputTokens: number;
+    }
+  | {
+      action: "skip";
+      batchId: string;
+      requestSha256: string;
+    };
+
+export async function reserveEmbeddingBatch(input: {
+  jobId: string;
+  workerId: string;
+  batchIndex: number;
+  chunks: EligibleEmbeddingChunk[];
+  config: EmbeddingRuntimeConfig;
+}): Promise<EmbeddingBatchReservation> {
+  return getDb().transaction(async (tx) => {
+    const job = await findEmbeddingJob(input.jobId, tx, { lockForUpdate: true });
+    if (!hasValidLease(job, input.workerId)) {
+      throw new EmbeddingPipelineError("WORKER_LEASE_LOST", false);
+    }
+    const requestSha256 = embeddingBatchRequestSha256(
+      job.embeddingProfileId,
+      input.chunks,
+    );
+    const [existing] = await tx
+      .select()
+      .from(documentEmbeddingBatch)
+      .where(
+        and(
+          eq(documentEmbeddingBatch.jobId, job.id),
+          eq(documentEmbeddingBatch.requestSha256, requestSha256),
+        ),
+      )
+      .limit(1)
+      .for("update", { of: documentEmbeddingBatch });
+    if (existing?.status === "succeeded") {
+      return { action: "skip", batchId: existing.id, requestSha256 };
+    }
+    if (existing?.status === "unknown" || existing?.status === "calling") {
+      throw new EmbeddingPipelineError("PROVIDER_RESULT_UNKNOWN", false);
+    }
+
+    const reservedInputTokens = embeddingBatchReservedInputTokens(input.chunks);
+    await lockDailyEmbeddingTokenBudget(tx);
+    const used = await dailyEmbeddingTokenBudgetUsed(tx, existing?.id);
+    if (used + reservedInputTokens > input.config.dailyTokenLimit) {
+      throw new EmbeddingPipelineError("DAILY_TOKEN_LIMIT_REACHED", false);
+    }
+
+    let batchId = existing?.id;
+    if (existing) {
+      await tx
+        .update(documentEmbeddingBatch)
+        .set({
+          batchIndex: input.batchIndex,
+          attemptCount: job.attemptCount,
+          status: "reserved",
+          model: input.config.model,
+          dimensions: input.config.dimensions,
+          chunkCount: input.chunks.length,
+          reservedInputTokens,
+          inputTokenCount: null,
+          totalTokenCount: null,
+          costMicroCny: null,
+          latencyMs: 0,
+          providerRequestId: null,
+          failureCode: null,
+          leasedBy: input.workerId,
+          leaseExpiresAt: job.leaseExpiresAt,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(documentEmbeddingBatch.id, existing.id));
+    } else {
+      batchId = crypto.randomUUID();
+      await tx.insert(documentEmbeddingBatch).values({
+        id: batchId,
+        jobId: job.id,
+        projectId: job.projectId,
+        documentId: job.documentId,
+        versionId: job.versionId,
+        embeddingProfileId: job.embeddingProfileId,
+        requestSha256,
+        batchIndex: input.batchIndex,
+        attemptCount: job.attemptCount,
+        providerAttemptCount: 0,
+        status: "reserved",
+        model: input.config.model,
+        dimensions: input.config.dimensions,
+        chunkCount: input.chunks.length,
+        reservedInputTokens,
+        inputTokenCount: null,
+        totalTokenCount: null,
+        costMicroCny: null,
+        latencyMs: 0,
+        providerRequestId: null,
+        failureCode: null,
+        leasedBy: input.workerId,
+        leaseExpiresAt: job.leaseExpiresAt,
+        startedAt: null,
+        completedAt: null,
+      });
+    }
+    await tx
+      .update(documentEmbeddingBatch)
+      .set({
+        status: "calling",
+        providerAttemptCount: sql`${documentEmbeddingBatch.providerAttemptCount} + 1`,
+        startedAt: sql`now()`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(documentEmbeddingBatch.id, batchId!));
+    await tx
+      .update(documentEmbeddingJob)
+      .set({
+        providerCallCount: sql`${documentEmbeddingJob.providerCallCount} + 1`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(documentEmbeddingJob.id, job.id));
+    return {
+      action: "call",
+      batchId: batchId!,
+      requestSha256,
+      reservedInputTokens,
+    };
+  });
+}
+
 export async function commitEmbeddingBatch(input: {
   jobId: string;
   workerId: string;
+  batchId: string;
   batchIndex: number;
   chunks: EligibleEmbeddingChunk[];
   result: EmbeddingGatewayResult;
@@ -597,37 +843,22 @@ export async function commitEmbeddingBatch(input: {
       input.chunks,
     );
     const [batch] = await tx
-      .insert(documentEmbeddingBatch)
-      .values({
-        id: crypto.randomUUID(),
-        jobId: job.id,
-        projectId: job.projectId,
-        documentId: job.documentId,
-        versionId: job.versionId,
-        embeddingProfileId: job.embeddingProfileId,
-        requestSha256,
-        batchIndex: input.batchIndex,
-        attemptCount: job.attemptCount,
-        status: "succeeded",
-        model: input.result.actualModel,
-        dimensions: input.result.dimensions,
-        chunkCount: input.chunks.length,
-        inputTokenCount: input.result.inputTokens,
-        totalTokenCount: input.result.totalTokens,
-        costMicroCny: null,
-        latencyMs: input.result.latencyMs,
-        providerRequestId: input.result.providerRequestId,
-        failureCode: null,
-      })
-      .onConflictDoNothing({
-        target: [
-          documentEmbeddingBatch.jobId,
-          documentEmbeddingBatch.requestSha256,
-          documentEmbeddingBatch.attemptCount,
-        ],
-      })
-      .returning({ id: documentEmbeddingBatch.id });
-    if (!batch) return;
+      .select()
+      .from(documentEmbeddingBatch)
+      .where(eq(documentEmbeddingBatch.id, input.batchId))
+      .limit(1)
+      .for("update", { of: documentEmbeddingBatch });
+    if (
+      !batch ||
+      batch.jobId !== job.id ||
+      batch.requestSha256 !== requestSha256 ||
+      batch.status !== "calling" ||
+      batch.leasedBy !== input.workerId ||
+      !batch.leaseExpiresAt ||
+      batch.leaseExpiresAt <= new Date()
+    ) {
+      throw new EmbeddingPipelineError("WORKER_LEASE_LOST", false);
+    }
     await tx
       .insert(documentChunkEmbedding)
       .values(
@@ -666,11 +897,28 @@ export async function commitEmbeddingBatch(input: {
       .update(documentEmbeddingJob)
       .set({
         completedChunkCount: sql`${documentEmbeddingJob.completedChunkCount} + ${input.chunks.length}`,
-        providerCallCount: sql`${documentEmbeddingJob.providerCallCount} + 1`,
         latencyMs: sql`${documentEmbeddingJob.latencyMs} + ${input.result.latencyMs}`,
         updatedAt: sql`now()`,
       })
       .where(eq(documentEmbeddingJob.id, job.id));
+    await tx
+      .update(documentEmbeddingBatch)
+      .set({
+        status: "succeeded",
+        model: input.result.actualModel,
+        dimensions: input.result.dimensions,
+        inputTokenCount: input.result.inputTokens,
+        totalTokenCount: input.result.totalTokens,
+        costMicroCny: null,
+        latencyMs: input.result.latencyMs,
+        providerRequestId: input.result.providerRequestId,
+        failureCode: null,
+        leasedBy: null,
+        leaseExpiresAt: null,
+        completedAt: sql`now()`,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(documentEmbeddingBatch.id, batch.id));
     await writeAuditEvent(
       {
         actorUserId: job.createdBy,
@@ -706,54 +954,49 @@ export async function recordEmbeddingFailure(input: {
   jobId: string;
   workerId: string;
   error: unknown;
+  batchId?: string;
   batchIndex?: number;
   chunks?: EligibleEmbeddingChunk[];
   latencyMs?: number;
   config?: EmbeddingRuntimeConfig;
 }): Promise<void> {
   const error = controlledEmbeddingError(input.error);
-  const config = input.config ?? getEmbeddingRuntimeConfig();
   await getDb().transaction(async (tx) => {
     const job = await findEmbeddingJob(input.jobId, tx, { lockForUpdate: true });
     if (!hasValidLease(job, input.workerId)) {
       throw new EmbeddingPipelineError("WORKER_LEASE_LOST", false);
     }
-    if (input.chunks?.length) {
+    const unknown = error.code === "PROVIDER_RESULT_UNKNOWN";
+    if (input.batchId) {
+      const [batch] = await tx
+        .select()
+        .from(documentEmbeddingBatch)
+        .where(eq(documentEmbeddingBatch.id, input.batchId))
+        .limit(1)
+        .for("update", { of: documentEmbeddingBatch });
+      if (
+        !batch ||
+        batch.jobId !== job.id ||
+        batch.status !== "calling" ||
+        batch.leasedBy !== input.workerId
+      ) {
+        throw new EmbeddingPipelineError("WORKER_LEASE_LOST", false);
+      }
       await tx
-        .insert(documentEmbeddingBatch)
-        .values({
-          id: crypto.randomUUID(),
-          jobId: job.id,
-          projectId: job.projectId,
-          documentId: job.documentId,
-          versionId: job.versionId,
-          embeddingProfileId: job.embeddingProfileId,
-          requestSha256: embeddingBatchRequestSha256(
-            job.embeddingProfileId,
-            input.chunks,
-          ),
-          batchIndex: input.batchIndex ?? 0,
-          attemptCount: job.attemptCount,
-          status: "failed",
-          model: config.model,
-          dimensions: config.dimensions,
-          chunkCount: input.chunks.length,
-          inputTokenCount: null,
-          totalTokenCount: null,
-          costMicroCny: null,
+        .update(documentEmbeddingBatch)
+        .set({
+          status: unknown ? "unknown" : "failed",
           latencyMs: input.latencyMs ?? 0,
-          providerRequestId: null,
           failureCode: error.code,
+          leasedBy: null,
+          leaseExpiresAt: null,
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
         })
-        .onConflictDoNothing({
-          target: [
-            documentEmbeddingBatch.jobId,
-            documentEmbeddingBatch.requestSha256,
-            documentEmbeddingBatch.attemptCount,
-          ],
-        });
+        .where(eq(documentEmbeddingBatch.id, batch.id));
     }
-    const retry = error.retryable && job.attemptCount < job.maxAttempts;
+    const retry =
+      !unknown && error.retryable && job.attemptCount < job.maxAttempts;
     await tx
       .update(documentEmbeddingJob)
       .set({
@@ -795,6 +1038,145 @@ export async function recordEmbeddingFailure(input: {
       },
       tx,
     );
+  });
+}
+
+export async function reconcileStaleEmbeddingCalls(): Promise<number> {
+  return getDb().transaction(async (tx) => {
+    const stale = await tx.execute<{
+      id: string;
+      job_id: string;
+      project_id: string;
+      document_id: string;
+      version_id: string;
+      embedding_profile_id: string;
+      created_by: string;
+    }>(sql`
+      select b.id, b.job_id, b.project_id, b.document_id, b.version_id,
+        b.embedding_profile_id, j.created_by
+      from document_embedding_batches b
+      inner join document_embedding_jobs j on j.id = b.job_id
+      where b.status = 'calling'
+        and b.lease_expires_at <= now()
+      order by b.started_at asc, b.id asc
+      for update of b, j skip locked
+    `);
+    for (const row of stale.rows) {
+      await tx
+        .update(documentEmbeddingBatch)
+        .set({
+          status: "unknown",
+          failureCode: "PROVIDER_RESULT_UNKNOWN",
+          leasedBy: null,
+          leaseExpiresAt: null,
+          completedAt: sql`now()`,
+          updatedAt: sql`now()`,
+        })
+        .where(eq(documentEmbeddingBatch.id, row.id));
+      await tx
+        .update(documentEmbeddingJob)
+        .set({
+          status: "failed",
+          completedAt: sql`now()`,
+          leasedBy: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+          failureCode: "PROVIDER_RESULT_UNKNOWN",
+          failureMessage: "Embedding provider result is unknown.",
+          updatedAt: sql`now()`,
+        })
+        .where(eq(documentEmbeddingJob.id, row.job_id));
+      await writeAuditEvent(
+        {
+          actorUserId: row.created_by,
+          projectId: row.project_id,
+          eventType: "document_embedding_failed",
+          entityType: "document_embedding_job",
+          entityId: row.job_id,
+          result: "failed",
+          metadata: {
+            documentId: row.document_id,
+            versionId: row.version_id,
+            embeddingProfileId: row.embedding_profile_id,
+            failureCode: "PROVIDER_RESULT_UNKNOWN",
+            retry: false,
+          },
+        },
+        tx,
+      );
+    }
+    return stale.rows.length;
+  });
+}
+
+export async function retryUnknownEmbeddingJob(input: {
+  jobId: string;
+  acceptPossibleDuplicateCharge: boolean;
+  apply?: boolean;
+}): Promise<{ dryRun: boolean; unknownBatchCount: number; requeued: boolean }> {
+  if (!input.acceptPossibleDuplicateCharge) {
+    throw new EmbeddingPipelineError("PROVIDER_RESULT_UNKNOWN", false);
+  }
+  return getDb().transaction(async (tx) => {
+    const job = await findEmbeddingJob(input.jobId, tx, { lockForUpdate: true });
+    if (!job || job.status !== "failed" || job.failureCode !== "PROVIDER_RESULT_UNKNOWN") {
+      throw new EmbeddingPipelineError("CONFIGURATION_INVALID", false);
+    }
+    const batches = await tx
+      .select({ id: documentEmbeddingBatch.id })
+      .from(documentEmbeddingBatch)
+      .where(
+        and(
+          eq(documentEmbeddingBatch.jobId, job.id),
+          eq(documentEmbeddingBatch.status, "unknown"),
+        ),
+      )
+      .for("update", { of: documentEmbeddingBatch });
+    if (!input.apply) {
+      return { dryRun: true, unknownBatchCount: batches.length, requeued: false };
+    }
+    if (batches.length !== 1) {
+      throw new EmbeddingPipelineError("CONFIGURATION_INVALID", false);
+    }
+    await tx
+      .update(documentEmbeddingBatch)
+      .set({
+        status: "failed",
+        failureCode: "MANUAL_UNKNOWN_RETRY_ACCEPTED",
+        updatedAt: sql`now()`,
+      })
+      .where(eq(documentEmbeddingBatch.id, batches[0]!.id));
+    await tx
+      .update(documentEmbeddingJob)
+      .set({
+        status: "pending",
+        maxAttempts: sql`greatest(${documentEmbeddingJob.maxAttempts}, ${documentEmbeddingJob.attemptCount} + 1)`,
+        availableAt: sql`now()`,
+        completedAt: null,
+        failureCode: null,
+        failureMessage: null,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(documentEmbeddingJob.id, job.id));
+    await writeAuditEvent(
+      {
+        actorUserId: job.createdBy,
+        projectId: job.projectId,
+        eventType: "document_embedding_retried",
+        entityType: "document_embedding_job",
+        entityId: job.id,
+        result: "succeeded",
+        metadata: {
+          documentId: job.documentId,
+          versionId: job.versionId,
+          embeddingProfileId: job.embeddingProfileId,
+          reason: "manual_unknown_retry_acknowledged",
+          possibleDuplicateChargeAccepted: true,
+        },
+      },
+      tx,
+    );
+    return { dryRun: false, unknownBatchCount: 1, requeued: true };
   });
 }
 

@@ -15,6 +15,10 @@ import {
   getEmbeddingRuntimeConfig,
   listEmbeddingBackfillCandidates,
   processEmbeddingJob,
+  prepareEmbeddingJob,
+  reconcileStaleEmbeddingCalls,
+  reserveEmbeddingBatch,
+  retryUnknownEmbeddingJob,
   runEmbeddingWorker,
 } from "../../lib/ai/embeddings";
 import type {
@@ -33,6 +37,7 @@ import {
   documentEmbeddingJob,
   documentIngestionJob,
   documentSection,
+  embeddingWorkerHeartbeat,
   project,
   projectDocument,
   projectDocumentVersion,
@@ -56,6 +61,7 @@ type Fixture = {
 
 let manager: UserRecord;
 const projectIds: string[] = [];
+const workerIds: string[] = [];
 const profileV2 = "qwen-text-embedding-cn-v2-test";
 
 class PartialFailureProvider implements EmbeddingProvider {
@@ -76,6 +82,95 @@ class PartialFailureProvider implements EmbeddingProvider {
       latencyMs: 1,
     };
   }
+}
+
+class CountingProvider implements EmbeddingProvider {
+  readonly provider = "fake" as const;
+  calls = 0;
+
+  constructor(
+    private readonly usage: number | null = 1,
+    private readonly waitForAbort = false,
+  ) {}
+
+  async embed(request: EmbeddingProviderRequest): Promise<EmbeddingProviderResult> {
+    this.calls += 1;
+    if (this.waitForAbort) {
+      await new Promise<void>((_resolve, reject) => {
+        const rejectUnknown = () =>
+          reject(new EmbeddingProviderError("PROVIDER_RESULT_UNKNOWN", false));
+        if (request.signal?.aborted) rejectUnknown();
+        else request.signal?.addEventListener("abort", rejectUnknown, { once: true });
+      });
+    }
+    return {
+      vectors: request.inputs.map(() => Array(request.dimensions).fill(0.0625)),
+      actualModel: request.model,
+      inputTokens: this.usage,
+      totalTokens: this.usage,
+      providerRequestId: `counting-${this.calls}`,
+      latencyMs: 1,
+    };
+  }
+}
+
+class DelayedSuccessProvider implements EmbeddingProvider {
+  readonly provider = "fake" as const;
+  calls = 0;
+
+  async embed(request: EmbeddingProviderRequest): Promise<EmbeddingProviderResult> {
+    this.calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    return {
+      vectors: request.inputs.map(() => Array(request.dimensions).fill(0.046875)),
+      actualModel: request.model,
+      inputTokens: request.inputs.length,
+      totalTokens: request.inputs.length,
+      providerRequestId: `delayed-success-${this.calls}`,
+      latencyMs: 30,
+    };
+  }
+}
+
+class FailOnceProvider implements EmbeddingProvider {
+  readonly provider = "fake" as const;
+  calls = 0;
+
+  constructor(private readonly code: "RATE_LIMITED" | "SERVER_ERROR" | "NETWORK") {}
+
+  async embed(request: EmbeddingProviderRequest): Promise<EmbeddingProviderResult> {
+    this.calls += 1;
+    if (this.calls === 1) throw new EmbeddingProviderError(this.code, true);
+    return {
+      vectors: request.inputs.map(() => Array(request.dimensions).fill(0.03125)),
+      actualModel: request.model,
+      inputTokens: 2,
+      totalTokens: 2,
+      providerRequestId: `retry-${this.code.toLowerCase()}`,
+      latencyMs: 1,
+    };
+  }
+}
+
+async function currentDailyTokenBudget(): Promise<number> {
+  const result = await getDb().execute<{ input_tokens: number | string }>(sql`
+    select coalesce(sum(
+      case
+        when status = 'succeeded' then coalesce(input_token_count, reserved_input_tokens)
+        when status in ('reserved', 'calling', 'unknown') then reserved_input_tokens
+        else 0
+      end
+    ), 0) as input_tokens
+    from document_embedding_batches
+    where started_at >= (
+      date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+    )
+      and started_at < (
+        date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+        + interval '1 day'
+      )
+  `);
+  return Number(result.rows[0]?.input_tokens ?? 0);
 }
 
 async function createFixture(input: {
@@ -257,6 +352,11 @@ before(async () => {
 
 after(async () => {
   try {
+    if (workerIds.length) {
+      await getDb()
+        .delete(embeddingWorkerHeartbeat)
+        .where(inArray(embeddingWorkerHeartbeat.workerId, workerIds));
+    }
     if (projectIds.length) {
       await getDb().delete(auditEvent).where(inArray(auditEvent.projectId, projectIds));
       await getDb()
@@ -376,7 +476,7 @@ describe("pgvector schema and embedding pipeline", () => {
       jobId: job!.id,
       workerId: "partial-worker-a",
       config,
-      gateway: new EmbeddingGateway(config, partialProvider, async () => undefined),
+      gateway: new EmbeddingGateway(config, partialProvider),
     });
     const [pending] = await getDb()
       .select()
@@ -417,7 +517,6 @@ describe("pgvector schema and embedding pipeline", () => {
       gateway: new EmbeddingGateway(
         config,
         new FakeEmbeddingProvider(),
-        async () => undefined,
       ),
     });
     const [completed] = await getDb()
@@ -443,6 +542,56 @@ describe("pgvector schema and embedding pipeline", () => {
       finalBatches.filter((batch) => batch.status === "succeeded").length,
       2,
     );
+  });
+
+  it("retries 429, 5xx, and network failures only through the durable Job state", async () => {
+    for (const code of ["RATE_LIMITED", "SERVER_ERROR", "NETWORK"] as const) {
+      const fixture = await createFixture({
+        name: `durable-retry-${code.toLowerCase()}`,
+        contents: [`Fictional ${code} retry`],
+      });
+      const job = await enqueue(fixture);
+      const provider = new FailOnceProvider(code);
+      const config = getEmbeddingRuntimeConfig();
+      const first = await claimEmbeddingJob(`retry-${code}-a`);
+      assert.equal(first?.id, job?.id);
+      await processEmbeddingJob({
+        jobId: job!.id,
+        workerId: `retry-${code}-a`,
+        config,
+        gateway: new EmbeddingGateway(config, provider),
+      });
+      const [pending] = await getDb()
+        .select()
+        .from(documentEmbeddingJob)
+        .where(eq(documentEmbeddingJob.id, job!.id));
+      assert.equal(pending?.status, "pending");
+      assert.equal(pending?.failureCode, code);
+      await getDb()
+        .update(documentEmbeddingJob)
+        .set({ availableAt: sql`now()` })
+        .where(eq(documentEmbeddingJob.id, job!.id));
+      const second = await claimEmbeddingJob(`retry-${code}-b`);
+      assert.equal(second?.id, job?.id);
+      await processEmbeddingJob({
+        jobId: job!.id,
+        workerId: `retry-${code}-b`,
+        config,
+        gateway: new EmbeddingGateway(config, provider),
+      });
+      const [completed] = await getDb()
+        .select()
+        .from(documentEmbeddingJob)
+        .where(eq(documentEmbeddingJob.id, job!.id));
+      const [batch] = await getDb()
+        .select()
+        .from(documentEmbeddingBatch)
+        .where(eq(documentEmbeddingBatch.jobId, job!.id));
+      assert.equal(completed?.status, "succeeded");
+      assert.equal(provider.calls, 2);
+      assert.equal(batch?.status, "succeeded");
+      assert.equal(batch?.providerAttemptCount, 2);
+    }
   });
 
   it("enforces cross-project scope, content hash validity, vector dimensions, and Profile version immutability", async () => {
@@ -593,7 +742,7 @@ describe("pgvector schema and embedding pipeline", () => {
       jobId: recovered!.id,
       workerId: "embedding-lease-worker-b",
       config,
-      gateway: new EmbeddingGateway(config, new FakeEmbeddingProvider(), async () => undefined),
+      gateway: new EmbeddingGateway(config, new FakeEmbeddingProvider()),
     });
     const [completed] = await getDb()
       .select()
@@ -720,6 +869,336 @@ describe("pgvector schema and embedding pipeline", () => {
         error instanceof Error &&
         "code" in error &&
         error.code === "DAILY_JOB_LIMIT_REACHED",
+    );
+  });
+
+  it("persists calling before the Provider and converts a crash to unknown without an automatic second charge", async () => {
+    const fixture = await createFixture({
+      name: "durable-provider-crash",
+      contents: ["Fictional durable provider call"],
+    });
+    const job = await enqueue(fixture);
+    const workerId = "durable-crash-worker";
+    const claimed = await claimEmbeddingJob(workerId);
+    assert.equal(claimed?.id, job?.id);
+    const prepared = await prepareEmbeddingJob({ jobId: job!.id, workerId });
+    assert.ok(prepared);
+    const config = getEmbeddingRuntimeConfig();
+    const reservation = await reserveEmbeddingBatch({
+      jobId: job!.id,
+      workerId,
+      batchIndex: 0,
+      chunks: prepared!.chunks,
+      config,
+    });
+    assert.equal(reservation.action, "call");
+    const [calling] = await getDb()
+      .select()
+      .from(documentEmbeddingBatch)
+      .where(eq(documentEmbeddingBatch.jobId, job!.id));
+    assert.equal(calling?.status, "calling");
+    assert.ok((calling?.reservedInputTokens ?? 0) > 0);
+
+    const provider = new CountingProvider(4);
+    await new EmbeddingGateway(config, provider).embed(
+      prepared!.chunks.map((chunk) => chunk.content),
+    );
+    assert.equal(provider.calls, 1);
+    await getDb()
+      .update(documentEmbeddingBatch)
+      .set({ leaseExpiresAt: sql`now() - interval '1 second'` })
+      .where(eq(documentEmbeddingBatch.id, calling!.id));
+    await getDb()
+      .update(documentEmbeddingJob)
+      .set({
+        startedAt: sql`now() - interval '10 seconds'`,
+        leaseExpiresAt: sql`now() - interval '1 second'`,
+      })
+      .where(eq(documentEmbeddingJob.id, job!.id));
+    assert.equal(await reconcileStaleEmbeddingCalls(), 1);
+    const [unknownJob] = await getDb()
+      .select()
+      .from(documentEmbeddingJob)
+      .where(eq(documentEmbeddingJob.id, job!.id));
+    const [unknownBatch] = await getDb()
+      .select()
+      .from(documentEmbeddingBatch)
+      .where(eq(documentEmbeddingBatch.id, calling!.id));
+    assert.equal(unknownJob?.status, "failed");
+    assert.equal(unknownJob?.failureCode, "PROVIDER_RESULT_UNKNOWN");
+    assert.equal(unknownBatch?.status, "unknown");
+    assert.equal(
+      (
+        await getDb()
+          .select()
+          .from(documentChunkEmbedding)
+          .where(eq(documentChunkEmbedding.embeddingJobId, job!.id))
+      ).length,
+      0,
+    );
+    assert.equal(await claimEmbeddingJob("normal-worker-must-not-retry"), null);
+    assert.equal(provider.calls, 1);
+
+    const budgetHeld = await currentDailyTokenBudget();
+    const blockedFixture = await createFixture({
+      name: "unknown-budget-hold",
+      contents: ["Blocked by unknown reservation"],
+    });
+    const blockedJob = await enqueue(blockedFixture);
+    const blockedClaim = await claimEmbeddingJob("unknown-budget-worker");
+    assert.equal(blockedClaim?.id, blockedJob?.id);
+    const blockedProvider = new CountingProvider();
+    await processEmbeddingJob({
+      jobId: blockedJob!.id,
+      workerId: "unknown-budget-worker",
+      config: { ...config, dailyTokenLimit: budgetHeld },
+      gateway: new EmbeddingGateway(config, blockedProvider),
+    });
+    assert.equal(blockedProvider.calls, 0);
+
+    await assert.rejects(
+      retryUnknownEmbeddingJob({
+        jobId: job!.id,
+        acceptPossibleDuplicateCharge: false,
+      }),
+      (error: unknown) =>
+        error instanceof EmbeddingProviderError ||
+        (error instanceof Error && "code" in error),
+    );
+    assert.deepEqual(
+      await retryUnknownEmbeddingJob({
+        jobId: job!.id,
+        acceptPossibleDuplicateCharge: true,
+      }),
+      { dryRun: true, unknownBatchCount: 1, requeued: false },
+    );
+    assert.deepEqual(
+      await retryUnknownEmbeddingJob({
+        jobId: job!.id,
+        acceptPossibleDuplicateCharge: true,
+        apply: true,
+      }),
+      { dryRun: false, unknownBatchCount: 1, requeued: true },
+    );
+    const manualClaim = await claimEmbeddingJob("manual-recovery-worker");
+    assert.equal(manualClaim?.id, job?.id);
+    await processEmbeddingJob({
+      jobId: job!.id,
+      workerId: "manual-recovery-worker",
+      config,
+      gateway: new EmbeddingGateway(config, provider),
+    });
+    assert.equal(provider.calls, 2);
+  });
+
+  it("serializes the last daily Token reservation so only one concurrent Provider call starts", async () => {
+    const contents = ["one two three four five six seven eight"];
+    const fixtureA = await createFixture({ name: "budget-race-a", contents });
+    const fixtureB = await createFixture({ name: "budget-race-b", contents });
+    const jobA = await enqueue(fixtureA);
+    const jobB = await enqueue(fixtureB);
+    const claimA = await claimEmbeddingJob("budget-race-worker-a");
+    const claimB = await claimEmbeddingJob("budget-race-worker-b");
+    assert.deepEqual(
+      new Set([claimA?.id, claimB?.id]),
+      new Set([jobA?.id, jobB?.id]),
+    );
+    const used = await currentDailyTokenBudget();
+    const config = {
+      ...getEmbeddingRuntimeConfig(),
+      dailyTokenLimit: used + 10,
+    };
+    const providerA = new CountingProvider(10);
+    const providerB = new CountingProvider(10);
+    await Promise.all([
+      processEmbeddingJob({
+        jobId: claimA!.id,
+        workerId: "budget-race-worker-a",
+        config,
+        gateway: new EmbeddingGateway(config, providerA),
+      }),
+      processEmbeddingJob({
+        jobId: claimB!.id,
+        workerId: "budget-race-worker-b",
+        config,
+        gateway: new EmbeddingGateway(config, providerB),
+      }),
+    ]);
+    assert.equal(providerA.calls + providerB.calls, 1);
+    const jobs = await getDb()
+      .select()
+      .from(documentEmbeddingJob)
+      .where(inArray(documentEmbeddingJob.id, [jobA!.id, jobB!.id]));
+    assert.equal(jobs.filter((item) => item.status === "succeeded").length, 1);
+    assert.equal(
+      jobs.filter((item) => item.failureCode === "DAILY_TOKEN_LIMIT_REACHED")
+        .length,
+      1,
+    );
+  });
+
+  it("keeps a successful null-Usage reservation in the UTC daily budget", async () => {
+    const used = await currentDailyTokenBudget();
+    const config = {
+      ...getEmbeddingRuntimeConfig(),
+      dailyTokenLimit: used + 10,
+    };
+    const fixture = await createFixture({
+      name: "null-usage-budget",
+      contents: ["one two three four five six seven eight"],
+    });
+    const job = await enqueue(fixture);
+    const claim = await claimEmbeddingJob("null-usage-worker");
+    assert.equal(claim?.id, job?.id);
+    const nullUsageProvider = new CountingProvider(null);
+    await processEmbeddingJob({
+      jobId: job!.id,
+      workerId: "null-usage-worker",
+      config,
+      gateway: new EmbeddingGateway(config, nullUsageProvider),
+    });
+    const [batch] = await getDb()
+      .select()
+      .from(documentEmbeddingBatch)
+      .where(eq(documentEmbeddingBatch.jobId, job!.id));
+    assert.equal(batch?.status, "succeeded");
+    assert.equal(batch?.inputTokenCount, null);
+    assert.equal(batch?.reservedInputTokens, 10);
+
+    const blockedFixture = await createFixture({
+      name: "null-usage-budget-blocked",
+      contents: ["one"],
+    });
+    const blockedJob = await enqueue(blockedFixture);
+    const blockedClaim = await claimEmbeddingJob("null-usage-blocked-worker");
+    assert.equal(blockedClaim?.id, blockedJob?.id);
+    const blockedProvider = new CountingProvider();
+    await processEmbeddingJob({
+      jobId: blockedJob!.id,
+      workerId: "null-usage-blocked-worker",
+      config,
+      gateway: new EmbeddingGateway(config, blockedProvider),
+    });
+    assert.equal(blockedProvider.calls, 0);
+  });
+
+  it("drains an active Provider request on shutdown and controls lease-renewal failures", async () => {
+    const first = await createFixture({
+      name: "shutdown-active",
+      contents: ["Fictional shutdown active request"],
+    });
+    const second = await createFixture({
+      name: "shutdown-not-claimed",
+      contents: ["Fictional shutdown pending request"],
+    });
+    const firstJob = await enqueue(first);
+    const secondJob = await enqueue(second);
+    const controller = new AbortController();
+    const shutdownProvider = new CountingProvider(1, true);
+    const workerId = "shutdown-drain-worker";
+    workerIds.push(workerId);
+    const config = {
+      ...getEmbeddingRuntimeConfig(),
+      shutdownDrainMs: 100,
+    };
+    const running = runEmbeddingWorker({
+      workerId,
+      config,
+      gateway: new EmbeddingGateway(config, shutdownProvider),
+      signal: controller.signal,
+    });
+    for (let index = 0; index < 100 && shutdownProvider.calls === 0; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.equal(shutdownProvider.calls, 1);
+    controller.abort(new Error("SIGTERM"));
+    await running;
+    const shutdownJobs = await getDb()
+      .select()
+      .from(documentEmbeddingJob)
+      .where(inArray(documentEmbeddingJob.id, [firstJob!.id, secondJob!.id]));
+    assert.equal(
+      shutdownJobs.filter(
+        (item) =>
+          item.status === "failed" &&
+          item.failureCode === "PROVIDER_RESULT_UNKNOWN",
+      ).length,
+      1,
+    );
+    assert.equal(shutdownJobs.filter((item) => item.status === "pending").length, 1);
+    await getDb()
+      .update(documentEmbeddingJob)
+      .set({ status: "cancelled", completedAt: sql`now()` })
+      .where(eq(documentEmbeddingJob.status, "pending"));
+
+    const leaseFixture = await createFixture({
+      name: "lease-renewal-error",
+      contents: ["Fictional lease renewal failure"],
+    });
+    const leaseJob = await enqueue(leaseFixture);
+    const leaseProvider = new CountingProvider(1, true);
+    const leaseWorkerId = "lease-renewal-error-worker";
+    workerIds.push(leaseWorkerId);
+    await runEmbeddingWorker({
+      once: true,
+      workerId: leaseWorkerId,
+      config: { ...config, leaseSeconds: 5 },
+      gateway: new EmbeddingGateway(config, leaseProvider),
+      renewLease: async () => {
+        throw new Error("synthetic database renewal failure");
+      },
+    });
+    assert.equal(leaseProvider.calls, 1);
+    const [leaseFailed] = await getDb()
+      .select()
+      .from(documentEmbeddingJob)
+      .where(eq(documentEmbeddingJob.id, leaseJob!.id));
+    assert.equal(leaseFailed?.status, "failed");
+    assert.equal(leaseFailed?.failureCode, "PROVIDER_RESULT_UNKNOWN");
+  });
+
+  it("finishes only the active Batch after shutdown and never starts a later Batch", async () => {
+    const fixture = await createFixture({
+      name: "shutdown-active-batch-only",
+      contents: ["Fictional active batch", "Fictional batch that must not start"],
+    });
+    const job = await enqueue(fixture);
+    const controller = new AbortController();
+    const provider = new DelayedSuccessProvider();
+    const workerId = "shutdown-active-batch-only-worker";
+    workerIds.push(workerId);
+    const config = {
+      ...getEmbeddingRuntimeConfig(),
+      batchSize: 1,
+      shutdownDrainMs: 200,
+    };
+    const running = runEmbeddingWorker({
+      workerId,
+      config,
+      gateway: new EmbeddingGateway(config, provider),
+      signal: controller.signal,
+    });
+    for (let index = 0; index < 100 && provider.calls === 0; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(provider.calls, 1);
+    controller.abort(new Error("SIGTERM"));
+    await running;
+    assert.equal(provider.calls, 1);
+    const [stoppedJob] = await getDb()
+      .select()
+      .from(documentEmbeddingJob)
+      .where(eq(documentEmbeddingJob.id, job!.id));
+    assert.equal(stoppedJob?.status, "pending");
+    assert.equal(stoppedJob?.failureCode, "SHUTDOWN_ABORTED");
+    assert.equal(
+      (
+        await getDb()
+          .select()
+          .from(documentChunkEmbedding)
+          .where(eq(documentChunkEmbedding.embeddingJobId, job!.id))
+      ).length,
+      1,
     );
   });
 });

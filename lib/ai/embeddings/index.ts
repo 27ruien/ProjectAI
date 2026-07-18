@@ -2,6 +2,7 @@ export * from "./config";
 export * from "./errors";
 export * from "./fake-provider";
 export * from "./gateway";
+export * from "./health";
 export * from "./jobs";
 export * from "./operations";
 export * from "./provider-types";
