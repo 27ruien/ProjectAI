@@ -2245,8 +2245,8 @@ printf 'Rechecking storage consistency after Lease verification cleanup.\n'
         select
           (select count(*)::int from ai_executions where status in ($1, $2, $3, $4)) as ai_count,
           (select count(*)::int from document_embedding_jobs where status in ($5, $6)) as embedding_count,
-          (select count(*)::int from document_embedding_batches where status in ($7, $8, $9)) as embedding_batch_count,
-          (select count(*)::int from document_embedding_provider_calls where status in ($7, $8, $9)) as embedding_provider_call_count
+          (select count(*)::int from document_embedding_batches where status::text in ($7, $8, $9)) as embedding_batch_count,
+          (select count(*)::int from document_embedding_provider_calls where status::text in ($7, $8, $9)) as embedding_provider_call_count
       `, ["reserved", "retrieving", "calling_provider", "validating", "pending", "running", "reserved", "calling", "unknown"]);
       if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0 || result.rows[0]?.embedding_batch_count !== 0 || result.rows[0]?.embedding_provider_call_count !== 0) {
         throw new Error("Staging retains a running AI Execution or Embedding Job");

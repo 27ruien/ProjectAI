@@ -524,6 +524,14 @@ test("B3-B1 deployment pins pgvector and gates the dedicated Embedding pipeline"
     script,
     /document_embedding_provider_calls where status::text in \(\$4, \$5, \$6\)/,
   );
+  assert.match(
+    script,
+    /document_embedding_batches where status::text in \(\$7, \$8, \$9\)/,
+  );
+  assert.match(
+    script,
+    /document_embedding_provider_calls where status::text in \(\$7, \$8, \$9\)/,
+  );
   assert.match(compose, /projectai-embedding-worker:[\s\S]+?stop_grace_period: 45s/);
   assert.match(compose, /AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS:[^\n]+25000/);
   assert.match(script, /Re-running B3-A grounded Qwen regression while Embedding remains enabled and lexical retrieval remains unchanged/);
