@@ -1690,7 +1690,7 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
               and profile_version = 1 and enabled = true
           ) as profile_count
           ,(
-            select array_agg(e.enumlabel order by e.enumsortorder)
+            select array_agg(e.enumlabel::text order by e.enumsortorder)
             from pg_enum e
             inner join pg_type t on t.oid = e.enumtypid
             where t.typname = $9
