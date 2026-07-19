@@ -12,7 +12,7 @@
 → AI 提取需求草稿 → 人工修改与审核 → 写入正式需求
 ```
 
-v0.4 已完成真实文件存储边界，v0.5 B2 已完成解析与词法索引，v0.6 B3-A 已完成受控问答。v0.7 B3-B1 在不改变用户检索的前提下建立向量基础：
+v0.4 已完成真实文件存储边界，v0.5 B2 已完成解析与词法索引，v0.6 B3-A 已完成受控问答，v0.7 B3-B1 已建立向量基础。v0.8 B3-B2 在保持用户知识搜索为词法的前提下，为项目助手提供经过评测的 Hybrid Evidence：
 
 ```text
 Stored Current Version → Durable Job → Independent Worker
@@ -20,9 +20,10 @@ Stored Current Version → Durable Job → Independent Worker
 → Project-scoped Search → Source Locator
 → Grounded Evidence → Qwen Answer → Validated Citation
 → Embedding Job → Dedicated Worker → text-embedding-v4 → vector(1024)
+→ Query Embedding → Exact Vector + Lexical → RRF → Assistant Evidence
 ```
 
-本轮只接入 Embedding 生成/存储/调度/回填基础，不把向量接入用户搜索或项目助手 Evidence；Hybrid Retrieval、Rerank、Tool Calling 和正式需求写入仍不在范围。
+本轮只把向量接入项目助手 Evidence，使用服务端 Mode、Coverage Gate、成本账本、Shadow、Fallback 和 60 Query 质量门禁；用户知识搜索、Rerank、ANN、Tool Calling 和正式需求写入仍不在范围。
 
 ## v0.7 — Embedding and pgvector Foundation / B3-B1
 
@@ -172,3 +173,13 @@ v0.5 当时的开发分支为 `agent/document-processing-index`、版本为 `0.5
 - Production 容器身份、运行状态、restart count 与 health 在部署前后精确不变。
 
 当前实际进度以 `docs/MVP_STATUS.md` 为准。
+
+## v0.8 B3-B2：Evaluated Hybrid Retrieval
+
+- 仅改变 B3-A 项目助手的 Evidence Retrieval；B2 用户知识搜索、Answer Prompt、Citation Validation 与正式业务数据边界不变。
+- `hybrid-rrf-v1` 冻结 Lexical/Vector/Fused=30、Evidence=10、RRF K=60、权重 1:1、cosine 最大距离 0.55、Coverage=9800 bps。
+- Exact Vector SQL 必须用 `embedding <=> query_vector` 并绑定精确项目、Active Document、Current/Stored Version、Succeeded Ingestion、Effective Chunk、内容 Hash 和 Embedding Profile；禁止 ANN。
+- `lexical` 不调用 Query Embedding；`shadow` 记录 Hybrid 但向 Prompt 交付 Lexical；`hybrid` 交付 RRF Evidence。所有异常均回退原 Lexical，Lexical 为空则保持 Evidence Insufficient 且不调用 Answer Model。
+- Query Embedding 走 Provider-neutral Gateway，1024 维，向量只驻留请求内存；调用使用 UTC 日预算、硬预留、真实 Usage 结算和发送后 `unknown` 不自动重试。
+- 上线门禁为 60 条虚构 Query 的安全、整体质量、语义提升、精确事实、无答案和性能指标。Staging 必须按 lexical→shadow→hybrid；Production 保持不变。
+- 本轮不实现 Rerank、`qwen3-rerank`、HNSW、IVFFlat、其他 ANN、B3-B3 或正式业务写入。

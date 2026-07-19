@@ -9,6 +9,8 @@ export * from "./project-documents";
 export * from "./document-ingestion";
 export * from "./ai-assistant";
 export * from "./document-embeddings";
+export * from "./ai-retrieval-profile";
+export * from "./ai-retrieval";
 
 import { account, rateLimit, verification } from "./auth-support";
 import { session } from "./sessions";

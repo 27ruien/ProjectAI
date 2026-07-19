@@ -43,7 +43,7 @@ function excerpt(content: string, query: string): string {
   }`;
 }
 
-type SearchRow = {
+export type SearchRow = {
   chunk_id: string;
   document_id: string;
   version_id: string;
@@ -72,7 +72,7 @@ export type ProjectKnowledgeEvidence = {
   score: number;
 };
 
-async function queryProjectKnowledgeRows(input: {
+export async function queryProjectKnowledgeRows(input: {
   projectId: string;
   query: string;
   documentIds: string[];
@@ -146,9 +146,80 @@ async function queryProjectKnowledgeRows(input: {
   return result.rows;
 }
 
-function normalizedScore(rawScore: number | string): number {
+export function normalizedScore(rawScore: number | string): number {
   const value = Math.max(0, Number(rawScore));
   return Number((value / (value + 1)).toFixed(4));
+}
+
+export type RankedProjectKnowledgeEvidence = {
+  rank: number;
+  evidence: ProjectKnowledgeEvidence;
+};
+
+export async function retrieveLexicalProjectCandidates(input: {
+  projectId: string;
+  query: string;
+  limit: number;
+}): Promise<RankedProjectKnowledgeEvidence[]> {
+  const rows = await queryProjectKnowledgeRows({
+    projectId: input.projectId,
+    query: input.query,
+    documentIds: [],
+    limit: input.limit,
+  });
+  return rows
+    .filter((row) => row.content.trim().length > 0)
+    .map((row, index) => ({
+      rank: index + 1,
+      evidence: {
+        label: "",
+        chunkId: row.chunk_id,
+        documentId: row.document_id,
+        versionId: row.version_id,
+        displayName: row.display_name,
+        versionNumber: row.version_number,
+        mimeType: row.mime_type,
+        content: row.content.trim(),
+        contentSha256: row.content_sha256,
+        headingPath: Array.isArray(row.heading_path)
+          ? row.heading_path.filter(
+              (item): item is string => typeof item === "string",
+            )
+          : [],
+        source: validateSourceLocator(row.source_locator),
+        score: normalizedScore(row.raw_score),
+      },
+    }));
+}
+
+export function selectBoundedProjectEvidence(input: {
+  candidates: Array<{ evidence: ProjectKnowledgeEvidence }>;
+  evidenceLimit: number;
+  maxChars: number;
+  minimumScore?: number;
+}): ProjectKnowledgeEvidence[] {
+  const evidence: ProjectKnowledgeEvidence[] = [];
+  let characterCount = 0;
+  for (const candidate of input.candidates) {
+    if (
+      input.minimumScore !== undefined &&
+      candidate.evidence.score < input.minimumScore
+    ) {
+      continue;
+    }
+    const remaining = input.maxChars - characterCount;
+    if (remaining <= 0) break;
+    const boundedContent = candidate.evidence.content.slice(0, remaining);
+    if (!boundedContent.trim()) continue;
+    evidence.push({
+      ...candidate.evidence,
+      label: `E${evidence.length + 1}`,
+      content: boundedContent,
+    });
+    characterCount += boundedContent.length;
+    if (evidence.length >= input.evidenceLimit) break;
+  }
+  return evidence;
 }
 
 export async function retrieveProjectEvidence(input: {
@@ -172,45 +243,17 @@ export async function retrieveProjectEvidence(input: {
   const evidenceLimit = Math.min(Math.max(input.evidenceLimit ?? 10, 1), 10);
   const maxChars = Math.min(Math.max(input.maxChars ?? 24_000, 1), 24_000);
   const minimumScore = Math.min(Math.max(input.minimumScore ?? 0.12, 0), 1);
-  const rows = await queryProjectKnowledgeRows({
+  const candidates = await retrieveLexicalProjectCandidates({
     projectId: input.projectId,
     query,
-    documentIds: [],
     limit: candidateLimit,
   });
-  const evidence: ProjectKnowledgeEvidence[] = [];
-  let characterCount = 0;
-  for (const row of rows) {
-    const score = normalizedScore(row.raw_score);
-    if (score < minimumScore) continue;
-    const content = row.content.trim();
-    if (!content) continue;
-    const remaining = maxChars - characterCount;
-    if (remaining <= 0) break;
-    const boundedContent = content.slice(0, remaining);
-    if (!boundedContent.trim()) break;
-    evidence.push({
-      label: `E${evidence.length + 1}`,
-      chunkId: row.chunk_id,
-      documentId: row.document_id,
-      versionId: row.version_id,
-      displayName: row.display_name,
-      versionNumber: row.version_number,
-      mimeType: row.mime_type,
-      content: boundedContent,
-      contentSha256: row.content_sha256,
-      headingPath: Array.isArray(row.heading_path)
-        ? row.heading_path.filter(
-            (item): item is string => typeof item === "string",
-          )
-        : [],
-      source: validateSourceLocator(row.source_locator),
-      score,
-    });
-    characterCount += boundedContent.length;
-    if (evidence.length >= evidenceLimit) break;
-  }
-  return evidence;
+  return selectBoundedProjectEvidence({
+    candidates,
+    evidenceLimit,
+    maxChars,
+    minimumScore,
+  });
 }
 
 export async function searchProjectKnowledge(input: {

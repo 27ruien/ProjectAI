@@ -224,3 +224,23 @@
 - 人工恢复：必须显式接受潜在重复计费；旧 Unknown Call 与预算原样保留，事务内检查剩余额度并新增一个 Call Attempt。预算不足不得重排 Job 或调用 Provider。
 - 原因：Model Studio 文本 Embedding 文档未承诺任一 HTTP 错误必然不计费；保守处理避免自动重放造成不可见的重复成本。
 - 依据：[Embedding 规格](https://help.aliyun.com/en/model-studio/embedding)、[同步 API](https://help.aliyun.com/en/model-studio/text-embedding-synchronous-api) 与[模型计费](https://www.alibabacloud.com/help/en/model-studio/model-pricing)确认批次/token/按输入计费规则；[错误码](https://www.alibabacloud.com/help/en/model-studio/error-code)提供错误含义和重试建议，但没有给文本 Embedding 错误不计费保证，因此不把 400/401/403/429/5xx 推断为 confirmed-no-charge。
+
+## ADR-035：先用 Exact Vector + RRF 建立评测基线
+
+- 状态：Accepted。
+- 决策：`hybrid-rrf-v1` 使用原 Lexical Top 30、exact cosine Vector Top 30 与确定性 RRF（K=60、权重 1:1），而不是在本轮引入 ANN 或 Reranker。
+- 参数：Fused Top 30、Evidence Top 10、最大距离 0.55、Coverage 9800 bps；参数由 60 条虚构 Query 的距离分布和完整质量门禁冻结。任何调整创建 v2，不原地修改 v1。
+- 原因：先得到可复现、可解释、无近似索引变量的质量和延迟基线；只有真实规模证明 exact scan 不足时，后续 ADR 才能评估 ANN。
+
+## ADR-036：Shadow 必须先于 Hybrid，所有失败回退 Lexical
+
+- 状态：Accepted。
+- 决策：Mode 只能服务端配置。Shadow 保存两路 Candidate/排名/聚合时延和 Usage，但 Prompt 仍使用 Lexical；只有离线门禁与 Shadow 验证均通过才允许 Hybrid。
+- 回退：Coverage、Profile、配置、预算、Timeout、Provider 或向量校验失败均交付原 Lexical Evidence。Lexical 也为空时保持 Evidence Insufficient，不调用 Answer Model。
+- 原因：不让向量能力可用性改变既有 Grounding 和 Citation 安全下限。
+
+## ADR-037：Query Embedding 使用独立不可变成本账本
+
+- 状态：Accepted。
+- 决策：每个 Retrieval Run 最多一个 Query Embedding Call；调用前以 8192 Token 规则做 UTC 日预算硬预留，成功只使用 Provider 返回 Usage 结算，Usage 缺失继续保留预留。发送后结果未知记 `unknown`，终态不可修改且不自动重试。
+- 数据最小化：只存 Query Hash、Usage、Latency、受控失败码和可选 Provider Request ID；Query Vector、完整问题、Provider Payload 均不持久化或输出。

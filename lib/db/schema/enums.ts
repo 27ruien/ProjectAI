@@ -118,6 +118,36 @@ export const aiExecutionStatusEnum = pgEnum("ai_execution_status", [
   "insufficient_evidence",
 ]);
 
+export const aiRetrievalModeEnum = pgEnum("ai_retrieval_mode", [
+  "lexical",
+  "shadow",
+  "hybrid",
+]);
+
+export const aiRetrievalRunStatusEnum = pgEnum("ai_retrieval_run_status", [
+  "running",
+  "succeeded",
+  "fallback_lexical",
+  "failed",
+  "insufficient_evidence",
+]);
+
+export const aiRetrievalCandidateSourceEnum = pgEnum(
+  "ai_retrieval_candidate_source",
+  ["lexical", "vector", "both"],
+);
+
+export const aiRetrievalQueryEmbeddingCallStatusEnum = pgEnum(
+  "ai_retrieval_query_embedding_call_status",
+  [
+    "reserved",
+    "calling",
+    "succeeded",
+    "failed_confirmed_no_charge",
+    "unknown",
+  ],
+);
+
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];
@@ -143,3 +173,11 @@ export type AiMessageRole = (typeof aiMessageRoleEnum.enumValues)[number];
 export type AiMessageStatus = (typeof aiMessageStatusEnum.enumValues)[number];
 export type AiExecutionStatus =
   (typeof aiExecutionStatusEnum.enumValues)[number];
+export type AiRetrievalMode =
+  (typeof aiRetrievalModeEnum.enumValues)[number];
+export type AiRetrievalRunStatus =
+  (typeof aiRetrievalRunStatusEnum.enumValues)[number];
+export type AiRetrievalCandidateSource =
+  (typeof aiRetrievalCandidateSourceEnum.enumValues)[number];
+export type AiRetrievalQueryEmbeddingCallStatus =
+  (typeof aiRetrievalQueryEmbeddingCallStatusEnum.enumValues)[number];

@@ -91,6 +91,19 @@
 - B3-B1 只允许部署 Staging。必须先以 Flag=false 部署并健康，再备份、Migration、验证 Extension、执行固定虚构 Embedding Probe、启用专用 Worker、执行虚构增量与小批量回填、精确向量范围 Probe、B3-A 回归和清理；Production 必须保持完全不变。
 - B3-B1 的 PR 必须保持 Draft，不得自动 Ready 或合并；本轮不得开始 B3-B2、ANN 索引选型、Hybrid Retrieval 或 `qwen3-rerank`。
 
+## v0.8 B3-B2 范围规则
+
+- v0.8 B3-B2 只把 B3-A 项目助手 Evidence 切换为经过评测的服务端检索链路；B2 用户知识搜索继续使用原词法检索，Prompt、Citation 验证和正式数据只读边界保持不变。
+- 固定只读 Profile 为 `hybrid-rrf-v1`：Lexical/Exact Vector/Fused Candidate 上限 30、Evidence 上限 10、`rrfK=60`、双路权重 1、cosine 最大距离 0.55、Embedding Coverage 门槛 9800 bps。任何参数变化必须创建新 Profile 并重新评测。
+- Mode 只能由服务端配置为 `lexical`、`shadow` 或 `hybrid`。客户端不得提交 Mode、Profile、Provider、模型、Dimensions、阈值、Evidence、Score 或向量；默认必须为 `lexical`。
+- Vector Retrieval 必须是带精确 `projectId` 和 Active/Current/Stored/Succeeded/Effective/内容 Hash/Profile 约束的 PostgreSQL exact scan：`embedding <=> query_vector`；本轮禁止 HNSW、IVFFlat、其他 ANN、Rerank、`qwen3-rerank`、Web Search、Tool Calling 和 Agent 自主执行。
+- Query Embedding 必须经过服务端 Gateway，单 Query 单调用，1024 维有限值严格校验，不持久化 Query Vector。独立 UTC 日 Token 预算使用硬预留；成功按 Provider Usage 结算，Usage 缺失保留预留，发送后不确定记 `unknown` 且不得自动重试。
+- Coverage、配置、Profile、预算、Timeout 或 Provider 失败必须自动回退原 Lexical Evidence；无有效 Chunk 或 Lexical 也无 Evidence 时不得调用 Answer Model。Shadow 只记录 Hybrid Candidate，实际 Prompt 仍使用 Lexical Evidence。
+- Hybrid 上线前必须通过至少 60 条纯虚构 Query 的安全、Recall/MRR/nDCG、语义提升、精确事实、无答案和延迟门禁，并完成 Staging `lexical → shadow → hybrid` 顺序验证；模式切换只重建 App。
+- Retrieval Run、Query Embedding Call 和 Candidate 必须绑定项目、用户 Thread、Message 与 Execution；只保存 Query Hash、排名、聚合时延、Usage 和受控失败码，不保存完整问题、正文、Prompt、Query Vector、Secret 或 Provider Payload。
+- B3-B2 只允许部署 Staging；Migration 只能新增 `drizzle/0007_*.sql`。Production 不得部署、迁移、安装 pgvector、挂载 Qwen Secret、增加 Worker、修改 Mode、重启或修改 Nginx。
+- B3-B2 的 PR 必须保持 Draft，不得 Ready 或合并；本轮不得开始 B3-B3、Rerank 或 ANN 选型。
+
 ## Review Guidelines
 
 - P0：跨项目数据泄露；密钥或客户资料暴露。

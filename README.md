@@ -2,7 +2,7 @@
 
 面向项目经理的 AI 项目交付工作台 MVP。它以项目为核心容器，将项目资料、知识、结构化需求、AI 工作流、人工审核、Scope 变更、Action Plan 与风险管理串联起来。
 
-> **安全提示：v0.7 B3-B1 只新增 `text-embedding-v4`、1024 维 pgvector 持久化、专用 Worker 与安全回填基础。用户搜索和 B3-A 项目助手仍使用 B2 词法检索；Hybrid Retrieval、Vector RAG、Rerank、Tool Calling 和正式业务写入仍未实现。真实 Provider 只允许在受控 Staging 使用 Secret File，测试和演示只能使用虚构文件。**
+> **安全提示：v0.8 B3-B2 只把经过评测的 Hybrid Retrieval 接入项目助手 Evidence。用户知识搜索仍使用 B2 词法检索；Query Vector 不持久化，异常自动回退 Lexical。ANN、Vector RAG、Rerank、Tool Calling 和正式业务写入仍未实现。真实 Provider 只允许在受控 Staging 使用 Secret File，测试和演示只能使用虚构文件。**
 
 ## 已实现能力
 
@@ -16,6 +16,7 @@
 - 项目空间：概览、真实资料、真实项目知识搜索、真实 Grounded 项目助手，以及仍为 Mock 的需求、Scope、Action、会议和风险模块。
 - 项目知识：读取当前项目 Active/Current/Stored/Succeeded/Effective 索引，支持 FTS、contains、`pg_trgm` 模糊匹配与 PDF Page、DOCX Section、XLSX Range、PPTX Slide、文本行来源。
 - 项目 AI 助手：私人 Thread、有限多轮、Qwen 主/备用模型、服务端 Evidence/Citation 校验、资料不足、失败重试、Token Usage、限流与审计；回答不直接写入正式业务数据。
+- Assistant Evidence Retrieval：服务端 lexical/shadow/hybrid Mode、冻结 `hybrid-rrf-v1`、Query Embedding 成本账本、exact pgvector、RRF、Coverage Gate、Lexical Fallback 与 60 条虚构 Query 质量门禁。
 - 向量基础：固定 `qwen-text-embedding-cn-v1` Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、dry-run Backfill、Probe 与 Usage；不接入浏览器检索或回答 Evidence。
 - 需求中心：TanStack Table、批量操作、CSV 导出和可编辑 Requirement Drawer。
 - AI 工作流：项目助手使用真实 AI Gateway；其他需求提取、Scope、Action 和风险工作流仍为 Mock。
@@ -182,8 +183,8 @@ Compose 按容器最小化注入 Secret：Worker 只接收数据库连接和 Buc
 
 ## 后续接入
 
-1. 完成 v0.7 B3-B1 产品与安全人工审查；Draft PR 不自动 Ready 或合并。
-2. B3-B2 单独评审 Hybrid Retrieval、RRF、ANN 与 Reranker，不得混入 B3-B1。
+1. 完成 v0.8 B3-B2 产品与安全人工审查；Draft PR 不自动 Ready 或合并。
+2. 后续 ANN 或 Reranker 必须独立评测和立项，不得混入 B3-B2。
 3. 保持 `ProjectKnowledgeService` 和 `AIGateway` 稳定边界；Provider Key 只进入服务端 Secret File。
 4. 项目助手回答必须显示来源并保留审计，不直接覆盖正式数据。
 
@@ -191,7 +192,7 @@ Compose 按容器最小化注入 Secret：Worker 只接收数据库连接和 Buc
 
 生产地址：<https://gridworks.cn/tool/projectai>
 
-v0.7 B3-B1 只允许部署 Staging，禁止在 Production 服务器构建、重启、迁移、增加 pgvector/Embedding Worker、配置 Qwen Secret 或重新部署本应用。现有 Production 继续使用 `/tool/projectai`、`/srv/projectai`、`project-ai-os` 和 `127.0.0.1:3100`；发布前后必须精确比对 Production 容器身份、运行状态、restart count 与 health。
+v0.8 B3-B2 只允许部署 Staging，禁止在 Production 服务器构建、重启、迁移、增加 pgvector/Embedding Worker、配置 Qwen Secret、修改 Retrieval Mode 或重新部署本应用。现有 Production 继续使用 `/tool/projectai`、`/srv/projectai`、`project-ai-os` 和 `127.0.0.1:3100`；发布前后必须精确比对 Production 容器身份、运行状态、restart count 与 health。
 
 以下命令仅保留为既有 Production 基线说明，不是本轮执行清单。`NEXT_PUBLIC_BASE_PATH` 是构建时配置，修改后必须重新构建镜像；应用内的 `next/link` 和 Router 继续使用 `/dashboard` 等逻辑路径，不要手工重复前缀。
 
@@ -292,3 +293,16 @@ curl -I https://gridworks.cn/tool/projectai/
 - 深层路由 404：确认请求完整转发到应用，没有在 Nginx 中剥离 `/tool/projectai`。
 - 修改 basePath 后页面仍旧：重新构建镜像，单独修改运行时环境变量不会更新客户端资源路径。
 - 容器不健康：先查看 Compose 日志并修复应用，不要在上游未通过健康检查前修改或 reload Nginx。
+
+## v0.8 B3-B2：Evaluated Hybrid Retrieval
+
+项目助手现在通过统一服务获取 Evidence。服务端 Mode 默认为 `lexical`，Staging 依次经过 `shadow` 和质量门禁后才可进入 `hybrid`；客户端不能选择 Mode 或提交检索内部参数。冻结的 `hybrid-rrf-v1` 使用原词法候选、PostgreSQL `embedding <=> query_vector` 精确 cosine 检索和确定性 RRF，Coverage 或 Query Embedding 异常时回退原词法结果。
+
+```bash
+npm run retrieval:evaluate
+npm run retrieval:probe
+npm run retrieval:shadow-report
+npm run retrieval:status
+```
+
+评测集是 60 条纯虚构 Query，报告 HitRate/Recall/MRR/nDCG、无答案误报、安全泄漏和延迟门禁。Query Vector 不持久化、不进入浏览器或 Evidence；Query Embedding 使用独立不可变成本账本。本轮没有 ANN/HNSW/IVFFlat、Rerank 或 `qwen3-rerank`，用户知识搜索仍为词法检索，Production 未上线 B3-B2。

@@ -18,8 +18,10 @@ import {
   aiExecutionStatusEnum,
   aiMessageRoleEnum,
   aiMessageStatusEnum,
+  aiRetrievalModeEnum,
   aiThreadStatusEnum,
 } from "./enums";
+import { aiRetrievalProfile } from "./ai-retrieval-profile";
 import { documentChunk } from "./document-ingestion";
 import { project } from "./projects";
 import { user } from "./users";
@@ -181,6 +183,18 @@ export const aiExecution = pgTable(
     status: aiExecutionStatusEnum("status").notNull().default("reserved"),
     promptVersion: varchar("prompt_version", { length: 32 }).notNull(),
     retrievalVersion: varchar("retrieval_version", { length: 32 }).notNull(),
+    retrievalRunId: text("retrieval_run_id"),
+    requestedRetrievalMode: aiRetrievalModeEnum("requested_retrieval_mode")
+      .notNull()
+      .default("lexical"),
+    effectiveRetrievalMode: aiRetrievalModeEnum("effective_retrieval_mode"),
+    retrievalProfileId: text("retrieval_profile_id")
+      .notNull()
+      .default("hybrid-rrf-v1")
+      .references(() => aiRetrievalProfile.id, { onDelete: "restrict" }),
+    retrievalFallbackReason: varchar("retrieval_fallback_reason", {
+      length: 80,
+    }),
     gatewayVersion: varchar("gateway_version", { length: 32 }).notNull(),
     evidenceCount: integer("evidence_count").notNull().default(0),
     inputTokenCount: integer("input_token_count"),
@@ -232,6 +246,7 @@ export const aiExecution = pgTable(
       table.status,
       table.createdAt,
     ),
+    index("ai_executions_retrieval_run_idx").on(table.retrievalRunId),
     foreignKey({
       name: "ai_executions_thread_owner_scope_fk",
       columns: [table.threadId, table.projectId, table.actorUserId],
@@ -302,6 +317,10 @@ export const aiExecution = pgTable(
     check("ai_executions_running_check", sql`
       ${table.status} not in ('reserved', 'retrieving', 'calling_provider', 'validating')
       or ${table.completedAt} is null
+    `),
+    check("ai_executions_retrieval_check", sql`
+      (${table.retrievalRunId} is null and ${table.effectiveRetrievalMode} is null)
+      or (${table.retrievalRunId} is not null and ${table.effectiveRetrievalMode} is not null)
     `),
   ],
 );

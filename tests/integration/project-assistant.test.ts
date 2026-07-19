@@ -7,6 +7,9 @@ import {
   aiExecution,
   aiMessage,
   aiMessageCitation,
+  aiRetrievalCandidate,
+  aiRetrievalQueryEmbeddingCall,
+  aiRetrievalRun,
   aiThread,
   auditEvent,
   documentChunk,
@@ -66,6 +69,9 @@ async function clearAssistantState(): Promise<void> {
   const db = getDb();
   await db.transaction(async (tx) => {
     await tx.delete(aiMessageCitation);
+    await tx.delete(aiRetrievalCandidate);
+    await tx.delete(aiRetrievalQueryEmbeddingCall);
+    await tx.delete(aiRetrievalRun);
     await tx.delete(aiExecution);
     await tx.delete(aiMessage);
     await tx.delete(aiThread);
@@ -721,6 +727,7 @@ describe("grounding, repair, retries and idempotency", () => {
       "existingQuestionHash",
       "incomingQuestionHash",
       "modelProfileMatched",
+      "retrievalProfileMatched",
     ]);
     assert.equal(audit?.metadata.modelProfileMatched, true);
     assert.equal(JSON.stringify(audit?.metadata).includes("被拒绝"), false);

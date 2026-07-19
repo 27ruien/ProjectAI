@@ -39,6 +39,9 @@ try {
 
   await db.transaction(async (tx) => {
     await tx.execute(sql`delete from ai_message_citations`);
+    await tx.execute(sql`delete from ai_retrieval_candidates`);
+    await tx.execute(sql`delete from ai_retrieval_query_embedding_calls`);
+    await tx.execute(sql`delete from ai_retrieval_runs`);
     await tx.execute(sql`delete from ai_executions`);
     await tx.execute(sql`delete from ai_messages`);
     await tx.execute(sql`delete from ai_threads`);
@@ -86,6 +89,11 @@ try {
     ai_executions: number;
     ai_citations: number;
     running_executions: number;
+    retrieval_runs: number;
+    retrieval_candidates: number;
+    query_embedding_calls: number;
+    active_retrieval_runs: number;
+    active_query_embedding_calls: number;
   }>(sql`
     select
       (select count(*)::int from sessions) as sessions,
@@ -102,6 +110,9 @@ try {
       (select count(*)::int from ai_messages) as ai_messages,
       (select count(*)::int from ai_executions) as ai_executions,
       (select count(*)::int from ai_message_citations) as ai_citations,
+      (select count(*)::int from ai_retrieval_runs) as retrieval_runs,
+      (select count(*)::int from ai_retrieval_candidates) as retrieval_candidates,
+      (select count(*)::int from ai_retrieval_query_embedding_calls) as query_embedding_calls,
       (
         select count(*)::int
         from document_ingestion_jobs
@@ -116,7 +127,14 @@ try {
         select count(*)::int
         from ai_executions
         where status in ('reserved', 'retrieving', 'calling_provider', 'validating')
-      ) as running_executions
+      ) as running_executions,
+      (
+        select count(*)::int from ai_retrieval_runs where status = 'running'
+      ) as active_retrieval_runs,
+      (
+        select count(*)::int from ai_retrieval_query_embedding_calls
+        where status in ('reserved', 'calling')
+      ) as active_query_embedding_calls
   `);
   const objects = (await storage.listObjects("projects/")).length;
   const temporaryFiles = (await readdir("/tmp")).filter((entry) =>

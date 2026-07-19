@@ -1,6 +1,6 @@
 # Testing
 
-## v0.7 B3-B1 测试分层
+## v0.8 B3-B2 测试分层
 
 1. TypeScript：`npm run typecheck`。
 2. ESLint：`npm run lint`。
@@ -13,10 +13,12 @@
 9. Embedding Adapter/Gateway/Worker 单元：`npm run test:embeddings`。
 10. pgvector/Job/Lease/Backfill/隔离集成：`npm run test:embedding-integration`。
 11. Project Assistant 数据库集成：`npm run test:assistant-integration`。
-12. Artifact/Provenance：`npm run test:artifacts`。
-13. Staging/Worker/AI Secret/Probe/备份部署契约：`npm run test:deployment`。
-14. Playwright 身份、文件、解析、知识搜索和 Grounded Assistant：`npm run test:e2e`。
-15. 完整本地门禁：`npm run qa:mvp`。
+12. Retrieval/RRF/评测：`npm run test:retrieval`。
+13. Retrieval/成本/隔离集成：`npm run test:retrieval-integration`。
+14. Artifact/Provenance：`npm run test:artifacts`。
+15. Staging/Worker/AI Secret/Probe/备份部署契约：`npm run test:deployment`。
+16. Playwright 身份、文件、解析、知识搜索和 Grounded Assistant：`npm run test:e2e`。
+17. 完整本地门禁：`npm run qa:mvp`。
 
 B3-A 新增覆盖 Secret File、Profile、私人 Thread、复合归属、幂等、B2 Evidence、Prompt 分区、Prompt Injection、Citation Validation/Repair、无 Evidence 不调用 Provider、Timeout/429/5xx 重试、401/403 不重试、Fallback、Token Usage、速率/日额度/全局并发和 SEC-006 架构扫描。
 
@@ -151,6 +153,10 @@ npm run assistant:smoke
 npm run embeddings:smoke:prepare
 npm run embeddings:lease-smoke
 npm run embeddings:smoke:verify
+npm run retrieval:evaluate
+npm run retrieval:probe
+npm run retrieval:shadow-report
+npm run retrieval:status
 ```
 
 前者同时走容器内部上游和公网 Nginx 路径；后者只在队列为空、Worker 暂停期间执行。验收失败必须保留部署失败状态并触发既有 Staging App/Worker 回滚，不得跳过清理或 Production baseline 复核。
@@ -158,3 +164,11 @@ npm run embeddings:smoke:verify
 ## 动态验证事实
 
 最终 PR Head、CI Run、Evidence/Provenance ID/Digest、Staging image 与 Build Time 不写入 tracked 文档；它们只记录在当前 Draft PR 描述、Provenance Manifest 和受控部署证据中。
+
+## v0.8 Retrieval 门禁
+
+- `npm run retrieval:migration-upgrade` 在隔离 PostgreSQL 17/pgvector 数据库验证 0004→0005→0006→0007 非空升级和旧 Execution 的 lexical 默认值。
+- `npm run test:retrieval` 验证冻结配置、模式拒绝、RRF 去重/加权/稳定排序以及 60 Query 质量门禁。
+- `npm run test:retrieval-integration` 验证 lexical 零调用、shadow Evidence 不变、hybrid 语义命中、跨项目/旧版本/归档排除、Coverage/Timeout 回退、unknown 不重试、Usage-null、UTC 日预算、幂等、Profile 禁用与数据库复合约束。
+- `npm run retrieval:evaluate` 输出 JSON/Markdown 的 Lexical/Vector/Hybrid 整体及分类 Metrics、距离校准、安全计数和门禁；只使用虚构资料，不使用 LLM Judge。
+- Playwright 继续监控 console/page/request/HTTP 500/无限 Loading，并拒绝浏览器出现 Secret、Query Vector、内部 Score 或 Provider Payload。B3-A/B3-B1 全量回归必须保持通过。

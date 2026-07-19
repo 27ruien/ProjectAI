@@ -19,8 +19,11 @@ import {
   aiExecution,
   aiMessage,
   aiMessageCitation,
+  aiRetrievalQueryEmbeddingCall,
+  aiRetrievalRun,
   aiThread,
   type AiExecutionRecord,
+  type AiRetrievalMode,
 } from "@/lib/db/schema";
 import { validateSourceLocator } from "@/lib/documents/processing/source-locator";
 import type {
@@ -404,6 +407,8 @@ export async function reserveAssistantExecution(input: {
   modelProfileId: string;
   idempotencyKey: string;
   executionStaleAfterMs: number;
+  retrievalProfileId: string;
+  retrievalMode: AiRetrievalMode;
 }): Promise<Reservation> {
   const scope = [
     input.projectId,
@@ -472,9 +477,12 @@ export async function reserveAssistantExecution(input: {
     if (existing) {
       const modelProfileMatched =
         existing.modelProfileId === input.modelProfileId;
+      const retrievalProfileMatched =
+        existing.retrievalProfileId === input.retrievalProfileId;
       if (
         existing.questionSha256 !== incomingQuestionHash ||
-        !modelProfileMatched
+        !modelProfileMatched ||
+        !retrievalProfileMatched
       ) {
         await writeAuditEvent(
           {
@@ -489,6 +497,7 @@ export async function reserveAssistantExecution(input: {
               existingQuestionHash: existing.questionSha256,
               incomingQuestionHash,
               modelProfileMatched,
+              retrievalProfileMatched,
             },
             ...getRequestAuditContext(input.requestHeaders),
           },
@@ -613,6 +622,71 @@ export async function reserveAssistantExecution(input: {
           completedAt: recoveredAt,
         })
         .where(eq(aiExecution.id, staleExecution.id));
+      const [staleRetrievalRun] = await tx
+        .select()
+        .from(aiRetrievalRun)
+        .where(eq(aiRetrievalRun.aiExecutionId, staleExecution.id))
+        .limit(1)
+        .for("update", { of: aiRetrievalRun });
+      if (staleRetrievalRun?.status === "running") {
+        await tx
+          .update(aiRetrievalQueryEmbeddingCall)
+          .set({
+            status: "unknown",
+            dispatchClassification: "post_dispatch",
+            failureCode: "PROVIDER_RESULT_UNKNOWN",
+            completedAt: recoveredAt,
+            updatedAt: recoveredAt,
+          })
+          .where(
+            and(
+              eq(
+                aiRetrievalQueryEmbeddingCall.retrievalRunId,
+                staleRetrievalRun.id,
+              ),
+              eq(aiRetrievalQueryEmbeddingCall.status, "calling"),
+            ),
+          );
+        await tx
+          .update(aiRetrievalQueryEmbeddingCall)
+          .set({
+            status: "failed_confirmed_no_charge",
+            dispatchClassification: "pre_dispatch",
+            failureCode: "QUERY_EMBEDDING_STALE_PRE_DISPATCH",
+            completedAt: recoveredAt,
+            updatedAt: recoveredAt,
+          })
+          .where(
+            and(
+              eq(
+                aiRetrievalQueryEmbeddingCall.retrievalRunId,
+                staleRetrievalRun.id,
+              ),
+              eq(aiRetrievalQueryEmbeddingCall.status, "reserved"),
+            ),
+          );
+        await tx
+          .update(aiRetrievalRun)
+          .set({
+            status: "failed",
+            effectiveMode: "lexical",
+            fallbackReason: "RETRIEVAL_STALE",
+            totalLatencyMs: Math.max(
+              0,
+              recoveredAt.getTime() - staleRetrievalRun.startedAt.getTime(),
+            ),
+            completedAt: recoveredAt,
+          })
+          .where(eq(aiRetrievalRun.id, staleRetrievalRun.id));
+        await tx
+          .update(aiExecution)
+          .set({
+            retrievalRunId: staleRetrievalRun.id,
+            effectiveRetrievalMode: "lexical",
+            retrievalFallbackReason: "RETRIEVAL_STALE",
+          })
+          .where(eq(aiExecution.id, staleExecution.id));
+      }
       await tx
         .update(aiThread)
         .set({ updatedAt: recoveredAt })
@@ -705,6 +779,8 @@ export async function reserveAssistantExecution(input: {
         status: "reserved",
         promptVersion: PROJECT_ASSISTANT_PROMPT_VERSION,
         retrievalVersion: PROJECT_ASSISTANT_RETRIEVAL_VERSION,
+        requestedRetrievalMode: input.retrievalMode,
+        retrievalProfileId: input.retrievalProfileId,
         gatewayVersion: AI_GATEWAY_VERSION,
         questionSha256: incomingQuestionHash,
         idempotencyKey: input.idempotencyKey,
@@ -734,6 +810,8 @@ export async function reserveAssistantExecution(input: {
           questionHash: execution.questionSha256,
           questionLength: input.question.length,
           modelProfileId: input.modelProfileId,
+          retrievalProfileId: input.retrievalProfileId,
+          requestedRetrievalMode: input.retrievalMode,
         },
         ...getRequestAuditContext(input.requestHeaders),
       },

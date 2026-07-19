@@ -28,13 +28,13 @@ export function EnvironmentBanner() {
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-5">
         <strong className="inline-flex items-center gap-1.5 text-xs">
           <AlertTriangle aria-hidden="true" className="size-3.5" />
-          STAGING · v0.7 向量生成与 pgvector 基础
+          STAGING · v0.8 评测驱动的 Hybrid Retrieval
         </strong>
         <span>版本 {APP_RUNTIME.version}</span>
         <span title={APP_RUNTIME.commitSha}>Commit {APP_RUNTIME.shortCommitSha}</span>
         <span>构建时间 {APP_RUNTIME.buildTime}</span>
         <span className="font-semibold">
-          项目文件会真实存储并建立词法知识索引；后台仅构建受保护的文本向量基础，当前知识搜索和项目助手仍使用词法检索，OCR、Hybrid Retrieval、Rerank 和正式业务写入尚未启用。仅允许上传虚构测试资料，禁止上传真实客户项目资料。
+          项目助手通过服务端受控的 lexical、shadow 或 hybrid 模式检索证据；Hybrid 使用 Query Embedding、精确向量检索与 RRF，并保留词法回退。知识搜索仍为词法检索，OCR、ANN 与 Rerank 尚未启用。仅允许上传虚构测试资料，禁止上传真实客户项目资料。
         </span>
       </div>
     </aside>

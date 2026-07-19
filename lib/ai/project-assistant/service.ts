@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
-import { retrieveProjectEvidence } from "@/lib/documents/processing/search-service";
+import {
+  getHybridRetrievalRuntimeConfig,
+  finalizeFailedRetrievalRunForExecution,
+  retrieveProjectEvidence,
+} from "@/lib/ai/retrieval";
 import type {
   ProjectAssistantMessageResponse,
   ProjectAssistantThreadDto,
@@ -120,6 +124,7 @@ export async function askProjectAssistant(input: {
   body: unknown;
 }): Promise<ProjectAssistantMessageResponse> {
   const config = requireAiAssistantEnabled();
+  const retrievalConfig = getHybridRetrievalRuntimeConfig();
   const parsed = questionSchema.safeParse(input.body);
   if (!parsed.success) {
     throw new ProjectAssistantError(
@@ -137,6 +142,8 @@ export async function askProjectAssistant(input: {
     modelProfileId: parsed.data.modelProfileId,
     idempotencyKey: idempotencyKey(input.idempotencyKey),
     executionStaleAfterMs: config.executionStaleAfterMs,
+    retrievalProfileId: retrievalConfig.profileId,
+    retrievalMode: retrievalConfig.mode,
   });
   if (reservation.replayed) {
     return responseForExecution({
@@ -151,7 +158,7 @@ export async function askProjectAssistant(input: {
   let evidenceCount = 0;
   try {
     await updateExecutionPhase(reservation.execution.id, "retrieving");
-    const [history, evidence] = await Promise.all([
+    const [history, retrieval] = await Promise.all([
       loadConversationHistory({
         projectId: input.projectId,
         threadId: input.threadId,
@@ -163,11 +170,12 @@ export async function askProjectAssistant(input: {
         projectId: input.projectId,
         requestHeaders: input.requestHeaders,
         query: parsed.data.question,
-        candidateLimit: 30,
-        evidenceLimit: 10,
-        maxChars: 24_000,
+        mode: retrievalConfig.mode,
+        retrievalProfileId: retrievalConfig.profileId,
+        execution: reservation.execution,
       }),
     ]);
+    const evidence = retrieval.evidence;
     evidenceCount = evidence.length;
     if (evidence.length === 0) {
       await finalizeInsufficientEvidence({
@@ -236,6 +244,9 @@ export async function askProjectAssistant(input: {
       replayed: false,
     });
   } catch (error) {
+    await finalizeFailedRetrievalRunForExecution(
+      reservation.execution.id,
+    ).catch(() => undefined);
     const controlled =
       error instanceof ProjectAssistantError
         ? error

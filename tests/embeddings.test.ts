@@ -473,8 +473,8 @@ describe("Embedding health gate", () => {
   });
 });
 
-describe("B3-B1 retrieval boundary", () => {
-  it("does not expose vectors from browser routes or connect Embeddings to B2/B3-A retrieval", async () => {
+describe("B3-B2 centralized retrieval boundary", () => {
+  it("does not expose vectors from browser routes or bypass the unified retrieval service", async () => {
     const routeEntries = await readdir(new URL("../app/api", import.meta.url), {
       recursive: true,
     });

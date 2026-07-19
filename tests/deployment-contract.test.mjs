@@ -18,6 +18,10 @@ const authBoundaryVerifier = new URL(
   "../scripts/verify-auth-boundaries.mjs",
   import.meta.url,
 );
+const groundedAiVerifier = new URL(
+  "../scripts/verify-grounded-ai-flow.ts",
+  import.meta.url,
+);
 const fileStorageVerifier = new URL(
   "../scripts/verify-file-storage-flow.ts",
   import.meta.url,
@@ -227,7 +231,7 @@ test("operations use scoped Compose services and storage verification stays read
   );
   assert.equal(
     [...script.matchAll(/projectai-ai-smoke npm run assistant:smoke/g)].length,
-    3,
+    5,
   );
   assert.equal(
     [...script.matchAll(/projectai-document-smoke npm run embeddings:smoke:prepare/g)].length,
@@ -321,7 +325,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/vector-embedding-foundation"/);
+  assert.match(script, /EXPECTED_BRANCH="agent\/hybrid-retrieval-foundation"/);
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -464,7 +468,7 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
   );
   assert.equal(
     [...script.matchAll(/for _ in \$\(seq 1 13\); do\n\s+sleep 5\ndone/g)].length,
-    3,
+    5,
   );
   assert.match(
     script,
@@ -476,7 +480,7 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
   assert.match(script, /"aiEmbeddingEnabled":true/);
   assert.match(script, /stale_after \+= 0/);
   assert.match(script, /stale_after < 300000 \|\| stale_after > 3600000/);
-  assert.match(script, /running AI Execution/);
+  assert.match(script, /running AI, Embedding, or Retrieval operation/);
   assert.match(script, /Staging application logs contain prohibited AI request or Secret markers/);
   assert.doesNotMatch(production, /qwen_api_key|QWEN_API_KEY|QWEN_BASE_URL|secrets:/);
 });
@@ -538,12 +542,46 @@ test("B3-B1 deployment pins pgvector and gates the dedicated Embedding pipeline"
   assert.doesNotMatch(production, /pgvector|AI_EMBEDDING|embedding-worker|document_chunk_embeddings/i);
 });
 
-test("Staging banner states the B3-B1 lexical retrieval boundary accurately", async () => {
+test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App promotion", async () => {
+  const [script, workflow, production, groundedVerifier] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(ciWorkflow, "utf8"),
+    readFile(productionCompose, "utf8"),
+    readFile(groundedAiVerifier, "utf8"),
+  ]);
+  assert.match(script, /EXPECTED_BRANCH="agent\/hybrid-retrieval-foundation"/);
+  const lexical = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"');
+  const evaluation = script.indexOf("npm run retrieval:evaluate");
+  const shadow = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=shadow"');
+  const shadowReport = script.indexOf("npm run retrieval:shadow-report");
+  const hybrid = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=hybrid"');
+  assert.ok(
+    lexical >= 0 && evaluation > lexical && shadow > evaluation &&
+      shadowReport > shadow && hybrid > shadowReport,
+  );
+  assert.match(script, /"assistantRetrievalMode":"shadow"/);
+  assert.match(script, /"assistantRetrievalMode":"hybrid"/);
+  assert.match(script, /"hybridRetrievalReady":true/);
+  assert.match(script, /retrieval_evaluation_digest/);
+  assert.match(script, /npm run retrieval:probe/);
+  assert.match(script, /npm run retrieval:status/);
+  assert.match(script, /project_scope_leakage_count/);
+  assert.match(groundedVerifier, /vector_latency_ms <= 1_500/);
+  assert.match(groundedVerifier, /total_latency_ms <= 8_000/);
+  assert.match(groundedVerifier, /vectorSqlP95Ms <= 1_500/);
+  assert.match(groundedVerifier, /retrievalP95Ms <= 8_000/);
+  assert.match(workflow, /npm run retrieval:migration-upgrade/);
+  assert.match(workflow, /npm run test:retrieval-integration/);
+  assert.match(workflow, /npm run retrieval:evaluate/);
+  assert.doesNotMatch(production, /AI_ASSISTANT_RETRIEVAL_MODE|hybrid-rrf|ai_retrieval/i);
+});
+
+test("Staging banner states the B3-B2 retrieval boundary accurately", async () => {
   const banner = await readFile(environmentBanner, "utf8");
-  assert.match(banner, /v0\.7 向量生成与 pgvector 基础/);
-  assert.match(banner, /后台仅构建受保护的文本向量基础/);
-  assert.match(banner, /当前知识搜索和项目助手仍使用词法检索/);
-  assert.match(banner, /Hybrid Retrieval、Rerank/);
+  assert.match(banner, /v0\.8 评测驱动的 Hybrid Retrieval/);
+  assert.match(banner, /Query Embedding、精确向量检索与 RRF/);
+  assert.match(banner, /知识搜索仍为词法检索/);
+  assert.match(banner, /ANN 与 Rerank 尚未启用/);
   assert.doesNotMatch(banner, /AI 综合回答尚未启用/);
 });
 

@@ -3,7 +3,7 @@ import { ProjectAssistantError } from "./errors";
 
 export const AI_GATEWAY_VERSION = "1";
 export const PROJECT_ASSISTANT_PROMPT_VERSION = "1";
-export const PROJECT_ASSISTANT_RETRIEVAL_VERSION = "b2-lexical-1";
+export const PROJECT_ASSISTANT_RETRIEVAL_VERSION = "hybrid-rrf-1";
 export const PROJECT_ASSISTANT_PROFILE_ID =
   "qwen-project-assistant-cn-v1";
 export const PROJECT_ASSISTANT_PRIMARY_MODEL = "qwen3.7-plus";

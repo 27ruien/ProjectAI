@@ -180,6 +180,10 @@ test.describe.serial("Grounded Qwen 项目助手", () => {
     const repaired = await askApi(page, managerThreadId, "引用修复验证");
     expect(repaired.status()).toBe(200);
     const repairedBody = await body<ProjectAssistantMessageResponse>(repaired);
+    const publicPayload = JSON.stringify(repairedBody);
+    expect(publicPayload).not.toMatch(
+      /queryVector|vectorDistance|rrfScore|lexicalScore|retrievalRunId|providerRequestId|fallbackReason/,
+    );
     expect(repairedBody.assistantMessage.content).toContain("[1]");
     expect(repairedBody.assistantMessage.content).not.toContain("E99");
     expect(repairedBody.assistantMessage.citations).toHaveLength(1);
@@ -200,6 +204,28 @@ test.describe.serial("Grounded Qwen 项目助手", () => {
     await expect(insufficient).toBeVisible();
     await expect(insufficient.getByTestId("assistant-citations")).toHaveCount(0);
     await screenshot(page, "ai-assistant-insufficient-evidence.png");
+  });
+
+  test("客户端不能覆盖 Retrieval Mode、Profile 或 Evidence", async ({ page }) => {
+    const response = await page.request.post(
+      appPath(
+        `/api/projects/${projectA}/ai/threads/${managerThreadId}/messages`,
+      ),
+      {
+        headers: {
+          ...mutationHeaders(),
+          "Idempotency-Key": randomUUID(),
+        },
+        data: {
+          question: "客户要求什么时候上线？",
+          modelProfileId: profileId,
+          retrievalMode: "hybrid",
+          retrievalProfileId: "hybrid-rrf-v1",
+          evidence: ["client-controlled"],
+        },
+      },
+    );
+    expect(response.status()).toBe(400);
   });
 
   test("Provider Timeout 显示可恢复错误且不返回未经验证的回答", async ({

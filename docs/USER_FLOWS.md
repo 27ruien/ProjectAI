@@ -111,3 +111,21 @@ B3-A 项目助手不等于需求提取。已有审核交互仍只产生 Mock 状
 ## 会议到 Action Plan（目标流程，当前 Mock）
 
 会议、决策和 Action 数据仍为 Mock；本轮不接受会议文件进行解析，不自动摘要、提取 Action、识别风险或生成周报。
+
+## v0.8 项目助手 Evidence Retrieval
+
+```mermaid
+flowchart LR
+  Q["用户在已授权项目提问"] --> M{"服务端 Retrieval Mode"}
+  M -->|lexical| L["原词法 Evidence"]
+  M -->|shadow| S["记录 Hybrid；Prompt 仍用词法"]
+  M -->|hybrid| H["Lexical + Exact Vector + RRF"]
+  S --> L
+  H --> G{"Coverage / Provider / Budget 正常"}
+  G -->|是| E["RRF 最终 Evidence"]
+  G -->|否| L
+  L --> A["原 Grounded Answer 与 Citation 校验"]
+  E --> A
+```
+
+用户不选择 Mode，也看不到 Profile、Query Vector、Score 或 Provider Payload。Hybrid 回答仍显示同一套来源引用、版本、定位、Excerpt 与下载入口；Fallback 不显示 500。知识搜索页继续是词法搜索，不宣称 Semantic Search。
