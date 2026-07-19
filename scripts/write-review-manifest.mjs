@@ -20,6 +20,23 @@ const screenshotFiles = (await readdir(screenshotsRoot, { withFileTypes: true })
   .filter((entry) => entry.isFile() && /\.png$/i.test(entry.name))
   .map((entry) => `screenshots/${entry.name}`)
   .sort();
+const requiredRetrievalReports = [
+  "retrieval-calibration.json",
+  "retrieval-calibration.md",
+  "retrieval-evaluation.json",
+  "retrieval-evaluation.md",
+  "retrieval-verification-summary.json",
+  "retrieval-verification-summary.md",
+];
+const retrievalReportFiles = [];
+for (const file of requiredRetrievalReports) {
+  try {
+    await readFile(path.join(root, file));
+    retrievalReportFiles.push(file);
+  } catch {
+    // Failed CI runs may not have reached evaluation; status remains authoritative.
+  }
+}
 
 const requiredScreenshots = [
   "screenshots/login.png",
@@ -70,6 +87,20 @@ const missingScreenshots = requiredScreenshots.filter(
 );
 const ci = /^true$/i.test(process.env.CI || "");
 const optional = (value) => value?.trim() || null;
+const reviewStatus =
+  process.env.REVIEW_ARTIFACT_STATUS?.trim() || (ci ? "" : "local");
+const missingRetrievalReports = requiredRetrievalReports.filter(
+  (file) => !retrievalReportFiles.includes(file),
+);
+if (
+  reviewStatus.toLowerCase() === "success" &&
+  (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
+  missingRetrievalReports.length
+) {
+  throw new Error(
+    `Successful B3-B2 evidence is missing Retrieval reports: ${missingRetrievalReports.join(", ")}`,
+  );
+}
 
 async function pngDimensions(relativePath) {
   const buffer = await readFile(path.join(root, relativePath));
@@ -125,6 +156,11 @@ const evidenceIndex = {
   assistantProfileId:
     process.env.AI_PROJECT_ASSISTANT_PROFILE_ID?.trim() ||
     "qwen-project-assistant-cn-v1",
+  retrievalProfileId: "hybrid-rrf-v1",
+  retrievalEvaluationDatasetVersion: "hybrid-retrieval-fictional-v1",
+  requiredRetrievalReports,
+  retrievalReportFiles,
+  missingRetrievalReports,
   testedUsers: [
     "system_admin",
     "project_manager_a",
@@ -137,7 +173,7 @@ const evidenceIndex = {
   requiredScreenshots,
   missingScreenshots,
   screenshotsComplete: missingScreenshots.length === 0,
-  status: process.env.REVIEW_ARTIFACT_STATUS?.trim() || (ci ? "" : "local"),
+  status: reviewStatus,
 };
 
 assertEvidenceIndex(evidenceIndex, { ci });

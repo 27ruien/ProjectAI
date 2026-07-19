@@ -7,14 +7,14 @@
 | Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 既有环境，本轮不得修改 | 不增加 pgvector/Worker/MinIO | `127.0.0.1:3100` |
 | Staging | https://gridworks.cn/tool/projectai-staging/ / `/tool/projectai-staging` | `/srv/projectai-staging` / App + Document Worker + Embedding Worker | PostgreSQL 17 + pgvector 0.8.1 / `projectai-staging-postgres` | 私有 MinIO + `projectai-staging-files` | 应用 `127.0.0.1:3101`；Worker/DB/MinIO 无端口 |
 
-v0.7 B3-B1 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 pgvector/Embedding Worker、配置 Qwen Secret、修改环境或重新部署。
+v0.8 B3-B2 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 pgvector/Embedding Worker、配置 Qwen Secret、修改 Retrieval Mode、修改环境或重新部署。
 
 ## Staging 构建元数据
 
 ```env
 NEXT_PUBLIC_BASE_PATH=/tool/projectai-staging
 NEXT_PUBLIC_APP_ENV=staging
-NEXT_PUBLIC_APP_VERSION=0.7.0-staging
+NEXT_PUBLIC_APP_VERSION=0.8.0-staging
 NEXT_PUBLIC_COMMIT_SHA=<feature branch full sha>
 NEXT_PUBLIC_BUILD_TIME=<ISO-8601>
 AI_ASSISTANT_ENABLED=false
@@ -27,7 +27,7 @@ AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1
 AI_EMBEDDING_DIMENSIONS=1024
 ```
 
-环境条必须显示 build 元数据。资料页显示异步解析/索引状态；知识页同时提供原始词法搜索和真实 Grounded 项目助手，并明确说明语义向量检索尚未启用。robots 与 Nginx header 均设置 noindex。认证配置继续使用完整 Staging `BETTER_AUTH_URL`、独立 `AUTH_COOKIE_PREFIX` 和 `/tool/projectai-staging` Cookie Path；Cookie 必须 HttpOnly、SameSite=Lax、Secure。
+环境条必须显示 build 元数据。资料页显示异步解析/索引状态；知识页同时提供原始词法搜索和真实 Grounded 项目助手，并明确用户知识搜索仍为词法、Assistant Evidence 可由服务端受控 Hybrid 检索。robots 与 Nginx header 均设置 noindex。认证配置继续使用完整 Staging `BETTER_AUTH_URL`、独立 `AUTH_COOKIE_PREFIX` 和 `/tool/projectai-staging` Cookie Path；Cookie 必须 HttpOnly、SameSite=Lax、Secure。
 
 ## 受保护环境文件
 
@@ -79,7 +79,7 @@ published ports: none
 
 使用 `scripts/deploy-staging.sh`。脚本要求：
 
-- 分支精确为 `agent/vector-embedding-foundation`，工作区 clean，完整 40 位 Commit。
+- 分支精确为 `agent/hybrid-retrieval-foundation`，工作区 clean，完整 40 位 Commit。
 - 固定 Compose project `projectai-staging`、目录 `/srv/projectai-staging` 和远端平台。
 - 原子取得 Staging 专属部署锁；发布目录、环境、备份、锁和 marker 均不得是 symlink。
 - 记录 Production 容器 ID、running、restart count、health，进入发布事务后的成功/失败/回滚出口都必须精确一致。
@@ -191,4 +191,6 @@ https://gridworks.cn/tool/projectai-staging/
 
 ## 当前发布状态
 
-v0.7 B3-B1 的稳定发布合同是：App、PostgreSQL/pgvector、MinIO、两个 Worker Healthy；Qwen Secret 仅 App/Embedding Worker；Flag=false → Migration/Profile/Probe → 分阶段启用；真实虚构向量、Backfill、Lease、范围 Probe与 B3-A 词法回归；测试数据和 running work 清零；Production 基线精确不变。动态 SHA、CI、Artifact 和 image 事实只记录在 Draft PR、Provenance 与受控部署证据中。
+v0.8 B3-B2 的稳定发布合同是：精确 PR Head CI 全绿后获取部署锁并记录 Production/Staging 基线；备份 PostgreSQL 和 MinIO；新代码先以 Retrieval Mode=lexical 健康；受控执行新增 0007；五服务 Healthy；完成 Lexical/B3-A/B3-B1 回归、60 Query 评测与冻结 Profile；只重建 App 切换 shadow，运行虚构 Query 和脱敏报告；门禁通过后再只重建 App 切换 hybrid 并完成语义、精确事实、Fallback、权限和清理验证。Production 容器、镜像、StartedAt、Restart Count、Health、Compose、Secret Mount 和公网响应必须精确不变。
+
+Mode 配置只存在 `/srv/projectai-staging/.env.ai`：`AI_ASSISTANT_RETRIEVAL_MODE`、`AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1`、`AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS`、`AI_HYBRID_VECTOR_SQL_TIMEOUT_MS` 和 Query 日 Token 上限。Qwen Secret 仍只读挂载 App/Embedding Worker，切勿读取或打印文件内容。回滚先把 Mode 恢复为 lexical，再恢复上一 immutable App image；不得 `down -v`、删除卷、修改 Production 或绕过质量门禁。

@@ -1,6 +1,6 @@
 {
   "name": "project-ai-os",
-  "version": "0.7.0-staging",
+  "version": "0.8.0-staging",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -17,7 +17,7 @@
     "test:deployment": "node --test tests/deployment-contract.test.mjs",
     "review:sanitize": "node scripts/sanitize-test-artifacts.mjs",
     "review:finalize": "node scripts/finalize-review-manifest.mjs",
-    "qa:mvp": "npm run embeddings:migration-upgrade && npm run typecheck && npm run lint && npm test && npm run test:assistant && npm run test:embeddings && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:embedding-integration && npm run test:assistant-integration && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
+    "qa:mvp": "npm run embeddings:migration-upgrade && npm run retrieval:migration-upgrade && npm run typecheck && npm run lint && npm test && npm run test:assistant && npm run test:embeddings && npm run test:retrieval && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:embedding-integration && npm run test:assistant-integration && npm run test:retrieval-integration && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern playwright-report --ignore-pattern review-artifacts --ignore-pattern product-review-evidence --ignore-pattern test-results --ignore-pattern test-logs",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
@@ -53,6 +53,14 @@
     "embeddings:lease-smoke": "tsx scripts/verify-embedding-worker-lease.ts",
     "embeddings:safety-smoke": "tsx scripts/verify-embedding-safety.ts",
     "test:embeddings": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1 AI_EMBEDDING_DIMENSIONS=1024 node --import tsx --test --test-concurrency=1 tests/embeddings.test.ts",
+    "test:retrieval": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_ASSISTANT_RETRIEVAL_MODE=hybrid node --import tsx --test --test-concurrency=1 tests/retrieval.test.ts tests/retrieval-evaluation.test.ts",
+    "retrieval:evaluate": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_EMBEDDING_PROVIDER=fake tsx scripts/evaluate-retrieval.ts",
+    "retrieval:probe": "tsx scripts/probe-retrieval.ts",
+    "retrieval:shadow-report": "tsx scripts/retrieval-shadow-report.ts",
+    "retrieval:status": "tsx scripts/retrieval-status.ts",
+    "retrieval:migration-upgrade": "tsx scripts/verify-retrieval-migration-upgrade.ts",
+    "retrieval:ci-evidence": "tsx scripts/write-retrieval-ci-evidence.ts",
+    "test:retrieval-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1 AI_EMBEDDING_DIMENSIONS=1024 AI_ASSISTANT_RETRIEVAL_MODE=hybrid node --import tsx --test --test-concurrency=1 tests/integration/retrieval.test.ts",
     "test:embedding-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1 AI_EMBEDDING_DIMENSIONS=1024 node --import tsx --test --test-concurrency=1 tests/integration/embeddings.test.ts",
     "test:cleanup": "tsx scripts/cleanup-ci-test-data.ts"
   },

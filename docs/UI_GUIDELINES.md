@@ -20,7 +20,7 @@
 
 - Staging 全局显示醒目的 `STAGING` 标识。
 - 同时显示环境、版本、Commit 短码和构建时间，并保留完整 SHA 的可查询信息。
-- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存并建立词法索引，后台仅构建受保护的文本向量基础，项目助手会调用真实 Qwen，但用户语义向量检索、向量 RAG、Hybrid Retrieval 和 Rerank 仍未启用。
+- 固定提示这是 Staging 试运行环境，仅允许上传虚构或已脱敏的验证资料；资料正文会真实保存并建立词法索引，项目助手可通过服务端受控 Hybrid Evidence 调用真实 Qwen，但用户知识搜索的 Hybrid、向量 RAG、ANN 和 Rerank 仍未启用。
 - Staging 设置 robots noindex，并由 Nginx 添加 `X-Robots-Tag`。
 
 ## 文档处理与知识搜索
@@ -36,7 +36,7 @@
 - 回答正文、`[1]` 引用、来源卡片、文件名、版本、Source Locator、Excerpt 和原文件下载必须同时可审核。
 - Disabled、Empty、Loading、Insufficient Evidence、Provider Error、Retry 和 Fallback 必须是不同状态，不能无限 Loading 或把失败伪装成空答案。
 - 固定免责声明：“AI 回答仅基于当前项目资料生成，请结合引用来源核对关键信息。”
-- 固定边界提示：“当前回答基于项目全文知识索引；语义向量检索将在后续版本启用。”
+- 固定边界提示：“当前回答仅基于本项目有效资料；检索异常时会自动使用词法证据，请结合引用核对。”
 - 不显示 Base URL、Provider Request ID、Object Key、Bucket、完整 Prompt、Evidence ID、Chunk ID、Secret 或敏感限流明细。
 
 ## 反馈入口
@@ -45,3 +45,10 @@
 - 只自动收集 pathname、环境、版本、Commit、User Agent 和时间。
 - 不读取页面正文、项目数据、URL query、上传文件或其他业务 localStorage。
 - 反馈描述需提示用户主动去除客户资料和密钥。
+
+## v0.8 Retrieval 呈现
+
+- 不增加客户端 Mode 切换器、Profile 选择器或“语义搜索”开关。Staging Banner 可说明受控的 lexical/shadow/hybrid 能力，但不得暗示用户知识搜索已改为 Hybrid。
+- Shadow 页面答案和 Citation 必须与 Lexical 一致；Hybrid 只改变最终 Evidence 来源，不改变 Answer、Repair、Review 和引用卡片交互。
+- Coverage、Query Embedding Timeout/预算/Provider 失败均显示正常的回答或既有 Evidence Insufficient 状态，不暴露内部失败码，不出现 500 或无限 Loading。
+- 浏览器 DTO、DOM、console 和截图不得出现 Query Vector、内部 lexical/vector/RRF Score、阈值、Coverage 细节、Provider Request ID、完整问题 Hash 或成本账本内部字段。

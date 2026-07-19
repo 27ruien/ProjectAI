@@ -1,6 +1,6 @@
 # Architecture
 
-## v0.7 请求、身份、文件、知识、项目助手与向量基础边界
+## v0.8 请求、身份、文件、知识、项目助手与 Hybrid Evidence 边界
 
 ```mermaid
 flowchart LR
@@ -191,3 +191,21 @@ CI 使用 `pgvector/pgvector:0.8.1-pg17` 和运行时创建的 MinIO；Embedding
 `playwright-report/`、`test-results/`、trace/video、任意归档/PDF、上传测试原件、数据库/对象备份和未列名文件均不进入 Payload A。sanitizer 对数据库/认证/MinIO/object-storage/Qwen Secret、Qwen Base URL、Bucket/Endpoint/Object Key、Cookie/Session、System Prompt、Provider Request/Response 和编码变体做删除/脱敏并失败关闭。
 
 GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v3 记录 Worker/Parser/Chunker/AI Gateway Version、Assistant Profile 和 PNG 实际尺寸。`MVP_STATUS.md` 只记录稳定交付结论；最终 Head、CI、Artifact 与 Staging 动态精确事实只进入 Draft PR、Provenance Manifest 和受控部署证据。
+
+## v0.8 Assistant Evidence Retrieval
+
+```text
+authorized Assistant request
+  -> unified Retrieval Service (projectId + private Thread + Execution)
+     -> Lexical candidates (existing B2 SQL)
+     -> Coverage gate
+     -> Query Embedding Gateway + immutable cost call
+     -> exact pgvector candidates (embedding <=> query_vector)
+     -> deterministic RRF
+     -> bounded Evidence
+  -> unchanged Prompt / Citation validation / optional one repair
+```
+
+`lexical` 只走第一路；`shadow` 执行两路和 RRF 但向 Prompt 交付原 Lexical Evidence；`hybrid` 才交付融合结果。Coverage、Profile、预算、配置、Timeout 或 Provider 异常都回退原 Lexical。Query Vector 不落库；Run 只保存 Query SHA-256、候选排名/距离/融合分数、聚合时延、Usage 和受控状态。候选表以复合外键绑定 Run 项目与 Chunk 项目。
+
+`hybrid-rrf-v1` 是不可变配置实体。Vector SQL 是 PostgreSQL exact scan，并同时约束 Active Document、Current/Stored Version、Succeeded Ingestion、Effective Chunk、内容 Hash 与 Embedding Profile。本轮没有 ANN 索引、Reranker 或用户知识搜索改造。Production 架构保持不变。

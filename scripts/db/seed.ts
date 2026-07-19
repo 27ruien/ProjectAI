@@ -4,6 +4,7 @@ import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   account,
   aiModelProfile,
+  aiRetrievalProfile,
   project,
   projectMember,
   user,
@@ -155,6 +156,25 @@ async function seedIdentity(spec: SeedUserSpec): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  await getDb()
+    .insert(aiRetrievalProfile)
+    .values({
+      id: "hybrid-rrf-v1",
+      profileVersion: 1,
+      lexicalCandidateLimit: 30,
+      vectorCandidateLimit: 30,
+      fusedCandidateLimit: 30,
+      evidenceLimit: 10,
+      rrfK: 60,
+      lexicalWeight: 1,
+      vectorWeight: 1,
+      vectorMaxDistance: 0.55,
+      minEmbeddingCoverageBps: 9_800,
+      embeddingProfileId: "qwen-text-embedding-cn-v1",
+      enabled: true,
+    })
+    .onConflictDoNothing({ target: aiRetrievalProfile.id });
+
   await getDb()
     .insert(aiModelProfile)
     .values({

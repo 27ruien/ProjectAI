@@ -43,8 +43,21 @@ const allowedTestLogs = new Set([
   "storage-verify.log",
   "post-cleanup-storage-verify.log",
   "test-cleanup.log",
+  "retrieval-evaluation.log",
+  "retrieval-integration.log",
+  "retrieval-migration-upgrade.log",
+  "retrieval-unit.log",
   "typecheck.log",
 ]);
+const allowedReviewReports = new Set([
+  "retrieval-calibration.json",
+  "retrieval-calibration.md",
+  "retrieval-evaluation.json",
+  "retrieval-evaluation.md",
+  "retrieval-verification-summary.json",
+  "retrieval-verification-summary.md",
+]);
+const requiredRetrievalReports = [...allowedReviewReports];
 const outputRoot = path.resolve("product-review-evidence");
 const redacted = "[REDACTED]";
 const whitespaceEncodedSecrets = new Set();
@@ -891,7 +904,9 @@ async function enforceEvidenceAllowlist() {
       const entryPath = path.join(reviewRoot, entry.name);
       if (
         entry.isFile() &&
-        (entry.name === "evidence-index.json" || entry.name === "manifest.json")
+        (entry.name === "evidence-index.json" ||
+          entry.name === "manifest.json" ||
+          allowedReviewReports.has(entry.name))
       ) {
         continue;
       }
@@ -1001,6 +1016,13 @@ async function verifyReviewEvidenceCompleteness() {
   const status = evidenceIndex.status.toLowerCase();
   if ((status === "success" || status === "local") && missingScreenshots.length > 0) {
     throw new Error("Successful product review evidence requires every screenshot.");
+  }
+  if (status === "success" && evidenceIndex.version.startsWith("0.8.")) {
+    for (const report of requiredRetrievalReports) {
+      if (!(await exists(path.join(reviewRoot, report)))) {
+        throw new Error(`Successful B3-B2 evidence is missing Retrieval report: ${report}`);
+      }
+    }
   }
 
   metrics.reviewStatus = status;

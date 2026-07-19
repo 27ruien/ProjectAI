@@ -67,6 +67,12 @@ const manifest = {
   chunkerVersion: evidenceIndex.chunkerVersion,
   aiGatewayVersion: evidenceIndex.aiGatewayVersion,
   assistantProfileId: evidenceIndex.assistantProfileId,
+  retrievalProfileId: evidenceIndex.retrievalProfileId,
+  retrievalEvaluationDatasetVersion:
+    evidenceIndex.retrievalEvaluationDatasetVersion,
+  requiredRetrievalReports: evidenceIndex.requiredRetrievalReports,
+  retrievalReportFiles: evidenceIndex.retrievalReportFiles,
+  missingRetrievalReports: evidenceIndex.missingRetrievalReports,
   testedUsers: evidenceIndex.testedUsers,
   routes: evidenceIndex.routes,
   screenshotFiles: evidenceIndex.screenshotFiles,

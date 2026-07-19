@@ -1,6 +1,6 @@
 # MVP Acceptance
 
-状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.7 B3-B1 证据。最终 PR Head、CI Run、Artifact ID/Digest、tested merge SHA 和 Staging image 等动态事实只记录在 Draft PR、Provenance Manifest 与受控部署证据。
+状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.8 B3-B2 证据。最终 PR Head、CI Run、Artifact ID/Digest、tested merge SHA 和 Staging image 等动态事实只记录在 Draft PR、Provenance Manifest 与受控部署证据。
 
 | ID | 优先级 | 描述 | 当前状态 | 验证方式 | 自动化覆盖 | 负责人 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -105,4 +105,17 @@
 - P1：21 条；通过 15，部分 5，未完成 1。
 - P2：8 条；通过 0，部分 5，未完成 3。
 
-统计只计算第一张长期 MVP 表。v0.7 B3-B1、v0.6 B3-A、v0.5 B2 与 v0.4 历史门禁单独跟踪；MVP-007/008 已由 Grounded Qwen + 服务端 Citation 闭环。B3-B1 只代表向量生成/存储基础，不代表用户向量检索、Hybrid Retrieval、Rerank 或正式业务写入。
+统计只计算第一张长期 MVP 表。v0.8 B3-B2、v0.7 B3-B1、v0.6 B3-A、v0.5 B2 与 v0.4 历史门禁单独跟踪；MVP-007/008 已由 Grounded Qwen + 服务端 Citation 闭环。
+
+## v0.8 B3-B2 门禁
+
+| ID | 验收项 | 标准 |
+| --- | --- | --- |
+| B3B2-001 | 统一 Evidence Retrieval | Assistant 只调用统一服务；客户端不可提交 Mode/Profile/Provider/阈值/向量 |
+| B3B2-002 | 项目与有效性隔离 | Exact Vector 与 Candidate 的跨项目、旧版本、归档、无效 Chunk 泄漏均为 0 |
+| B3B2-003 | Query 成本一致性 | 单 Execution 单 Run/Call；硬预留、Usage-null、unknown、不自动重试与 UTC 日上限通过 |
+| B3B2-004 | RRF 与回退 | 冻结 v1 参数；Coverage/Timeout/配置/预算失败回退原 Lexical；无 Evidence 不调用 Answer Model |
+| B3B2-005 | 评测质量 | 60 条虚构 Query；Hybrid Recall@10/nDCG 不低于 Lexical，MRR 容差 0.01，语义 Recall 提升至少 0.15，精确事实与无答案门禁通过 |
+| B3B2-006 | 性能 | Exact Vector P95 ≤1500ms；Hybrid Retrieval P95 ≤8000ms |
+| B3B2-007 | Staging 发布 | lexical→0007→评测→shadow→报告→hybrid；仅 Mode 切换时只重建 App，清理和 Production 精确不变 |
+| B3B2-008 | 边界 | 用户搜索仍词法；无 ANN、HNSW、IVFFlat、Rerank、`qwen3-rerank` 或 Production 发布 |

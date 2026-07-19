@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/vector-embedding-foundation"
+readonly EXPECTED_BRANCH="agent/hybrid-retrieval-foundation"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
@@ -235,14 +235,46 @@ sudo chmod 600 "$ai_env_file"
 [[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
 ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.preflight.XXXXXX")"
 if ! sudo awk -F= '
-  BEGIN { updated = 0 }
+  BEGIN { assistant = 0; mode = 0; profile = 0; query_timeout = 0; vector_timeout = 0; daily_limit = 0 }
   $1 == "AI_ASSISTANT_ENABLED" {
     print "AI_ASSISTANT_ENABLED=false"
-    updated += 1
+    assistant += 1
+    next
+  }
+  $1 == "AI_ASSISTANT_RETRIEVAL_MODE" {
+    print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
+    mode += 1
+    next
+  }
+  $1 == "AI_HYBRID_RETRIEVAL_PROFILE_ID" {
+    print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1"
+    profile += 1
+    next
+  }
+  $1 == "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS" {
+    print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
+    query_timeout += 1
+    next
+  }
+  $1 == "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS" {
+    print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
+    vector_timeout += 1
+    next
+  }
+  $1 == "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT" {
+    print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
+    daily_limit += 1
     next
   }
   { print }
-  END { if (updated != 1) exit 1 }
+  END {
+    if (assistant != 1 || mode > 1 || profile > 1 || query_timeout > 1 || vector_timeout > 1 || daily_limit > 1) exit 1
+    if (mode == 0) print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
+    if (profile == 0) print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1"
+    if (query_timeout == 0) print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
+    if (vector_timeout == 0) print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
+    if (daily_limit == 0) print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
+  }
 ' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null; then
   sudo rm -f "$ai_env_temp"
   printf 'Protected Staging AI configuration must contain exactly one Assistant Feature Flag.\n' >&2
@@ -302,6 +334,11 @@ sudo awk -F= '
     if (count["AI_PROVIDER"] != 1 || values["AI_PROVIDER"] != "qwen") exit 1
     if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
     if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v1") exit 1
+    if (count["AI_ASSISTANT_RETRIEVAL_MODE"] != 1 || values["AI_ASSISTANT_RETRIEVAL_MODE"] != "lexical") exit 1
+    if (count["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != 1 || values["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != "hybrid-rrf-v1") exit 1
+    if (count["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != "5000") exit 1
+    if (count["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != 1 || values["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != "1500") exit 1
+    if (count["AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT"] != "5000000") exit 1
     stale_after = values["AI_EXECUTION_STALE_AFTER_MS"]
     if (count["AI_EXECUTION_STALE_AFTER_MS"] != 1 || stale_after !~ /^[0-9]+$/) exit 1
     stale_after += 0
@@ -752,14 +789,19 @@ cd "$remote_dir"
 if sudo test -f "$ai_env_file"; then
   ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.rollback.XXXXXX")"
   sudo awk -F= '
-    BEGIN { updated = 0 }
+    BEGIN { updated = 0; retrieval_mode = 0 }
     $1 == "AI_ASSISTANT_ENABLED" {
       print "AI_ASSISTANT_ENABLED=false"
       updated += 1
       next
     }
+    $1 == "AI_ASSISTANT_RETRIEVAL_MODE" {
+      print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
+      retrieval_mode += 1
+      next
+    }
     { print }
-    END { if (updated != 1) exit 1 }
+    END { if (updated != 1 || retrieval_mode != 1) exit 1 }
   ' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null
   sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
   sudo rm -f "$ai_env_temp"
@@ -2137,6 +2179,111 @@ printf 'Re-running B3-A grounded Qwen regression while Embedding remains enabled
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-ai-smoke npm run assistant:smoke
 
+printf 'Running the 60-query fictional lexical, exact-vector, and hybrid quality evaluation.\n'
+retrieval_evaluation="$(sudo docker exec "$container_name" npm run retrieval:evaluate)"
+grep -q '"queryCount":60' <<<"$retrieval_evaluation"
+grep -q '"passed":true' <<<"$retrieval_evaluation"
+retrieval_evaluation_digest="$(
+  sudo docker exec "$container_name" sha256sum review-artifacts/retrieval-evaluation.json \
+    | awk '{ print $1 }'
+)"
+[[ "$retrieval_evaluation_digest" =~ ^[0-9a-f]{64}$ ]]
+
+printf 'Running the fixed real Query Embedding and deterministic RRF Probe.\n'
+retrieval_probe="$(sudo docker exec "$container_name" npm run retrieval:probe)"
+grep -q '"dimensions":1024' <<<"$retrieval_probe"
+grep -q '"finite":true' <<<"$retrieval_probe"
+grep -q '"projectScoped":true' <<<"$retrieval_probe"
+grep -q '"vectorOutput":false' <<<"$retrieval_probe"
+
+printf 'Promoting only the Staging App from lexical to mandatory shadow mode.\n'
+ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.shadow.XXXXXX")"
+sudo awk -F= '
+  BEGIN { updated = 0 }
+  $1 == "AI_ASSISTANT_RETRIEVAL_MODE" {
+    print "AI_ASSISTANT_RETRIEVAL_MODE=shadow"
+    updated += 1
+    next
+  }
+  { print }
+  END { if (updated != 1) exit 1 }
+' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null
+sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
+sudo rm -f "$ai_env_temp"
+"${compose[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+shadow_ready=0
+for _ in $(seq 1 60); do
+  shadow_health="$(curl --fail --silent --show-error --max-time 5 "${origin}${base_path}/api/health" || true)"
+  if grep -q '"status":"ok"' <<<"$shadow_health" \
+    && grep -q '"assistantRetrievalMode":"shadow"' <<<"$shadow_health" \
+    && grep -q '"hybridRetrievalReady":true' <<<"$shadow_health"; then
+    shadow_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$shadow_ready" == "1" ]] || {
+  printf 'Staging Shadow retrieval readiness timed out.\n' >&2
+  exit 1
+}
+printf 'Waiting for one protected login rate-limit window before the Shadow smoke.\n'
+for _ in $(seq 1 13); do
+  sleep 5
+done
+printf 'Running the grounded fictional Assistant smoke with lexical Prompt Evidence and shadow candidates.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  --env "EXPECTED_RETRIEVAL_MODE=shadow" \
+  projectai-ai-smoke npm run assistant:smoke
+shadow_report="$(sudo docker exec "$container_name" npm run retrieval:shadow-report)"
+grep -q '"window":"past_24_hours"' <<<"$shadow_report"
+grep -q '"project_scope_leakage_count":"0"' <<<"$shadow_report"
+
+printf 'Promoting only the Staging App to hybrid after the evaluation and shadow gates passed.\n'
+ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.hybrid.XXXXXX")"
+sudo awk -F= '
+  BEGIN { updated = 0 }
+  $1 == "AI_ASSISTANT_RETRIEVAL_MODE" {
+    print "AI_ASSISTANT_RETRIEVAL_MODE=hybrid"
+    updated += 1
+    next
+  }
+  { print }
+  END { if (updated != 1) exit 1 }
+' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null
+sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
+sudo rm -f "$ai_env_temp"
+"${compose[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+hybrid_ready=0
+for _ in $(seq 1 60); do
+  hybrid_health="$(curl --fail --silent --show-error --max-time 5 "${origin}${base_path}/api/health" || true)"
+  if grep -q '"status":"ok"' <<<"$hybrid_health" \
+    && grep -q '"assistantRetrievalMode":"hybrid"' <<<"$hybrid_health" \
+    && grep -q '"hybridRetrievalReady":true' <<<"$hybrid_health"; then
+    hybrid_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$hybrid_ready" == "1" ]] || {
+  printf 'Staging Hybrid retrieval readiness timed out.\n' >&2
+  exit 1
+}
+printf 'Waiting for one protected login rate-limit window before the Hybrid smoke.\n'
+for _ in $(seq 1 13); do
+  sleep 5
+done
+printf 'Running the grounded fictional Assistant regression with hybrid Evidence selection.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=http://projectai-staging:3000${base_path}" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  --env "EXPECTED_RETRIEVAL_MODE=hybrid" \
+  projectai-ai-smoke npm run assistant:smoke
+retrieval_status="$(sudo docker exec "$container_name" npm run retrieval:status)"
+grep -q '"mode":"hybrid"' <<<"$retrieval_status"
+grep -q '"id":"hybrid-rrf-v1"' <<<"$retrieval_status"
+
 "${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";
     const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
@@ -2246,10 +2393,12 @@ printf 'Rechecking storage consistency after Lease verification cleanup.\n'
           (select count(*)::int from ai_executions where status in ($1, $2, $3, $4)) as ai_count,
           (select count(*)::int from document_embedding_jobs where status in ($5, $6)) as embedding_count,
           (select count(*)::int from document_embedding_batches where status::text in ($7, $8, $9)) as embedding_batch_count,
-          (select count(*)::int from document_embedding_provider_calls where status::text in ($7, $8, $9)) as embedding_provider_call_count
-      `, ["reserved", "retrieving", "calling_provider", "validating", "pending", "running", "reserved", "calling", "unknown"]);
-      if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0 || result.rows[0]?.embedding_batch_count !== 0 || result.rows[0]?.embedding_provider_call_count !== 0) {
-        throw new Error("Staging retains a running AI Execution or Embedding Job");
+          (select count(*)::int from document_embedding_provider_calls where status::text in ($7, $8, $9)) as embedding_provider_call_count,
+          (select count(*)::int from ai_retrieval_runs where status = $10) as retrieval_run_count,
+          (select count(*)::int from ai_retrieval_query_embedding_calls where status::text in ($7, $8)) as query_embedding_call_count
+      `, ["reserved", "retrieving", "calling_provider", "validating", "pending", "running", "reserved", "calling", "unknown", "running"]);
+      if (result.rows[0]?.ai_count !== 0 || result.rows[0]?.embedding_count !== 0 || result.rows[0]?.embedding_batch_count !== 0 || result.rows[0]?.embedding_provider_call_count !== 0 || result.rows[0]?.retrieval_run_count !== 0 || result.rows[0]?.query_embedding_call_count !== 0) {
+        throw new Error("Staging retains a running AI, Embedding, or Retrieval operation");
       }
     } finally {
       await client.end();

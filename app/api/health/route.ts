@@ -15,6 +15,10 @@ import {
   embeddingReadiness,
   getEmbeddingRuntimeConfig,
 } from "@/lib/ai/embeddings";
+import {
+  getHybridRetrievalRuntimeConfig,
+  hybridRetrievalReadiness,
+} from "@/lib/ai/retrieval";
 
 export async function GET(): Promise<Response> {
   try {
@@ -65,6 +69,11 @@ export async function GET(): Promise<Response> {
       embeddingConfig,
       aiProviderConfigured,
     );
+    const retrievalConfig = getHybridRetrievalRuntimeConfig();
+    const hybridRetrievalReady = await hybridRetrievalReadiness(
+      retrievalConfig,
+      aiProviderConfigured,
+    );
     return jsonResponse(
       {
         status: "ok",
@@ -74,6 +83,10 @@ export async function GET(): Promise<Response> {
         aiEmbeddingEnabled: embeddingConfig.enabled,
         embeddingGatewayVersion: EMBEDDING_GATEWAY_VERSION,
         pgvectorReady,
+        assistantRetrievalMode: retrievalConfig.mode,
+        hybridRetrievalProfile: retrievalConfig.profileId,
+        hybridRetrievalReady,
+        queryEmbeddingConfigured: aiProviderConfigured,
       },
       { headers },
     );

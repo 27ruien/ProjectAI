@@ -26,6 +26,11 @@ import {
 const environment = documentVerificationEnvironment();
 const runId = randomUUID();
 const displayNamePrefix = "B3-A 虚构 Staging 助手验收 ";
+const expectedRetrievalMode = process.env.EXPECTED_RETRIEVAL_MODE?.trim() || "";
+assert(
+  !expectedRetrievalMode || ["shadow", "hybrid"].includes(expectedRetrievalMode),
+  "EXPECTED_RETRIEVAL_MODE must be shadow or hybrid when provided.",
+);
 const titlePrefix = "B3-A Staging 验证 ";
 const managerAgentPrefix = "projectai-staging-assistant-manager/0.6/";
 const viewerAgentPrefix = "projectai-staging-assistant-viewer/0.6/";
@@ -38,8 +43,25 @@ const viewerEmail = requiredEnvironment("SEED_VIEWER_A_EMAIL");
 const viewerPassword = requiredEnvironment("SEED_VIEWER_A_PASSWORD");
 const trackedThreadIds = new Set<string>();
 
+type RetrievalPerformance = {
+  sampleCount: number;
+  lexicalP50Ms: number;
+  lexicalP95Ms: number;
+  queryEmbeddingP50Ms: number;
+  queryEmbeddingP95Ms: number;
+  vectorSqlP50Ms: number;
+  vectorSqlP95Ms: number;
+  fusionP50Ms: number;
+  fusionP95Ms: number;
+  retrievalP50Ms: number;
+  retrievalP95Ms: number;
+  assistantP50Ms: number;
+  assistantP95Ms: number;
+};
+
 let manager: VerificationSession | null = null;
 let viewer: VerificationSession | null = null;
+let retrievalPerformance: RetrievalPerformance | null = null;
 
 function threadPath(
   projectId: string,
@@ -56,6 +78,9 @@ async function cleanupAiVerification(): Promise<{
   messages: number;
   executions: number;
   citations: number;
+  retrievalRuns: number;
+  queryEmbeddingCalls: number;
+  retrievalCandidates: number;
   audits: number;
 }> {
   const pool = getPool();
@@ -81,6 +106,24 @@ async function cleanupAiVerification(): Promise<{
       await client.query("begin");
       await client.query(
         `delete from ai_message_citations where thread_id = any($1::text[])`,
+        [threadIds],
+      );
+      await client.query(
+        `delete from ai_retrieval_candidates
+         where retrieval_run_id in (
+           select id from ai_retrieval_runs where thread_id = any($1::text[])
+         )`,
+        [threadIds],
+      );
+      await client.query(
+        `delete from ai_retrieval_query_embedding_calls
+         where retrieval_run_id in (
+           select id from ai_retrieval_runs where thread_id = any($1::text[])
+         )`,
+        [threadIds],
+      );
+      await client.query(
+        `delete from ai_retrieval_runs where thread_id = any($1::text[])`,
         [threadIds],
       );
       await client.query(
@@ -122,6 +165,9 @@ async function cleanupAiVerification(): Promise<{
     messages: number;
     executions: number;
     citations: number;
+    retrievalRuns: number;
+    queryEmbeddingCalls: number;
+    retrievalCandidates: number;
     audits: number;
   }>(
     `select
@@ -129,6 +175,13 @@ async function cleanupAiVerification(): Promise<{
       (select count(*)::int from ai_messages where thread_id = any($1::text[])) as messages,
       (select count(*)::int from ai_executions where thread_id = any($1::text[])) as executions,
       (select count(*)::int from ai_message_citations where thread_id = any($1::text[])) as citations,
+      (select count(*)::int from ai_retrieval_runs where thread_id = any($1::text[])) as "retrievalRuns",
+      (select count(*)::int from ai_retrieval_query_embedding_calls q
+        join ai_retrieval_runs r on r.id = q.retrieval_run_id
+        where r.thread_id = any($1::text[])) as "queryEmbeddingCalls",
+      (select count(*)::int from ai_retrieval_candidates c
+        join ai_retrieval_runs r on r.id = c.retrieval_run_id
+        where r.thread_id = any($1::text[])) as "retrievalCandidates",
       (
         select count(*)::int
         from audit_events
@@ -246,6 +299,39 @@ async function waitForIngestion(documentId: string, versionId: string) {
   throw new Error("Grounding fixture ingestion timed out.");
 }
 
+async function waitForEmbeddingCoverage(documentId: string, versionId: string) {
+  const pool = getPool();
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    const result = await pool.query<{
+      chunks: number;
+      embeddings: number;
+    }>(
+      `select
+        count(*)::int as chunks,
+        count(e.id)::int as embeddings
+       from document_chunks c
+       join document_ingestion_jobs j
+         on j.id = c.ingestion_job_id and j.project_id = c.project_id
+       left join document_chunk_embeddings e
+         on e.chunk_id = c.id
+        and e.project_id = c.project_id
+        and e.document_id = c.document_id
+        and e.version_id = c.version_id
+        and e.content_sha256 = c.content_sha256
+        and e.embedding_profile_id = 'qwen-text-embedding-cn-v1'
+        and e.status = 'current'
+       where c.project_id = $1 and c.document_id = $2 and c.version_id = $3
+         and c.is_effective = true and j.status = 'succeeded'`,
+      [environment.projectAId, documentId, versionId],
+    );
+    const row = result.rows[0];
+    if (Number(row?.chunks) > 0 && row?.chunks === row.embeddings) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error("Grounding fixture Embedding coverage timed out.");
+}
+
 let verificationError: unknown;
 try {
   await cleanupAll();
@@ -284,6 +370,9 @@ try {
     uploaded.version.id,
   );
   assert(version.ingestion.chunkCount > 0, "Grounding fixture has no Chunk.");
+  if (expectedRetrievalMode) {
+    await waitForEmbeddingCoverage(uploaded.document.id, uploaded.version.id);
+  }
 
   const pool = getPool();
   const managerThread = await createThread(manager);
@@ -316,6 +405,63 @@ try {
     ),
     "Assistant response leaked internal metadata.",
   );
+  if (expectedRetrievalMode) {
+    const retrieval = await pool.query<{
+      requested_retrieval_mode: string;
+      effective_retrieval_mode: string;
+      fallback_reason: string | null;
+      vector_candidate_count: number;
+      query_calls: number;
+      vector_latency_ms: number;
+      total_latency_ms: number;
+    }>(
+      `select
+        r.requested_mode::text as requested_retrieval_mode,
+        r.effective_mode::text as effective_retrieval_mode,
+        r.fallback_reason,
+        r.vector_candidate_count,
+        r.vector_latency_ms,
+        r.total_latency_ms,
+        (select count(*)::int from ai_retrieval_query_embedding_calls q
+          where q.retrieval_run_id = r.id and q.status = 'succeeded') as query_calls
+       from ai_retrieval_runs r where r.ai_execution_id = $1`,
+      [grounded.execution.id],
+    );
+    const run = retrieval.rows[0];
+    assert(
+      run?.requested_retrieval_mode === expectedRetrievalMode &&
+        run.vector_candidate_count > 0 && run.query_calls === 1,
+      "The expected Retrieval mode did not produce one successful Query Embedding and Vector candidates.",
+    );
+    assert(
+      run.vector_latency_ms <= 1_500 && run.total_latency_ms <= 8_000,
+      "The Staging Retrieval run exceeded the frozen Vector SQL or total Retrieval P95 gate.",
+    );
+    if (expectedRetrievalMode === "shadow") {
+      assert(
+        run.effective_retrieval_mode === "lexical" &&
+          run.fallback_reason === "SHADOW_MODE",
+        "Shadow mode changed Prompt Evidence or did not record its controlled fallback.",
+      );
+    } else {
+      assert(
+        run.effective_retrieval_mode === "hybrid" && run.fallback_reason === null,
+        "Hybrid mode did not supply the final Assistant Evidence.",
+      );
+      const semantic = await ask(
+        manager,
+        managerThread.thread.id,
+        "这项工作计划在哪一天正式投产？",
+      );
+      assert(
+        semantic.execution.status === "succeeded" &&
+          semantic.assistantMessage.citations.some(
+            (item) => item.documentId === uploaded.document.id,
+          ),
+        "Hybrid semantic paraphrase did not return the fictional source Citation.",
+      );
+    }
+  }
 
   const replay = await ask(
     manager,
@@ -327,6 +473,15 @@ try {
     replay.execution.id === grounded.execution.id &&
       replay.execution.replayed === true,
     "The same request fingerprint did not replay the original Execution.",
+  );
+  const countsBeforeConflict = await pool.query<{
+    executions: number;
+    messages: number;
+  }>(
+    `select
+      (select count(*)::int from ai_executions where thread_id = $1) as executions,
+      (select count(*)::int from ai_messages where thread_id = $1) as messages`,
+    [managerThread.thread.id],
   );
   const conflictResponse = await askResponse(
     manager,
@@ -345,7 +500,7 @@ try {
     conflictBody.error.code === "AI_IDEMPOTENCY_CONFLICT",
     "Idempotency conflict returned the wrong error code.",
   );
-  const fingerprintCounts = await pool.query<{
+  const countsAfterConflict = await pool.query<{
     executions: number;
     messages: number;
   }>(
@@ -355,8 +510,10 @@ try {
     [managerThread.thread.id],
   );
   assert(
-    fingerprintCounts.rows[0]?.executions === 1 &&
-      fingerprintCounts.rows[0]?.messages === 2,
+    countsAfterConflict.rows[0]?.executions ===
+      countsBeforeConflict.rows[0]?.executions &&
+      countsAfterConflict.rows[0]?.messages ===
+        countsBeforeConflict.rows[0]?.messages,
     "Idempotency conflict created extra Messages or Executions.",
   );
 
@@ -778,14 +935,62 @@ try {
     [[...trackedThreadIds], [managerUserAgent, viewerUserAgent]],
   );
   const counts = persisted.rows[0]!;
+  const expectedExecutionCount = expectedRetrievalMode === "hybrid" ? 10 : 9;
   assert(counts.threads === 3, "Private Threads were not persisted.");
   assert(counts.messages >= 18, "Messages were not persisted.");
-  assert(counts.executions === 9, "Executions were not persisted.");
+  assert(
+    counts.executions === expectedExecutionCount,
+    `Expected ${expectedExecutionCount} persisted Executions, found ${counts.executions}.`,
+  );
   assert(counts.citations >= 3, "Citations were not persisted.");
   assert(counts.succeeded_audits >= 3, "AI success Audit was not persisted.");
   assert(counts.conflict_audits >= 2, "Idempotency conflict Audit was not persisted.");
   assert(counts.stale_audits === 3, "Stale recovery Audit was not persisted.");
   assert(counts.raw_question_audits === 0, "AI Audit stored raw prompt data.");
+
+  if (expectedRetrievalMode) {
+    const performance = await pool.query<RetrievalPerformance>(
+      `select
+        count(*)::int as "sampleCount",
+        coalesce(round(percentile_cont(0.5) within group (order by r.lexical_latency_ms)::numeric, 2), 0)::float8 as "lexicalP50Ms",
+        coalesce(round(percentile_cont(0.95) within group (order by r.lexical_latency_ms)::numeric, 2), 0)::float8 as "lexicalP95Ms",
+        coalesce(round(percentile_cont(0.5) within group (order by r.query_embedding_latency_ms)::numeric, 2), 0)::float8 as "queryEmbeddingP50Ms",
+        coalesce(round(percentile_cont(0.95) within group (order by r.query_embedding_latency_ms)::numeric, 2), 0)::float8 as "queryEmbeddingP95Ms",
+        coalesce(round(percentile_cont(0.5) within group (order by r.vector_latency_ms)::numeric, 2), 0)::float8 as "vectorSqlP50Ms",
+        coalesce(round(percentile_cont(0.95) within group (order by r.vector_latency_ms)::numeric, 2), 0)::float8 as "vectorSqlP95Ms",
+        coalesce(round(percentile_cont(0.5) within group (order by r.fusion_latency_ms)::numeric, 2), 0)::float8 as "fusionP50Ms",
+        coalesce(round(percentile_cont(0.95) within group (order by r.fusion_latency_ms)::numeric, 2), 0)::float8 as "fusionP95Ms",
+        coalesce(round(percentile_cont(0.5) within group (order by r.total_latency_ms)::numeric, 2), 0)::float8 as "retrievalP50Ms",
+        coalesce(round(percentile_cont(0.95) within group (order by r.total_latency_ms)::numeric, 2), 0)::float8 as "retrievalP95Ms",
+        coalesce((
+          select round(percentile_cont(0.5) within group (order by e.latency_ms)::numeric, 2)::float8
+          from ai_executions e
+          where e.thread_id = any($1::text[])
+            and e.status = 'succeeded' and e.latency_ms is not null
+        ), 0) as "assistantP50Ms",
+        coalesce((
+          select round(percentile_cont(0.95) within group (order by e.latency_ms)::numeric, 2)::float8
+          from ai_executions e
+          where e.thread_id = any($1::text[])
+            and e.status = 'succeeded' and e.latency_ms is not null
+        ), 0) as "assistantP95Ms"
+       from ai_retrieval_runs r
+       where r.thread_id = any($1::text[])
+         and r.requested_mode = $2
+         and r.status in ('succeeded', 'fallback_lexical')`,
+      [[...trackedThreadIds], expectedRetrievalMode],
+    );
+    retrievalPerformance = performance.rows[0] ?? null;
+    assert(
+      retrievalPerformance && retrievalPerformance.sampleCount > 0,
+      "Staging Retrieval performance has no samples.",
+    );
+    assert(
+      retrievalPerformance.vectorSqlP95Ms <= 1_500 &&
+        retrievalPerformance.retrievalP95Ms <= 8_000,
+      "Staging Retrieval performance exceeded the frozen P95 gates.",
+    );
+  }
 
   await signOut(environment, manager);
   await signOut(environment, viewer);
@@ -820,6 +1025,7 @@ try {
       privateThread404: true,
       tokenUsage: true,
       audit: true,
+      retrievalPerformance,
       cleanup,
       runningExecutions: 0,
     })}\n`,

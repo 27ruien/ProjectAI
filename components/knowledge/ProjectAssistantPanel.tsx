@@ -459,7 +459,7 @@ export function ProjectAssistantPanel({
 
       <footer className="grid gap-2 border-t border-border bg-muted/20 px-5 py-3 text-[10px] text-muted-foreground sm:grid-cols-2">
         <p>AI 回答仅基于当前项目资料生成，请结合引用来源核对关键信息。</p>
-        <p className="sm:text-right">当前回答基于项目全文知识索引；语义向量检索将在后续版本启用。</p>
+        <p className="sm:text-right">当前回答仅基于本项目有效资料；检索异常时会自动使用词法证据，请结合引用核对。</p>
       </footer>
     </section>
   );

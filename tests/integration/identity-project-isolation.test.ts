@@ -313,6 +313,10 @@ describe("database constraints", () => {
         aiEmbeddingEnabled: false,
         embeddingGatewayVersion: "2",
         pgvectorReady: false,
+        assistantRetrievalMode: "lexical",
+        hybridRetrievalProfile: "hybrid-rrf-v1",
+        hybridRetrievalReady: false,
+        queryEmbeddingConfigured: false,
       });
       assert.equal(response.headers.get("x-projectai-commit-sha"), runtimeSha);
       assert.equal(response.headers.get("x-projectai-embedding-model"), null);
