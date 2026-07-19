@@ -94,7 +94,7 @@ docker run --detach --rm \
 
 healthy=0
 health_body=""
-for _ in {1..45}; do
+for _ in {1..90}; do
   health_body="$(docker exec "$app" node -e '
     fetch("http://127.0.0.1:3000/tool/projectai/api/health")
       .then(async response => {
@@ -110,7 +110,11 @@ for _ in {1..45}; do
   fi
   sleep 2
 done
-[[ "$healthy" == "1" ]]
+if [[ "$healthy" != "1" ]]; then
+  app_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}' "$app" 2>/dev/null || printf 'missing|unknown|unknown|unknown')"
+  printf 'Isolated application did not become healthy before the 180-second deadline (state|exitCode|oomKilled|restartCount=%s).\n' "$app_state" >&2
+  exit 1
+fi
 [[ "$health_body" == *'"aiAssistantEnabled":false'* ]]
 [[ "$health_body" == *'"aiEmbeddingEnabled":false'* ]]
 [[ "$health_body" == *'"assistantRetrievalMode":"lexical"'* ]]

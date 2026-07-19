@@ -370,6 +370,20 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.doesNotMatch(workflow, /STAGING_HEALTH_URL|projectai-staging\/api\/health/);
 });
 
+test("disabled release image rehearsal has a bounded cold-start deadline and sanitized diagnostics", async () => {
+  const script = await readFile(
+    new URL("../scripts/release/disabled-image-rehearsal.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(script, /for _ in \{1\.\.90\}; do/);
+  assert.match(script, /before the 180-second deadline/);
+  assert.match(script, /\.State\.Status/);
+  assert.match(script, /\.State\.ExitCode/);
+  assert.match(script, /\.State\.OOMKilled/);
+  assert.match(script, /\.RestartCount/);
+  assert.doesNotMatch(script, /docker logs/);
+});
+
 test("Staging document Worker is isolated, bounded, healthy, and uses the immutable app image", async () => {
   const [script, compose, dockerfile] = await Promise.all([
     readFile(deployScript, "utf8"),
