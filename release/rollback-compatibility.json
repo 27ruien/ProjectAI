@@ -4,7 +4,7 @@
   "estimatedRto": "30-60 minutes for app rollback; 60-120 minutes when database restore is required",
   "combinations": [
     { "id": "old-app-current-schema", "required": true, "evidenceKey": "oldAppCurrentSchema" },
-    { "id": "old-app-0007-schema", "required": true, "evidenceKey": "oldApp0007Schema" },
+    { "id": "old-app-parallel-0007-database", "required": true, "evidenceKey": "oldAppParallel0007Database" },
     { "id": "new-app-disabled-0007", "required": true, "evidenceKey": "newAppDisabled0007" },
     { "id": "new-app-lexical-0007", "required": true, "evidenceKey": "newAppLexical0007" },
     { "id": "new-app-embedding-0007", "required": true, "evidenceKey": "newAppEmbedding0007" },

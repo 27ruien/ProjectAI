@@ -101,22 +101,31 @@ if (kind === "disabled-image") {
     passed: raw.loginStatus < 500 && raw.projectsStatus < 500,
   };
 } else if (kind === "old-app") {
+  const expectedSha = requiredOption(options, "expected-sha");
   const expectedImage = requiredOption(options, "expected-image");
+  assertFullSha(expectedSha, "expected-sha");
   assertDigest(expectedImage, "expected-image");
   assertDigest(raw.dbToolsImageDigest, "dbToolsImageDigest");
   requireEqual(raw.productionImageDigest, expectedImage, "Production image digest");
   requireEqual(raw.targetMigration, 7, "Target migration");
   requireEqual(raw.migrationCount, 8, "Migration count");
   requireEqual(raw.pgvectorVersion, "0.8.1", "pgvector version");
-  requireEqual(raw.oldAppHttpStatus, 200, "Old application HTTP status");
+  for (const [field, status] of [
+    ["login", raw.oldAppLoginStatus],
+    ["dashboard", raw.oldAppDashboardStatus],
+    ["projects", raw.oldAppProjectsStatus],
+  ]) {
+    if (!Number.isSafeInteger(status) || status < 200 || status >= 500) {
+      throw new Error(`Old application ${field} route did not satisfy the release rehearsal contract.`);
+    }
+  }
   requireEqual(raw.oldAppRestartCount, 0, "Old application restart count");
   requireEqual(raw.databaseUrlSuppliedToOldApp, true, "Database URL supply");
-  requireEqual(
-    raw.databaseDependency,
-    "not-required-by-current-production-image",
-    "Old application database dependency",
-  );
-  requireEqual(raw.schemaForwardAppRollbackCompatible, true, "Schema-forward rollback");
+  requireEqual(raw.oldAppOperationalWithParallel0007Database, true, "Parallel 0007 operation");
+  requireEqual(raw.oldAppDatabaseDependency, "absent", "Old application database dependency");
+  requireEqual(raw.oldAppDatabaseConnectionObserved, false, "Old application database connection");
+  requireEqual(raw.schemaForwardRollbackScope, "legacy-application-shell", "Schema-forward rollback scope");
+  requireEqual(raw.newDataPlaneFeaturesAvailableAfterRollback, false, "Rolled-back data-plane features");
   requireEqual(raw.publicPortPublished, false, "Public port publication");
   requireEqual(raw.productionContainerTouched, false, "Production container isolation");
   requireEqual(raw.productionNetworkJoined, false, "Production network isolation");
@@ -124,23 +133,32 @@ if (kind === "disabled-image") {
   requireEqual(raw.cleanupComplete, true, "Cleanup");
   requireEqual(raw.passed, true, "Old application compatibility rehearsal");
   stem = "release-old-app-compatibility";
-  title = "B3-C1 old Production image and 0007 schema compatibility";
+  title = "B3-C1 old Production image with a parallel 0007 database";
   payload = {
     schemaVersion: 1,
     recordedAt: new Date().toISOString(),
     environment: "rehearsal",
+    releaseCandidateSha: expectedSha,
     rollbackImageDigest: expectedImage,
     databaseToolsImageDigest: raw.dbToolsImageDigest,
     targetMigration: 7,
     migrationCount: 8,
     pgvectorVersion: "0.8.1",
-    databaseDependency: raw.databaseDependency,
+    oldAppOperationalWithParallel0007Database: true,
+    oldAppDatabaseDependency: raw.oldAppDatabaseDependency,
+    oldAppDatabaseConnectionObserved: false,
+    schemaForwardRollbackScope: raw.schemaForwardRollbackScope,
+    newDataPlaneFeaturesAvailableAfterRollback: false,
     databaseUrlSupplied: true,
-    databaseConnectionObservation: raw.databaseConnectedByOldApp,
+    routeStatuses: {
+      login: raw.oldAppLoginStatus,
+      dashboard: raw.oldAppDashboardStatus,
+      projects: raw.oldAppProjectsStatus,
+    },
     checks: {
-      oldAppHttp200: true,
+      corePublicRoutesBelow500: true,
       restartCountZero: true,
-      schemaForwardAppRollback: true,
+      legacyApplicationShellRollback: true,
       noPublicPort: true,
       productionUntouched: true,
       productionSecretAbsent: true,

@@ -13,6 +13,7 @@ import {
   assertInventory,
   assertReleaseManifest,
   assertSanitized,
+  digestObject,
   numberOrNull,
   parseArguments,
   readJson,
@@ -25,6 +26,54 @@ import {
 const command = process.argv[2];
 const { options } = parseArguments(process.argv.slice(3));
 const defaultOutputRoot = path.resolve("release-artifacts");
+
+function commandKey(program, args) {
+  return JSON.stringify([program, ...args]);
+}
+
+function runFactCommand(program, args, spawnOptions = {}) {
+  const serialized = process.env.PROJECTAI_RELEASE_TEST_COMMANDS;
+  if (serialized) {
+    if (process.env.NODE_ENV !== "test") {
+      throw new Error("Release command adapters are only available in NODE_ENV=test.");
+    }
+    const adapter = JSON.parse(serialized);
+    const result = adapter[commandKey(program, args)];
+    if (!result) {
+      throw new Error(`Test command adapter is missing ${commandKey(program, args)}.`);
+    }
+    return {
+      status: Number(result.status ?? 0),
+      stdout: String(result.stdout ?? ""),
+      stderr: String(result.stderr ?? ""),
+    };
+  }
+  return spawnSync(program, args, {
+    encoding: "utf8",
+    maxBuffer: 8 * 1024 * 1024,
+    ...spawnOptions,
+  });
+}
+
+function requireCommandSuccess(result, label) {
+  if (result.status !== 0) {
+    throw new Error(`${label} failed: ${(result.stderr || "unknown error").trim()}`);
+  }
+  return String(result.stdout ?? "").trim();
+}
+
+function currentUtcMilliseconds() {
+  const injected = process.env.PROJECTAI_RELEASE_TEST_NOW;
+  if (injected) {
+    if (process.env.NODE_ENV !== "test") {
+      throw new Error("Release clock injection is only available in NODE_ENV=test.");
+    }
+    const parsed = Date.parse(injected);
+    if (!Number.isFinite(parsed)) throw new Error("Invalid test release clock.");
+    return parsed;
+  }
+  return Date.now();
+}
 
 function outputDirectory(suffix) {
   return path.resolve(
@@ -84,6 +133,7 @@ function setNested(target, dottedKey, value) {
     "active.queryEmbeddingCalls",
     "active.aiExecutions",
     "backup.latestSizeBytes",
+    "backup.availableBytes",
     "features.hybridQueryEmbeddingTimeoutMs",
     "features.hybridVectorSqlTimeoutMs",
     "features.hybridDailyQueryTokenLimit",
@@ -100,7 +150,13 @@ function setNested(target, dottedKey, value) {
     "services.documentWorker",
     "services.embeddingWorker",
     "locks.deployment",
+    "locks.migrationApplicable",
+    "locks.migrationFile",
     "locks.migration",
+    "backup.pgDumpAvailable",
+    "backup.pgRestoreAvailable",
+    "backup.directoryExists",
+    "backup.directoryWritable",
   ]);
   let normalized = value;
   if (value === "null") normalized = null;
@@ -144,9 +200,38 @@ async function inventoryCommand() {
       new URL("./remote-inventory.sh", import.meta.url),
       "utf8",
     );
+    const migrationLockContract = JSON.parse(
+      await readFile(
+        new URL("../../release/migration-lock-contract.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    if (
+      migrationLockContract.schemaVersion !== 1 ||
+      migrationLockContract.productionFile !== "/srv/projectai/.production-migration-lock" ||
+      migrationLockContract.stagingFile !== "/srv/projectai-staging/.staging-migration-lock" ||
+      !Number.isSafeInteger(migrationLockContract.postgresAdvisoryKey) ||
+      migrationLockContract.postgresAdvisoryKey <= 0
+    ) {
+      throw new Error("Migration lock contract is invalid or unsupported.");
+    }
+    const migrationLockFile =
+      environment === "production"
+        ? migrationLockContract.productionFile
+        : migrationLockContract.stagingFile;
     const result = spawnSync(
       "ssh",
-      ["-o", "BatchMode=yes", remoteHost, "bash", "-s", "--", environment],
+      [
+        "-o",
+        "BatchMode=yes",
+        remoteHost,
+        "bash",
+        "-s",
+        "--",
+        environment,
+        migrationLockFile,
+        String(migrationLockContract.postgresAdvisoryKey),
+      ],
       { encoding: "utf8", input: remoteScript, maxBuffer: 8 * 1024 * 1024 },
     );
     if (result.status !== 0) {
@@ -170,10 +255,12 @@ async function inventoryCommand() {
 - Migration count: ${finalized.database.migrationCount}
 - pgvector: ${finalized.database.pgvectorVersion}
 - Object storage: ${finalized.objectStorage.present ? "present" : "absent"}
+- Object inventory: ${String(finalized.objectStorage.inventoryKnown)}
 - Assistant / Embedding / Retrieval: ${finalized.features.aiAssistantEnabled} / ${finalized.features.aiEmbeddingEnabled} / ${finalized.features.retrievalMode}
 - Root available bytes: ${finalized.capacity.availableBytes}
 - Root / inode usage: ${finalized.capacity.filesystemUsagePercent}% / ${finalized.capacity.inodeUsagePercent}%
-- Deployment lock: ${finalized.locks.deployment}`;
+- Deployment / migration lock: ${finalized.locks.deployment} / ${finalized.locks.migration}
+- Migration file / advisory: ${finalized.locks.migrationFile} / ${finalized.locks.migrationAdvisory}`;
   const written = await writeArtifactPair({
     outputDir: outputDirectory(environment),
     stem: `${environment}-inventory`,
@@ -188,6 +275,25 @@ function valueAt(object, dottedPath) {
 }
 
 function differenceCategory(field, production, staging) {
+  if (
+    (field.endsWith("inventoryKnown") && (production === false || staging === false)) ||
+    (field === "locks.migrationAdvisory" &&
+      (production === "unknown" || staging === "unknown"))
+  ) {
+    return "blocking_unknown";
+  }
+  if (
+    field.startsWith("locks.") &&
+    field !== "locks.migrationApplicable" &&
+    (production === true ||
+      staging === true ||
+      production === "held" ||
+      staging === "held" ||
+      production === "unknown" ||
+      staging === "unknown")
+  ) {
+    return "blocking_unknown";
+  }
   if (field === "app.imageDigest" || field === "app.commitSha") return "requires_image_change";
   if (field.startsWith("database.")) {
     if (field === "database.migrationCount" || field === "database.pgvectorVersion") {
@@ -224,15 +330,19 @@ async function diffCommand() {
     "checks.composeConfigValid",
     "checks.nginxConfigValid",
     "database.present",
+    "database.inventoryKnown",
     "database.imageDigest",
     "database.version",
     "database.migrationCount",
     "database.pgvectorVersion",
     "database.sizeBytes",
     "objectStorage.present",
+    "objectStorage.inventoryKnown",
+    "objectStorage.bucketNameHash",
     "objectStorage.imageDigest",
     "objectStorage.objectCount",
     "objectStorage.totalBytes",
+    "objectStorage.bucketCount",
     "services.documentWorker",
     "services.embeddingWorker",
     "features.qwenSecretMount",
@@ -248,6 +358,11 @@ async function diffCommand() {
     "capacity.availableBytes",
     "capacity.filesystemUsagePercent",
     "capacity.inodeUsagePercent",
+    "locks.deployment",
+    "locks.migrationApplicable",
+    "locks.migrationFile",
+    "locks.migrationAdvisory",
+    "locks.migration",
   ];
   const differences = fields
     .map((field) => {
@@ -324,82 +439,189 @@ function diskRequiredBytes({ targetImageBytes, databaseBackupBytes, objectBackup
 async function preflightCommand() {
   const manifest = await readJson(requiredOption(options, "manifest"));
   const production = await readJson(requiredOption(options, "production-inventory"));
-  const checks = await readJson(requiredOption(options, "checks"));
+  const baseline = await readJson(requiredOption(options, "production-baseline"));
+  const ciRunId = requiredOption(options, "ci-run-id");
+  const repository =
+    typeof options.repo === "string" ? options.repo : "27ruien/ProjectAI";
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
+    throw new Error("--repo is invalid.");
+  }
+  if (!/^[1-9][0-9]{0,19}$/.test(ciRunId)) {
+    throw new Error("--ci-run-id must be a positive GitHub Actions run ID.");
+  }
   assertReleaseManifest(manifest);
   assertInventory(production);
+  assertInventory(baseline);
+  if (production.environment !== "production" || baseline.environment !== "production") {
+    throw new Error("Preflight requires Production inventories.");
+  }
+
+  const gitStatus = runFactCommand("git", ["status", "--porcelain"]);
+  const localHead = requireCommandSuccess(
+    runFactCommand("git", ["rev-parse", "HEAD"]),
+    "git rev-parse HEAD",
+  );
+  const originMain = requireCommandSuccess(
+    runFactCommand("git", ["rev-parse", "origin/main"]),
+    "git rev-parse origin/main",
+  );
+  const targetSha = runFactCommand("git", [
+    "cat-file",
+    "-e",
+    `${manifest.releaseCandidateSha}^{commit}`,
+  ]);
+
+  const ghAuth = runFactCommand("gh", ["auth", "status"]);
+  let ci = null;
+  const ghRun = runFactCommand("gh", [
+    "run",
+    "view",
+    ciRunId,
+    "--repo",
+    repository,
+    "--json",
+    "status,conclusion,headSha,headBranch,event",
+  ]);
+  if (ghRun.status === 0) {
+    try {
+      ci = JSON.parse(String(ghRun.stdout));
+    } catch {
+      ci = null;
+    }
+  }
+
+  const inspectId = runFactCommand("docker", [
+    "image",
+    "inspect",
+    "--format",
+    "{{.Id}}",
+    manifest.releaseImageDigest,
+  ]);
+  const inspectRevision = runFactCommand("docker", [
+    "image",
+    "inspect",
+    "--format",
+    "{{index .Config.Labels \"org.opencontainers.image.revision\"}}",
+    manifest.releaseImageDigest,
+  ]);
+  const inspectEnvironment = runFactCommand("docker", [
+    "image",
+    "inspect",
+    "--format",
+    "{{index .Config.Labels \"com.projectai.release.environment\"}}",
+    manifest.releaseImageDigest,
+  ]);
+  const inspectSize = runFactCommand("docker", [
+    "image",
+    "inspect",
+    "--format",
+    "{{.Size}}",
+    manifest.releaseImageDigest,
+  ]);
+  const targetImageBytes =
+    inspectSize.status === 0 && /^[0-9]+$/.test(String(inspectSize.stdout).trim())
+      ? Number(String(inspectSize.stdout).trim())
+      : 0;
   const requiredBytes = diskRequiredBytes({
-    targetImageBytes: Number(checks.targetImageBytes ?? 0),
-    databaseBackupBytes: Number(checks.databaseBackupBytes ?? 0),
-    objectBackupDeltaBytes: Number(checks.objectBackupDeltaBytes ?? 0),
+    targetImageBytes,
+    databaseBackupBytes: production.database.present ? production.database.sizeBytes : 0,
+    objectBackupDeltaBytes: production.objectStorage.present
+      ? production.objectStorage.totalBytes
+      : 0,
   });
-  const expected = checks.expectedProduction ?? {};
-  const explicitNotApplicable = (value) => value === "not-applicable";
+  const baselineFields = [
+    "app.containerId",
+    "app.imageDigest",
+    "app.startedAt",
+    "app.restartCount",
+    "configuration.composeHash",
+    "configuration.nginxHash",
+    "database.present",
+    "database.inventoryKnown",
+    "database.imageDigest",
+    "database.migrationCount",
+    "objectStorage.present",
+    "objectStorage.inventoryKnown",
+    "objectStorage.imageDigest",
+    "objectStorage.objectCount",
+    "objectStorage.totalBytes",
+    "objectStorage.bucketCount",
+    "services.documentWorker",
+    "services.embeddingWorker",
+    "features.qwenSecretMount",
+    "features.aiAssistantEnabled",
+    "features.aiEmbeddingEnabled",
+    "features.retrievalMode",
+    "locks.deployment",
+    "locks.migrationApplicable",
+    "locks.migrationFile",
+    "locks.migrationAdvisory",
+    "locks.migration",
+  ];
+  const baselineMatches = baselineFields.every(
+    (field) => JSON.stringify(valueAt(production, field)) === JSON.stringify(valueAt(baseline, field)),
+  );
+  const migrationAdvisoryAcceptable =
+    production.locks.migrationAdvisory === "clear" ||
+    production.locks.migrationAdvisory === "not-applicable";
+  const capturedAtMs = Date.parse(production.capturedAt);
+  const clockSkewMs = Math.abs(currentUtcMilliseconds() - capturedAtMs);
+  const dataPlanePresent = production.database.present || production.objectStorage.present;
+  const backupCapabilitiesReady = !dataPlanePresent || (
+    (!production.database.present ||
+      (production.backup.pgDumpAvailable === true &&
+        production.backup.pgRestoreAvailable === true)) &&
+    production.backup.directoryExists === true &&
+    production.backup.directoryWritable === true &&
+    Number.isSafeInteger(production.backup.availableBytes) &&
+    production.backup.availableBytes >= requiredBytes &&
+    (!production.objectStorage.present || production.objectStorage.inventoryKnown === true)
+  );
   const gates = {
-    localWorktreeClean: checks.localWorktreeClean === true,
-    localMainMatchesOrigin: checks.localMainMatchesOrigin === true,
-    targetShaExists:
-      checks.targetShaExists === true &&
-      checks.targetSha === manifest.releaseCandidateSha,
-    targetCiSucceeded: checks.targetCiSucceeded === true,
-    targetImageExists:
-      checks.targetImageExists === true &&
-      checks.targetImageDigest === manifest.releaseImageDigest,
-    productionContainerMatches: production.app.containerId === expected.containerId,
-    productionImageMatches:
-      production.app.imageDigest === manifest.currentProductionImage &&
-      production.app.imageDigest === expected.imageDigest,
-    productionStartedAtMatches: production.app.startedAt === expected.startedAt,
+    localWorktreeClean: gitStatus.status === 0 && String(gitStatus.stdout).trim() === "",
+    localHeadMatchesCandidate: localHead === manifest.releaseCandidateSha,
+    localMainMatchesManifest: originMain === manifest.sourceMainSha,
+    targetShaExists: targetSha.status === 0,
+    githubAuthenticated: ghAuth.status === 0,
+    targetCiSucceeded:
+      ghAuth.status === 0 &&
+      ci?.status === "completed" &&
+      ci?.conclusion === "success" &&
+      ci?.headSha === manifest.releaseCandidateSha &&
+      ci?.headBranch === manifest.releaseCandidateBranch &&
+      ci?.event === "pull_request",
+    targetImageExists: inspectId.status === 0,
+    targetImageDigest:
+      inspectId.status === 0 && String(inspectId.stdout).trim() === manifest.releaseImageDigest,
+    targetImageCommit:
+      inspectRevision.status === 0 &&
+      String(inspectRevision.stdout).trim() === manifest.releaseCandidateSha,
+    targetImageEnvironment:
+      inspectEnvironment.status === 0 &&
+      String(inspectEnvironment.stdout).trim() === "production",
+    productionBaselineDigest: baseline.digest === manifest.productionBaselineDigest,
+    productionBaselineStable: baselineMatches,
+    productionImageMatches: production.app.imageDigest === manifest.currentProductionImage,
     productionHealthy: production.app.health === "healthy",
-    restartCountStable: production.app.restartCount === expected.restartCount,
-    composeHashMatches: production.configuration.composeHash === expected.composeHash,
-    nginxHashMatches: production.configuration.nginxHash === expected.nginxHash,
-    migrationMatches: production.database.migrationCount === expected.migrationCount,
-    postgresImageMatches: production.database.imageDigest === expected.postgresImageDigest,
-    minioImageMatches: production.objectStorage.imageDigest === expected.minioImageDigest,
-    documentWorkerMatches:
-      production.services.documentWorker === expected.documentWorker,
-    embeddingWorkerMatches:
-      production.services.embeddingWorker === expected.embeddingWorker,
-    secretMountMatches:
-      production.features.qwenSecretMount === expected.qwenSecretMount,
-    assistantFlagMatches:
-      production.features.aiAssistantEnabled === expected.aiAssistantEnabled,
-    embeddingFlagMatches:
-      production.features.aiEmbeddingEnabled === expected.aiEmbeddingEnabled,
-    retrievalModeMatches:
-      production.features.retrievalMode === expected.retrievalMode,
     diskHeadroom: production.capacity.availableBytes >= requiredBytes,
     filesystemUsage: production.capacity.filesystemUsagePercent < 85,
     inodeUsage: production.capacity.inodeUsagePercent < 85,
-    databaseConnection: production.database.present
-      ? checks.databaseConnection === true
-      : explicitNotApplicable(checks.databaseConnection),
-    migrationStateKnown: checks.migrationStateKnown === true,
-    backupToolAvailable:
-      checks.backupToolAvailable === true ||
-      (!production.database.present &&
-        !production.objectStorage.present &&
-        explicitNotApplicable(checks.backupToolAvailable)),
-    backupDirectoryReady:
-      checks.backupDirectoryReady === true ||
-      (!production.database.present &&
-        !production.objectStorage.present &&
-        explicitNotApplicable(checks.backupDirectoryReady)),
-    backupSpaceReady:
-      checks.backupSpaceReady === true ||
-      (!production.database.present &&
-        !production.objectStorage.present &&
-        explicitNotApplicable(checks.backupSpaceReady)),
-    objectInventoryReadable: production.objectStorage.present
-      ? checks.objectInventoryReadable === true
-      : explicitNotApplicable(checks.objectInventoryReadable),
+    databaseInventoryKnown:
+      production.database.inventoryKnown === true ||
+      production.database.inventoryKnown === "not-applicable",
+    objectInventoryKnown:
+      production.objectStorage.inventoryKnown === true ||
+      production.objectStorage.inventoryKnown === "not-applicable",
+    backupCapabilitiesReady,
     nginxConfigValid: production.checks.nginxConfigValid === true,
     composeConfigValid: production.checks.composeConfigValid === true,
     deploymentLockClear: production.locks.deployment === false,
-    migrationLockClear: production.locks.migration === false,
+    migrationLockFileClear: production.locks.migrationFile === false,
+    migrationAdvisoryClear: migrationAdvisoryAcceptable,
+    migrationLockClear:
+      production.locks.migration === false && migrationAdvisoryAcceptable,
     activeWorkClear: Object.values(production.active).every((value) => value === 0),
-    serverClockReasonable: checks.serverClockReasonable === true,
-    manifestMatchesServer: checks.manifestMatchesServer === true,
+    serverClockReasonable: Number.isFinite(capturedAtMs) && clockSkewMs <= 5 * 60 * 1000,
   };
   const failed = Object.entries(gates)
     .filter(([, passed]) => !passed)
@@ -409,6 +631,29 @@ async function preflightCommand() {
     checkedAt: new Date().toISOString(),
     releaseManifestDigest: manifest.digest,
     productionInventoryDigest: production.digest,
+    productionBaselineDigest: baseline.digest,
+    ciRunId,
+    ci: ci
+      ? {
+          status: ci.status,
+          conclusion: ci.conclusion,
+          headSha: ci.headSha,
+          headBranch: ci.headBranch,
+          event: ci.event,
+        }
+      : null,
+    targetImage: {
+      digest: inspectId.status === 0 ? String(inspectId.stdout).trim() : null,
+      commitSha:
+        inspectRevision.status === 0 ? String(inspectRevision.stdout).trim() : null,
+      environment:
+        inspectEnvironment.status === 0
+          ? String(inspectEnvironment.stdout).trim()
+          : null,
+      sizeBytes: targetImageBytes || null,
+    },
+    clockSkewMs,
+    backupApplicability: dataPlanePresent ? "required" : "not-applicable",
     requiredAvailableBytes: requiredBytes,
     gates,
     failed,
@@ -470,7 +715,7 @@ async function guardedReportCommand(name) {
       rehearse: [
         "databaseRestore",
         "migration0004To0007",
-        "oldApp0007Schema",
+        "oldAppParallel0007Database",
         "newAppDisabled0007",
         "cleanup",
       ],
@@ -593,6 +838,14 @@ async function rollbackCheckCommand() {
   const rehearsal = await readJson(requiredOption(options, "rehearsal"));
   assertSanitized(matrix);
   assertSanitized(rehearsal);
+  if (rehearsal.digest) {
+    const expectedDigest = digestObject(
+      Object.fromEntries(Object.entries(rehearsal).filter(([key]) => key !== "digest")),
+    );
+    if (rehearsal.digest !== expectedDigest) {
+      throw new Error("Rollback rehearsal digest does not match its payload.");
+    }
+  }
   const combinations = matrix.combinations.map((combination) => ({
     ...combination,
     passed:
@@ -603,6 +856,11 @@ async function rollbackCheckCommand() {
   const payload = {
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
+    releaseCandidateSha:
+      rehearsal.expectedSha ?? rehearsal.releaseCandidateSha ?? null,
+    releaseImageDigest:
+      rehearsal.expectedImage ?? rehearsal.releaseImageDigest ?? null,
+    rehearsalDigest: rehearsal.digest ?? null,
     combinations,
     estimatedRpo: matrix.estimatedRpo,
     estimatedRto: matrix.estimatedRto,
@@ -623,16 +881,158 @@ Required combinations: ${combinations.length}; failed: ${failed.length}.`,
 }
 
 async function goNoGoCommand() {
-  const checklist = await readJson(requiredOption(options, "checklist"));
-  assertSanitized(checklist);
-  const failed = checklist.items.filter(
-    (item) => item.required === true && item.passed !== true,
-  );
+  if (typeof options.checklist === "string") {
+    throw new Error(
+      "Checklist-only Go/No-Go input is synthetic and cannot establish release readiness.",
+    );
+  }
+  const inputOptions = {
+    manifest: "manifest",
+    productionBaseline: "production-baseline",
+    productionInventory: "production-inventory",
+    stagingInventory: "staging-inventory",
+    diff: "diff",
+    preflight: "preflight",
+    rehearsal: "rehearsal",
+    restoreDrill: "restore-drill",
+    smoke: "smoke",
+    rollbackCheck: "rollback-check",
+    disabledImage: "disabled-image",
+    oldApp: "old-app",
+    backup: "backup",
+    ciEvidence: "ci-evidence",
+  };
+  const reports = {};
+  for (const [name, option] of Object.entries(inputOptions)) {
+    reports[name] = await readJson(requiredOption(options, option));
+    assertSanitized(reports[name]);
+    if (name === "manifest") assertReleaseManifest(reports[name]);
+    else if (
+      name === "productionBaseline" ||
+      name === "productionInventory" ||
+      name === "stagingInventory"
+    ) {
+      assertInventory(reports[name]);
+    } else {
+      if (typeof reports[name].digest !== "string") {
+        throw new Error(`${option} report is missing its digest.`);
+      }
+      const expected = digestObject(
+        Object.fromEntries(
+          Object.entries(reports[name]).filter(([key]) => key !== "digest"),
+        ),
+      );
+      if (reports[name].digest !== expected) {
+        throw new Error(`${option} report digest does not match its payload.`);
+      }
+    }
+  }
+  const manifest = reports.manifest;
+  const baseline = reports.productionBaseline;
+  const production = reports.productionInventory;
+  const staging = reports.stagingInventory;
+  const sha = manifest.releaseCandidateSha;
+  const image = manifest.releaseImageDigest;
+  const hasUnknown = (value) => {
+    if (Array.isArray(value)) return value.some(hasUnknown);
+    if (value && typeof value === "object") return Object.values(value).some(hasUnknown);
+    return value === "unknown";
+  };
+  const reportSha = (report) =>
+    report.releaseCandidateSha ?? report.expectedSha ?? report.input?.releaseCandidateSha;
+  const reportImage = (report) =>
+    report.releaseImageDigest ?? report.expectedImage ?? report.input?.releaseImageDigest;
+  const dataPlanePresent = production.database.present || production.objectStorage.present;
+  const backupBound =
+    reports.backup.inventoryDigest === production.digest &&
+    reports.backup.dataPlanePresent === dataPlanePresent &&
+    (dataPlanePresent
+      ? reports.backup.result === "passed" &&
+        manifest.backupIds.length > 0 &&
+        manifest.backupDigests.length > 0 &&
+        reports.backup.backupIds?.length > 0 &&
+        JSON.stringify(reports.backup.backupIds) === JSON.stringify(manifest.backupIds) &&
+        JSON.stringify(reports.backup.backupDigests) === JSON.stringify(manifest.backupDigests)
+      : reports.backup.plan?.database === "not-applicable" &&
+        reports.backup.plan?.objectStorage === "not-applicable" &&
+        manifest.backupIds.length === 0 &&
+        manifest.backupDigests.length === 0);
+  const gates = {
+    productionEnvironment: production.environment === "production",
+    stagingEnvironment: staging.environment === "staging",
+    productionBaselineBound:
+      baseline.environment === "production" &&
+      manifest.productionBaselineDigest === baseline.digest,
+    currentProductionImageBound:
+      manifest.currentProductionImage === production.app.imageDigest,
+    diffBound:
+      reports.diff.productionInventoryDigest === production.digest &&
+      reports.diff.stagingInventoryDigest === staging.digest &&
+      reports.diff.blockingDifferenceCount === 0,
+    preflightPassed:
+      reports.preflight.result === "GO" &&
+      reports.preflight.releaseManifestDigest === manifest.digest &&
+      reports.preflight.productionInventoryDigest === production.digest &&
+      reports.preflight.productionBaselineDigest === baseline.digest &&
+      reports.preflight.gates?.productionBaselineStable === true,
+    ciEvidenceBound:
+      reports.ciEvidence.status === "success" &&
+      reports.ciEvidence.headSha === sha &&
+      String(reports.ciEvidence.workflowRunId) === String(reports.preflight.ciRunId) &&
+      reports.ciEvidence.artifactDigest === manifest.evidenceDigest,
+    rehearsalPassed:
+      reports.rehearsal.result === "passed" &&
+      reportSha(reports.rehearsal) === sha &&
+      reportImage(reports.rehearsal) === image &&
+      reports.rehearsal.input?.checks?.migration0004To0007 === true,
+    restoreDrillPassed:
+      reports.restoreDrill.result === "passed" &&
+      reportSha(reports.restoreDrill) === sha &&
+      reportImage(reports.restoreDrill) === image &&
+      reports.restoreDrill.input?.checks?.backupChecksum === true,
+    smokePassed:
+      reports.smoke.result === "passed" &&
+      reportSha(reports.smoke) === sha &&
+      reportImage(reports.smoke) === image,
+    rollbackPassed:
+      reports.rollbackCheck.result === "passed" &&
+      reports.rollbackCheck.rehearsalDigest === reports.rehearsal.digest &&
+      reportSha(reports.rollbackCheck) === sha &&
+      reportImage(reports.rollbackCheck) === image,
+    disabledImagePassed:
+      reports.disabledImage.passed === true &&
+      reportSha(reports.disabledImage) === sha &&
+      reportImage(reports.disabledImage) === image,
+    oldAppScopePassed:
+      reports.oldApp.passed === true &&
+      reportSha(reports.oldApp) === sha &&
+      reports.oldApp.rollbackImageDigest === manifest.rollbackImage &&
+      reports.oldApp.oldAppOperationalWithParallel0007Database === true &&
+      reports.oldApp.oldAppDatabaseDependency === "absent" &&
+      reports.oldApp.oldAppDatabaseConnectionObserved === false &&
+      reports.oldApp.schemaForwardRollbackScope === "legacy-application-shell" &&
+      reports.oldApp.newDataPlaneFeaturesAvailableAfterRollback === false,
+    backupApplicabilityBound: backupBound,
+    productionApplyHardBlocked: reports.backup.productionWritePerformed === false,
+    noUnknown: !Object.values(reports).some(hasUnknown),
+  };
+  const failed = Object.entries(gates)
+    .filter(([, passed]) => !passed)
+    .map(([name]) => name);
   const payload = {
     schemaVersion: 1,
     evaluatedAt: new Date().toISOString(),
-    items: checklist.items,
-    failed: failed.map((item) => item.id),
+    releaseCandidateSha: sha,
+    releaseImageDigest: image,
+    inputs: Object.fromEntries(
+      Object.entries(reports).map(([name, report]) => [name, report.digest]),
+    ),
+    gates,
+    failed,
+    backupApplicability: dataPlanePresent ? "required" : "not-applicable",
+    machineReadiness: failed.length === 0 ? "GO" : "NO-GO",
+    independentReview: "pending",
+    productionRolloutAuthorized: false,
     result: failed.length === 0 ? "GO" : "NO-GO",
   };
   const written = await writeArtifactPair({
@@ -641,11 +1041,15 @@ async function goNoGoCommand() {
     payload,
     markdown: `# Production Go / No-Go
 
-Result: **${payload.result}**
+Machine readiness: **${payload.machineReadiness}**
+
+Independent review: **${payload.independentReview}**
+
+Production rollout authorized: **${payload.productionRolloutAuthorized}**
 
 Failed required gates: ${payload.failed.length ? payload.failed.join(", ") : "none"}.`,
   });
-  if (written.result !== "GO") process.exitCode = 2;
+  if (written.machineReadiness !== "GO") process.exitCode = 2;
   process.stdout.write(`${written.digest}\n`);
 }
 

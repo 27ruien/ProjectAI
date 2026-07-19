@@ -4,14 +4,16 @@
 
 回滚优先通过 Feature Flag 或旧 immutable App Image 完成，不删除向量、Job、Execution、Citation 或新增表。数据库恢复只在 Schema 不兼容、Migration/数据完整性失败或明确的数据损坏时使用。任何回滚都先冻结写入、记录基线和批准人，再执行最小范围动作。
 
-当前 Production Image 没有 ProjectAI PostgreSQL 数据依赖。兼容演练应把 `DATABASE_URL` 指向隔离的 0007 Schema，同时验证旧页面 200、Restart Count=0、Production 容器/网络/Secret 未接触。这里的兼容含义是旧 Image 可在 0007 数据面存在时继续提供既有功能；不得虚构它读取了当前尚不依赖的数据库。
+当前 Production Image 没有 ProjectAI PostgreSQL 数据依赖。兼容演练应把 `DATABASE_URL` 指向隔离的 0007 Schema，同时验证登录、Dashboard、项目入口等当前公开路径低于 500、Restart Count=0、未观察到旧 App 数据库连接，且 Production 容器/网络/Secret 未接触。这里的兼容含义仅是旧 Image 可在旁路存在 0007 数据面时继续提供旧服务壳；不得描述为旧 App 已使用或完整兼容 0007 数据功能。
+
+回滚到旧 App 后，新 PostgreSQL 与对象数据保留，旧 App 不会删除这些数据，但也不能展示或使用新数据面功能；恢复新 App 后数据重新可用。这属于“服务壳回滚”，不是完整功能等价回滚。
 
 ## 兼容矩阵
 
 | 组合 | 期望 | 回退含义 |
 | --- | --- | --- |
 | 当前 Production Image + 当前 Schema | 正常 | 当前基线 |
-| 当前 Production Image + 0007 隔离 Schema | 必须通过 | 允许 Schema forward + App rollback |
+| 当前 Production Image + 旁路 0007 隔离数据库 | 必须通过 | 仅证明 legacy application shell 可运行；不证明旧 App 使用新数据面 |
 | 新 Image、AI 全关闭 + 0007 | 必须通过 | Phase 2 可回旧 Image |
 | 新 Image、Assistant lexical + 0007 | 必须通过 | 先关 Assistant，必要时回旧 Image |
 | 新 Image、Embedding enabled + 0007 | 必须通过 | 关 Embedding、停 Worker，保留向量 |

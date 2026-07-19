@@ -88,12 +88,12 @@ sudo -n docker run --detach --rm \
 
 healthy=0
 for _ in {1..45}; do
-  status="$(sudo -n docker exec "$app" node -e '
-    fetch("http://127.0.0.1:3000/tool/projectai/dashboard")
+  dashboard_status="$(sudo -n docker exec "$app" node -e '
+    fetch("http://127.0.0.1:3000/tool/projectai/dashboard", {redirect:"manual"})
       .then(response => process.stdout.write(String(response.status)))
       .catch(() => process.exit(1));
   ' 2>/dev/null || true)"
-  if [[ "$status" == "200" ]]; then
+  if [[ "$dashboard_status" =~ ^(200|30[1278])$ ]]; then
     healthy=1
     break
   fi
@@ -101,18 +101,35 @@ for _ in {1..45}; do
 done
 [[ "$healthy" == "1" ]]
 [[ "$(sudo -n docker inspect --format '{{.RestartCount}}' "$app")" == "0" ]]
+route_statuses="$(sudo -n docker exec "$app" node -e '
+  const base="http://127.0.0.1:3000/tool/projectai";
+  Promise.all(["/login","/dashboard","/projects"].map(async path => {
+    const response=await fetch(base+path,{redirect:"manual"});
+    return response.status;
+  })).then(values => process.stdout.write(values.join("|"))).catch(() => process.exit(1));
+')"
+[[ "$route_statuses" =~ ^[234][0-9][0-9]\|[234][0-9][0-9]\|[234][0-9][0-9]$ ]]
+IFS='|' read -r login_status dashboard_status projects_status <<<"$route_statuses"
+database_connection_count="$(sudo -n docker exec "$postgres" psql -X -qAt \
+  --username "$database_user" --dbname "$database" -c \
+  "select count(*) from pg_stat_activity where datname=current_database() and usename=current_user and pid <> pg_backend_pid();")"
+[[ "$database_connection_count" == "0" ]]
 
 printf 'productionImageDigest\t%s\n' "$actual_production_digest"
 printf 'dbToolsImageDigest\t%s\n' "$db_tools_digest"
 printf 'targetMigration\t7\n'
 printf 'migrationCount\t8\n'
 printf 'pgvectorVersion\t0.8.1\n'
-printf 'oldAppHttpStatus\t200\n'
+printf 'oldAppLoginStatus\t%s\n' "$login_status"
+printf 'oldAppDashboardStatus\t%s\n' "$dashboard_status"
+printf 'oldAppProjectsStatus\t%s\n' "$projects_status"
 printf 'oldAppRestartCount\t0\n'
 printf 'databaseUrlSuppliedToOldApp\ttrue\n'
-printf 'databaseDependency\tnot-required-by-current-production-image\n'
-printf 'databaseConnectedByOldApp\tnot-observable-and-not-required\n'
-printf 'schemaForwardAppRollbackCompatible\ttrue\n'
+printf 'oldAppOperationalWithParallel0007Database\ttrue\n'
+printf 'oldAppDatabaseDependency\tabsent\n'
+printf 'oldAppDatabaseConnectionObserved\tfalse\n'
+printf 'schemaForwardRollbackScope\tlegacy-application-shell\n'
+printf 'newDataPlaneFeaturesAvailableAfterRollback\tfalse\n'
 printf 'publicPortPublished\tfalse\n'
 printf 'productionContainerTouched\tfalse\n'
 printf 'productionNetworkJoined\tfalse\n'

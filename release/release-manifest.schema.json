@@ -9,12 +9,14 @@
     "releaseVersion",
     "sourceMainSha",
     "releaseCandidateSha",
+    "releaseCandidateBranch",
     "releaseImageDigest",
     "databaseToolsImageDigest",
     "nodeVersion",
     "buildTime",
     "baseImageDigests",
     "currentProductionImage",
+    "productionBaselineDigest",
     "databaseMigrationFrom",
     "databaseMigrationTo",
     "postgresCurrentImage",
@@ -37,6 +39,7 @@
     "releaseVersion": { "type": "string", "pattern": "^[0-9A-Za-z._-]{1,64}$" },
     "sourceMainSha": { "$ref": "#/$defs/sha" },
     "releaseCandidateSha": { "$ref": "#/$defs/sha" },
+    "releaseCandidateBranch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
     "releaseImageDigest": { "$ref": "#/$defs/digest" },
     "databaseToolsImageDigest": { "$ref": "#/$defs/digest" },
     "nodeVersion": { "type": "string", "pattern": "^v?22\\.[0-9]+\\.[0-9]+$" },
@@ -47,6 +50,7 @@
       "items": { "$ref": "#/$defs/digest" }
     },
     "currentProductionImage": { "$ref": "#/$defs/digest" },
+    "productionBaselineDigest": { "$ref": "#/$defs/digest" },
     "databaseMigrationFrom": {
       "oneOf": [{ "const": "none" }, { "type": "integer", "minimum": 0 }]
     },
@@ -82,7 +86,7 @@
     "rollbackCompatibility": { "enum": ["schema-forward-app-rollback", "restore-required"] },
     "evidenceDigest": { "$ref": "#/$defs/digest" },
     "createdAt": { "type": "string", "format": "date-time" },
-    "createdByToolVersion": { "const": "b3-c1-v1" },
+    "createdByToolVersion": { "const": "b3-c1-v2" },
     "digest": { "$ref": "#/$defs/digest" }
   },
   "$defs": {

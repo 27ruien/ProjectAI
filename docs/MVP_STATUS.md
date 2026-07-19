@@ -14,7 +14,7 @@
 
 ## 当前结论
 
-B3-C1 在已合并 B3-B2 上建立 Production Inventory/Diff、Release Manifest、Preflight、隔离 Backup/Restore/Migration/兼容性演练、Smoke、Rollback、Go/No-Go、监控和 Evidence/Provenance。本轮没有 Runtime 产品代码或 Production 外部状态变更。
+B3-C1 在已合并 B3-B2 上建立 Production Inventory/Diff、Release Manifest、Preflight、隔离 Backup/Restore/Migration/兼容性演练、Smoke、Rollback、Go/No-Go、监控和 Evidence/Provenance。本轮只调整 Release Control Plane 与镜像元数据 Label，没有业务 Runtime 行为或 Production 外部状态变更。
 
 B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 SEC-006 边界保持不变。用户知识搜索继续使用 B2 词法检索；只有 Assistant Evidence 可使用 Hybrid。本轮不实现 ANN、Rerank 或正式业务写入。
 
@@ -25,8 +25,9 @@ B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 S
 - 精确基线、CI、空间、锁、活动任务、Nginx/Compose 和 Manifest Preflight；
 - 全部 Production apply 硬拒绝；当前无数据面时 Backup 为 dry-run/not-applicable；
 - 虚构非空 Backup/Checksum/Restore/0004–0007/pgvector 演练；
-- 旧 Image + 0007 与新 Image AI 全关闭兼容性合同；
-- 机器可读 Smoke、Rollback、Go/No-Go、成本和监控门禁；
+- 旧 Image 在旁路 0007 数据库存在时继续运行 legacy application shell，以及新 Image AI 全关闭兼容性合同；
+- 真实 Migration File/Advisory Lock、环境感知 MinIO Inventory、Git/CI/Image/Clock/Baseline Preflight；
+- 跨 Digest、SHA 与 Image 绑定的机器可读 Smoke、Rollback、Go/No-Go、成本和监控门禁；机器 Readiness 与独立审查/上线授权分离；
 - 固定 Release Evidence allowlist 与上传后 Provenance。
 
 ## v0.8 B3-B2 真实能力

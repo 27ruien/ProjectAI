@@ -36,6 +36,7 @@
   },
   "database": {
     "present": true,
+    "inventoryKnown": true,
     "containerId": "fictional-postgres-container",
     "imageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "health": "healthy",
@@ -46,10 +47,12 @@
   },
   "objectStorage": {
     "present": true,
+    "inventoryKnown": true,
+    "bucketNameHash": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
     "containerId": "fictional-minio-container",
     "imageDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
     "health": "healthy",
-    "objectCount": 0,
+    "objectCount": 2,
     "totalBytes": 4096,
     "bucketCount": 1
   },
@@ -87,7 +90,18 @@
     "directory": "/srv/projectai-staging/backups",
     "state": "present",
     "latestSizeBytes": 200000,
-    "latestCompletedAt": "2026-01-01T00:00:00Z"
+    "latestCompletedAt": "2026-01-01T00:00:00Z",
+    "pgDumpAvailable": true,
+    "pgRestoreAvailable": true,
+    "directoryExists": true,
+    "directoryWritable": true,
+    "availableBytes": 13000000000
   },
-  "locks": { "deployment": false, "migration": false }
+  "locks": {
+    "deployment": false,
+    "migrationApplicable": true,
+    "migrationFile": false,
+    "migrationAdvisory": "clear",
+    "migration": false
+  }
 }

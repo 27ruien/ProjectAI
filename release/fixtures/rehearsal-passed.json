@@ -6,13 +6,13 @@
   "checks": {
     "databaseRestore": true,
     "migration0004To0007": true,
-    "oldApp0007Schema": true,
+    "oldAppParallel0007Database": true,
     "newAppDisabled0007": true,
     "cleanup": true
   },
   "compatibility": {
     "oldAppCurrentSchema": true,
-    "oldApp0007Schema": true,
+    "oldAppParallel0007Database": true,
     "newAppDisabled0007": true,
     "newAppLexical0007": true,
     "newAppEmbedding0007": true,

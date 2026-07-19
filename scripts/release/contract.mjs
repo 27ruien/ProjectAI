@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export const RELEASE_TOOL_VERSION = "b3-c1-v1";
+export const RELEASE_TOOL_VERSION = "b3-c1-v2";
 export const SHA_PATTERN = /^[0-9a-f]{40}$/;
 export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const ENVIRONMENTS = ["production", "staging", "rehearsal"];
@@ -14,6 +14,12 @@ export const DIFFERENCE_CATEGORIES = [
   "requires_new_service",
   "requires_configuration",
   "blocking_unknown",
+];
+export const MIGRATION_ADVISORY_STATES = [
+  "not-applicable",
+  "clear",
+  "held",
+  "unknown",
 ];
 
 const forbiddenKeys = new Set([
@@ -151,12 +157,168 @@ export function assertInventory(inventory) {
   if (inventory.app.commitSha !== null) {
     assertFullSha(inventory.app.commitSha, "app.commitSha");
   }
+  for (const [field, value] of [
+    ["app.containerId", inventory.app.containerId],
+    ["app.startedAt", inventory.app.startedAt],
+    ["app.status", inventory.app.status],
+    ["app.health", inventory.app.health],
+    ["configuration.composeHash", inventory.configuration?.composeHash],
+    ["configuration.nginxHash", inventory.configuration?.nginxHash],
+  ]) {
+    if (typeof value !== "string" || !value || value === "unknown" || value === "absent") {
+      throw new Error(`Release inventory has invalid ${field}.`);
+    }
+  }
+  assertIsoTimestamp(inventory.app.startedAt, "app.startedAt");
+  assertDigest(inventory.configuration.composeHash, "configuration.composeHash");
+  assertDigest(inventory.configuration.nginxHash, "configuration.nginxHash");
   for (const field of ["restartCount", "filesystemUsagePercent", "inodeUsagePercent"]) {
     const value =
       field === "restartCount" ? inventory.app[field] : inventory.capacity?.[field];
     if (!Number.isSafeInteger(value) || value < 0 || value > 100) {
       throw new Error(`Release inventory has invalid ${field}.`);
     }
+  }
+  for (const field of ["composeConfigValid", "nginxConfigValid"]) {
+    if (typeof inventory.checks?.[field] !== "boolean") {
+      throw new Error(`Release inventory is missing checks.${field}.`);
+    }
+  }
+  if (typeof inventory.database?.present !== "boolean") {
+    throw new Error("Release inventory is missing database.present.");
+  }
+  if (inventory.database.present) {
+    if (inventory.database.inventoryKnown !== true) {
+      throw new Error("Present database inventory must be known.");
+    }
+    assertDigest(inventory.database.imageDigest, "database.imageDigest");
+    if (
+      typeof inventory.database.containerId !== "string" ||
+      !inventory.database.containerId ||
+      inventory.database.health === "absent" ||
+      inventory.database.health === "unknown" ||
+      inventory.database.version === "absent" ||
+      inventory.database.version === "unknown" ||
+      !Number.isSafeInteger(inventory.database.sizeBytes) ||
+      inventory.database.sizeBytes < 0
+    ) {
+      throw new Error("Present database inventory is incomplete.");
+    }
+  } else if (
+    inventory.database.inventoryKnown !== "not-applicable" ||
+    inventory.database.containerId !== null ||
+    inventory.database.imageDigest !== null ||
+    inventory.database.health !== "absent" ||
+    inventory.database.version !== "absent" ||
+    inventory.database.sizeBytes !== 0 ||
+    inventory.database.pgvectorVersion !== "absent" ||
+    inventory.database.migrationCount !== "none"
+  ) {
+    throw new Error("Absent database inventory is inconsistent.");
+  }
+  if (typeof inventory.objectStorage?.present !== "boolean") {
+    throw new Error("Release inventory is missing objectStorage.present.");
+  }
+  if (inventory.objectStorage.present) {
+    if (inventory.objectStorage.inventoryKnown !== true) {
+      throw new Error("Present object-storage inventory must be known.");
+    }
+    assertDigest(inventory.objectStorage.imageDigest, "objectStorage.imageDigest");
+    assertDigest(inventory.objectStorage.bucketNameHash, "objectStorage.bucketNameHash");
+    for (const field of ["objectCount", "totalBytes", "bucketCount"]) {
+      if (!Number.isSafeInteger(inventory.objectStorage[field]) || inventory.objectStorage[field] < 0) {
+        throw new Error(`Present object-storage inventory has invalid ${field}.`);
+      }
+    }
+    if (
+      typeof inventory.objectStorage.containerId !== "string" ||
+      !inventory.objectStorage.containerId ||
+      inventory.objectStorage.health === "absent" ||
+      inventory.objectStorage.health === "unknown" ||
+      inventory.objectStorage.bucketCount < 1
+    ) {
+      throw new Error("Present object-storage inventory is incomplete.");
+    }
+  } else if (
+    inventory.objectStorage.inventoryKnown !== "not-applicable" ||
+    inventory.objectStorage.bucketNameHash !== null ||
+    inventory.objectStorage.containerId !== null ||
+    inventory.objectStorage.imageDigest !== null ||
+    inventory.objectStorage.health !== "absent" ||
+    inventory.objectStorage.objectCount !== 0 ||
+    inventory.objectStorage.totalBytes !== 0 ||
+    inventory.objectStorage.bucketCount !== 0
+  ) {
+    throw new Error("Absent object-storage inventory is inconsistent.");
+  }
+  for (const worker of ["documentWorker", "embeddingWorker"]) {
+    const present = inventory.services?.[worker];
+    const health = inventory.services?.[`${worker}Health`];
+    const restartCount = inventory.services?.[`${worker}RestartCount`];
+    if (
+      typeof present !== "boolean" ||
+      !Number.isSafeInteger(restartCount) ||
+      restartCount < 0 ||
+      (present && (typeof health !== "string" || !health || health === "absent" || health === "unknown")) ||
+      (!present && (health !== "absent" || restartCount !== 0))
+    ) {
+      throw new Error(`Release inventory has inconsistent ${worker} state.`);
+    }
+  }
+  const activeKeys = [
+    "documentJobs",
+    "embeddingJobs",
+    "embeddingBatches",
+    "embeddingProviderCalls",
+    "retrievalRuns",
+    "queryEmbeddingCalls",
+    "aiExecutions",
+  ];
+  for (const field of activeKeys) {
+    if (!Number.isSafeInteger(inventory.active?.[field]) || inventory.active[field] < 0) {
+      throw new Error(`Release inventory has invalid active.${field}.`);
+    }
+  }
+  const dataPlanePresent = inventory.database.present || inventory.objectStorage.present;
+  for (const field of [
+    "pgDumpAvailable",
+    "pgRestoreAvailable",
+    "directoryExists",
+    "directoryWritable",
+  ]) {
+    if (typeof inventory.backup?.[field] !== "boolean") {
+      throw new Error(`Release inventory is missing backup.${field}.`);
+    }
+  }
+  if (
+    !Number.isSafeInteger(inventory.backup?.availableBytes) ||
+    inventory.backup.availableBytes < 0 ||
+    (!dataPlanePresent &&
+      (inventory.backup.pgDumpAvailable ||
+        inventory.backup.pgRestoreAvailable ||
+        inventory.backup.directoryExists ||
+        inventory.backup.directoryWritable ||
+        inventory.backup.availableBytes !== 0))
+  ) {
+    throw new Error("Release inventory has inconsistent backup capabilities.");
+  }
+  if (
+    typeof inventory.locks?.deployment !== "boolean" ||
+    typeof inventory.locks?.migrationApplicable !== "boolean" ||
+    typeof inventory.locks?.migrationFile !== "boolean" ||
+    typeof inventory.locks?.migration !== "boolean" ||
+    !MIGRATION_ADVISORY_STATES.includes(inventory.locks?.migrationAdvisory)
+  ) {
+    throw new Error("Release inventory has an invalid migration lock contract.");
+  }
+  if (
+    inventory.locks.migrationApplicable !== inventory.database.present ||
+    (!inventory.database.present && inventory.locks.migrationAdvisory !== "not-applicable") ||
+    (inventory.database.present && inventory.locks.migrationAdvisory === "not-applicable") ||
+    inventory.locks.migration !==
+      (inventory.locks.migrationFile || inventory.locks.migrationAdvisory === "held")
+  ) {
+    throw new Error("Release inventory migration lock state is inconsistent.");
   }
   assertSanitized(inventory);
   const expected = digestObject(
@@ -183,6 +345,12 @@ export function assertReleaseManifest(manifest) {
   for (const field of ["sourceMainSha", "releaseCandidateSha"]) {
     assertFullSha(manifest[field], field);
   }
+  if (
+    typeof manifest.releaseCandidateBranch !== "string" ||
+    !/^[A-Za-z0-9._/-]{1,200}$/.test(manifest.releaseCandidateBranch)
+  ) {
+    throw new Error("releaseCandidateBranch is invalid.");
+  }
   for (const field of [
     "releaseImageDigest",
     "databaseToolsImageDigest",
@@ -191,6 +359,7 @@ export function assertReleaseManifest(manifest) {
     "minioImage",
     "rollbackImage",
     "evidenceDigest",
+    "productionBaselineDigest",
   ]) {
     assertDigest(manifest[field], field);
   }

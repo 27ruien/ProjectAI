@@ -36,6 +36,7 @@
   },
   "database": {
     "present": false,
+    "inventoryKnown": "not-applicable",
     "containerId": null,
     "imageDigest": null,
     "health": "absent",
@@ -46,6 +47,8 @@
   },
   "objectStorage": {
     "present": false,
+    "inventoryKnown": "not-applicable",
+    "bucketNameHash": null,
     "containerId": null,
     "imageDigest": null,
     "health": "absent",
@@ -87,7 +90,18 @@
     "directory": "/srv/projectai/backups",
     "state": "absent",
     "latestSizeBytes": 0,
-    "latestCompletedAt": null
+    "latestCompletedAt": null,
+    "pgDumpAvailable": false,
+    "pgRestoreAvailable": false,
+    "directoryExists": false,
+    "directoryWritable": false,
+    "availableBytes": 0
   },
-  "locks": { "deployment": false, "migration": false }
+  "locks": {
+    "deployment": false,
+    "migrationApplicable": false,
+    "migrationFile": false,
+    "migrationAdvisory": "not-applicable",
+    "migration": false
+  }
 }

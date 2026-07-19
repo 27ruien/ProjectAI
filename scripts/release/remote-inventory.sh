@@ -2,10 +2,20 @@
 set -Eeuo pipefail
 
 environment="${1:-}"
+expected_migration_lock_file="${2:-}"
+migration_advisory_key="${3:-}"
 case "$environment" in
   production|staging) ;;
   *) printf 'Unsupported inventory environment.\n' >&2; exit 64 ;;
 esac
+[[ "$expected_migration_lock_file" =~ ^/srv/projectai(-staging)?/\.[a-z-]+$ ]] || {
+  printf 'Invalid migration lock file contract.\n' >&2
+  exit 64
+}
+[[ "$migration_advisory_key" =~ ^[1-9][0-9]{0,17}$ ]] || {
+  printf 'Invalid migration advisory lock contract.\n' >&2
+  exit 64
+}
 
 emit() {
   local key="$1"
@@ -98,6 +108,7 @@ if [[ "$environment" == "production" ]]; then
   minio=project-ai-os-minio
   document_worker=project-ai-os-worker
   embedding_worker=project-ai-os-embedding-worker
+  migration_lock=/srv/projectai/.production-migration-lock
 else
   app=project-ai-os-staging
   compose_file=/srv/projectai-staging/docker-compose.staging.yml
@@ -108,7 +119,12 @@ else
   minio=project-ai-os-staging-minio
   document_worker=project-ai-os-staging-worker
   embedding_worker=project-ai-os-staging-embedding-worker
+  migration_lock=/srv/projectai-staging/.staging-migration-lock
 fi
+[[ "$migration_lock" == "$expected_migration_lock_file" ]] || {
+  printf 'Migration lock contract does not match the target environment.\n' >&2
+  exit 64
+}
 
 emit app.containerId "$(container_field "$app" '{{.Id}}')"
 app_image="$(container_field "$app" '{{.Image}}')"
@@ -193,6 +209,7 @@ emit features.hybridDailyQueryTokenLimit "${daily_budget:-null}"
 
 if container_exists "$postgres"; then
   emit database.present true
+  emit database.inventoryKnown true
   emit database.containerId "$(container_field "$postgres" '{{.Id}}')"
   database_image="$(container_field "$postgres" '{{.Image}}')"
   emit database.imageDigest "$database_image"
@@ -209,6 +226,22 @@ SQL
   emit database.sizeBytes "${database_values[1]:-0}"
   emit database.pgvectorVersion "${database_values[2]:-absent}"
   emit database.migrationCount "${database_values[3]:-none}"
+  migration_advisory="$(sudo -n docker exec -i "$postgres" sh -c 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<SQL 2>/dev/null || true
+with attempted as (
+  select pg_try_advisory_lock(${migration_advisory_key}::bigint) as acquired
+)
+select case
+  when acquired is false then 'held'
+  when pg_advisory_unlock(${migration_advisory_key}::bigint) then 'clear'
+  else 'unknown'
+end
+from attempted;
+SQL
+)"
+  case "$migration_advisory" in
+    clear|held) ;;
+    *) migration_advisory=unknown ;;
+  esac
   if [[ "$environment" == "staging" ]]; then
     active="$(sudo -n docker exec -i "$postgres" sh -c 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 select
@@ -225,6 +258,7 @@ SQL
   fi
 else
   emit database.present false
+  emit database.inventoryKnown not-applicable
   emit database.containerId null
   emit database.imageDigest null
   emit database.health absent
@@ -239,12 +273,43 @@ if container_exists "$minio"; then
   emit objectStorage.containerId "$(container_field "$minio" '{{.Id}}')"
   emit objectStorage.imageDigest "$(container_field "$minio" '{{.Image}}')"
   emit objectStorage.health "$(container_field "$minio" '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
-  emit objectStorage.objectCount "$(sudo -n docker exec "$minio" sh -c 'find /data/projectai-staging-files -type f -name xl.meta 2>/dev/null | wc -l')"
-  object_bytes="$(sudo -n docker exec "$minio" sh -c 'du -sb /data/projectai-staging-files 2>/dev/null' | cut -f1 || true)"
-  emit objectStorage.totalBytes "${object_bytes:-0}"
-  emit objectStorage.bucketCount 1
+  bucket_name="$(sudo -n docker exec "$app" sh -c 'printf "%s" "$OBJECT_STORAGE_BUCKET"' 2>/dev/null || true)"
+  if [[ ! "$bucket_name" =~ ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$ ]] || [[ "$bucket_name" == *..* ]]; then
+    emit objectStorage.inventoryKnown false
+    emit objectStorage.bucketNameHash null
+    emit objectStorage.objectCount null
+    emit objectStorage.totalBytes null
+    emit objectStorage.bucketCount null
+  else
+    emit objectStorage.bucketNameHash "sha256:$(printf '%s' "$bucket_name" | sha256sum | cut -d' ' -f1)"
+    storage_values="$(sudo -n docker exec "$minio" sh -s -- "$bucket_name" <<'MINIO_INVENTORY' 2>/dev/null || true
+set -eu
+bucket="$1"
+root="/data/$bucket"
+test -d "$root"
+bucket_count="$(find /data -mindepth 1 -maxdepth 1 -type d ! -name .minio.sys -print | wc -l)"
+object_count="$(find "$root" -type f -name xl.meta -print | wc -l)"
+total_bytes="$(du -sb "$root" | awk '{print $1}')"
+printf '%s|%s|%s\n' "$bucket_count" "$object_count" "$total_bytes"
+MINIO_INVENTORY
+)"
+    if [[ "$storage_values" =~ ^[0-9]+\|[0-9]+\|[0-9]+$ ]]; then
+      IFS='|' read -r bucket_count object_count object_bytes <<<"$storage_values"
+      emit objectStorage.inventoryKnown true
+      emit objectStorage.objectCount "$object_count"
+      emit objectStorage.totalBytes "$object_bytes"
+      emit objectStorage.bucketCount "$bucket_count"
+    else
+      emit objectStorage.inventoryKnown false
+      emit objectStorage.objectCount null
+      emit objectStorage.totalBytes null
+      emit objectStorage.bucketCount null
+    fi
+  fi
 else
   emit objectStorage.present false
+  emit objectStorage.inventoryKnown not-applicable
+  emit objectStorage.bucketNameHash null
   emit objectStorage.containerId null
   emit objectStorage.imageDigest null
   emit objectStorage.health absent
@@ -285,6 +350,43 @@ emit backup.directory "$backup_root"
 emit backup.state "$backup_state"
 emit backup.latestSizeBytes "$backup_size"
 emit backup.latestCompletedAt "${backup_time:-null}"
+if container_exists "$postgres"; then
+  if sudo -n docker exec "$postgres" pg_dump --version >/dev/null 2>&1; then
+    emit backup.pgDumpAvailable true
+  else
+    emit backup.pgDumpAvailable false
+  fi
+  if sudo -n docker exec "$postgres" pg_restore --version >/dev/null 2>&1; then
+    emit backup.pgRestoreAvailable true
+  else
+    emit backup.pgRestoreAvailable false
+  fi
+else
+  emit backup.pgDumpAvailable false
+  emit backup.pgRestoreAvailable false
+fi
+if container_exists "$postgres" || container_exists "$minio"; then
+  if sudo -n test -d "$backup_root"; then
+    emit backup.directoryExists true
+  else
+    emit backup.directoryExists false
+  fi
+  if sudo -n test -d "$backup_root" && sudo -n test -w "$backup_root"; then
+    emit backup.directoryWritable true
+  else
+    emit backup.directoryWritable false
+  fi
+  backup_available="$(df -B1 "$backup_root" 2>/dev/null | awk 'NR==2 {print $4}' || true)"
+  if [[ "$backup_available" =~ ^[0-9]+$ ]]; then
+    emit backup.availableBytes "$backup_available"
+  else
+    emit backup.availableBytes null
+  fi
+else
+  emit backup.directoryExists false
+  emit backup.directoryWritable false
+  emit backup.availableBytes 0
+fi
 
 if [[ "$environment" == "production" ]]; then
   deployment_lock=/srv/projectai/.production-deploy-lock
@@ -296,4 +398,23 @@ if sudo -n test -e "$deployment_lock"; then
 else
   emit locks.deployment false
 fi
-emit locks.migration false
+if sudo -n test -e "$migration_lock"; then
+  migration_file=true
+else
+  migration_file=false
+fi
+if container_exists "$postgres"; then
+  migration_applicable=true
+else
+  migration_applicable=false
+  migration_advisory=not-applicable
+fi
+if [[ "$migration_file" == "true" || "$migration_advisory" == "held" ]]; then
+  migration_locked=true
+else
+  migration_locked=false
+fi
+emit locks.migrationApplicable "$migration_applicable"
+emit locks.migrationFile "$migration_file"
+emit locks.migrationAdvisory "$migration_advisory"
+emit locks.migration "$migration_locked"

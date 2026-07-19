@@ -128,7 +128,8 @@
 | B3C1-002 | Manifest/Preflight | 完整 SHA/Image/Base Digest；精确 Production 基线、空间、锁、CI/Evidence 门禁 |
 | B3C1-003 | Production 写保护 | 所有 `--environment=production --apply` 返回 `PRODUCTION_APPLY_NOT_AUTHORIZED` |
 | B3C1-004 | Backup/Restore/Migration | 当前无数据面时 not-applicable；隔离虚构非空 dump/Checksum/Restore/0004–0007/pgvector 通过 |
-| B3C1-005 | Compatibility | 旧 Production Image + 0007、新 Image AI 全关闭、Schema forward + App rollback 证据 |
+| B3C1-005 | Compatibility | 旧 Production Image 在旁路 0007 数据库存在时的 legacy application shell Smoke；明确无数据库依赖/连接观察、回滚后新数据面功能不可用；新 Image AI 全关闭证据 |
+| B3C1-010 | Evidence-derived readiness | Migration File/Advisory Lock、环境感知 MinIO Count、Git/CI/Image/Clock/Baseline Preflight 与跨 Digest Go/No-Go 全部由工具事实和绑定报告产生；Checklist-only 输入被拒绝 |
 | B3C1-006 | Smoke/Regression | B3-A/B3-B1/B3-B2、集成、Playwright、Release matrix 和清理全绿 |
 | B3C1-007 | Runbook/Go-No-Go | Phase 0–6、Secret、Rollback、RPO/RTO、监控、成本和 Stop Conditions 可审查 |
 | B3C1-008 | Production 不变 | Container/Image/StartedAt/Restart/Health/Compose/Nginx/服务/Migration/Secret/HTTP 前后精确一致 |

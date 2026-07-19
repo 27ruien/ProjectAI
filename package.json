@@ -17,7 +17,7 @@
     "test:deployment": "node --test tests/deployment-contract.test.mjs",
     "review:sanitize": "node scripts/sanitize-test-artifacts.mjs",
     "review:finalize": "node scripts/finalize-review-manifest.mjs",
-    "qa:mvp": "npm run embeddings:migration-upgrade && npm run retrieval:migration-upgrade && npm run typecheck && npm run lint && npm test && npm run test:assistant && npm run test:embeddings && npm run test:retrieval && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:embedding-integration && npm run test:assistant-integration && npm run test:retrieval-integration && npm run test:artifacts && npm run test:deployment && npm run test:e2e",
+    "qa:mvp": "npm run embeddings:migration-upgrade && npm run retrieval:migration-upgrade && npm run release:database-rehearsal && npm run typecheck && npm run lint && npm test && npm run test:assistant && npm run test:embeddings && npm run test:retrieval && npm run test:integration && npm run test:documents && npm run test:storage && npm run test:document-integration && npm run test:embedding-integration && npm run test:assistant-integration && npm run test:retrieval-integration && npm run test:artifacts && npm run test:deployment && npm run test:release && npm run test:e2e",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern playwright-report --ignore-pattern review-artifacts --ignore-pattern product-review-evidence --ignore-pattern test-results --ignore-pattern test-logs",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
