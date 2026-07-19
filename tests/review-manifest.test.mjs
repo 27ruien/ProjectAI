@@ -102,6 +102,8 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
       index.missingRetrievalReports,
       index.requiredRetrievalReports,
     );
+    assert.deepEqual(index.releaseReportFiles, []);
+    assert.deepEqual(index.missingReleaseReports, index.requiredReleaseReports);
     assert.deepEqual(index.screenshots, []);
     assert.equal(Object.hasOwn(index, "viewport"), false);
     assert.ok(index.requiredScreenshots.includes("screenshots/documents-empty.png"));
@@ -294,6 +296,11 @@ test("publishes a separate authoritative manifest after payload upload", async (
     assert.deepEqual(
       manifest.missingRetrievalReports,
       manifest.requiredRetrievalReports,
+    );
+    assert.deepEqual(manifest.releaseReportFiles, []);
+    assert.deepEqual(
+      manifest.missingReleaseReports,
+      manifest.requiredReleaseReports,
     );
     assert.deepEqual(manifest.screenshots, []);
     assert.equal(Object.hasOwn(manifest, "viewport"), false);

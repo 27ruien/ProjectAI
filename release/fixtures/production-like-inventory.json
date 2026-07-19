@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "capturedAt": "2026-01-01T00:00:00Z",
+  "host": "fictional-release-host",
+  "app": {
+    "containerId": "fictional-production-container",
+    "imageDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "startedAt": "2026-01-01T00:00:01Z",
+    "restartCount": 0,
+    "status": "running",
+    "health": "healthy",
+    "composeProject": "projectai",
+    "commitSha": null,
+    "imageSizeBytes": 70000000,
+    "publicHttpStatus": 200,
+    "localHttpStatus": 200
+  },
+  "configuration": {
+    "composeHash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "nginxHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "checks": { "composeConfigValid": true, "nginxConfigValid": true },
+  "features": {
+    "aiAssistantEnabled": false,
+    "aiEmbeddingEnabled": false,
+    "retrievalMode": "lexical",
+    "queryEmbeddingConfigured": false,
+    "qwenSecretMount": false,
+    "retrievalProfileId": null,
+    "embeddingProfileId": null,
+    "hybridQueryEmbeddingTimeoutMs": null,
+    "hybridVectorSqlTimeoutMs": null,
+    "hybridDailyQueryTokenLimit": null
+  },
+  "database": {
+    "present": false,
+    "containerId": null,
+    "imageDigest": null,
+    "health": "absent",
+    "version": "absent",
+    "sizeBytes": 0,
+    "pgvectorVersion": "absent",
+    "migrationCount": "none"
+  },
+  "objectStorage": {
+    "present": false,
+    "containerId": null,
+    "imageDigest": null,
+    "health": "absent",
+    "objectCount": 0,
+    "totalBytes": 0,
+    "bucketCount": 0
+  },
+  "services": {
+    "documentWorker": false,
+    "documentWorkerHealth": "absent",
+    "documentWorkerRestartCount": 0,
+    "embeddingWorker": false,
+    "embeddingWorkerHealth": "absent",
+    "embeddingWorkerRestartCount": 0
+  },
+  "active": {
+    "documentJobs": 0,
+    "embeddingJobs": 0,
+    "embeddingBatches": 0,
+    "embeddingProviderCalls": 0,
+    "retrievalRuns": 0,
+    "queryEmbeddingCalls": 0,
+    "aiExecutions": 0
+  },
+  "capacity": {
+    "totalBytes": 42949672960,
+    "usedBytes": 29000000000,
+    "availableBytes": 13000000000,
+    "filesystemUsagePercent": 70,
+    "inodeTotal": 2000000,
+    "inodeUsed": 600000,
+    "inodeAvailable": 1400000,
+    "inodeUsagePercent": 30,
+    "dockerImages": "8GB",
+    "dockerVolumes": "0B",
+    "dockerBuildCache": "0B"
+  },
+  "backup": {
+    "directory": "/srv/projectai/backups",
+    "state": "absent",
+    "latestSizeBytes": 0,
+    "latestCompletedAt": null
+  },
+  "locks": { "deployment": false, "migration": false }
+}

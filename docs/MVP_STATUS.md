@@ -4,19 +4,30 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前开发版本 | `0.8.0-staging`（Evaluated Hybrid Retrieval / B3-B2） |
-| `main` 基线 | 已合并 v0.7 B3-B1 |
-| 开发分支 | `agent/hybrid-retrieval-foundation` |
-| Draft PR | 标题 `Add evaluated hybrid retrieval`；保持 Draft、未 Ready、未合并 |
+| 当前开发版本 | `0.8.0-staging`（B3-C1 Production Release Readiness） |
+| `main` 基线 | 已合并 B3-A、B3-B1、B3-B2 |
+| 开发分支 | `agent/production-release-readiness` |
+| Draft PR | 标题 `Add production release readiness`；必须保持 Draft、未 Ready、未合并 |
 | 动态交付事实 | PR Head、CI Run、Artifact ID/Digest、Staging image 与 Build Time 只记录在 Draft PR、Provenance Manifest 和受控部署证据 |
-| Staging | https://gridworks.cn/tool/projectai-staging/；B3-B2 只允许受控部署此环境 |
-| Production | https://gridworks.cn/tool/projectai/；B3-B2 不部署、不迁移、不重启、不修改 Retrieval Mode |
+| Staging | https://gridworks.cn/tool/projectai-staging/；保持已验证 hybrid，不重复制造真实 Provider 费用 |
+| Production | https://gridworks.cn/tool/projectai/；B3-C1 只读审计，不部署、不迁移、不重启、不创建 Secret |
 
 ## 当前结论
 
-v0.8 B3-B2 在已合并 B3-B1 之上建立经过离线评测和 Staging shadow 门禁的项目助手 Hybrid Evidence Retrieval：冻结 Profile、Query Embedding 成本账本、Exact Vector SQL、RRF、Coverage Gate、Fallback、Run/Candidate 审计和 lexical/shadow/hybrid 服务端模式。
+B3-C1 在已合并 B3-B2 上建立 Production Inventory/Diff、Release Manifest、Preflight、隔离 Backup/Restore/Migration/兼容性演练、Smoke、Rollback、Go/No-Go、监控和 Evidence/Provenance。本轮没有 Runtime 产品代码或 Production 外部状态变更。
 
-B3-A 的 Prompt、Grounding、Citation 与 SEC-006 边界保持不变。用户知识搜索继续使用 B2 词法检索；只有 Assistant Evidence 可使用 Hybrid。本轮不实现 ANN、Rerank 或正式业务写入。
+B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 SEC-006 边界保持不变。用户知识搜索继续使用 B2 词法检索；只有 Assistant Evidence 可使用 Hybrid。本轮不实现 ANN、Rerank 或正式业务写入。
+
+## B3-C1 Readiness 能力
+
+- Production/Staging 只读白名单 Inventory、分类差异和 canonical SHA-256；
+- 固定 SHA/Image/Node/Base Digest/Phase/Backup/Evidence 的 Release Manifest Schema；
+- 精确基线、CI、空间、锁、活动任务、Nginx/Compose 和 Manifest Preflight；
+- 全部 Production apply 硬拒绝；当前无数据面时 Backup 为 dry-run/not-applicable；
+- 虚构非空 Backup/Checksum/Restore/0004–0007/pgvector 演练；
+- 旧 Image + 0007 与新 Image AI 全关闭兼容性合同；
+- 机器可读 Smoke、Rollback、Go/No-Go、成本和监控门禁；
+- 固定 Release Evidence allowlist 与上传后 Provenance。
 
 ## v0.8 B3-B2 真实能力
 

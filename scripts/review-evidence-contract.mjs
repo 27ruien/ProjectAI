@@ -122,6 +122,33 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
       fail(`The product review evidence index has an invalid ${field}.`);
     }
   }
+  for (const prefix of ["retrieval", "release"]) {
+    const required = index[`required${prefix[0].toUpperCase()}${prefix.slice(1)}Reports`];
+    const present = index[`${prefix}ReportFiles`];
+    const missing = index[`missing${prefix[0].toUpperCase()}${prefix.slice(1)}Reports`];
+    if (![required, present, missing].every(Array.isArray)) {
+      fail(`The product review evidence index has an invalid ${prefix} report inventory.`);
+    }
+    for (const report of [...required, ...present, ...missing]) {
+      if (
+        typeof report !== "string" ||
+        !/^[A-Za-z0-9._-]+\.(?:json|md)$/.test(report) ||
+        report.includes("..")
+      ) {
+        fail(`The product review evidence index has an unsafe ${prefix} report name.`);
+      }
+    }
+    const expectedMissing = required.filter((report) => !present.includes(report)).sort();
+    if (
+      new Set(required).size !== required.length ||
+      new Set(present).size !== present.length ||
+      new Set(missing).size !== missing.length ||
+      present.some((report) => !required.includes(report)) ||
+      JSON.stringify([...missing].sort()) !== JSON.stringify(expectedMissing)
+    ) {
+      fail(`The product review evidence index misstates ${prefix} report completeness.`);
+    }
+  }
   if (!Array.isArray(index.screenshotFiles) || !Array.isArray(index.screenshots)) {
     fail("The product review evidence index has an invalid screenshot inventory.");
   }

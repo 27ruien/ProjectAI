@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "items": [
+    { "id": "main-sha-locked", "required": true, "passed": true },
+    { "id": "ci-success", "required": true, "passed": true },
+    { "id": "evidence-success", "required": true, "passed": true },
+    { "id": "image-digest-locked", "required": true, "passed": true },
+    { "id": "production-baseline-stable", "required": true, "passed": true },
+    { "id": "backup-complete-or-not-applicable", "required": true, "passed": true },
+    { "id": "backup-checksum", "required": true, "passed": true },
+    { "id": "restore-drill", "required": true, "passed": true },
+    { "id": "migration-rehearsal", "required": true, "passed": true },
+    { "id": "old-app-new-schema", "required": true, "passed": true },
+    { "id": "new-app-disabled", "required": true, "passed": true },
+    { "id": "rollback-drill", "required": true, "passed": true },
+    { "id": "disk-gate", "required": true, "passed": true },
+    { "id": "nginx-config", "required": true, "passed": true },
+    { "id": "compose-config", "required": true, "passed": true },
+    { "id": "secret-plan", "required": true, "passed": true },
+    { "id": "cost-gate", "required": true, "passed": true },
+    { "id": "observability-gate", "required": true, "passed": true },
+    { "id": "staging-or-rehearsal", "required": true, "passed": true },
+    { "id": "p0-zero", "required": true, "passed": true },
+    { "id": "p1-zero", "required": true, "passed": true }
+  ]
+}

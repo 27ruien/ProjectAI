@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "environment": "staging",
+  "capturedAt": "2026-01-01T00:00:00Z",
+  "host": "fictional-release-host",
+  "app": {
+    "containerId": "fictional-staging-container",
+    "imageDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "createdAt": "2026-01-01T00:00:00Z",
+    "startedAt": "2026-01-01T00:00:01Z",
+    "restartCount": 0,
+    "status": "running",
+    "health": "healthy",
+    "composeProject": "projectai-staging",
+    "commitSha": "1111111111111111111111111111111111111111",
+    "imageSizeBytes": 305000000,
+    "publicHttpStatus": 200,
+    "localHttpStatus": 200
+  },
+  "configuration": {
+    "composeHash": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "nginxHash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  },
+  "checks": { "composeConfigValid": true, "nginxConfigValid": true },
+  "features": {
+    "aiAssistantEnabled": true,
+    "aiEmbeddingEnabled": true,
+    "retrievalMode": "hybrid",
+    "queryEmbeddingConfigured": true,
+    "qwenSecretMount": true,
+    "retrievalProfileId": "hybrid-rrf-v1",
+    "embeddingProfileId": "qwen-text-embedding-cn-v1",
+    "hybridQueryEmbeddingTimeoutMs": 5000,
+    "hybridVectorSqlTimeoutMs": 1500,
+    "hybridDailyQueryTokenLimit": 5000000
+  },
+  "database": {
+    "present": true,
+    "containerId": "fictional-postgres-container",
+    "imageDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "health": "healthy",
+    "version": "17.8",
+    "sizeBytes": 15000000,
+    "pgvectorVersion": "0.8.1",
+    "migrationCount": 8
+  },
+  "objectStorage": {
+    "present": true,
+    "containerId": "fictional-minio-container",
+    "imageDigest": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "health": "healthy",
+    "objectCount": 0,
+    "totalBytes": 4096,
+    "bucketCount": 1
+  },
+  "services": {
+    "documentWorker": true,
+    "documentWorkerHealth": "healthy",
+    "documentWorkerRestartCount": 0,
+    "embeddingWorker": true,
+    "embeddingWorkerHealth": "healthy",
+    "embeddingWorkerRestartCount": 0
+  },
+  "active": {
+    "documentJobs": 0,
+    "embeddingJobs": 0,
+    "embeddingBatches": 0,
+    "embeddingProviderCalls": 0,
+    "retrievalRuns": 0,
+    "queryEmbeddingCalls": 0,
+    "aiExecutions": 0
+  },
+  "capacity": {
+    "totalBytes": 42949672960,
+    "usedBytes": 29000000000,
+    "availableBytes": 13000000000,
+    "filesystemUsagePercent": 70,
+    "inodeTotal": 2000000,
+    "inodeUsed": 600000,
+    "inodeAvailable": 1400000,
+    "inodeUsagePercent": 30,
+    "dockerImages": "8GB",
+    "dockerVolumes": "80MB",
+    "dockerBuildCache": "0B"
+  },
+  "backup": {
+    "directory": "/srv/projectai-staging/backups",
+    "state": "present",
+    "latestSizeBytes": 200000,
+    "latestCompletedAt": "2026-01-01T00:00:00Z"
+  },
+  "locks": { "deployment": false, "migration": false }
+}

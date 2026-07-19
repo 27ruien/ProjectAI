@@ -28,6 +28,14 @@ const requiredRetrievalReports = [
   "retrieval-verification-summary.json",
   "retrieval-verification-summary.md",
 ];
+const requiredReleaseReports = [
+  "release-database-rehearsal.json",
+  "release-database-rehearsal.md",
+  "release-disabled-image-rehearsal.json",
+  "release-disabled-image-rehearsal.md",
+  "release-smoke.json",
+  "release-smoke.md",
+];
 const retrievalReportFiles = [];
 for (const file of requiredRetrievalReports) {
   try {
@@ -35,6 +43,15 @@ for (const file of requiredRetrievalReports) {
     retrievalReportFiles.push(file);
   } catch {
     // Failed CI runs may not have reached evaluation; status remains authoritative.
+  }
+}
+const releaseReportFiles = [];
+for (const file of requiredReleaseReports) {
+  try {
+    await readFile(path.join(root, file));
+    releaseReportFiles.push(file);
+  } catch {
+    // Failed CI runs may not have reached release rehearsal.
   }
 }
 
@@ -92,6 +109,9 @@ const reviewStatus =
 const missingRetrievalReports = requiredRetrievalReports.filter(
   (file) => !retrievalReportFiles.includes(file),
 );
+const missingReleaseReports = requiredReleaseReports.filter(
+  (file) => !releaseReportFiles.includes(file),
+);
 if (
   reviewStatus.toLowerCase() === "success" &&
   (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
@@ -99,6 +119,15 @@ if (
 ) {
   throw new Error(
     `Successful B3-B2 evidence is missing Retrieval reports: ${missingRetrievalReports.join(", ")}`,
+  );
+}
+if (
+  reviewStatus.toLowerCase() === "success" &&
+  (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
+  missingReleaseReports.length
+) {
+  throw new Error(
+    `Successful B3-C1 evidence is missing Release reports: ${missingReleaseReports.join(", ")}`,
   );
 }
 
@@ -161,6 +190,9 @@ const evidenceIndex = {
   requiredRetrievalReports,
   retrievalReportFiles,
   missingRetrievalReports,
+  requiredReleaseReports,
+  releaseReportFiles,
+  missingReleaseReports,
   testedUsers: [
     "system_admin",
     "project_manager_a",

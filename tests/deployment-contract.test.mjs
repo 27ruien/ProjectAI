@@ -353,6 +353,13 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.match(workflow, /npm run test:cleanup/);
   assert.match(workflow, /npm run storage:verify/);
   assert.match(workflow, /npm run storage:reconcile/);
+  assert.match(workflow, /npm run test:release/);
+  assert.match(workflow, /npm run release:database-rehearsal/);
+  assert.match(workflow, /scripts\/release\/disabled-image-rehearsal\.sh/);
+  assert.match(workflow, /RELEASE_CANDIDATE_SHA/);
+  assert.match(workflow, /npm run release:report/);
+  assert.match(workflow, /npm run release:smoke/);
+  assert.doesNotMatch(workflow, /gridworks\.cn[\s\S]*release:database-rehearsal/);
   assert.match(workflow, /Destroy isolated CI MinIO\n\s+if: always\(\)/);
   assert.match(workflow, /docker rm --force "\$container"/);
   assert.match(workflow, /docker network rm "\$network"/);

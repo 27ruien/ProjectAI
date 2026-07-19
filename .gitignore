@@ -19,6 +19,9 @@
 /product-review-evidence/
 /product-review-manifest/
 /test-logs/
+/release-artifacts/
+/release-manifests/
+/release-rehearsal/
 
 # next.js
 /.next/

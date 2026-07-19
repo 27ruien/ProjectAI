@@ -38,6 +38,7 @@ jobs:
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
       NEXT_PUBLIC_APP_ENV: test
       NEXT_PUBLIC_COMMIT_SHA: ${{ github.sha }}
+      RELEASE_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       AI_REGION: cn-beijing
       AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v1
       AI_EXECUTION_STALE_AFTER_MS: "900000"
@@ -391,6 +392,84 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:deployment 2>&1 | tee test-logs/deployment-contract.log
+
+      - name: Production release tooling contract tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:release 2>&1 | tee test-logs/release-tooling.log
+
+      - name: Isolated release backup, restore, and migration rehearsal
+        shell: bash
+        env:
+          NODE_ENV: test
+          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run release:database-rehearsal 2>&1 | tee test-logs/release-database-rehearsal.log
+
+      - name: Build and verify the exact release head with all AI disabled
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          release_tree="${RUNNER_TEMP}/projectai-release-head-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          app_image="projectai-release-candidate:${RELEASE_CANDIDATE_SHA}"
+          db_tools_image="projectai-release-db-tools:${RELEASE_CANDIDATE_SHA}"
+          cleanup_release_tree() {
+            git worktree remove --force "$release_tree" >/dev/null 2>&1 || true
+          }
+          trap cleanup_release_tree EXIT
+
+          git worktree add --detach "$release_tree" "$RELEASE_CANDIDATE_SHA" >/dev/null
+          docker build \
+            --target runner \
+            --build-arg NEXT_PUBLIC_BASE_PATH=/tool/projectai \
+            --build-arg NEXT_PUBLIC_APP_ENV=production \
+            --build-arg "NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}" \
+            --build-arg "NEXT_PUBLIC_COMMIT_SHA=${RELEASE_CANDIDATE_SHA}" \
+            --build-arg "NEXT_PUBLIC_BUILD_TIME=${NEXT_PUBLIC_BUILD_TIME}" \
+            --tag "$app_image" \
+            "$release_tree" >/dev/null
+          docker build \
+            --target db-tools \
+            --tag "$db_tools_image" \
+            "$release_tree" >/dev/null
+
+          app_digest="$(docker image inspect --format '{{.Id}}' "$app_image")"
+          log_path="test-logs/release-disabled-image-rehearsal.log"
+          RELEASE_REHEARSAL=1 \
+            "$release_tree/scripts/release/disabled-image-rehearsal.sh" \
+              "$app_image" "$db_tools_image" "$RELEASE_CANDIDATE_SHA" \
+            | tee "$log_path"
+          npm run release:report -- \
+            --kind=disabled-image \
+            --input="$log_path" \
+            --expected-sha="$RELEASE_CANDIDATE_SHA" \
+            --expected-image="$app_digest" \
+            --output-dir=review-artifacts
+
+          smoke_input="${RUNNER_TEMP}/projectai-release-smoke-${GITHUB_RUN_ID}.json"
+          RELEASE_SMOKE_FIXTURE=release/fixtures/smoke-passed.json \
+          RELEASE_SMOKE_OUTPUT="$smoke_input" \
+          RELEASE_SMOKE_SHA="$RELEASE_CANDIDATE_SHA" \
+          RELEASE_SMOKE_IMAGE="$app_digest" \
+            node --input-type=module -e '
+              import { readFile, writeFile } from "node:fs/promises";
+              const input = JSON.parse(await readFile(process.env.RELEASE_SMOKE_FIXTURE, "utf8"));
+              input.releaseCandidateSha = process.env.RELEASE_SMOKE_SHA;
+              input.releaseImageDigest = process.env.RELEASE_SMOKE_IMAGE;
+              input.source = "isolated CI integration, Playwright, and release rehearsal gates in this job";
+              await writeFile(process.env.RELEASE_SMOKE_OUTPUT, `${JSON.stringify(input, null, 2)}\n`);
+            '
+          npm run release:smoke -- \
+            --environment=rehearsal \
+            --expected-sha="$RELEASE_CANDIDATE_SHA" \
+            --expected-image="$app_digest" \
+            --input="$smoke_input" \
+            --apply \
+            --output-dir=review-artifacts
 
       - name: Playwright identity, isolation, and MVP flows
         shell: bash

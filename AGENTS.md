@@ -104,6 +104,16 @@
 - B3-B2 只允许部署 Staging；Migration 只能新增 `drizzle/0007_*.sql`。Production 不得部署、迁移、安装 pgvector、挂载 Qwen Secret、增加 Worker、修改 Mode、重启或修改 Nginx。
 - B3-B2 的 PR 必须保持 Draft，不得 Ready 或合并；本轮不得开始 B3-B3、Rerank 或 ANN 选型。
 
+## B3-C1 Production Release Readiness 规则
+
+- B3-C1 只建立 Production Inventory、差异报告、Release Manifest、Preflight、Backup/Restore 计划、隔离 Migration/pgvector/兼容性演练、Smoke、Rollback、Go/No-Go、监控和脱敏 Evidence；不得开发新的业务或 AI 能力。
+- 本轮不得部署、迁移、重启、修改 Compose/Nginx、创建或挂载 Qwen Secret、增加 Worker、Backfill、切换 Retrieval Mode 或启用任何 Production AI。所有 `--environment=production --apply` 必须由代码硬拒绝并返回 `PRODUCTION_APPLY_NOT_AUTHORIZED`。
+- Production 操作只允许只读审计。当前没有 ProjectAI 持久化数据面时，Backup 必须记录为 dry-run/not-applicable，不得查询或修改无法归属本项目的宿主机数据库。
+- Migration 0004–0007、pgvector 0.8.1、Restore、旧 Production Image + 0007 Schema 和新 Image 全关闭必须在本地/CI/独立 Network/Database/Volume 中演练，不得连接 Production Database、MinIO、Secret 或域名；结束必须清理全部 Rehearsal 资源。
+- Release Candidate 必须锁定完整 Git SHA、App/db-tools Image Digest、Node 版本、Build 时间和 Base Image Digest。动态 Container/CI/Backup/Evidence ID 不得写入 tracked 文档。
+- Release Artifact 和 Provenance 只允许 Hash、Digest、计数、大小、时长、排名、聚合时延、Usage 和受控失败码；禁止 Secret、完整 Env、Cookie/Session、数据库密码、客户内容、Object Key、完整 Backup/Prompt/问题、Query/Document Vector 和 Provider Payload。
+- 正式 Production Rollout 只能在后续独立 B3-C2 中按 Phase 0–6 执行。B3-C1 PR 必须保持 Draft，不得 Ready 或合并；不得开始 Rerank、`qwen3-rerank`、HNSW、IVFFlat 或其他 ANN。
+
 ## Review Guidelines
 
 - P0：跨项目数据泄露；密钥或客户资料暴露。
