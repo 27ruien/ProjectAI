@@ -85,16 +85,14 @@ docker run --detach --rm \
   --env AUTH_COOKIE_PREFIX=projectai_release \
   --env AUTH_COOKIE_PATH=/tool/projectai \
   --env AUTH_TRUSTED_ORIGINS=http://projectai-app:3000 \
-  --env AI_PROVIDER=fake \
   --env AI_ASSISTANT_ENABLED=false \
-  --env AI_EMBEDDING_PROVIDER=fake \
   --env AI_EMBEDDING_ENABLED=false \
   --env AI_ASSISTANT_RETRIEVAL_MODE=lexical \
   "$app_image" >/dev/null
 
 healthy=0
 health_body=""
-for _ in {1..90}; do
+for _ in {1..45}; do
   health_body="$(docker exec "$app" node -e '
     fetch("http://127.0.0.1:3000/tool/projectai/api/health")
       .then(async response => {
@@ -112,7 +110,7 @@ for _ in {1..90}; do
 done
 if [[ "$healthy" != "1" ]]; then
   app_state="$(docker inspect --format '{{.State.Status}}|{{.State.ExitCode}}|{{.State.OOMKilled}}|{{.RestartCount}}' "$app" 2>/dev/null || printf 'missing|unknown|unknown|unknown')"
-  printf 'Isolated application did not become healthy before the 180-second deadline (state|exitCode|oomKilled|restartCount=%s).\n' "$app_state" >&2
+  printf 'Isolated application did not become healthy before the 90-second deadline (state|exitCode|oomKilled|restartCount=%s).\n' "$app_state" >&2
   exit 1
 fi
 [[ "$health_body" == *'"aiAssistantEnabled":false'* ]]

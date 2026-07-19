@@ -370,13 +370,17 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.doesNotMatch(workflow, /STAGING_HEALTH_URL|projectai-staging\/api\/health/);
 });
 
-test("disabled release image rehearsal has a bounded cold-start deadline and sanitized diagnostics", async () => {
+test("disabled release image rehearsal is provider-neutral with a bounded health deadline", async () => {
   const script = await readFile(
     new URL("../scripts/release/disabled-image-rehearsal.sh", import.meta.url),
     "utf8",
   );
-  assert.match(script, /for _ in \{1\.\.90\}; do/);
-  assert.match(script, /before the 180-second deadline/);
+  assert.match(script, /--env AI_ASSISTANT_ENABLED=false/);
+  assert.match(script, /--env AI_EMBEDDING_ENABLED=false/);
+  assert.match(script, /--env AI_ASSISTANT_RETRIEVAL_MODE=lexical/);
+  assert.doesNotMatch(script, /--env AI_(?:EMBEDDING_)?PROVIDER=fake/);
+  assert.match(script, /for _ in \{1\.\.45\}; do/);
+  assert.match(script, /before the 90-second deadline/);
   assert.match(script, /\.State\.Status/);
   assert.match(script, /\.State\.ExitCode/);
   assert.match(script, /\.State\.OOMKilled/);
