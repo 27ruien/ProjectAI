@@ -935,9 +935,13 @@ try {
     [[...trackedThreadIds], [managerUserAgent, viewerUserAgent]],
   );
   const counts = persisted.rows[0]!;
+  const expectedExecutionCount = expectedRetrievalMode === "hybrid" ? 10 : 9;
   assert(counts.threads === 3, "Private Threads were not persisted.");
   assert(counts.messages >= 18, "Messages were not persisted.");
-  assert(counts.executions === 9, "Executions were not persisted.");
+  assert(
+    counts.executions === expectedExecutionCount,
+    `Expected ${expectedExecutionCount} persisted Executions, found ${counts.executions}.`,
+  );
   assert(counts.citations >= 3, "Citations were not persisted.");
   assert(counts.succeeded_audits >= 3, "AI success Audit was not persisted.");
   assert(counts.conflict_audits >= 2, "Idempotency conflict Audit was not persisted.");
