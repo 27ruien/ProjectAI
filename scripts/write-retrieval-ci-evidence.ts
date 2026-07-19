@@ -4,6 +4,21 @@ const integrationLog = await readFile(
   "test-logs/retrieval-integration.log",
   "utf8",
 );
+const normalizedIntegrationLog = integrationLog.replace(
+  // Node uses the spec reporter on an interactive terminal and TAP in CI.
+  // Normalize ANSI before accepting either reporter's explicit pass line.
+  /\u001b\[[0-9;]*m/g,
+  "",
+);
+const passedTest = (label: string): boolean =>
+  normalizedIntegrationLog.split("\n").some((line) => {
+    const trimmed = line.trim();
+    return (
+      trimmed === `✔ ${label}` ||
+      /^ok\s+\d+\s+-\s+/.test(trimmed) &&
+        trimmed.replace(/^ok\s+\d+\s+-\s+/, "") === label
+    );
+  });
 const requiredChecks = {
   lexicalNoQueryEmbedding: "keeps lexical mode identical and never creates a query embedding call",
   shadowEvidenceUnchanged: "records shadow candidates while keeping lexical evidence",
@@ -20,10 +35,13 @@ const requiredChecks = {
 const checks = Object.fromEntries(
   Object.entries(requiredChecks).map(([key, label]) => [
     key,
-    integrationLog.includes(`✔ ${label}`),
+    passedTest(label),
   ]),
 );
-if (!Object.values(checks).every(Boolean)) {
+if (
+  /^\s*not ok\b/m.test(normalizedIntegrationLog) ||
+  !Object.values(checks).every(Boolean)
+) {
   throw new Error("Retrieval CI verification log is incomplete.");
 }
 const evaluation = JSON.parse(
