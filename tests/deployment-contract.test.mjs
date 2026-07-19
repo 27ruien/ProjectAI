@@ -391,6 +391,11 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(script, /npm run documents:enqueue/);
   assert.match(dockerfile, /COPY --from=deps --chown=node:node \/app\/node_modules/);
   assert.match(dockerfile, /COPY --chown=node:node lib \.\/lib/);
+  assert.match(
+    dockerfile,
+    /COPY --chown=node:node tests\/fixtures\/hybrid-retrieval-evaluation\.json \.\/tests\/fixtures\/hybrid-retrieval-evaluation\.json/,
+  );
+  assert.match(dockerfile, /RUN install -d -o node -g node \/app\/review-artifacts/);
   assert.match(dockerfile, /USER node/);
 });
 
