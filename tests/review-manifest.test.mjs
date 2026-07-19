@@ -92,6 +92,16 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     assert.equal(index.chunkerVersion, "1");
     assert.equal(index.aiGatewayVersion, "1");
     assert.equal(index.assistantProfileId, "qwen-project-assistant-cn-v1");
+    assert.equal(index.retrievalProfileId, "hybrid-rrf-v1");
+    assert.equal(
+      index.retrievalEvaluationDatasetVersion,
+      "hybrid-retrieval-fictional-v1",
+    );
+    assert.deepEqual(index.retrievalReportFiles, []);
+    assert.deepEqual(
+      index.missingRetrievalReports,
+      index.requiredRetrievalReports,
+    );
     assert.deepEqual(index.screenshots, []);
     assert.equal(Object.hasOwn(index, "viewport"), false);
     assert.ok(index.requiredScreenshots.includes("screenshots/documents-empty.png"));
@@ -274,6 +284,16 @@ test("publishes a separate authoritative manifest after payload upload", async (
     assert.equal(
       manifest.assistantProfileId,
       "qwen-project-assistant-cn-v1",
+    );
+    assert.equal(manifest.retrievalProfileId, "hybrid-rrf-v1");
+    assert.equal(
+      manifest.retrievalEvaluationDatasetVersion,
+      "hybrid-retrieval-fictional-v1",
+    );
+    assert.deepEqual(manifest.retrievalReportFiles, []);
+    assert.deepEqual(
+      manifest.missingRetrievalReports,
+      manifest.requiredRetrievalReports,
     );
     assert.deepEqual(manifest.screenshots, []);
     assert.equal(Object.hasOwn(manifest, "viewport"), false);
