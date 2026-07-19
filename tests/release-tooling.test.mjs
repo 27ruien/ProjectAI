@@ -189,9 +189,15 @@ test("inventory distinguishes absent storage, environment buckets, missing bucke
       "utf8",
     );
     assert.doesNotMatch(remote, /\/data\/projectai-staging-files/);
+    assert.doesNotMatch(remote, /find \/data/);
     assert.match(remote, /OBJECT_STORAGE_BUCKET/);
     assert.match(remote, /bucketNameHash/);
     assert.match(remote, /inventoryKnown false/);
+    assert.match(remote, /quay\.io\/minio\/mc@sha256:[0-9a-f]{64}/);
+    assert.match(remote, /mc --config-dir "\$config_dir" du --json --recursive/);
+    const cliSource = await readFile(cli, "utf8");
+    assert.match(cliSource, /"database\.inventoryKnown"/);
+    assert.match(cliSource, /"objectStorage\.inventoryKnown"/);
   } finally {
     await rm(output, { recursive: true, force: true });
   }

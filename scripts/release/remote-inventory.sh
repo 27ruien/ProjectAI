@@ -282,17 +282,45 @@ if container_exists "$minio"; then
     emit objectStorage.bucketCount null
   else
     emit objectStorage.bucketNameHash "sha256:$(printf '%s' "$bucket_name" | sha256sum | cut -d' ' -f1)"
-    storage_values="$(sudo -n docker exec "$minio" sh -s -- "$bucket_name" <<'MINIO_INVENTORY' 2>/dev/null || true
-set -eu
-bucket="$1"
-root="/data/$bucket"
-test -d "$root"
-bucket_count="$(find /data -mindepth 1 -maxdepth 1 -type d ! -name .minio.sys -print | wc -l)"
-object_count="$(find "$root" -type f -name xl.meta -print | wc -l)"
-total_bytes="$(du -sb "$root" | awk '{print $1}')"
-printf '%s|%s|%s\n' "$bucket_count" "$object_count" "$total_bytes"
-MINIO_INVENTORY
-)"
+    minio_root_user="$(sudo -n docker exec "$minio" sh -c 'printf "%s" "$MINIO_ROOT_USER"' 2>/dev/null || true)"
+    minio_root_password="$(sudo -n docker exec "$minio" sh -c 'printf "%s" "$MINIO_ROOT_PASSWORD"' 2>/dev/null || true)"
+    minio_client_image=quay.io/minio/mc@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    if [[ -z "$minio_root_user" || -z "$minio_root_password" ]]; then
+      storage_values=""
+    else
+      bucket_lines="$(sudo -n docker run --rm \
+        --network "container:$minio" \
+        --entrypoint /bin/sh \
+        --env "MC_INVENTORY_USER=$minio_root_user" \
+        --env "MC_INVENTORY_PASSWORD=$minio_root_password" \
+        "$minio_client_image" -ec '
+          config_dir="$(mktemp -d /tmp/projectai-inventory.XXXXXX)"
+          trap "rm -rf $config_dir" EXIT
+          mc --quiet --config-dir "$config_dir" alias set inventory http://127.0.0.1:9000 "$MC_INVENTORY_USER" "$MC_INVENTORY_PASSWORD" >/dev/null
+          mc --config-dir "$config_dir" ls --json inventory
+        ' 2>/dev/null || true)"
+      bucket_count="$(printf '%s\n' "$bucket_lines" | sed '/^$/d' | wc -l | tr -d ' ')"
+      storage_summary="$(sudo -n docker run --rm \
+        --network "container:$minio" \
+        --entrypoint /bin/sh \
+        --env "MC_INVENTORY_USER=$minio_root_user" \
+        --env "MC_INVENTORY_PASSWORD=$minio_root_password" \
+        --env "MC_INVENTORY_BUCKET=$bucket_name" \
+        "$minio_client_image" -ec '
+          config_dir="$(mktemp -d /tmp/projectai-inventory.XXXXXX)"
+          trap "rm -rf $config_dir" EXIT
+          mc --quiet --config-dir "$config_dir" alias set inventory http://127.0.0.1:9000 "$MC_INVENTORY_USER" "$MC_INVENTORY_PASSWORD" >/dev/null
+          mc --quiet --config-dir "$config_dir" stat "inventory/$MC_INVENTORY_BUCKET" >/dev/null
+          mc --config-dir "$config_dir" du --json --recursive "inventory/$MC_INVENTORY_BUCKET"
+        ' 2>/dev/null || true)"
+      object_count="$(printf '%s' "$storage_summary" | sed -n 's/.*"objects":\([0-9][0-9]*\).*/\1/p' | tail -1)"
+      object_bytes="$(printf '%s' "$storage_summary" | sed -n 's/.*"size":\([0-9][0-9]*\).*/\1/p' | tail -1)"
+      if [[ "$bucket_count" =~ ^[0-9]+$ && "$object_count" =~ ^[0-9]+$ && "$object_bytes" =~ ^[0-9]+$ ]]; then
+        storage_values="$bucket_count|$object_count|$object_bytes"
+      else
+        storage_values=""
+      fi
+    fi
     if [[ "$storage_values" =~ ^[0-9]+\|[0-9]+\|[0-9]+$ ]]; then
       IFS='|' read -r bucket_count object_count object_bytes <<<"$storage_values"
       emit objectStorage.inventoryKnown true
