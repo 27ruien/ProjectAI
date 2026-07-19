@@ -338,6 +338,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
 
 test("CI MinIO uses random masked credentials, a private tmpfs, and always cleans up", async () => {
   const workflow = await readFile(ciWorkflow, "utf8");
+  assert.match(workflow, /uses: actions\/checkout@v4\n\s+with:\n\s+fetch-depth: 0/);
   assert.match(workflow, /Start isolated MinIO with ephemeral credentials/);
   assert.match(workflow, /openssl rand -hex 32/);
   assert.match(workflow, /::add-mask::\$secret/);
@@ -357,6 +358,8 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.match(workflow, /npm run release:database-rehearsal/);
   assert.match(workflow, /scripts\/release\/disabled-image-rehearsal\.sh/);
   assert.match(workflow, /RELEASE_CANDIDATE_SHA/);
+  assert.match(workflow, /git cat-file -e "\$\{RELEASE_CANDIDATE_SHA\}\^\{commit\}"/);
+  assert.match(workflow, /git worktree add --detach "\$release_tree" "\$RELEASE_CANDIDATE_SHA"/);
   assert.match(workflow, /npm run release:report/);
   assert.match(workflow, /npm run release:smoke/);
   assert.doesNotMatch(workflow, /gridworks\.cn[\s\S]*release:database-rehearsal/);

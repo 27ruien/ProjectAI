@@ -86,6 +86,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Record the revision actually checked out for testing
         shell: bash
@@ -422,6 +424,10 @@ jobs:
           }
           trap cleanup_release_tree EXIT
 
+          if ! git cat-file -e "${RELEASE_CANDIDATE_SHA}^{commit}" 2>/dev/null; then
+            echo "::error::Release candidate commit is unavailable after checkout: ${RELEASE_CANDIDATE_SHA}"
+            exit 1
+          fi
           git worktree add --detach "$release_tree" "$RELEASE_CANDIDATE_SHA" >/dev/null
           docker build \
             --target runner \
