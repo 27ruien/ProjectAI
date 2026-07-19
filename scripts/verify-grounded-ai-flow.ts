@@ -474,6 +474,15 @@ try {
       replay.execution.replayed === true,
     "The same request fingerprint did not replay the original Execution.",
   );
+  const countsBeforeConflict = await pool.query<{
+    executions: number;
+    messages: number;
+  }>(
+    `select
+      (select count(*)::int from ai_executions where thread_id = $1) as executions,
+      (select count(*)::int from ai_messages where thread_id = $1) as messages`,
+    [managerThread.thread.id],
+  );
   const conflictResponse = await askResponse(
     manager,
     managerThread.thread.id,
@@ -491,7 +500,7 @@ try {
     conflictBody.error.code === "AI_IDEMPOTENCY_CONFLICT",
     "Idempotency conflict returned the wrong error code.",
   );
-  const fingerprintCounts = await pool.query<{
+  const countsAfterConflict = await pool.query<{
     executions: number;
     messages: number;
   }>(
@@ -501,8 +510,10 @@ try {
     [managerThread.thread.id],
   );
   assert(
-    fingerprintCounts.rows[0]?.executions === 1 &&
-      fingerprintCounts.rows[0]?.messages === 2,
+    countsAfterConflict.rows[0]?.executions ===
+      countsBeforeConflict.rows[0]?.executions &&
+      countsAfterConflict.rows[0]?.messages ===
+        countsBeforeConflict.rows[0]?.messages,
     "Idempotency conflict created extra Messages or Executions.",
   );
 
