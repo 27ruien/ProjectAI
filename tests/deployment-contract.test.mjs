@@ -338,6 +338,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
 
 test("CI MinIO uses random masked credentials, a private tmpfs, and always cleans up", async () => {
   const workflow = await readFile(ciWorkflow, "utf8");
+  assert.match(workflow, /uses: actions\/checkout@v4\n\s+with:\n\s+fetch-depth: 0/);
   assert.match(workflow, /Start isolated MinIO with ephemeral credentials/);
   assert.match(workflow, /openssl rand -hex 32/);
   assert.match(workflow, /::add-mask::\$secret/);
@@ -353,11 +354,40 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.match(workflow, /npm run test:cleanup/);
   assert.match(workflow, /npm run storage:verify/);
   assert.match(workflow, /npm run storage:reconcile/);
+  assert.match(workflow, /npm run test:release/);
+  assert.match(workflow, /npm run release:database-rehearsal/);
+  assert.match(workflow, /scripts\/release\/disabled-image-rehearsal\.sh/);
+  assert.match(workflow, /RELEASE_CANDIDATE_SHA/);
+  assert.match(workflow, /git cat-file -e "\$\{RELEASE_CANDIDATE_SHA\}\^\{commit\}"/);
+  assert.match(workflow, /git worktree add --detach "\$release_tree" "\$RELEASE_CANDIDATE_SHA"/);
+  assert.match(workflow, /npm run release:report/);
+  assert.match(workflow, /write-ci-smoke-tsv\.mjs/);
+  assert.match(workflow, /--kind=smoke/);
+  assert.match(workflow, /npm run release:session/);
+  assert.doesNotMatch(workflow, /gridworks\.cn[\s\S]*release:database-rehearsal/);
   assert.match(workflow, /Destroy isolated CI MinIO\n\s+if: always\(\)/);
   assert.match(workflow, /docker rm --force "\$container"/);
   assert.match(workflow, /docker network rm "\$network"/);
   assert.doesNotMatch(workflow, /OBJECT_STORAGE_ENDPOINT=.*gridworks\.cn/);
   assert.doesNotMatch(workflow, /STAGING_HEALTH_URL|projectai-staging\/api\/health/);
+});
+
+test("disabled release image rehearsal is provider-neutral with a bounded health deadline", async () => {
+  const script = await readFile(
+    new URL("../scripts/release/disabled-image-rehearsal.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(script, /--env AI_ASSISTANT_ENABLED=false/);
+  assert.match(script, /--env AI_EMBEDDING_ENABLED=false/);
+  assert.match(script, /--env AI_ASSISTANT_RETRIEVAL_MODE=lexical/);
+  assert.doesNotMatch(script, /--env AI_(?:EMBEDDING_)?PROVIDER=fake/);
+  assert.match(script, /for _ in \{1\.\.45\}; do/);
+  assert.match(script, /before the 90-second deadline/);
+  assert.match(script, /\.State\.Status/);
+  assert.match(script, /\.State\.ExitCode/);
+  assert.match(script, /\.State\.OOMKilled/);
+  assert.match(script, /\.RestartCount/);
+  assert.doesNotMatch(script, /docker logs/);
 });
 
 test("Staging document Worker is isolated, bounded, healthy, and uses the immutable app image", async () => {

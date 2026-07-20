@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "productionFile": "/srv/projectai/.production-migration-lock",
+  "stagingFile": "/srv/projectai-staging/.staging-migration-lock",
+  "postgresAdvisoryKey": 578410083200007
+}

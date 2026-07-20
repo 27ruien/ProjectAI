@@ -4,10 +4,10 @@
 
 | 环境 | URL / basePath | 目录与应用 | PostgreSQL | Object Storage | 宿主机端口 |
 | --- | --- | --- | --- | --- | --- |
-| Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 既有环境，本轮不得修改 | 不增加 pgvector/Worker/MinIO | `127.0.0.1:3100` |
+| Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 当前无 ProjectAI PostgreSQL；B3-C1 不得修改 | 当前无 ProjectAI MinIO/Worker；B3-C1 不得增加 | `127.0.0.1:3100` |
 | Staging | https://gridworks.cn/tool/projectai-staging/ / `/tool/projectai-staging` | `/srv/projectai-staging` / App + Document Worker + Embedding Worker | PostgreSQL 17 + pgvector 0.8.1 / `projectai-staging-postgres` | 私有 MinIO + `projectai-staging-files` | 应用 `127.0.0.1:3101`；Worker/DB/MinIO 无端口 |
 
-v0.8 B3-B2 只允许部署 Staging。不得在 Production 主机构建、迁移、重启、增加 pgvector/Embedding Worker、配置 Qwen Secret、修改 Retrieval Mode、修改环境或重新部署。
+B3-C1 只做 Production Readiness 和隔离 Rehearsal。不得在 Production 主机构建、迁移、重启、增加 PostgreSQL/pgvector/MinIO/Worker、配置 Qwen Secret、修改 Retrieval Mode、修改环境或重新部署。全部 Production `--apply` 被代码硬禁用；正式分阶段流程见 `PRODUCTION_RELEASE.md`，只可在后续 B3-C2 执行。
 
 ## Staging 构建元数据
 
@@ -191,6 +191,6 @@ https://gridworks.cn/tool/projectai-staging/
 
 ## 当前发布状态
 
-v0.8 B3-B2 的稳定发布合同是：精确 PR Head CI 全绿后获取部署锁并记录 Production/Staging 基线；备份 PostgreSQL 和 MinIO；新代码先以 Retrieval Mode=lexical 健康；受控执行新增 0007；五服务 Healthy；完成 Lexical/B3-A/B3-B1 回归、60 Query 评测与冻结 Profile；只重建 App 切换 shadow，运行虚构 Query 和脱敏报告；门禁通过后再只重建 App 切换 hybrid 并完成语义、精确事实、Fallback、权限和清理验证。Production 容器、镜像、StartedAt、Restart Count、Health、Compose、Secret Mount 和公网响应必须精确不变。
+B3-C1 的稳定合同是：锁定完整 SHA/Image/Base Digest；生成带 Migration File/Advisory 状态和环境感知 MinIO Count 的 Production/Staging 脱敏 Inventory 与分类差异；在隔离 PostgreSQL/pgvector 中完成 Backup/Restore/0004–0007；验证旧 Image 的 legacy application shell 可在旁路 0007 数据库存在时运行以及新 Image AI 全关闭；由工具采集 Git/CI/Image/Clock/Baseline Preflight；对全部 Readiness Report 做 Digest/SHA/Image 交叉绑定；CI 上传脱敏 Release Evidence/Provenance；最后复核 Production Container、Image、StartedAt、Restart Count、Health、Compose、Nginx、服务、Migration、Secret Mount 和公网响应精确不变。
 
 Mode 配置只存在 `/srv/projectai-staging/.env.ai`：`AI_ASSISTANT_RETRIEVAL_MODE`、`AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1`、`AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS`、`AI_HYBRID_VECTOR_SQL_TIMEOUT_MS` 和 Query 日 Token 上限。Qwen Secret 仍只读挂载 App/Embedding Worker，切勿读取或打印文件内容。回滚先把 Mode 恢复为 lexical，再恢复上一 immutable App image；不得 `down -v`、删除卷、修改 Production 或绕过质量门禁。

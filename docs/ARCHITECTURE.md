@@ -209,3 +209,11 @@ authorized Assistant request
 `lexical` 只走第一路；`shadow` 执行两路和 RRF 但向 Prompt 交付原 Lexical Evidence；`hybrid` 才交付融合结果。Coverage、Profile、预算、配置、Timeout 或 Provider 异常都回退原 Lexical。Query Vector 不落库；Run 只保存 Query SHA-256、候选排名/距离/融合分数、聚合时延、Usage 和受控状态。候选表以复合外键绑定 Run 项目与 Chunk 项目。
 
 `hybrid-rrf-v1` 是不可变配置实体。Vector SQL 是 PostgreSQL exact scan，并同时约束 Active Document、Current/Stored Version、Succeeded Ingestion、Effective Chunk、内容 Hash 与 Embedding Profile。本轮没有 ANN 索引、Reranker 或用户知识搜索改造。Production 架构保持不变。
+
+## B3-C1 Release Control Plane
+
+Release tooling 位于 `scripts/release/`，与 Runtime 请求路径分离。它只接收脱敏 Inventory、Manifest、Checklist 和 Rehearsal Report，通过 canonical JSON SHA-256 建立可重复 Evidence。远程盘点只读取明确白名单字段，不输出完整 Env、Compose 展开、Secret 内容、数据库凭据或对象 Key。
+
+所有可能产生变化的命令共享 `environment + expected full SHA + expected image digest + explicit --apply` 合同；Production apply 在命令入口硬拒绝。Preflight 逐项比对 Container ID、Image、StartedAt、Restart Count、Compose/Nginx Hash、Migration、服务、Secret/Flag/Mode、活动任务、空间与锁，unknown 不能人工跳过。
+
+Database Rehearsal 使用独立虚构非空数据库完成 custom dump、Checksum、Restore 和 0004–0007，不连接 Production。版本化 Migration Lock Contract 同时定义环境文件锁和固定 PostgreSQL Advisory Key；Inventory 将 `not-applicable/clear/held/unknown` 原样带入 Preflight。MinIO Inventory 只从目标 App 读取经校验的 Bucket 配置，并公开 Hash 与实际 Count。Release Candidate 的 runner/db-tools Image 单独构建，runner 带 Commit/Environment Label；AI 全关闭演练不挂 Qwen Secret、不发布端口、不产生 Job/Query Call/Execution。Go/No-Go 对 Manifest、Inventory、Diff、Preflight、Rehearsal、Restore、Smoke、Rollback、Disabled Image、Old App、Backup 和 CI Evidence 做 Digest/SHA/Image 交叉绑定。Evidence sanitizer 只允许固定 Release Report 名称进入 Payload A，并在上传后由 Provenance B 引用真实 Artifact ID/Digest。

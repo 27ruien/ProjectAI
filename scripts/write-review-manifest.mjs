@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { assertEvidenceIndex } from "./review-evidence-contract.mjs";
+import {
+  assertProducerContract,
+  assertDigest,
+  digestObject,
+} from "./release/contract.mjs";
 
 const root = path.resolve("review-artifacts");
 const screenshotsRoot = path.join(root, "screenshots");
@@ -28,6 +34,14 @@ const requiredRetrievalReports = [
   "retrieval-verification-summary.json",
   "retrieval-verification-summary.md",
 ];
+const requiredReleaseReports = [
+  "release-database-rehearsal.json",
+  "release-database-rehearsal.md",
+  "release-disabled-image-rehearsal.json",
+  "release-disabled-image-rehearsal.md",
+  "release-smoke.json",
+  "release-smoke.md",
+];
 const retrievalReportFiles = [];
 for (const file of requiredRetrievalReports) {
   try {
@@ -36,6 +50,50 @@ for (const file of requiredRetrievalReports) {
   } catch {
     // Failed CI runs may not have reached evaluation; status remains authoritative.
   }
+}
+const releaseReportFiles = [];
+for (const file of requiredReleaseReports) {
+  try {
+    await readFile(path.join(root, file));
+    releaseReportFiles.push(file);
+  } catch {
+    // Failed CI runs may not have reached release rehearsal.
+  }
+}
+
+function fileDigest(buffer) {
+  return `sha256:${createHash("sha256").update(buffer).digest("hex")}`;
+}
+
+const releaseReportDigests = [];
+for (const filename of releaseReportFiles) {
+  const contents = await readFile(path.join(root, filename));
+  const jsonFilename = filename.replace(/\.md$/, ".json");
+  let report;
+  try {
+    report = JSON.parse(await readFile(path.join(root, jsonFilename), "utf8"));
+  } catch {
+    throw new Error(`Release report companion JSON is invalid: ${jsonFilename}`);
+  }
+  assertProducerContract(report, report.reportType, { allowSynthetic: false });
+  if (report.sourceMode !== "ci-artifact") {
+    throw new Error(`CI Release report has invalid sourceMode: ${filename}`);
+  }
+  assertDigest(report.digest, `${jsonFilename}.digest`);
+  const expectedReportDigest = digestObject(
+    Object.fromEntries(Object.entries(report).filter(([key]) => key !== "digest")),
+  );
+  if (report.digest !== expectedReportDigest) {
+    throw new Error(`CI Release report digest does not match its payload: ${jsonFilename}`);
+  }
+  releaseReportDigests.push({
+    filename,
+    sha256: fileDigest(contents),
+    reportDigest: report.digest,
+    reportType: report.reportType,
+    releaseCandidateSha: report.releaseCandidateSha,
+    releaseImageDigest: report.releaseImageDigest,
+  });
 }
 
 const requiredScreenshots = [
@@ -92,6 +150,9 @@ const reviewStatus =
 const missingRetrievalReports = requiredRetrievalReports.filter(
   (file) => !retrievalReportFiles.includes(file),
 );
+const missingReleaseReports = requiredReleaseReports.filter(
+  (file) => !releaseReportFiles.includes(file),
+);
 if (
   reviewStatus.toLowerCase() === "success" &&
   (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
@@ -99,6 +160,15 @@ if (
 ) {
   throw new Error(
     `Successful B3-B2 evidence is missing Retrieval reports: ${missingRetrievalReports.join(", ")}`,
+  );
+}
+if (
+  reviewStatus.toLowerCase() === "success" &&
+  (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
+  missingReleaseReports.length
+) {
+  throw new Error(
+    `Successful B3-C1 evidence is missing Release reports: ${missingReleaseReports.join(", ")}`,
   );
 }
 
@@ -161,6 +231,10 @@ const evidenceIndex = {
   requiredRetrievalReports,
   retrievalReportFiles,
   missingRetrievalReports,
+  requiredReleaseReports,
+  releaseReportFiles,
+  missingReleaseReports,
+  releaseReportDigests,
   testedUsers: [
     "system_admin",
     "project_manager_a",

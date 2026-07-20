@@ -244,3 +244,11 @@
 - 状态：Accepted。
 - 决策：每个 Retrieval Run 最多一个 Query Embedding Call；调用前以 8192 Token 规则做 UTC 日预算硬预留，成功只使用 Provider 返回 Usage 结算，Usage 缺失继续保留预留。发送后结果未知记 `unknown`，终态不可修改且不自动重试。
 - 数据最小化：只存 Query Hash、Usage、Latency、受控失败码和可选 Provider Request ID；Query Vector、完整问题、Provider Payload 均不持久化或输出。
+
+## ADR-038：Production Readiness 与 Rollout 分离并硬禁用 apply
+
+- 状态：Accepted。
+- 决策：B3-C1 只交付 Inventory、Manifest、Preflight、隔离 Backup/Restore/Migration/Image Rehearsal、Smoke、Rollback、Go/No-Go、Runbook 和脱敏 Evidence。任何 `--environment=production --apply` 在代码入口返回 `PRODUCTION_APPLY_NOT_AUTHORIZED`；正式上线必须由独立 B3-C2 使用已合并 main 的新 SHA/Image 执行。
+- 备份冲突：虽然需求允许唯一的 Production Backup 写入，但同一阶段又要求所有 Production apply 硬禁用。采用更严格边界；当前 Production 无 ProjectAI 数据面时只保存 dry-run/not-applicable 证据，不接触无关宿主机 PostgreSQL。
+- 回滚：先验证旧 Production Image 与 0007 隔离 Schema 共存，再允许 Schema forward + App rollback。当前旧 Image 没有 ProjectAI DB 依赖，兼容证据必须表述为“在 0007 数据面存在时旧能力正常”，不得声称观察到并不存在的数据库读取。
+- 原因：把工具/证据审查和真实外部状态变更拆分，避免 Draft PR、未合并 SHA 或不完整备份获得隐含上线授权。

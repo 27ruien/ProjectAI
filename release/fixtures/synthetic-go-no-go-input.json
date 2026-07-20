@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "synthetic": true,
+  "items": [
+    { "id": "main-sha-locked", "required": true, "passed": true },
+    { "id": "ci-success", "required": true, "passed": true }
+  ]
+}

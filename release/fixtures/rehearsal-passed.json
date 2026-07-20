@@ -1,0 +1,26 @@
+{
+  "environment": "rehearsal",
+  "releaseCandidateSha": "1111111111111111111111111111111111111111",
+  "releaseImageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "passed": true,
+  "checks": {
+    "databaseRestore": true,
+    "migration0004To0007": true,
+    "oldAppParallel0007Database": true,
+    "newAppDisabled0007": true,
+    "cleanup": true
+  },
+  "compatibility": {
+    "oldAppCurrentSchema": true,
+    "oldAppParallel0007Database": true,
+    "newAppDisabled0007": true,
+    "newAppLexical0007": true,
+    "newAppEmbedding0007": true,
+    "newAppShadow0007": true,
+    "newAppHybrid0007": true
+  },
+  "restoreDurationMs": 250,
+  "migrationDurationMs": 400,
+  "waitingLocks": 0,
+  "cleanupComplete": true
+}

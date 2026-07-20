@@ -1,0 +1,33 @@
+{
+  "environment": "rehearsal",
+  "releaseCandidateSha": "1111111111111111111111111111111111111111",
+  "releaseImageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "passed": true,
+  "fictionalDataOnly": true,
+  "checks": {
+    "login": true,
+    "session": true,
+    "projectList": true,
+    "projectAuthorization": true,
+    "crossProject404": true,
+    "projectMembers": true,
+    "fileList": true,
+    "fileDownload": true,
+    "uploadContract": true,
+    "documentProcessing": true,
+    "lexicalSearch": true,
+    "assistantDisabled": true,
+    "assistantLexical": true,
+    "embeddingDisabled": true,
+    "embeddingEnabled": true,
+    "shadow": true,
+    "hybrid": true,
+    "citation": true,
+    "viewer": true,
+    "privateThread": true,
+    "idempotency": true,
+    "insufficientEvidence": true,
+    "health": true,
+    "storageReconciliation": true
+  }
+}

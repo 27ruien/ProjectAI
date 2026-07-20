@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   access,
@@ -47,6 +48,9 @@ const allowedTestLogs = new Set([
   "retrieval-integration.log",
   "retrieval-migration-upgrade.log",
   "retrieval-unit.log",
+  "release-database-rehearsal.log",
+  "release-disabled-image-rehearsal.log",
+  "release-tooling.log",
   "typecheck.log",
 ]);
 const allowedReviewReports = new Set([
@@ -56,8 +60,29 @@ const allowedReviewReports = new Set([
   "retrieval-evaluation.md",
   "retrieval-verification-summary.json",
   "retrieval-verification-summary.md",
+  "release-database-rehearsal.json",
+  "release-database-rehearsal.md",
+  "release-disabled-image-rehearsal.json",
+  "release-disabled-image-rehearsal.md",
+  "release-smoke.json",
+  "release-smoke.md",
 ]);
-const requiredRetrievalReports = [...allowedReviewReports];
+const requiredRetrievalReports = [
+  "retrieval-calibration.json",
+  "retrieval-calibration.md",
+  "retrieval-evaluation.json",
+  "retrieval-evaluation.md",
+  "retrieval-verification-summary.json",
+  "retrieval-verification-summary.md",
+];
+const requiredReleaseReports = [
+  "release-database-rehearsal.json",
+  "release-database-rehearsal.md",
+  "release-disabled-image-rehearsal.json",
+  "release-disabled-image-rehearsal.md",
+  "release-smoke.json",
+  "release-smoke.md",
+];
 const outputRoot = path.resolve("product-review-evidence");
 const redacted = "[REDACTED]";
 const whitespaceEncodedSecrets = new Set();
@@ -979,6 +1004,13 @@ async function verifyReviewEvidenceCompleteness() {
   assertEvidenceIndex(evidenceIndex, {
     ci: /^true$/i.test(process.env.CI || ""),
   });
+  for (const entry of evidenceIndex.releaseReportDigests ?? []) {
+    const contents = await readFile(path.join(reviewRoot, entry.filename));
+    const actual = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
+    if (actual !== entry.sha256) {
+      throw new Error(`Release evidence file digest changed after indexing: ${entry.filename}`);
+    }
+  }
   if (
     !Array.isArray(evidenceIndex.requiredScreenshots) ||
     !Array.isArray(evidenceIndex.screenshotFiles) ||
@@ -1021,6 +1053,11 @@ async function verifyReviewEvidenceCompleteness() {
     for (const report of requiredRetrievalReports) {
       if (!(await exists(path.join(reviewRoot, report)))) {
         throw new Error(`Successful B3-B2 evidence is missing Retrieval report: ${report}`);
+      }
+    }
+    for (const report of requiredReleaseReports) {
+      if (!(await exists(path.join(reviewRoot, report)))) {
+        throw new Error(`Successful B3-C1 evidence is missing Release report: ${report}`);
       }
     }
   }

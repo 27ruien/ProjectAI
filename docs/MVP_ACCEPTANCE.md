@@ -119,3 +119,18 @@
 | B3B2-006 | 性能 | Exact Vector P95 ≤1500ms；Hybrid Retrieval P95 ≤8000ms |
 | B3B2-007 | Staging 发布 | lexical→0007→评测→shadow→报告→hybrid；仅 Mode 切换时只重建 App，清理和 Production 精确不变 |
 | B3B2-008 | 边界 | 用户搜索仍词法；无 ANN、HNSW、IVFFlat、Rerank、`qwen3-rerank` 或 Production 发布 |
+
+## B3-C1 Production Readiness 门禁
+
+| ID | 门禁 | 验收 |
+| --- | --- | --- |
+| B3C1-001 | Production/Staging Inventory 与分类差异 | 白名单、脱敏、Digest、unknown fail-closed |
+| B3C1-002 | Manifest/Preflight | 完整 SHA/Image/Base Digest；精确 Production 基线、空间、锁、CI/Evidence 门禁 |
+| B3C1-003 | Production 写保护 | 所有 `--environment=production --apply` 返回 `PRODUCTION_APPLY_NOT_AUTHORIZED` |
+| B3C1-004 | Backup/Restore/Migration | 当前无数据面时 not-applicable；隔离虚构非空 dump/Checksum/Restore/0004–0007/pgvector 通过 |
+| B3C1-005 | Compatibility | 旧 Production Image 在旁路 0007 数据库存在时的 legacy application shell Smoke；明确无数据库依赖/连接观察、回滚后新数据面功能不可用；新 Image AI 全关闭证据 |
+| B3C1-010 | Evidence-derived readiness | Migration File/Advisory Lock、环境感知 MinIO Count、Git/CI/Image/Clock/Baseline Preflight 与跨 Digest Go/No-Go 全部由工具事实和绑定报告产生；Checklist-only 输入被拒绝 |
+| B3C1-006 | Smoke/Regression | B3-A/B3-B1/B3-B2、集成、Playwright、Release matrix 和清理全绿 |
+| B3C1-007 | Runbook/Go-No-Go | Phase 0–6、Secret、Rollback、RPO/RTO、监控、成本和 Stop Conditions 可审查 |
+| B3C1-008 | Production 不变 | Container/Image/StartedAt/Restart/Health/Compose/Nginx/服务/Migration/Secret/HTTP 前后精确一致 |
+| B3C1-009 | 范围 | Draft PR；无 Production Rollout、Rerank、HNSW、IVFFlat 或 ANN |

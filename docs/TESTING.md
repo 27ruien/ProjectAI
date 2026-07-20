@@ -172,3 +172,15 @@ npm run retrieval:status
 - `npm run test:retrieval-integration` 验证 lexical 零调用、shadow Evidence 不变、hybrid 语义命中、跨项目/旧版本/归档排除、Coverage/Timeout 回退、unknown 不重试、Usage-null、UTC 日预算、幂等、Profile 禁用与数据库复合约束。
 - `npm run retrieval:evaluate` 输出 JSON/Markdown 的 Lexical/Vector/Hybrid 整体及分类 Metrics、距离校准、安全计数和门禁；只使用虚构资料，不使用 LLM Judge。
 - Playwright 继续监控 console/page/request/HTTP 500/无限 Loading，并拒绝浏览器出现 Secret、Query Vector、内部 Score 或 Provider Payload。B3-A/B3-B1 全量回归必须保持通过。
+
+## B3-C1 Release Readiness 门禁
+
+`npm run qa:mvp` 串行包含 Migration Upgrade、隔离 Database Backup/Restore/Migration Rehearsal、Release Tool Unit、全部应用 Unit/Integration、Artifact/Deployment Contract 与 Playwright；本地执行必须提供名称含 `test|ci` 的隔离 PostgreSQL/MinIO，CI 使用 Job Service 与临时私有 Bucket。
+
+- `npm run test:release` 验证 canonical digest、Inventory/Diff/Manifest、dry-run 默认、Production apply 硬拒绝、精确基线/低磁盘失败、Backup no-write、Rollback/Go-No-Go fail-closed、命令级 Smoke 检查和 Artifact sanitizer。
+- `npm run release:database-rehearsal` 在临时 PostgreSQL 17 + pgvector 0.8.1 中插入纯虚构非空数据，执行 custom dump、Checksum、真实 Restore、0004–0007、Profile/默认值/锁/行计数验证并清理。
+- `npm run test:release` 覆盖数据库不存在时 Migration Advisory `not-applicable`、File Lock、Advisory `held/unknown` 失败关闭、Production/Staging Bucket 区分、2 Object Count、Bucket Missing/Inventory Unknown、Git/CI/Image/Clock/Baseline Preflight，以及 Go/No-Go Digest 篡改、SHA/Image 不匹配和缺失报告。
+- CI 从 PR Head 的完整 SHA 构建 runner 与 db-tools Image，在无 Qwen Secret、Assistant=false、Embedding=false、Mode=lexical 的独立 Network/tmpfs 数据库中验证 Health、核心路由、零 AI Job/Call/Execution、无公开端口和清理。
+- `release:smoke` 的 required matrix 覆盖登录、Session、项目/成员/跨项目 404、文件、解析、词法、Assistant disabled/lexical、Embedding disabled/enabled、Shadow、Hybrid、Citation、Viewer、私有 Thread、幂等、Evidence Insufficient、Health 和 reconciliation；CI 的实际集成/Playwright 门禁失败会使 Evidence 状态失败。
+- Release JSON/Markdown 和固定日志加入 Evidence allowlist；成功 v0.8 CI 缺少 database rehearsal、disabled-image 或 smoke report 时 sanitizer/finalizer fail-closed。
+- 旧 Production Image 在独立服务器 Network 中验证旁路 0007 数据库存在时登录、Dashboard、项目入口等既有公开路径可运行，且通过 `pg_stat_activity` 未观察到旧 App 数据库连接；结论只覆盖 legacy application shell，不宣称新数据面功能等价。

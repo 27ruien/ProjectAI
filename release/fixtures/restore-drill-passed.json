@@ -1,0 +1,14 @@
+{
+  "environment": "rehearsal",
+  "releaseCandidateSha": "1111111111111111111111111111111111111111",
+  "releaseImageDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "passed": true,
+  "checks": {
+    "backupChecksum": true,
+    "rowCounts": true,
+    "relationships": true,
+    "cleanup": true
+  },
+  "restoreDurationMs": 250,
+  "productionConnected": false
+}

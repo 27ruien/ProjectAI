@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://projectai.invalid/schemas/release-manifest-v1.json",
+  "title": "Project AI OS guarded release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportType",
+    "producer",
+    "producerVersion",
+    "sourceMode",
+    "releaseSessionId",
+    "releaseVersion",
+    "sourceMainSha",
+    "releaseCandidateSha",
+    "releaseCandidateBranch",
+    "releaseImageDigest",
+    "databaseToolsImageDigest",
+    "nodeVersion",
+    "buildTime",
+    "baseImageDigests",
+    "currentProductionImage",
+    "productionBaselineDigest",
+    "databaseMigrationFrom",
+    "databaseMigrationTo",
+    "postgresCurrentImage",
+    "postgresTargetImage",
+    "pgvectorTargetVersion",
+    "minioImage",
+    "featureFlags",
+    "releasePhases",
+    "backupIds",
+    "backupDigests",
+    "rollbackImage",
+    "rollbackCompatibility",
+    "evidenceDigest",
+    "createdAt",
+    "createdByToolVersion",
+    "digest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "reportType": { "const": "release-manifest" },
+    "producer": { "const": "projectai-release-tool" },
+    "producerVersion": { "const": "b3-c1-v3" },
+    "sourceMode": { "enum": ["live-readonly", "synthetic-test"] },
+    "releaseSessionId": { "type": "string", "pattern": "^rs-[0-9a-f]{32}$" },
+    "releaseVersion": { "type": "string", "pattern": "^[0-9A-Za-z._-]{1,64}$" },
+    "sourceMainSha": { "$ref": "#/$defs/sha" },
+    "releaseCandidateSha": { "$ref": "#/$defs/sha" },
+    "releaseCandidateBranch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
+    "releaseImageDigest": { "$ref": "#/$defs/digest" },
+    "databaseToolsImageDigest": { "$ref": "#/$defs/digest" },
+    "nodeVersion": { "type": "string", "pattern": "^v?22\\.[0-9]+\\.[0-9]+$" },
+    "buildTime": { "type": "string", "format": "date-time" },
+    "baseImageDigests": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/digest" }
+    },
+    "currentProductionImage": { "$ref": "#/$defs/digest" },
+    "productionBaselineDigest": { "$ref": "#/$defs/digest" },
+    "databaseMigrationFrom": {
+      "oneOf": [{ "const": "none" }, { "type": "integer", "minimum": 0 }]
+    },
+    "databaseMigrationTo": { "type": "integer", "minimum": 0 },
+    "postgresCurrentImage": {
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/digest" }]
+    },
+    "postgresTargetImage": { "$ref": "#/$defs/digest" },
+    "pgvectorTargetVersion": { "const": "0.8.1" },
+    "minioImage": { "$ref": "#/$defs/digest" },
+    "featureFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assistant", "embedding", "retrievalMode"],
+      "properties": {
+        "assistant": { "type": "boolean" },
+        "embedding": { "type": "boolean" },
+        "retrievalMode": { "enum": ["lexical", "shadow", "hybrid"] }
+      }
+    },
+    "releasePhases": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": { "type": "string", "pattern": "^phase-[0-6]$" }
+    },
+    "backupIds": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,120}$" }
+    },
+    "backupDigests": { "type": "array", "items": { "$ref": "#/$defs/digest" } },
+    "rollbackImage": { "$ref": "#/$defs/digest" },
+    "rollbackCompatibility": { "enum": ["schema-forward-app-rollback", "legacy-application-shell", "restore-required"] },
+    "evidenceDigest": { "$ref": "#/$defs/digest" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "createdByToolVersion": { "const": "b3-c1-v3" },
+    "digest": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+  }
+}
