@@ -194,3 +194,7 @@ https://gridworks.cn/tool/projectai-staging/
 B3-C1 的稳定合同是：锁定完整 SHA/Image/Base Digest；生成带 Migration File/Advisory 状态和环境感知 MinIO Count 的 Production/Staging 脱敏 Inventory 与分类差异；在隔离 PostgreSQL/pgvector 中完成 Backup/Restore/0004–0007；验证旧 Image 的 legacy application shell 可在旁路 0007 数据库存在时运行以及新 Image AI 全关闭；由工具采集 Git/CI/Image/Clock/Baseline Preflight；对全部 Readiness Report 做 Digest/SHA/Image 交叉绑定；CI 上传脱敏 Release Evidence/Provenance；最后复核 Production Container、Image、StartedAt、Restart Count、Health、Compose、Nginx、服务、Migration、Secret Mount 和公网响应精确不变。
 
 Mode 配置只存在 `/srv/projectai-staging/.env.ai`：`AI_ASSISTANT_RETRIEVAL_MODE`、`AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1`、`AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS`、`AI_HYBRID_VECTOR_SQL_TIMEOUT_MS` 和 Query 日 Token 上限。Qwen Secret 仍只读挂载 App/Embedding Worker，切勿读取或打印文件内容。回滚先把 Mode 恢复为 lexical，再恢复上一 immutable App image；不得 `down -v`、删除卷、修改 Production 或绕过质量门禁。
+
+## B3-C2A deployment executor
+
+Production rollout 使用 `docker-compose.production-rollout.yml` 和 Phase 3+ 的 `docker-compose.production-ai.yml`，固定 `projectai-production` Project、内部 Network、命名 Volume、immutable Image 和 `127.0.0.1:3100` App 端口；PostgreSQL/MinIO 不发布宿主机端口。执行器禁止 `docker compose down`，Phase 必须分开执行并停顿。B3-C2A 不传输 Image、不创建 Production 配置/Secret、不运行 Compose；正式部署仍未开始。

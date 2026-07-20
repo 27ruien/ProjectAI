@@ -184,3 +184,9 @@ npm run retrieval:status
 - `release:smoke` 的 required matrix 覆盖登录、Session、项目/成员/跨项目 404、文件、解析、词法、Assistant disabled/lexical、Embedding disabled/enabled、Shadow、Hybrid、Citation、Viewer、私有 Thread、幂等、Evidence Insufficient、Health 和 reconciliation；CI 的实际集成/Playwright 门禁失败会使 Evidence 状态失败。
 - Release JSON/Markdown 和固定日志加入 Evidence allowlist；成功 v0.8 CI 缺少 database rehearsal、disabled-image 或 smoke report 时 sanitizer/finalizer fail-closed。
 - 旧 Production Image 在独立服务器 Network 中验证旁路 0007 数据库存在时登录、Dashboard、项目入口等既有公开路径可运行，且通过 `pg_stat_activity` 未观察到旧 App 数据库连接；结论只覆盖 legacy application shell，不宣称新数据面功能等价。
+
+## B3-C2A rollout executor
+
+- `npm run test:production-rollout` 覆盖 Authorization 签名/过期/Phase Scope/SHA/Image/Session 绑定、Production Apply 无 Authorization Exit 78、状态机、原子/遗留 Lock、Migration Lock、Journal Digest、前置报告、Resume/Rollback、Secret 元数据、Image/Compose Scope、Observation/Cost/Stop Gates，以及 Phase 1–6 点名失败路径。
+- `npm run production:rehearsal` 使用独立 Compose Project、内部 Network、独立 Volume、Fake Provider 语义、纯虚构数据与 ephemeral key 执行 Phase 0–6；不连接 Production/Staging、不挂真实 Secret、不调用真实 Qwen，并在结束时清理容器、Network、Volume 和临时文件。
+- CI Evidence 额外要求七组 `production-*` JSON/Markdown 报告。每个文件和 payload Digest、Producer `b3-c2-v1`、Session、Candidate SHA 与 Image Digest 都进入 Artifact Index；缺失或篡改时发布失败关闭。

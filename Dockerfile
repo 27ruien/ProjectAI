@@ -10,6 +10,12 @@ RUN npm ci
 FROM deps AS db-tools
 WORKDIR /app
 COPY . .
+
+ARG NEXT_PUBLIC_APP_ENV=production
+ARG NEXT_PUBLIC_COMMIT_SHA=local
+LABEL org.opencontainers.image.revision=${NEXT_PUBLIC_COMMIT_SHA}
+LABEL com.projectai.release.environment=${NEXT_PUBLIC_APP_ENV}
+
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 USER node

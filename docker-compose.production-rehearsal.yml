@@ -1,0 +1,20 @@
+name: projectai-rollout-rehearsal
+
+services:
+  rollout-probe:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    command: ["node", "-e", "setInterval(() => {}, 1000)"]
+    restart: "no"
+    networks:
+      - rollout-rehearsal-internal
+    volumes:
+      - rollout-rehearsal-state:/state
+    pids_limit: 64
+    mem_limit: 128m
+
+networks:
+  rollout-rehearsal-internal:
+    internal: true
+
+volumes:
+  rollout-rehearsal-state:

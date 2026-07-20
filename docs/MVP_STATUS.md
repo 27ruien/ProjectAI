@@ -93,6 +93,7 @@ B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 S
 
 ## 后续
 
-1. 当前 PR 必须保持 Draft，不自动 Ready 或合并。
-2. 完成产品与安全人工复审后才可决定合并。
-3. 不得在 B3-B2 中开始 B3-B3、ANN 选型或 Reranker。
+1. B3-C1 已完成并合并；Production 仍保持旧 Container/Image，B3 数据面与 AI 尚未上线。
+2. 当前 B3-C2A 只开发和隔离演练 Production Rollout Executor，PR 必须保持 Draft，不自动 Ready 或合并。
+3. 正式 Production Phase 0–6 只能在 B3-C2A 独立复审并合并后的 B3-C2B 中授权和执行。
+4. C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling 与 Agent Execution 未开始。

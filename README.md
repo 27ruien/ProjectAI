@@ -326,3 +326,19 @@ npm run release:go-no-go
 ```
 
 工具默认 dry-run，Artifact 使用 canonical JSON SHA-256 和强脱敏；CI 使用 Fake Provider、临时 PostgreSQL/pgvector、临时 MinIO 与纯虚构数据，执行 Backup/Restore/0004–0007、新 Image 全关闭、Smoke、Rollback 和现有 B3-A/B3-B1/B3-B2 回归。当前 Production 没有 ProjectAI PostgreSQL/MinIO 数据面，所以 B3-C1 的 Production Backup 是明确的 dry-run/not-applicable 证据，不触碰无关宿主机数据库。
+
+## B3-C2A guarded rollout executor
+
+B3-C2A 只开发并隔离演练分阶段 Production Rollout Executor；Production 仍未部署 B3 数据面或 AI。执行器提供签名 Authorization、Phase 0–6、原子 Deployment Lock、Digest Journal、Status/Resume/Rollback、Observation/Cost/Stop Gates、私有 Production Compose 和最小 Secret Scope。正式 Production Apply 默认返回 `PRODUCTION_APPLY_NOT_AUTHORIZED`；本 PR 不生成 formal Authorization，正式上线属于独立 B3-C2B。
+
+```bash
+npm run production:phase -- --phase=0 --environment=production --dry-run ...
+npm run production:status -- --environment=production ...
+npm run production:resume -- --phase=0 --environment=production ...
+npm run production:rollback -- --phase=0 --environment=production --dry-run ...
+npm run production:image -- plan --session=<release-session>
+npm run test:production-rollout
+npm run production:rehearsal
+```
+
+C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling 与 Agent Execution 未开始。

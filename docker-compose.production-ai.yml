@@ -1,0 +1,12 @@
+services:
+  projectai-app:
+    secrets:
+      - qwen_api_key
+
+  projectai-embedding-worker:
+    secrets:
+      - qwen_api_key
+
+secrets:
+  qwen_api_key:
+    file: /srv/projectai/secrets/qwen_api_key

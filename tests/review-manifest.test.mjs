@@ -136,18 +136,25 @@ test("indexes every CI Release JSON and Markdown digest with report identity", a
   const image = `sha256:${"1".repeat(64)}`;
   const sessionId = `rs-${"2".repeat(32)}`;
   const reports = [
-    ["release-database-rehearsal", "database-rehearsal"],
-    ["release-disabled-image-rehearsal", "disabled-image"],
-    ["release-smoke", "smoke"],
+    ["release-database-rehearsal", "database-rehearsal", "b3-c1-v3"],
+    ["release-disabled-image-rehearsal", "disabled-image", "b3-c1-v3"],
+    ["release-smoke", "smoke", "b3-c1-v3"],
+    ["production-authorization-contract", "production-authorization-contract", "b3-c2-v1"],
+    ["production-phase-state-machine", "production-phase-state-machine", "b3-c2-v1"],
+    ["production-rollout-rehearsal", "production-rollout-rehearsal", "b3-c2-v1"],
+    ["production-rollout-rollback", "production-rollout-rollback", "b3-c2-v1"],
+    ["production-rollout-resume", "production-rollout-resume", "b3-c2-v1"],
+    ["production-compose-contract", "production-compose-contract", "b3-c2-v1"],
+    ["production-secret-boundary", "production-secret-boundary", "b3-c2-v1"],
   ];
   try {
     await mkdir(path.join(root, "review-artifacts/screenshots"), { recursive: true });
-    for (const [stem, reportType] of reports) {
+    for (const [stem, reportType, producerVersion] of reports) {
       const report = withDigest({
         schemaVersion: 1,
         reportType,
         producer: "projectai-release-tool",
-        producerVersion: "b3-c1-v3",
+        producerVersion,
         sourceMode: "ci-artifact",
         releaseCandidateSha: headSha,
         releaseImageDigest: image,
@@ -171,7 +178,7 @@ test("indexes every CI Release JSON and Markdown digest with report identity", a
       path.join(root, "review-artifacts/evidence-index.json"),
       "utf8",
     ));
-    assert.equal(index.releaseReportDigests.length, 6);
+    assert.equal(index.releaseReportDigests.length, 20);
     for (const entry of index.releaseReportDigests) {
       const contents = await readFile(path.join(root, "review-artifacts", entry.filename));
       const expectedFileDigest = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
