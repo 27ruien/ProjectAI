@@ -854,11 +854,12 @@ async function rollbackCheckCommand() {
       throw new Error("Rollback rehearsal digest does not match its payload.");
     }
   }
+  const compatibility = rehearsal.compatibility ?? rehearsal.input?.compatibility;
   const combinations = matrix.combinations.map((combination) => ({
     ...combination,
     passed:
       combination.required !== true ||
-      rehearsal.compatibility?.[combination.evidenceKey] === true,
+      compatibility?.[combination.evidenceKey] === true,
   }));
   const failed = combinations.filter((combination) => !combination.passed);
   const payload = {

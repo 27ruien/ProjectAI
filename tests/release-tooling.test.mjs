@@ -576,6 +576,53 @@ test("preflight fails closed for held and unknown PostgreSQL migration advisory 
   }
 });
 
+test("rollback check consumes compatibility from a generated rehearsal report", async () => {
+  const output = await temporaryRoot();
+  try {
+    const sha = "2".repeat(40);
+    const image = `sha256:${"1".repeat(64)}`;
+    const rehearsalInput = path.join(output, "rehearsal-input.json");
+    await writeFile(
+      rehearsalInput,
+      JSON.stringify({
+        ...JSON.parse(await readFile(rehearsalFixture, "utf8")),
+        releaseCandidateSha: sha,
+        releaseImageDigest: image,
+      }),
+    );
+    const rehearsalRoot = path.join(output, "rehearsal");
+    await run("rehearse", [
+      "--environment=rehearsal",
+      `--expected-sha=${sha}`,
+      `--expected-image=${image}`,
+      `--input=${rehearsalInput}`,
+      "--apply",
+      `--output-dir=${rehearsalRoot}`,
+    ]);
+    const rehearsalReport = path.join(
+      rehearsalRoot,
+      "release-rehearse.json",
+    );
+    await run("rollback-check", [
+      `--matrix=${path.join(root, "release/rollback-compatibility.json")}`,
+      `--rehearsal=${rehearsalReport}`,
+      `--output-dir=${path.join(output, "rollback")}`,
+    ]);
+    const rehearsal = JSON.parse(await readFile(rehearsalReport, "utf8"));
+    const rollback = JSON.parse(
+      await readFile(
+        path.join(output, "rollback/release-rollback-check.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(rollback.result, "passed");
+    assert.equal(rollback.rehearsalDigest, rehearsal.digest);
+    assert.equal(rollback.combinations.every((item) => item.passed), true);
+  } finally {
+    await rm(output, { recursive: true, force: true });
+  }
+});
+
 test("Go/No-Go cross-binds reports and rejects checklist, tampering, SHA, image, and missing reports", async () => {
   const output = await temporaryRoot();
   try {
