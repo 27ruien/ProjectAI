@@ -13,6 +13,7 @@ import {
   assertInventory,
   assertReleaseManifest,
   assertSanitized,
+  booleanOrNotApplicable,
   digestObject,
   numberOrNull,
   parseArguments,
@@ -146,9 +147,7 @@ function setNested(target, dottedKey, value) {
     "features.queryEmbeddingConfigured",
     "features.qwenSecretMount",
     "database.present",
-    "database.inventoryKnown",
     "objectStorage.present",
-    "objectStorage.inventoryKnown",
     "services.documentWorker",
     "services.embeddingWorker",
     "locks.deployment",
@@ -161,7 +160,14 @@ function setNested(target, dottedKey, value) {
     "backup.directoryWritable",
   ]);
   let normalized = value;
+  const inventoryKnownKeys = new Set([
+    "database.inventoryKnown",
+    "objectStorage.inventoryKnown",
+  ]);
   if (value === "null") normalized = null;
+  else if (inventoryKnownKeys.has(dottedKey)) {
+    normalized = booleanOrNotApplicable(value, dottedKey);
+  }
   else if (numericKeys.has(dottedKey)) normalized = numberOrNull(value);
   else if (booleanKeys.has(dottedKey)) normalized = asBoolean(value);
   const parts = dottedKey.split(".");

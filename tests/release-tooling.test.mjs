@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import {
   assertSanitized,
+  booleanOrNotApplicable,
   digestObject,
   withDigest,
   writeArtifactPair,
@@ -121,6 +122,19 @@ test("inventory writes canonical sanitized JSON and Markdown", async () => {
   } finally {
     await rm(output, { recursive: true, force: true });
   }
+});
+
+test("inventoryKnown parsing preserves booleans and explicit not-applicable", () => {
+  assert.equal(booleanOrNotApplicable("true", "database.inventoryKnown"), true);
+  assert.equal(booleanOrNotApplicable("false", "objectStorage.inventoryKnown"), false);
+  assert.equal(
+    booleanOrNotApplicable("not-applicable", "database.inventoryKnown"),
+    "not-applicable",
+  );
+  assert.throws(
+    () => booleanOrNotApplicable("unknown", "database.inventoryKnown"),
+    /boolean or not-applicable/,
+  );
 });
 
 test("inventory distinguishes absent storage, environment buckets, missing buckets, and unknown counts", async () => {

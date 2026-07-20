@@ -131,6 +131,13 @@ export function assertEnvironment(value) {
   return value;
 }
 
+export function booleanOrNotApplicable(value, field) {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  if (value === "not-applicable") return value;
+  throw new Error(`${field} must be a boolean or not-applicable.`);
+}
+
 export function assertIsoTimestamp(value, field) {
   if (
     typeof value !== "string" ||
