@@ -2,7 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-export const RELEASE_TOOL_VERSION = "b3-c1-v2";
+export const RELEASE_TOOL_VERSION = "b3-c1-v3";
+export const RELEASE_REPORT_PRODUCER = "projectai-release-tool";
+export const RELEASE_SOURCE_MODES = [
+  "live-readonly",
+  "ci-artifact",
+  "rehearsal-command",
+  "synthetic-test",
+];
+export const RELEASE_SESSION_PATTERN = /^rs-[0-9a-f]{32}$/;
 export const SHA_PATTERN = /^[0-9a-f]{40}$/;
 export const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 export const ENVIRONMENTS = ["production", "staging", "rehearsal"];
@@ -124,6 +132,88 @@ export function assertDigest(value, field) {
   }
 }
 
+export function assertReleaseSessionId(value, field = "releaseSessionId") {
+  if (typeof value !== "string" || !RELEASE_SESSION_PATTERN.test(value)) {
+    throw new Error(`${field} must be a tool-generated release session ID.`);
+  }
+}
+
+export function producerContract({
+  reportType,
+  sourceMode,
+  session,
+}) {
+  if (!/^[a-z0-9-]{1,64}$/.test(reportType)) {
+    throw new Error("reportType is invalid.");
+  }
+  if (!RELEASE_SOURCE_MODES.includes(sourceMode)) {
+    throw new Error("sourceMode is invalid.");
+  }
+  if (sourceMode === "synthetic-test" && process.env.NODE_ENV !== "test") {
+    throw new Error("synthetic-test reports are allowed only in NODE_ENV=test.");
+  }
+  assertReleaseSession(session);
+  return {
+    reportType,
+    producer: RELEASE_REPORT_PRODUCER,
+    producerVersion: RELEASE_TOOL_VERSION,
+    sourceMode,
+    releaseCandidateSha: session.releaseCandidateSha,
+    releaseImageDigest: session.releaseImageDigest,
+    releaseSessionId: session.releaseSessionId,
+  };
+}
+
+export function assertProducerContract(
+  report,
+  expectedType,
+  { expectedSessionId, allowSynthetic = process.env.NODE_ENV === "test" } = {},
+) {
+  if (!report || typeof report !== "object" || Array.isArray(report)) {
+    throw new Error("A generated release report is required.");
+  }
+  if (report.reportType !== expectedType) {
+    throw new Error(`Release report type must be ${expectedType}.`);
+  }
+  if (report.producer !== RELEASE_REPORT_PRODUCER) {
+    throw new Error("Release report producer is invalid.");
+  }
+  if (report.producerVersion !== RELEASE_TOOL_VERSION) {
+    throw new Error("Release report producer version is invalid.");
+  }
+  if (!RELEASE_SOURCE_MODES.includes(report.sourceMode)) {
+    throw new Error("Release report sourceMode is invalid.");
+  }
+  if (report.sourceMode === "synthetic-test" && !allowSynthetic) {
+    throw new Error("Synthetic release reports are not valid for formal readiness.");
+  }
+  assertFullSha(report.releaseCandidateSha, "releaseCandidateSha");
+  assertDigest(report.releaseImageDigest, "releaseImageDigest");
+  assertReleaseSessionId(report.releaseSessionId);
+  if (expectedSessionId && report.releaseSessionId !== expectedSessionId) {
+    throw new Error("Release report belongs to a different release session.");
+  }
+}
+
+export function assertReleaseSession(session) {
+  if (!session || typeof session !== "object" || Array.isArray(session)) {
+    throw new Error("A release session is required.");
+  }
+  if (session.schemaVersion !== 1) {
+    throw new Error("Unsupported release session schemaVersion.");
+  }
+  assertProducerContract(session, "release-session");
+  assertDigest(session.productionBaselineDigest, "productionBaselineDigest");
+  assertIsoTimestamp(session.createdAt, "createdAt");
+  assertSanitized(session);
+  const expected = digestObject(
+    Object.fromEntries(Object.entries(session).filter(([key]) => key !== "digest")),
+  );
+  if (session.digest && session.digest !== expected) {
+    throw new Error("Release session digest does not match its payload.");
+  }
+}
+
 export function assertEnvironment(value) {
   if (!ENVIRONMENTS.includes(value)) {
     throw new Error(`--environment must be one of ${ENVIRONMENTS.join(", ")}.`);
@@ -148,7 +238,10 @@ export function assertIsoTimestamp(value, field) {
   }
 }
 
-export function assertInventory(inventory) {
+export function assertInventory(
+  inventory,
+  { requireProducer = true, expectedSessionId } = {},
+) {
   if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) {
     throw new Error("A release inventory object is required.");
   }
@@ -156,6 +249,13 @@ export function assertInventory(inventory) {
     throw new Error("Unsupported release inventory schemaVersion.");
   }
   assertEnvironment(inventory.environment);
+  if (requireProducer) {
+    assertProducerContract(
+      inventory,
+      `${inventory.environment}-inventory`,
+      { expectedSessionId },
+    );
+  }
   assertIsoTimestamp(inventory.capturedAt, "capturedAt");
   if (!inventory.app || typeof inventory.app !== "object") {
     throw new Error("Release inventory is missing app state.");
@@ -343,6 +443,7 @@ export function assertReleaseManifest(manifest) {
   if (manifest.schemaVersion !== 1) {
     throw new Error("Unsupported release manifest schemaVersion.");
   }
+  assertProducerContract(manifest, "release-manifest");
   if (
     typeof manifest.releaseVersion !== "string" ||
     !/^[0-9A-Za-z._-]{1,64}$/.test(manifest.releaseVersion)

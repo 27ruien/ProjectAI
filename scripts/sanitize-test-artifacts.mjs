@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
   access,
@@ -1003,6 +1004,13 @@ async function verifyReviewEvidenceCompleteness() {
   assertEvidenceIndex(evidenceIndex, {
     ci: /^true$/i.test(process.env.CI || ""),
   });
+  for (const entry of evidenceIndex.releaseReportDigests ?? []) {
+    const contents = await readFile(path.join(reviewRoot, entry.filename));
+    const actual = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
+    if (actual !== entry.sha256) {
+      throw new Error(`Release evidence file digest changed after indexing: ${entry.filename}`);
+    }
+  }
   if (
     !Array.isArray(evidenceIndex.requiredScreenshots) ||
     !Array.isArray(evidenceIndex.screenshotFiles) ||

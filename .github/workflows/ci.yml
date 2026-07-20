@@ -444,6 +444,17 @@ jobs:
             "$release_tree" >/dev/null
 
           app_digest="$(docker image inspect --format '{{.Id}}' "$app_image")"
+          npm run release:session -- \
+            --expected-sha="$RELEASE_CANDIDATE_SHA" \
+            --expected-image="$app_digest" \
+            --production-baseline=release/fixtures/production-like-inventory.json \
+            --output-dir=review-artifacts
+          release_session="review-artifacts/release-session.json"
+          npm run release:report -- \
+            --kind=database-rehearsal \
+            --input=review-artifacts/release-database-rehearsal.json \
+            --session="$release_session" \
+            --output-dir=review-artifacts
           log_path="test-logs/release-disabled-image-rehearsal.log"
           RELEASE_REHEARSAL=1 \
             "$release_tree/scripts/release/disabled-image-rehearsal.sh" \
@@ -454,28 +465,12 @@ jobs:
             --input="$log_path" \
             --expected-sha="$RELEASE_CANDIDATE_SHA" \
             --expected-image="$app_digest" \
+            --session="$release_session" \
             --output-dir=review-artifacts
-
-          smoke_input="${RUNNER_TEMP}/projectai-release-smoke-${GITHUB_RUN_ID}.json"
-          RELEASE_SMOKE_FIXTURE=release/fixtures/smoke-passed.json \
-          RELEASE_SMOKE_OUTPUT="$smoke_input" \
-          RELEASE_SMOKE_SHA="$RELEASE_CANDIDATE_SHA" \
-          RELEASE_SMOKE_IMAGE="$app_digest" \
-            node --input-type=module -e '
-              import { readFile, writeFile } from "node:fs/promises";
-              const input = JSON.parse(await readFile(process.env.RELEASE_SMOKE_FIXTURE, "utf8"));
-              input.releaseCandidateSha = process.env.RELEASE_SMOKE_SHA;
-              input.releaseImageDigest = process.env.RELEASE_SMOKE_IMAGE;
-              input.source = "isolated CI integration, Playwright, and release rehearsal gates in this job";
-              await writeFile(process.env.RELEASE_SMOKE_OUTPUT, `${JSON.stringify(input, null, 2)}\n`);
-            '
-          npm run release:smoke -- \
-            --environment=rehearsal \
-            --expected-sha="$RELEASE_CANDIDATE_SHA" \
-            --expected-image="$app_digest" \
-            --input="$smoke_input" \
-            --apply \
-            --output-dir=review-artifacts
+          {
+            echo "RELEASE_CI_APP_DIGEST=$app_digest"
+            echo "RELEASE_CI_SESSION=$release_session"
+          } >> "$GITHUB_ENV"
 
       - name: Playwright identity, isolation, and MVP flows
         shell: bash
@@ -483,6 +478,20 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:e2e 2>&1 | tee test-logs/playwright.log
+
+      - name: Write generated CI release smoke report
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          smoke_tsv="${RUNNER_TEMP}/projectai-release-smoke-${GITHUB_RUN_ID}.tsv"
+          node scripts/release/write-ci-smoke-tsv.mjs > "$smoke_tsv"
+          npm run release:report -- \
+            --kind=smoke \
+            --input="$smoke_tsv" \
+            --expected-sha="$RELEASE_CANDIDATE_SHA" \
+            --expected-image="$RELEASE_CI_APP_DIGEST" \
+            --session="$RELEASE_CI_SESSION" \
+            --output-dir=review-artifacts
 
       - name: Remove all CI Sessions, documents, indexes, objects, and temporary files
         if: always()

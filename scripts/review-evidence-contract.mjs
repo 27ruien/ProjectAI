@@ -1,5 +1,6 @@
 const shaPattern = /^[0-9a-f]{40}$/;
 const decimalIdPattern = /^[1-9][0-9]*$/;
+const digestPattern = /^sha256:[0-9a-f]{64}$/;
 const isoTimestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
@@ -148,6 +149,41 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
     ) {
       fail(`The product review evidence index misstates ${prefix} report completeness.`);
     }
+  }
+  const releaseReportDigests = index.releaseReportDigests ?? [];
+  if (!Array.isArray(releaseReportDigests)) {
+    fail("The product review evidence index has an invalid Release report digest map.");
+  }
+  if (
+    index.status?.toLowerCase() === "success" &&
+    index.version?.startsWith("0.8.") &&
+    !Array.isArray(index.releaseReportDigests)
+  ) {
+    fail("Successful B3-C1 evidence has no Release report digest map.");
+  }
+  const digestFilenames = new Set();
+  for (const entry of releaseReportDigests) {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      !index.releaseReportFiles.includes(entry.filename) ||
+      digestFilenames.has(entry.filename) ||
+      !digestPattern.test(entry.sha256) ||
+      !digestPattern.test(entry.reportDigest) ||
+      typeof entry.reportType !== "string" ||
+      !/^[a-z0-9-]{1,64}$/.test(entry.reportType) ||
+      !isCommitSha(entry.releaseCandidateSha) ||
+      !digestPattern.test(entry.releaseImageDigest)
+    ) {
+      fail("The product review Release report digest map is invalid.");
+    }
+    digestFilenames.add(entry.filename);
+  }
+  if (
+    digestFilenames.size !== index.releaseReportFiles.length ||
+    index.releaseReportFiles.some((filename) => !digestFilenames.has(filename))
+  ) {
+    fail("The product review Release report digest map is incomplete.");
   }
   if (!Array.isArray(index.screenshotFiles) || !Array.isArray(index.screenshots)) {
     fail("The product review evidence index has an invalid screenshot inventory.");

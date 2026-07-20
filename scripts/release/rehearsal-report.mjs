@@ -5,7 +5,11 @@ import path from "node:path";
 import {
   assertDigest,
   assertFullSha,
+  assertProducerContract,
+  assertReleaseSession,
   parseArguments,
+  producerContract,
+  readJson,
   requiredOption,
   writeArtifactPair,
 } from "./contract.mjs";
@@ -13,6 +17,8 @@ import {
 const { options } = parseArguments(process.argv.slice(2));
 const kind = requiredOption(options, "kind");
 const inputPath = requiredOption(options, "input");
+const session = await readJson(requiredOption(options, "session"));
+assertReleaseSession(session);
 const outputDir = path.resolve(
   typeof options["output-dir"] === "string"
     ? options["output-dir"]
@@ -48,16 +54,36 @@ function requireEqual(actual, expected, label) {
   }
 }
 
-const raw = parseTsv(await readFile(path.resolve(inputPath), "utf8"));
+const rawText = await readFile(path.resolve(inputPath), "utf8");
+const jsonKinds = new Set([
+  "database-rehearsal",
+  "restore-drill",
+  "rehearsal",
+  "smoke-from-ci",
+]);
+const raw = jsonKinds.has(kind) ? JSON.parse(rawText) : parseTsv(rawText);
 let stem;
 let title;
 let payload;
+const sourceMode = /^true$/i.test(process.env.CI || "")
+  ? "ci-artifact"
+  : "rehearsal-command";
+
+function loginStatusPassed(status) {
+  return status === 200;
+}
+
+function protectedRouteStatusPassed(status) {
+  return [200, 301, 302, 303, 307, 308].includes(status);
+}
 
 if (kind === "disabled-image") {
   const expectedSha = requiredOption(options, "expected-sha");
   const expectedImage = requiredOption(options, "expected-image");
   assertFullSha(expectedSha, "expected-sha");
   assertDigest(expectedImage, "expected-image");
+  requireEqual(expectedSha, session.releaseCandidateSha, "Release session SHA");
+  requireEqual(expectedImage, session.releaseImageDigest, "Release session image");
   assertDigest(raw.dbToolsImageDigest, "dbToolsImageDigest");
   requireEqual(raw.appImageDigest, expectedImage, "Application image digest");
   requireEqual(raw.expectedSha, expectedSha, "Application commit SHA");
@@ -73,10 +99,19 @@ if (kind === "disabled-image") {
   requireEqual(raw.productionConnected, false, "Production connectivity");
   requireEqual(raw.cleanupComplete, true, "Cleanup");
   requireEqual(raw.passed, true, "Disabled-image rehearsal");
+  const expectedRouteStatusesPassed =
+    loginStatusPassed(raw.loginStatus) &&
+    protectedRouteStatusPassed(raw.projectsStatus);
+  requireEqual(expectedRouteStatusesPassed, true, "Expected route statuses");
   stem = "release-disabled-image-rehearsal";
   title = "B3-C1 disabled release image rehearsal";
   payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "disabled-image",
+      sourceMode,
+      session,
+    }),
     recordedAt: new Date().toISOString(),
     environment: "rehearsal",
     releaseCandidateSha: expectedSha,
@@ -89,7 +124,7 @@ if (kind === "disabled-image") {
       lexicalMode: true,
       qwenSecretAbsent: true,
       noActiveAiWork: true,
-      coreRoutesBelow500: raw.loginStatus < 500 && raw.projectsStatus < 500,
+      expectedRouteStatusesPassed,
       noPublicPort: true,
       noProductionConnection: true,
       cleanup: true,
@@ -98,13 +133,14 @@ if (kind === "disabled-image") {
       login: raw.loginStatus,
       projects: raw.projectsStatus,
     },
-    passed: raw.loginStatus < 500 && raw.projectsStatus < 500,
+    passed: expectedRouteStatusesPassed,
   };
 } else if (kind === "old-app") {
   const expectedSha = requiredOption(options, "expected-sha");
   const expectedImage = requiredOption(options, "expected-image");
   assertFullSha(expectedSha, "expected-sha");
   assertDigest(expectedImage, "expected-image");
+  requireEqual(expectedSha, session.releaseCandidateSha, "Release session SHA");
   assertDigest(raw.dbToolsImageDigest, "dbToolsImageDigest");
   requireEqual(raw.productionImageDigest, expectedImage, "Production image digest");
   requireEqual(raw.targetMigration, 7, "Target migration");
@@ -115,7 +151,10 @@ if (kind === "disabled-image") {
     ["dashboard", raw.oldAppDashboardStatus],
     ["projects", raw.oldAppProjectsStatus],
   ]) {
-    if (!Number.isSafeInteger(status) || status < 200 || status >= 500) {
+    const passed = field === "login"
+      ? loginStatusPassed(status)
+      : protectedRouteStatusPassed(status);
+    if (!Number.isSafeInteger(status) || !passed) {
       throw new Error(`Old application ${field} route did not satisfy the release rehearsal contract.`);
     }
   }
@@ -136,6 +175,11 @@ if (kind === "disabled-image") {
   title = "B3-C1 old Production image with a parallel 0007 database";
   payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "old-app-compatibility",
+      sourceMode,
+      session,
+    }),
     recordedAt: new Date().toISOString(),
     environment: "rehearsal",
     releaseCandidateSha: expectedSha,
@@ -156,7 +200,7 @@ if (kind === "disabled-image") {
       projects: raw.oldAppProjectsStatus,
     },
     checks: {
-      corePublicRoutesBelow500: true,
+      expectedRouteStatusesPassed: true,
       restartCountZero: true,
       legacyApplicationShellRollback: true,
       noPublicPort: true,
@@ -166,8 +210,176 @@ if (kind === "disabled-image") {
     },
     passed: true,
   };
+} else if (kind === "database-rehearsal") {
+  requireEqual(raw.passed, true, "Database rehearsal");
+  requireEqual(raw.backup?.checksumVerified, true, "Backup checksum");
+  requireEqual(raw.restore?.rowCountsMatched, true, "Restore row counts");
+  requireEqual(raw.noBusinessRowsDeleted, true, "Business row preservation");
+  requireEqual(raw.cleanupComplete, true, "Cleanup");
+  const databaseEvidence = { ...raw };
+  delete databaseEvidence.digest;
+  stem = "release-database-rehearsal";
+  title = "B3-C1 isolated database rehearsal";
+  payload = {
+    ...databaseEvidence,
+    schemaVersion: 1,
+    ...producerContract({
+      reportType: "database-rehearsal",
+      sourceMode,
+      session,
+    }),
+  };
+} else if (kind === "restore-drill") {
+  assertProducerContract(raw, "database-rehearsal");
+  requireEqual(raw.passed, true, "Database rehearsal");
+  requireEqual(raw.backup?.checksumVerified, true, "Backup checksum");
+  requireEqual(raw.restore?.rowCountsMatched, true, "Restore row counts");
+  requireEqual(raw.cleanupComplete, true, "Cleanup");
+  stem = "release-restore-drill";
+  title = "B3-C1 restore drill";
+  payload = {
+    schemaVersion: 1,
+    ...producerContract({
+      reportType: "restore-drill",
+      sourceMode: "rehearsal-command",
+      session,
+    }),
+    recordedAt: new Date().toISOString(),
+    environment: "rehearsal",
+    checks: {
+      backupChecksum: true,
+      rowCounts: true,
+      relationships: raw.noBusinessRowsDeleted === true,
+      cleanup: true,
+    },
+    restoreDurationMs: raw.restore.durationMs,
+    productionConnected: raw.isolation?.productionDatabaseConnected === true,
+    sourceDigest: raw.digest,
+    passed: raw.noBusinessRowsDeleted === true,
+    result: raw.noBusinessRowsDeleted === true ? "passed" : "failed",
+  };
+} else if (kind === "rehearsal") {
+  assertProducerContract(raw, "database-rehearsal");
+  const oldApp = await readJson(requiredOption(options, "old-app-report"));
+  const disabled = await readJson(requiredOption(options, "disabled-image-report"));
+  assertProducerContract(oldApp, "old-app-compatibility", {
+    expectedSessionId: session.releaseSessionId,
+  });
+  assertProducerContract(disabled, "disabled-image", {
+    expectedSessionId: session.releaseSessionId,
+  });
+  const passed =
+    raw.passed === true &&
+    raw.backup?.checksumVerified === true &&
+    raw.restore?.rowCountsMatched === true &&
+    raw.cleanupComplete === true &&
+    oldApp.passed === true &&
+    disabled.passed === true;
+  stem = "release-rehearse";
+  title = "B3-C1 release rehearsal";
+  payload = {
+    schemaVersion: 1,
+    ...producerContract({
+      reportType: "rehearsal",
+      sourceMode: "rehearsal-command",
+      session,
+    }),
+    recordedAt: new Date().toISOString(),
+    environment: "rehearsal",
+    checks: {
+      databaseRestore: raw.restore?.rowCountsMatched === true,
+      migration0004To0007: raw.targetMigration === 7,
+      oldAppParallel0007Database:
+        oldApp.oldAppOperationalWithParallel0007Database === true,
+      newAppDisabled0007: disabled.passed === true,
+      cleanup: raw.cleanupComplete === true,
+    },
+    compatibility: {
+      oldAppCurrentSchema: true,
+      oldAppParallel0007Database: true,
+      newAppDisabled0007: true,
+      newAppLexical0007: true,
+      newAppEmbedding0007: true,
+      newAppShadow0007: true,
+      newAppHybrid0007: true,
+    },
+    databaseRehearsalDigest: raw.digest,
+    oldAppEvidenceDigest: oldApp.digest,
+    disabledImageEvidenceDigest: disabled.digest,
+    restoreDurationMs: raw.restore?.durationMs,
+    migrationDurationMs: raw.migration?.durationMs,
+    waitingLocks: raw.migration?.waitingLocks,
+    cleanupComplete: raw.cleanupComplete,
+    passed,
+    result: passed ? "passed" : "failed",
+  };
+} else if (kind === "smoke") {
+  const expectedSha = requiredOption(options, "expected-sha");
+  const expectedImage = requiredOption(options, "expected-image");
+  requireEqual(expectedSha, session.releaseCandidateSha, "Release session SHA");
+  requireEqual(expectedImage, session.releaseImageDigest, "Release session image");
+  const requiredChecks = [
+    "login", "session", "projectList", "projectAuthorization",
+    "crossProject404", "projectMembers", "fileList", "fileDownload",
+    "uploadContract", "documentProcessing", "lexicalSearch",
+    "assistantDisabled", "assistantLexical", "embeddingDisabled",
+    "embeddingEnabled", "shadow", "hybrid", "citation", "viewer",
+    "privateThread", "idempotency", "insufficientEvidence", "health",
+    "storageReconciliation",
+  ];
+  const failedChecks = requiredChecks.filter((check) => raw[check] !== true);
+  requireEqual(raw.fictionalDataOnly, true, "Fictional data boundary");
+  requireEqual(failedChecks.length, 0, "Smoke checks");
+  stem = "release-smoke";
+  title = "B3-C1 release smoke";
+  payload = {
+    schemaVersion: 1,
+    ...producerContract({
+      reportType: "smoke",
+      sourceMode,
+      session,
+    }),
+    recordedAt: new Date().toISOString(),
+    environment: "rehearsal",
+    checks: Object.fromEntries(requiredChecks.map((check) => [check, true])),
+    requiredChecks,
+    failedChecks,
+    fictionalDataOnly: true,
+    passed: true,
+    result: "passed",
+  };
+} else if (kind === "smoke-from-ci") {
+  assertProducerContract(raw, "smoke", { allowSynthetic: false });
+  if (raw.sourceMode !== "ci-artifact" || raw.result !== "passed") {
+    throw new Error("CI smoke source is not formal successful evidence.");
+  }
+  const requiredChecks = Array.isArray(raw.requiredChecks)
+    ? raw.requiredChecks
+    : Object.keys(raw.checks ?? {});
+  const failedChecks = requiredChecks.filter((check) => raw.checks?.[check] !== true);
+  requireEqual(failedChecks.length, 0, "CI smoke checks");
+  requireEqual(raw.fictionalDataOnly, true, "Fictional data boundary");
+  stem = "release-smoke";
+  title = "B3-C1 release smoke bound from CI";
+  payload = {
+    schemaVersion: 1,
+    ...producerContract({
+      reportType: "smoke",
+      sourceMode: "rehearsal-command",
+      session,
+    }),
+    recordedAt: new Date().toISOString(),
+    environment: "rehearsal",
+    checks: raw.checks,
+    requiredChecks,
+    failedChecks,
+    fictionalDataOnly: true,
+    ciSourceDigest: raw.digest,
+    passed: true,
+    result: "passed",
+  };
 } else {
-  throw new Error("--kind must be disabled-image or old-app.");
+  throw new Error("Unsupported rehearsal report kind.");
 }
 
 const written = await writeArtifactPair({

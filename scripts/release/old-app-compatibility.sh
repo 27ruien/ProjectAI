@@ -93,7 +93,7 @@ for _ in {1..45}; do
       .then(response => process.stdout.write(String(response.status)))
       .catch(() => process.exit(1));
   ' 2>/dev/null || true)"
-  if [[ "$dashboard_status" =~ ^(200|30[1278])$ ]]; then
+  if [[ "$dashboard_status" =~ ^(200|301|302|303|307|308)$ ]]; then
     healthy=1
     break
   fi
@@ -108,8 +108,10 @@ route_statuses="$(sudo -n docker exec "$app" node -e '
     return response.status;
   })).then(values => process.stdout.write(values.join("|"))).catch(() => process.exit(1));
 ')"
-[[ "$route_statuses" =~ ^[234][0-9][0-9]\|[234][0-9][0-9]\|[234][0-9][0-9]$ ]]
 IFS='|' read -r login_status dashboard_status projects_status <<<"$route_statuses"
+[[ "$login_status" == "200" ]]
+[[ "$dashboard_status" =~ ^(200|301|302|303|307|308)$ ]]
+[[ "$projects_status" =~ ^(200|301|302|303|307|308)$ ]]
 database_connection_count="$(sudo -n docker exec "$postgres" psql -X -qAt \
   --username "$database_user" --dbname "$database" -c \
   "select count(*) from pg_stat_activity where datname=current_database() and usename=current_user and pid <> pg_backend_pid();")"

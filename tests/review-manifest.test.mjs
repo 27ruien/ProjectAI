@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +7,7 @@ import test from "node:test";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { withDigest } from "../scripts/release/contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const writer = new URL("../scripts/write-review-manifest.mjs", import.meta.url);
@@ -124,6 +126,60 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     await assert.rejects(
       readFile(path.join(root, "review-artifacts/manifest.json")),
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("indexes every CI Release JSON and Markdown digest with report identity", async () => {
+  const root = await temporaryRoot();
+  const image = `sha256:${"1".repeat(64)}`;
+  const sessionId = `rs-${"2".repeat(32)}`;
+  const reports = [
+    ["release-database-rehearsal", "database-rehearsal"],
+    ["release-disabled-image-rehearsal", "disabled-image"],
+    ["release-smoke", "smoke"],
+  ];
+  try {
+    await mkdir(path.join(root, "review-artifacts/screenshots"), { recursive: true });
+    for (const [stem, reportType] of reports) {
+      const report = withDigest({
+        schemaVersion: 1,
+        reportType,
+        producer: "projectai-release-tool",
+        producerVersion: "b3-c1-v3",
+        sourceMode: "ci-artifact",
+        releaseCandidateSha: headSha,
+        releaseImageDigest: image,
+        releaseSessionId: sessionId,
+        passed: true,
+      });
+      await writeFile(
+        path.join(root, `review-artifacts/${stem}.json`),
+        `${JSON.stringify(report, null, 2)}\n`,
+      );
+      await writeFile(
+        path.join(root, `review-artifacts/${stem}.md`),
+        `# ${reportType}\n\nDigest: ${report.digest}\n`,
+      );
+    }
+    await runWriter(root, ciEnvironment({
+      NEXT_PUBLIC_APP_VERSION: "0.8.0-staging",
+      REVIEW_ARTIFACT_STATUS: "failure",
+    }));
+    const index = JSON.parse(await readFile(
+      path.join(root, "review-artifacts/evidence-index.json"),
+      "utf8",
+    ));
+    assert.equal(index.releaseReportDigests.length, 6);
+    for (const entry of index.releaseReportDigests) {
+      const contents = await readFile(path.join(root, "review-artifacts", entry.filename));
+      const expectedFileDigest = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
+      assert.equal(entry.sha256, expectedFileDigest);
+      assert.equal(entry.releaseCandidateSha, headSha);
+      assert.equal(entry.releaseImageDigest, image);
+      assert.match(entry.reportDigest, /^sha256:[0-9a-f]{64}$/);
+    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }

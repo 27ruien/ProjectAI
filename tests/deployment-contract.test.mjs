@@ -361,7 +361,9 @@ test("CI MinIO uses random masked credentials, a private tmpfs, and always clean
   assert.match(workflow, /git cat-file -e "\$\{RELEASE_CANDIDATE_SHA\}\^\{commit\}"/);
   assert.match(workflow, /git worktree add --detach "\$release_tree" "\$RELEASE_CANDIDATE_SHA"/);
   assert.match(workflow, /npm run release:report/);
-  assert.match(workflow, /npm run release:smoke/);
+  assert.match(workflow, /write-ci-smoke-tsv\.mjs/);
+  assert.match(workflow, /--kind=smoke/);
+  assert.match(workflow, /npm run release:session/);
   assert.doesNotMatch(workflow, /gridworks\.cn[\s\S]*release:database-rehearsal/);
   assert.match(workflow, /Destroy isolated CI MinIO\n\s+if: always\(\)/);
   assert.match(workflow, /docker rm --force "\$container"/);

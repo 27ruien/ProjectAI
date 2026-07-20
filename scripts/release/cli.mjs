@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -11,18 +12,25 @@ import {
   assertEnvironment,
   assertFullSha,
   assertInventory,
+  assertProducerContract,
   assertReleaseManifest,
+  assertReleaseSession,
   assertSanitized,
   booleanOrNotApplicable,
   digestObject,
   numberOrNull,
   parseArguments,
+  producerContract,
   readJson,
   requiredOption,
   withDigest,
   writeArtifactPair,
   writeJson,
 } from "./contract.mjs";
+import {
+  assertEvidenceIndex,
+  assertPublishedArtifactIdentity,
+} from "../review-evidence-contract.mjs";
 
 const command = process.argv[2];
 const { options } = parseArguments(process.argv.slice(3));
@@ -82,6 +90,19 @@ function outputDirectory(suffix) {
       ? options["output-dir"]
       : path.join(defaultOutputRoot, suffix),
   );
+}
+
+async function releaseSession() {
+  const session = await readJson(requiredOption(options, "session"));
+  assertReleaseSession(session);
+  return session;
+}
+
+function formalSourceMode(fallback = "live-readonly") {
+  if (process.env.NODE_ENV === "test" && typeof options.input === "string") {
+    return "synthetic-test";
+  }
+  return /^true$/i.test(process.env.CI || "") ? "ci-artifact" : fallback;
 }
 
 function asBoolean(value) {
@@ -190,7 +211,46 @@ function parseRemoteInventory(stdout) {
   return inventory;
 }
 
+async function sessionCommand() {
+  const expectedSha = requiredOption(options, "expected-sha");
+  const expectedImage = requiredOption(options, "expected-image");
+  assertFullSha(expectedSha, "expected-sha");
+  assertDigest(expectedImage, "expected-image");
+  const baselineValue = await readJson(
+    requiredOption(options, "production-baseline"),
+  );
+  const baseline = withDigest(baselineValue);
+  assertInventory(baseline, { requireProducer: false });
+  if (baseline.environment !== "production") {
+    throw new Error("Release session requires a Production baseline.");
+  }
+  const releaseSessionId = `rs-${randomUUID().replaceAll("-", "")}`;
+  const payload = {
+    schemaVersion: 1,
+    reportType: "release-session",
+    producer: "projectai-release-tool",
+    producerVersion: RELEASE_TOOL_VERSION,
+    sourceMode: /^true$/i.test(process.env.CI || "")
+      ? "ci-artifact"
+      : "live-readonly",
+    releaseCandidateSha: expectedSha,
+    releaseImageDigest: expectedImage,
+    releaseSessionId,
+    productionBaselineDigest: baseline.digest,
+    createdAt: new Date().toISOString(),
+  };
+  const written = await writeArtifactPair({
+    outputDir: outputDirectory("session"),
+    stem: "release-session",
+    payload,
+    markdown: `# B3-C1 release session\n\nSession: ${releaseSessionId}`,
+  });
+  assertReleaseSession(written);
+  process.stdout.write(`${written.digest}\n`);
+}
+
 async function inventoryCommand() {
+  const session = await releaseSession();
   const environment = assertEnvironment(requiredOption(options, "environment"));
   let inventory;
   if (typeof options.input === "string") {
@@ -252,6 +312,14 @@ async function inventoryCommand() {
   if (inventory.environment !== environment) {
     throw new Error("Inventory environment does not match --environment.");
   }
+  inventory = {
+    ...inventory,
+    ...producerContract({
+      reportType: `${environment}-inventory`,
+      sourceMode: formalSourceMode("live-readonly"),
+      session,
+    }),
+  };
   const finalized = withDigest(inventory);
   assertInventory(finalized);
   const markdown = `# ${environment} release inventory
@@ -321,10 +389,11 @@ function differenceCategory(field, production, staging) {
 }
 
 async function diffCommand() {
+  const session = await releaseSession();
   const production = await readJson(requiredOption(options, "production-inventory"));
   const staging = await readJson(requiredOption(options, "staging-inventory"));
-  assertInventory(production);
-  assertInventory(staging);
+  assertInventory(production, { expectedSessionId: session.releaseSessionId });
+  assertInventory(staging, { expectedSessionId: session.releaseSessionId });
   if (production.environment !== "production" || staging.environment !== "staging") {
     throw new Error("release:diff requires Production and Staging inventories.");
   }
@@ -392,6 +461,11 @@ async function diffCommand() {
     .filter(Boolean);
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "production-staging-diff",
+      sourceMode: formalSourceMode("live-readonly"),
+      session,
+    }),
     createdAt: new Date().toISOString(),
     productionInventoryDigest: production.digest,
     stagingInventoryDigest: staging.digest,
@@ -422,12 +496,21 @@ ${rows}`,
 }
 
 async function manifestCommand() {
+  const session = await releaseSession();
   const input = await readJson(requiredOption(options, "input"));
   const candidate = {
     ...input,
     schemaVersion: 1,
     createdByToolVersion: RELEASE_TOOL_VERSION,
+    ...producerContract({
+      reportType: "release-manifest",
+      sourceMode: formalSourceMode("live-readonly"),
+      session,
+    }),
   };
+  if (candidate.productionBaselineDigest !== session.productionBaselineDigest) {
+    throw new Error("Manifest Production baseline does not match the release session.");
+  }
   const manifest = withDigest(candidate);
   assertReleaseManifest(manifest);
   await writeJson(
@@ -445,9 +528,12 @@ function diskRequiredBytes({ targetImageBytes, databaseBackupBytes, objectBackup
 }
 
 async function preflightCommand() {
+  const session = await releaseSession();
   const manifest = await readJson(requiredOption(options, "manifest"));
   const production = await readJson(requiredOption(options, "production-inventory"));
-  const baseline = await readJson(requiredOption(options, "production-baseline"));
+  const baseline = withDigest(
+    await readJson(requiredOption(options, "production-baseline")),
+  );
   const ciRunId = requiredOption(options, "ci-run-id");
   const repository =
     typeof options.repo === "string" ? options.repo : "27ruien/ProjectAI";
@@ -458,8 +544,11 @@ async function preflightCommand() {
     throw new Error("--ci-run-id must be a positive GitHub Actions run ID.");
   }
   assertReleaseManifest(manifest);
-  assertInventory(production);
-  assertInventory(baseline);
+  assertProducerContract(manifest, "release-manifest", {
+    expectedSessionId: session.releaseSessionId,
+  });
+  assertInventory(production, { expectedSessionId: session.releaseSessionId });
+  assertInventory(baseline, { requireProducer: false });
   if (production.environment !== "production" || baseline.environment !== "production") {
     throw new Error("Preflight requires Production inventories.");
   }
@@ -636,6 +725,11 @@ async function preflightCommand() {
     .map(([name]) => name);
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "production-preflight",
+      sourceMode: formalSourceMode("live-readonly"),
+      session,
+    }),
     checkedAt: new Date().toISOString(),
     releaseManifestDigest: manifest.digest,
     productionInventoryDigest: production.digest,
@@ -697,7 +791,19 @@ Failed gates: ${failed.length ? failed.join(", ") : "none"}`,
 }
 
 async function guardedReportCommand(name) {
+  const session = await releaseSession();
   const contract = mutationContract(name);
+  if (
+    contract.expectedSha !== session.releaseCandidateSha ||
+    contract.expectedImage !== session.releaseImageDigest
+  ) {
+    throw new Error(`${name} target does not match the release session.`);
+  }
+  if (typeof options.input === "string" && process.env.NODE_ENV !== "test") {
+    throw new Error(
+      `${name} JSON input is synthetic and allowed only in NODE_ENV=test; use the rehearsal report parser for formal evidence.`,
+    );
+  }
   const input =
     typeof options.input === "string"
       ? await readJson(options.input)
@@ -773,6 +879,15 @@ async function guardedReportCommand(name) {
   }
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType:
+        name === "rehearse" ? "rehearsal" : name,
+      sourceMode:
+        typeof options.input === "string"
+          ? "synthetic-test"
+          : "rehearsal-command",
+      session,
+    }),
     recordedAt: new Date().toISOString(),
     ...contract,
     input,
@@ -796,9 +911,10 @@ Result: ${payload.result}`,
 }
 
 async function backupCommand() {
+  const session = await releaseSession();
   const contract = mutationContract("backup");
   const inventory = await readJson(requiredOption(options, "inventory"));
-  assertInventory(inventory);
+  assertInventory(inventory, { expectedSessionId: session.releaseSessionId });
   if (inventory.environment !== contract.environment) {
     throw new Error("Backup inventory environment mismatch.");
   }
@@ -818,6 +934,11 @@ async function backupCommand() {
   const dataPlanePresent = inventory.database.present || inventory.objectStorage.present;
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "release-backup-plan",
+      sourceMode: formalSourceMode("live-readonly"),
+      session,
+    }),
     createdAt: new Date().toISOString(),
     ...contract,
     inventoryDigest: inventory.digest,
@@ -842,10 +963,14 @@ Production apply is disabled in B3-C1. Data plane present: ${dataPlanePresent}. 
 }
 
 async function rollbackCheckCommand() {
+  const session = await releaseSession();
   const matrix = await readJson(requiredOption(options, "matrix"));
   const rehearsal = await readJson(requiredOption(options, "rehearsal"));
   assertSanitized(matrix);
   assertSanitized(rehearsal);
+  assertProducerContract(rehearsal, "rehearsal", {
+    expectedSessionId: session.releaseSessionId,
+  });
   if (rehearsal.digest) {
     const expectedDigest = digestObject(
       Object.fromEntries(Object.entries(rehearsal).filter(([key]) => key !== "digest")),
@@ -864,6 +989,11 @@ async function rollbackCheckCommand() {
   const failed = combinations.filter((combination) => !combination.passed);
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "rollback-check",
+      sourceMode: "rehearsal-command",
+      session,
+    }),
     checkedAt: new Date().toISOString(),
     releaseCandidateSha:
       rehearsal.expectedSha ?? rehearsal.releaseCandidateSha ?? null,
@@ -889,7 +1019,84 @@ Required combinations: ${combinations.length}; failed: ${failed.length}.`,
   process.stdout.write(`${written.digest}\n`);
 }
 
+async function ciEvidenceCommand() {
+  const session = await releaseSession();
+  const provenance = await readJson(requiredOption(options, "provenance"));
+  const evidenceIndex = await readJson(requiredOption(options, "evidence-index"));
+  assertEvidenceIndex(evidenceIndex, { ci: true });
+  const workflowRunId = requiredOption(options, "ci-run-id");
+  assertPublishedArtifactIdentity({
+    artifactId: String(provenance.artifactId ?? ""),
+    artifactName: provenance.artifactName,
+    workflowRunId: String(provenance.workflowRunId ?? ""),
+    expectedWorkflowRunId: workflowRunId,
+  });
+  assertDigest(provenance.artifactDigest, "artifactDigest");
+  if (
+    provenance.headSha !== session.releaseCandidateSha ||
+    evidenceIndex.headSha !== session.releaseCandidateSha ||
+    provenance.headSha !== evidenceIndex.headSha ||
+    provenance.branch !== evidenceIndex.branch ||
+    String(provenance.workflowRunId) !== String(evidenceIndex.workflowRunId) ||
+    provenance.status !== "success" ||
+    evidenceIndex.status !== "success"
+  ) {
+    throw new Error("CI Evidence identity does not match the release session.");
+  }
+  if (
+    !Array.isArray(provenance.releaseReportDigests) ||
+    JSON.stringify(provenance.releaseReportDigests) !==
+      JSON.stringify(evidenceIndex.releaseReportDigests)
+  ) {
+    throw new Error("CI Artifact report digest map is missing or inconsistent.");
+  }
+  const requiredJsonReports = new Set([
+    "release-database-rehearsal.json",
+    "release-disabled-image-rehearsal.json",
+    "release-smoke.json",
+  ]);
+  for (const entry of provenance.releaseReportDigests) {
+    assertDigest(entry.sha256, `releaseReportDigests.${entry.filename}`);
+    assertDigest(entry.reportDigest, `releaseReportDigests.${entry.filename}.reportDigest`);
+    if (entry.filename.endsWith(".json")) {
+      requiredJsonReports.delete(entry.filename);
+      assertFullSha(entry.releaseCandidateSha, `${entry.filename}.releaseCandidateSha`);
+      assertDigest(entry.releaseImageDigest, `${entry.filename}.releaseImageDigest`);
+      if (!/^[a-z0-9-]{1,64}$/.test(entry.reportType)) {
+        throw new Error("CI Artifact report type is invalid.");
+      }
+    }
+  }
+  if (requiredJsonReports.size > 0) {
+    throw new Error("CI Artifact report digest map is incomplete.");
+  }
+  const payload = {
+    schemaVersion: 1,
+    ...producerContract({
+      reportType: "ci-evidence",
+      sourceMode: "ci-artifact",
+      session,
+    }),
+    status: "success",
+    headSha: provenance.headSha,
+    headBranch: provenance.branch,
+    workflowRunId: String(provenance.workflowRunId),
+    artifactId: String(provenance.artifactId),
+    artifactName: provenance.artifactName,
+    artifactDigest: provenance.artifactDigest,
+    artifactReportDigestMap: provenance.releaseReportDigests,
+  };
+  const written = await writeArtifactPair({
+    outputDir: outputDirectory("ci-evidence"),
+    stem: "release-ci-evidence",
+    payload,
+    markdown: "# CI release evidence identity\n\nArtifact and report digests are bound to the exact workflow run.",
+  });
+  process.stdout.write(`${written.digest}\n`);
+}
+
 async function goNoGoCommand() {
+  const session = await releaseSession();
   if (typeof options.checklist === "string") {
     throw new Error(
       "Checklist-only Go/No-Go input is synthetic and cannot establish release readiness.",
@@ -910,18 +1117,48 @@ async function goNoGoCommand() {
     oldApp: "old-app",
     backup: "backup",
     ciEvidence: "ci-evidence",
+    ciDatabaseRehearsal: "ci-database-rehearsal",
+    ciDisabledImage: "ci-disabled-image",
+    ciSmoke: "ci-smoke",
+  };
+  const reportTypes = {
+    manifest: "release-manifest",
+    productionInventory: "production-inventory",
+    stagingInventory: "staging-inventory",
+    diff: "production-staging-diff",
+    preflight: "production-preflight",
+    rehearsal: "rehearsal",
+    restoreDrill: "restore-drill",
+    smoke: "smoke",
+    rollbackCheck: "rollback-check",
+    disabledImage: "disabled-image",
+    oldApp: "old-app-compatibility",
+    backup: "release-backup-plan",
+    ciEvidence: "ci-evidence",
+    ciDatabaseRehearsal: "database-rehearsal",
+    ciDisabledImage: "disabled-image",
+    ciSmoke: "smoke",
   };
   const reports = {};
   for (const [name, option] of Object.entries(inputOptions)) {
     reports[name] = await readJson(requiredOption(options, option));
+    if (name === "productionBaseline") {
+      reports[name] = withDigest(reports[name]);
+    }
     assertSanitized(reports[name]);
-    if (name === "manifest") assertReleaseManifest(reports[name]);
+    if (name === "manifest") {
+      assertReleaseManifest(reports[name]);
+      assertProducerContract(reports[name], reportTypes[name], {
+        allowSynthetic: process.env.NODE_ENV === "test",
+      });
+    }
     else if (
-      name === "productionBaseline" ||
       name === "productionInventory" ||
       name === "stagingInventory"
     ) {
       assertInventory(reports[name]);
+    } else if (name === "productionBaseline") {
+      assertInventory(reports[name], { requireProducer: false });
     } else {
       if (typeof reports[name].digest !== "string") {
         throw new Error(`${option} report is missing its digest.`);
@@ -934,10 +1171,13 @@ async function goNoGoCommand() {
       if (reports[name].digest !== expected) {
         throw new Error(`${option} report digest does not match its payload.`);
       }
+      assertProducerContract(reports[name], reportTypes[name], {
+        allowSynthetic: process.env.NODE_ENV === "test",
+      });
     }
   }
   const manifest = reports.manifest;
-  const baseline = reports.productionBaseline;
+  const baseline = withDigest(reports.productionBaseline);
   const production = reports.productionInventory;
   const staging = reports.stagingInventory;
   const sha = manifest.releaseCandidateSha;
@@ -952,6 +1192,41 @@ async function goNoGoCommand() {
   const reportImage = (report) =>
     report.releaseImageDigest ?? report.expectedImage ?? report.input?.releaseImageDigest;
   const dataPlanePresent = production.database.present || production.objectStorage.present;
+  const liveReportNames = [
+    "manifest",
+    "productionInventory",
+    "stagingInventory",
+    "diff",
+    "preflight",
+    "rehearsal",
+    "restoreDrill",
+    "smoke",
+    "rollbackCheck",
+    "disabledImage",
+    "oldApp",
+    "backup",
+    "ciEvidence",
+  ];
+  const liveSessionsMatch = liveReportNames.every(
+    (name) => reports[name].releaseSessionId === session.releaseSessionId,
+  );
+  const noSyntheticReports =
+    process.env.NODE_ENV === "test" ||
+    Object.values(reports).every(
+      (report) => report.sourceMode !== "synthetic-test",
+    );
+  const artifactMap = reports.ciEvidence.artifactReportDigestMap;
+  const ciReportBound = (filename, report) => {
+    if (!Array.isArray(artifactMap)) return false;
+    const entry = artifactMap.find((candidate) => candidate.filename === filename);
+    return Boolean(
+      entry &&
+      entry.reportDigest === report.digest &&
+      entry.reportType === report.reportType &&
+      entry.releaseCandidateSha === report.releaseCandidateSha &&
+      entry.releaseImageDigest === report.releaseImageDigest,
+    );
+  };
   const backupBound =
     reports.backup.inventoryDigest === production.digest &&
     reports.backup.dataPlanePresent === dataPlanePresent &&
@@ -988,17 +1263,36 @@ async function goNoGoCommand() {
       reports.ciEvidence.status === "success" &&
       reports.ciEvidence.headSha === sha &&
       String(reports.ciEvidence.workflowRunId) === String(reports.preflight.ciRunId) &&
-      reports.ciEvidence.artifactDigest === manifest.evidenceDigest,
+      reports.ciEvidence.artifactDigest === manifest.evidenceDigest &&
+      reports.ciEvidence.artifactName ===
+        `product-review-evidence-${reports.ciEvidence.workflowRunId}-1`,
+    ciArtifactReportsBound:
+      ciReportBound(
+        "release-database-rehearsal.json",
+        reports.ciDatabaseRehearsal,
+      ) &&
+      ciReportBound(
+        "release-disabled-image-rehearsal.json",
+        reports.ciDisabledImage,
+      ) &&
+      ciReportBound("release-smoke.json", reports.ciSmoke) &&
+      reports.ciDatabaseRehearsal.sourceMode === "ci-artifact" &&
+      reports.ciDisabledImage.sourceMode === "ci-artifact" &&
+      reports.ciSmoke.sourceMode === "ci-artifact",
+    liveReleaseSessionBound: liveSessionsMatch,
+    noSyntheticReports,
     rehearsalPassed:
       reports.rehearsal.result === "passed" &&
       reportSha(reports.rehearsal) === sha &&
       reportImage(reports.rehearsal) === image &&
-      reports.rehearsal.input?.checks?.migration0004To0007 === true,
+      (reports.rehearsal.checks?.migration0004To0007 === true ||
+        reports.rehearsal.input?.checks?.migration0004To0007 === true),
     restoreDrillPassed:
       reports.restoreDrill.result === "passed" &&
       reportSha(reports.restoreDrill) === sha &&
       reportImage(reports.restoreDrill) === image &&
-      reports.restoreDrill.input?.checks?.backupChecksum === true,
+      (reports.restoreDrill.checks?.backupChecksum === true ||
+        reports.restoreDrill.input?.checks?.backupChecksum === true),
     smokePassed:
       reports.smoke.result === "passed" &&
       reportSha(reports.smoke) === sha &&
@@ -1030,6 +1324,11 @@ async function goNoGoCommand() {
     .map(([name]) => name);
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "go-no-go",
+      sourceMode: "live-readonly",
+      session,
+    }),
     evaluatedAt: new Date().toISOString(),
     releaseCandidateSha: sha,
     releaseImageDigest: image,
@@ -1063,6 +1362,7 @@ Failed required gates: ${payload.failed.length ? payload.failed.join(", ") : "no
 }
 
 async function statusCommand() {
+  const session = await releaseSession();
   const files = String(requiredOption(options, "inputs"))
     .split(",")
     .map((file) => file.trim())
@@ -1071,6 +1371,11 @@ async function statusCommand() {
   reports.forEach(assertSanitized);
   const payload = {
     schemaVersion: 1,
+    ...producerContract({
+      reportType: "release-status",
+      sourceMode: "live-readonly",
+      session,
+    }),
     recordedAt: new Date().toISOString(),
     reports: reports.map((report, index) => ({
       file: path.basename(files[index]),
@@ -1084,6 +1389,7 @@ async function statusCommand() {
 }
 
 const commands = {
+  session: sessionCommand,
   inventory: inventoryCommand,
   diff: diffCommand,
   manifest: manifestCommand,
@@ -1093,6 +1399,7 @@ const commands = {
   "restore-drill": () => guardedReportCommand("restore-drill"),
   smoke: () => guardedReportCommand("smoke"),
   "rollback-check": rollbackCheckCommand,
+  "ci-evidence": ciEvidenceCommand,
   "go-no-go": goNoGoCommand,
   status: statusCommand,
 };

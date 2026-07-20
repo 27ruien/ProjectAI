@@ -131,7 +131,8 @@ core_status="$(docker exec "$app" node -e '
     .catch(() => process.exit(1));
 ')"
 IFS='|' read -r login_status projects_status <<<"$core_status"
-(( login_status < 500 && projects_status < 500 ))
+[[ "$login_status" == "200" ]]
+[[ "$projects_status" =~ ^(200|301|302|303|307|308)$ ]]
 
 active_counts="$(docker exec "$postgres" psql -X -qAt \
   --username "$database_user" --dbname "$database" -c "

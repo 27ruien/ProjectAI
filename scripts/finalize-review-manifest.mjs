@@ -76,6 +76,7 @@ const manifest = {
   requiredReleaseReports: evidenceIndex.requiredReleaseReports,
   releaseReportFiles: evidenceIndex.releaseReportFiles,
   missingReleaseReports: evidenceIndex.missingReleaseReports,
+  releaseReportDigests: evidenceIndex.releaseReportDigests,
   testedUsers: evidenceIndex.testedUsers,
   routes: evidenceIndex.routes,
   screenshotFiles: evidenceIndex.screenshotFiles,

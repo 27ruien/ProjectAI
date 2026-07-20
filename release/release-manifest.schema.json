@@ -6,6 +6,11 @@
   "additionalProperties": false,
   "required": [
     "schemaVersion",
+    "reportType",
+    "producer",
+    "producerVersion",
+    "sourceMode",
+    "releaseSessionId",
     "releaseVersion",
     "sourceMainSha",
     "releaseCandidateSha",
@@ -36,6 +41,11 @@
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
+    "reportType": { "const": "release-manifest" },
+    "producer": { "const": "projectai-release-tool" },
+    "producerVersion": { "const": "b3-c1-v3" },
+    "sourceMode": { "enum": ["live-readonly", "synthetic-test"] },
+    "releaseSessionId": { "type": "string", "pattern": "^rs-[0-9a-f]{32}$" },
     "releaseVersion": { "type": "string", "pattern": "^[0-9A-Za-z._-]{1,64}$" },
     "sourceMainSha": { "$ref": "#/$defs/sha" },
     "releaseCandidateSha": { "$ref": "#/$defs/sha" },
@@ -83,10 +93,10 @@
     },
     "backupDigests": { "type": "array", "items": { "$ref": "#/$defs/digest" } },
     "rollbackImage": { "$ref": "#/$defs/digest" },
-    "rollbackCompatibility": { "enum": ["schema-forward-app-rollback", "restore-required"] },
+    "rollbackCompatibility": { "enum": ["schema-forward-app-rollback", "legacy-application-shell", "restore-required"] },
     "evidenceDigest": { "$ref": "#/$defs/digest" },
     "createdAt": { "type": "string", "format": "date-time" },
-    "createdByToolVersion": { "const": "b3-c1-v2" },
+    "createdByToolVersion": { "const": "b3-c1-v3" },
     "digest": { "$ref": "#/$defs/digest" }
   },
   "$defs": {
