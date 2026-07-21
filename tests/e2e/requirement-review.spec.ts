@@ -1,45 +1,95 @@
+import { randomUUID } from "node:crypto";
+import type { APIResponse, Page } from "@playwright/test";
+import type {
+  ProjectDocumentUploadResponse,
+  ProjectDocumentVersionsResponse,
+} from "@/types/documents";
 import { expect, test } from "./fixtures";
 import { appPath } from "./support/app-url";
+import { fictitiousText } from "./support/file-fixtures";
 
-test("需求提取失败重试后进入审核并修改后通过", async ({ page }) => {
-  await page.goto(appPath("/workflows/requirement-extraction"));
+const projectId = "project-001";
+
+function appOrigin(): string {
+  const configured = process.env.PLAYWRIGHT_BASE_URL?.trim();
+  const port = Number(process.env.PLAYWRIGHT_PORT ?? 3200);
+  return new URL(configured || `http://127.0.0.1:${port}`).origin;
+}
+
+async function responseJson<T>(response: APIResponse): Promise<T> {
+  return (await response.json()) as T;
+}
+
+async function uploadIndexedRequirementSource(page: Page, displayName: string) {
+  const response = await page.request.post(
+    appPath(`/api/projects/${projectId}/documents`),
+    {
+      headers: {
+        origin: appOrigin(),
+        "Idempotency-Key": randomUUID(),
+      },
+      multipart: {
+        file: fictitiousText(
+          "虚构-第一阶段需求依据.txt",
+          "[TEST] 项目必须在虚构上线日期前完成验收，并由项目经理确认验收记录。",
+        ),
+        displayName,
+      },
+    },
+  );
+  expect(response.status()).toBe(201);
+  const uploaded = await responseJson<ProjectDocumentUploadResponse>(response);
+
+  await expect
+    .poll(
+      async () => {
+        const versions = await page.request.get(
+          appPath(
+            `/api/projects/${projectId}/documents/${uploaded.document.id}/versions`,
+          ),
+        );
+        expect(versions.status()).toBe(200);
+        const payload = await responseJson<ProjectDocumentVersionsResponse>(
+          versions,
+        );
+        return payload.versions.find(
+          (version) => version.id === uploaded.version.id,
+        )?.ingestion.status;
+      },
+      { timeout: 45_000, intervals: [250, 500, 1_000, 2_000] },
+    )
+    .toBe("succeeded");
+}
+
+test("真实需求提取经人工编辑审核后才写入正式需求", async ({ page }) => {
+  test.setTimeout(90_000);
+  const marker = Date.now();
+  const displayName = `[TEST] 需求审核来源 ${marker}`;
+  const acceptedTitle = `[TEST] 经人工审核的需求 ${marker}`;
+  await uploadIndexedRequirementSource(page, displayName);
+
+  await page.goto(appPath(`/projects/${projectId}/requirements`));
   await page.waitForLoadState("networkidle");
-  await expect(page.getByRole("heading", { name: "配置需求提取" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "需求提取与审核" }),
+  ).toBeVisible();
 
-  const mockDocument = page.getByRole("checkbox", {
-    name: /北美旗舰店 AI 互动活动_当前需求说明\.docx/,
+  await page.getByRole("checkbox", { name: new RegExp(displayName) }).check();
+  await page.getByRole("button", { name: "生成草稿" }).click();
+  await expect(page.getByRole("status")).toContainText("已生成 1 条草稿", {
+    timeout: 20_000,
   });
-  await expect(mockDocument).toBeChecked();
-  await mockDocument.uncheck();
-  await expect(mockDocument).not.toBeChecked();
-  await mockDocument.check();
 
-  await page.getByRole("button", { name: "开始执行" }).click();
-  const workflow = page.getByRole("list", { name: "工作流执行步骤" });
-  await expect(workflow.getByText("执行中").first()).toBeVisible({ timeout: 3_000 });
+  const draft = page.locator("article").filter({ hasText: displayName }).first();
+  await expect(draft).toBeVisible();
+  await draft.locator('input:not([type="checkbox"])').fill(acceptedTitle);
+  await draft
+    .locator("textarea")
+    .fill("[TEST] 已由项目经理核对来源并补充可验收描述。");
+  await draft.getByRole("button", { name: "接受" }).click();
 
-  await expect(page.getByText("执行遇到可恢复错误")).toBeVisible({ timeout: 15_000 });
-  await expect(workflow.getByRole("listitem").filter({ hasText: "AI 提取需求" })).toContainText("需要重试");
-  await page.getByRole("button", { name: "从此步骤重试" }).click();
-
-  await expect(page.getByText("AI 处理完成，等待人工审核")).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText("审核任务 REV-240712 已创建")).toBeVisible();
-  await page.getByRole("button", { name: /进入审核中心/ }).click();
-
-  await expect(page).toHaveURL(/\/reviews$/);
-  await expect(page.getByRole("heading", { name: "审核中心" })).toBeVisible();
-  const reviewTask = page.getByRole("button").filter({ hasText: "客户需求确认稿 v1.3 · 需求提取" });
-  await expect(reviewTask).toBeVisible();
-  await reviewTask.click();
-
-  const content = page.getByLabel("结构化内容");
-  await expect(content).toBeVisible();
-  await content.fill(`${await content.inputValue()}\n\nE2E 修改：补充失败重试后的验收描述。`);
-  await page.getByLabel("审核备注").fill("E2E 审核：已核对来源，补充失败重试说明后通过。");
-  await page.getByRole("button", { name: "修改后通过", exact: true }).click();
-
-  await expect(page.getByText("修改后通过，已保留原始版本与差异记录")).toBeVisible();
-  await page.getByRole("button", { name: "已通过", exact: true }).click();
-  const approvedTask = page.getByRole("button").filter({ hasText: "客户需求确认稿 v1.3 · 需求提取" });
-  await expect(approvedTask).toContainText("修改后通过");
+  await expect(page.getByRole("status")).toContainText(
+    "草稿已人工确认并生成正式需求",
+  );
+  await expect(page.getByText(acceptedTitle, { exact: true })).toBeVisible();
 });

@@ -39,10 +39,18 @@ test.describe("Project Manager 工作管理闭环", () => {
     await expect(page.getByRole("status")).toContainText("周报已发布");
     await expect(page.getByText(/^v\d+$/).first()).toBeVisible();
 
-    const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("link", { name: "Markdown Export" }).first().click();
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^projectai-weekly-v\d+\.md$/);
+    const exportLink = page
+      .getByRole("link", { name: "Markdown Export" })
+      .first();
+    const exportHref = await exportLink.getAttribute("href");
+    expect(exportHref).toBeTruthy();
+    const exportResponse = await page.request.get(exportHref!);
+    expect(exportResponse.status()).toBe(200);
+    expect(exportResponse.headers()["content-type"]).toContain("text/markdown");
+    expect(exportResponse.headers()["content-disposition"]).toMatch(
+      /attachment; filename="projectai-weekly-v\d+\.md"/,
+    );
+    expect(await exportResponse.text()).toMatch(/^# ProjectAI 周报/m);
 
     await page.goto(appPath("/projects/project-001/audit"));
     await page.waitForLoadState("networkidle");

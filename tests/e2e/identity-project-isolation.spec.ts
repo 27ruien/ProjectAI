@@ -7,6 +7,7 @@ import { appPath } from "./support/app-url";
 const projectA = { id: "project-001", name: "北美旗舰店 AI 互动活动" };
 const projectB = { id: "project-002", name: "品牌官网重构" };
 const projectC = { id: "project-003", name: "会员系统升级" };
+const projectD = { id: "project-004", name: "其他部门隔离验证项目" };
 
 async function reviewScreenshot(page: Page, name: string) {
   if (process.env.PLAYWRIGHT_REVIEW_ARTIFACTS !== "1") return;
@@ -83,7 +84,9 @@ test.describe("system_admin 项目范围", () => {
     const response = await page.request.get(appPath("/api/projects"));
     expect(response.status()).toBe(200);
     const ids = new Set(projectRows(await response.json()).map((project) => project.id));
-    expect(ids).toEqual(new Set([projectA.id, projectB.id, projectC.id]));
+    expect(ids).toEqual(
+      new Set([projectA.id, projectB.id, projectC.id, projectD.id]),
+    );
   });
 });
 
@@ -96,6 +99,7 @@ test.describe("Manager A 项目隔离", () => {
     await expect(page.getByText(projectA.name, { exact: true })).toBeVisible();
     await expect(page.getByText(projectB.name, { exact: true })).toHaveCount(0);
     await expect(page.getByText(projectC.name, { exact: true })).toHaveCount(0);
+    await expect(page.getByText(projectD.name, { exact: true })).toHaveCount(0);
     await reviewScreenshot(page, "projects-manager-a.png");
 
     const response = await page.request.get(appPath("/api/projects"));
@@ -104,6 +108,7 @@ test.describe("Manager A 项目隔离", () => {
     expect(ids.has(projectA.id)).toBeTruthy();
     expect(ids.has(projectB.id)).toBeFalsy();
     expect(ids.has(projectC.id)).toBeFalsy();
+    expect(ids.has(projectD.id)).toBeFalsy();
   });
 
   test("项目 A 概览经过服务端授权后可读", async ({ page }) => {
