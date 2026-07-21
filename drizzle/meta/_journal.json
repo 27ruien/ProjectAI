@@ -92,6 +92,13 @@
       "when": 1784655991487,
       "tag": "0012_parallel_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1784657651894,
+      "tag": "0013_knowledge_space_scope_guard",
+      "breakpoints": true
     }
   ]
 }

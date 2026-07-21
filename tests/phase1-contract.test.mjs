@@ -8,6 +8,7 @@ const source = (path) => readFile(new URL(path, root), "utf8");
 describe("Phase 1 organization and knowledge authorization contract", () => {
   it("commits the complete Round 1 data model and compatibility backfill", async () => {
     const migration = await source("drizzle/0008_material_maggott.sql");
+    const scopeGuard = await source("drizzle/0013_knowledge_space_scope_guard.sql");
     for (const table of [
       "organizations",
       "organization_members",
@@ -26,6 +27,8 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
     assert.match(migration, /UPDATE "project_documents"[\s\S]+"knowledge_space_id"/);
     assert.match(migration, /projects_default_knowledge_space_trigger/);
     assert.match(migration, /project_documents_knowledge_space_trigger/);
+    assert.match(scopeGuard, /project_documents_scope_guard_trigger/);
+    assert.match(scopeGuard, /space_department_id IS DISTINCT FROM source_department_id/);
   });
 
   it("uses one database authorization scope for lexical, vector, downloads and citations", async () => {

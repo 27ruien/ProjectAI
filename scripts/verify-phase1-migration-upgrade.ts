@@ -66,6 +66,7 @@ async function main(): Promise<void> {
         "0010_steep_squadron_supreme.sql",
         "0011_giant_living_lightning.sql",
         "0012_parallel_stellaris.sql",
+        "0013_knowledge_space_scope_guard.sql",
       ]) {
         await applyMigration(upgrade, filename);
       }
@@ -87,6 +88,7 @@ async function main(): Promise<void> {
       weekly_reports_table: string | null;
       management_ai_executions_table: string | null;
       requirement_skill_column: string | null;
+      scope_guard_trigger_count: string;
     }>(`
       select
         (select count(*)::text from projects
@@ -124,6 +126,12 @@ async function main(): Promise<void> {
             and table_name = 'requirement_extraction_runs'
             and column_name = 'skill_id'
         ) as requirement_skill_column
+        ,(
+          select count(*)::text from pg_trigger
+          where tgrelid = 'project_documents'::regclass
+            and tgname = 'project_documents_scope_guard_trigger'
+            and not tgisinternal
+        ) as scope_guard_trigger_count
     `);
     const row = verified.rows[0];
     if (
@@ -139,14 +147,40 @@ async function main(): Promise<void> {
       row.weekly_reports_table !== "weekly_report_versions" ||
       row.management_ai_executions_table !==
         "project_management_ai_executions" ||
-      row.requirement_skill_column !== "skill_id"
+      row.requirement_skill_column !== "skill_id" ||
+      row.scope_guard_trigger_count !== "1"
     ) {
       throw new Error(
         `Phase 1 non-empty upgrade contract failed: ${JSON.stringify(row)}`,
       );
     }
+    await upgrade.query(`
+      insert into knowledge_spaces (
+        id, organization_id, department_id, space_type, visibility, name, created_by
+      ) values (
+        'phase1-upgrade-other-department-space', 'org-legacy-default',
+        'dept-other-test', 'department', 'department_shared',
+        'Other Department Space', 'phase1-upgrade-user'
+      )
+    `);
+    let rejectedInvalidScope = false;
+    try {
+      await upgrade.query(
+        `update project_documents set knowledge_space_id = $1 where id = $2`,
+        ["phase1-upgrade-other-department-space", "phase1-upgrade-document"],
+      );
+    } catch (error) {
+      rejectedInvalidScope =
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "23514";
+    }
+    if (!rejectedInvalidScope) {
+      throw new Error("Phase 1 knowledge-space scope guard accepted cross-department data");
+    }
     process.stdout.write(
-      "Non-empty 0007 to 0012 Phase 1 migration upgrade verified.\n",
+      "Non-empty 0007 to 0013 Phase 1 migration upgrade verified.\n",
     );
   } finally {
     if (upgrade) await upgrade.end();
