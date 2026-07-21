@@ -111,7 +111,7 @@ async function main(): Promise<void> {
         (
           select column_name from information_schema.columns
           where table_schema = 'public'
-            and table_name = 'ai_assistant_executions'
+            and table_name = 'ai_executions'
             and column_name = 'source_selection_digest'
         ) as source_selection_column,
         to_regclass('public.action_items')::text as action_items_table,
