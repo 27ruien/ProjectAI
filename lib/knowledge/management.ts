@@ -98,53 +98,50 @@ async function canMountKnowledgeSpace(input: {
   space: typeof knowledgeSpace.$inferSelect;
   db: DatabaseExecutor;
 }): Promise<boolean> {
-  const [[orgMembership], [deptMembership], [spaceMembership], grants] =
-    await Promise.all([
-      input.db
+  const [orgMembership] = await input.db
+    .select()
+    .from(organizationMember)
+    .where(
+      and(
+        eq(organizationMember.organizationId, input.target.organizationId),
+        eq(organizationMember.userId, input.principal.user.id),
+        eq(organizationMember.isActive, true),
+      ),
+    )
+    .limit(1);
+  const [deptMembership] = input.target.departmentId
+    ? await input.db
         .select()
-        .from(organizationMember)
+        .from(departmentMember)
         .where(
           and(
-            eq(organizationMember.organizationId, input.target.organizationId),
-            eq(organizationMember.userId, input.principal.user.id),
-            eq(organizationMember.isActive, true),
+            eq(departmentMember.departmentId, input.target.departmentId),
+            eq(departmentMember.userId, input.principal.user.id),
+            eq(departmentMember.isActive, true),
           ),
         )
-        .limit(1),
-      input.target.departmentId
-        ? input.db
-            .select()
-            .from(departmentMember)
-            .where(
-              and(
-                eq(departmentMember.departmentId, input.target.departmentId),
-                eq(departmentMember.userId, input.principal.user.id),
-                eq(departmentMember.isActive, true),
-              ),
-            )
-            .limit(1)
-        : Promise.resolve([]),
-      input.db
-        .select()
-        .from(knowledgeSpaceMember)
-        .where(
-          and(
-            eq(knowledgeSpaceMember.knowledgeSpaceId, input.space.id),
-            eq(knowledgeSpaceMember.userId, input.principal.user.id),
-            eq(knowledgeSpaceMember.isActive, true),
-          ),
-        )
-        .limit(1),
-      input.db
-        .select()
-        .from(knowledgeSpaceGrant)
-        .where(
-          and(
-            eq(knowledgeSpaceGrant.knowledgeSpaceId, input.space.id),
-            eq(knowledgeSpaceGrant.permission, "view"),
-          ),
-        ),
-    ]);
+        .limit(1)
+    : [];
+  const [spaceMembership] = await input.db
+    .select()
+    .from(knowledgeSpaceMember)
+    .where(
+      and(
+        eq(knowledgeSpaceMember.knowledgeSpaceId, input.space.id),
+        eq(knowledgeSpaceMember.userId, input.principal.user.id),
+        eq(knowledgeSpaceMember.isActive, true),
+      ),
+    )
+    .limit(1);
+  const grants = await input.db
+    .select()
+    .from(knowledgeSpaceGrant)
+    .where(
+      and(
+        eq(knowledgeSpaceGrant.knowledgeSpaceId, input.space.id),
+        eq(knowledgeSpaceGrant.permission, "view"),
+      ),
+    );
   const roles = new Set<string>(
     [input.target.projectRole, orgMembership?.role, deptMembership?.role].filter(
       Boolean,
@@ -574,6 +571,10 @@ export async function listUploadableKnowledgeSpaces(input: {
           )
           or (
             upload_grant.subject_type = 'role'
+            and (
+              ${knowledgeSpace.departmentId} is null
+              or ${knowledgeSpace.departmentId} = ${target.departmentId}
+            )
             and (
               upload_grant.subject_id = ${target.projectRole}
               or exists (
