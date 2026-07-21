@@ -60,9 +60,9 @@ export function RequirementsPage({ project }: { project: AuthorizedProjectSummar
   const [phase, setPhase] = useState<"loading" | "ready" | "working" | "error">("loading");
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options?: { preserveFeedback?: boolean }) => {
     setPhase("loading");
-    setFeedback(null);
+    if (!options?.preserveFeedback) setFeedback(null);
     try {
       const [requirements, documentList] = await Promise.all([
         projectManagementRequest<RequirementPayload>(`/api/projects/${encodeURIComponent(project.id)}/requirements`),
@@ -97,7 +97,7 @@ export function RequirementsPage({ project }: { project: AuthorizedProjectSummar
         { documentIds: selectedDocuments, idempotencyKey: crypto.randomUUID() },
       );
       setFeedback(`已生成 ${result.drafts.length} 条草稿，正式需求尚未写入。`);
-      await load();
+      await load({ preserveFeedback: true });
     } catch (error) {
       setFeedback(errorMessage(error));
       setPhase("ready");
@@ -120,7 +120,7 @@ export function RequirementsPage({ project }: { project: AuthorizedProjectSummar
     try {
       await review(draft, decision);
       setFeedback(decision === "reject" ? "草稿已拒绝，未生成正式需求。" : "草稿已人工确认并生成正式需求。");
-      await load();
+      await load({ preserveFeedback: true });
     } catch (error) {
       setFeedback(errorMessage(error));
       setPhase("ready");
@@ -136,7 +136,7 @@ export function RequirementsPage({ project }: { project: AuthorizedProjectSummar
       for (const draft of targets) await review(draft, decision);
       setSelectedDrafts([]);
       setFeedback(`已完成 ${targets.length} 条草稿的人工${decision === "accept" ? "接受" : "拒绝"}。`);
-      await load();
+      await load({ preserveFeedback: true });
     } catch (error) {
       setFeedback(errorMessage(error));
       setPhase("ready");
