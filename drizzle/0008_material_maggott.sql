@@ -482,7 +482,7 @@ WITH target_context AS (
 		cd.document_id,
 		CASE requested_permission
 			WHEN 'view' THEN cd.project_role IS NOT NULL
-			WHEN 'download' THEN cd.project_role IN ('project_manager', 'project_member')
+			WHEN 'download' THEN cd.project_role IS NOT NULL
 			WHEN 'upload' THEN cd.space_project_id = cd.target_project_id
 				AND cd.project_role IN ('project_manager', 'project_member')
 			WHEN 'edit_metadata' THEN cd.space_project_id = cd.target_project_id
