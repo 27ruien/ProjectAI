@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "bundleType": "production-authorization-claim-dependencies",
+  "claimHelperPath": "/srv/projectai/scripts/release/production-authorization-claim.mjs",
+  "trustContractPath": "/srv/projectai/release/production-rollout-trust.json",
+  "publicKeySha256": "sha256:957296b2fd6b9c4a744fd113f851e6de65f556789d6a0351fd2e6a258e903438",
+  "dependencies": [
+    {
+      "path": "/srv/projectai/scripts/release/contract.mjs",
+      "sha256": "sha256:f0d3a6d11bcfe579b61f645d0d584a434cdf63f0f8216c3994a1be8d4a7a98f2"
+    },
+    {
+      "path": "/srv/projectai/scripts/release/production-rollout-contract.mjs",
+      "sha256": "sha256:da92071990366279380fe77f5a0285e0e39db90af6e55ad7e6fbcadc7bbd6f45"
+    },
+    {
+      "path": "/srv/projectai/scripts/release/production-rollout-trust.mjs",
+      "sha256": "sha256:76d144c287c534f7ff3eca7358d62052fac2b7e464aeff81554864545568f9c2"
+    }
+  ]
+}

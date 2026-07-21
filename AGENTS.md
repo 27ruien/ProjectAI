@@ -118,6 +118,10 @@
 
 - B3-C2A 只开发和隔离演练 Production Rollout Executor；不得部署、迁移、重启或修改 Production，不得重新部署 Staging。正式上线属于独立 B3-C2B。
 - Production Apply 默认硬拒绝。正式执行必须同时通过独立 Ed25519 签名 Authorization、Release Session/SHA/App 与 db-tools Image/Baseline/Go-No-Go/Phase 绑定、最长 60 分钟有效期、前置 Phase 报告和未漂移的只读 Production Inventory。
+- Production 只信任 `/srv/projectai/authorization/production-rollout-public-key.pem` 与受审查 Fingerprint；不得接受 Caller Key。Authorization 只能授权一个 Phase，必须匹配 root-owned Marker，并通过 Digest-linked used-authorizations Journal 防重放。
+- Apply 只允许进入 `awaiting_verification`；只有工具自行采集新鲜 live Inventory 与 Phase 状态的 `production:verify` 才能写 `succeeded`。Rollback 同样必须经过 `awaiting_rollback_verification`，且严格按最高 Phase 倒序。
+- App 与 Embedding Worker可连接独立 Egress；PostgreSQL、MinIO、Document Worker、Migration 等不得连接 Egress。Document Worker必须获得 Embedding Flag/Profile/Dimensions，但不得获得 Qwen Secret。
+- Production Apply 固定 CWD `/srv/projectai`、绝对 Compose 路径和 Manifest Image Digest，忽略 Caller Image Env。Lock 必须具备 Lease/Heartbeat/并发所有权；过期或 Dead PID Lock 只能显式 Review/Clear。Phase 6 后必须经 Finalize 门禁才能释放 Lock。
 - Phase 0–6 必须逐个执行、逐个停止并生成 Digest 报告；禁止一条命令自动跑完全部 Phase，禁止 `docker compose down`，禁止自动覆盖未知 Lock 或删除业务数据/向量。
 - 固定 Deployment Lock 为 `/srv/projectai/.production-rollout-lock`；Journal 为 `/srv/projectai/releases/<release-session-id>/journal.jsonl`，必须 append-only、Digest 链接、支持 Status/Resume/Rollback，无法判断时返回 `PRODUCTION_ROLLOUT_STATE_UNKNOWN`。
 - Production Compose 必须固定 Project/Container/Network/Volume、immutable Image、无 PostgreSQL/MinIO 公网端口、最小 Secret Scope、Health/Restart/Resource/Log 限制。Phase 0–2 不得要求 Qwen Secret；Phase 3 只检查 Secret 元数据且不得读取或输出内容。

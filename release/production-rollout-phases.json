@@ -1,8 +1,33 @@
 {
   "schemaVersion": 1,
-  "producerVersion": "b3-c2-v1",
+  "producerVersion": "b3-c2-v2",
   "lockPath": "/srv/projectai/.production-rollout-lock",
   "journalRoot": "/srv/projectai/releases",
+  "trustContract": "release/production-rollout-trust.json",
+  "authorizationKeyPath": "/srv/projectai/authorization/production-rollout-public-key.pem",
+  "authorizationMarkerPath": "/srv/projectai/authorization/rollout-enabled.json",
+  "authorizationClaimHelperPath": "/srv/projectai/scripts/release/production-authorization-claim.mjs",
+  "authorizationClaimBundlePath": "/srv/projectai/release/production-authorization-claim-bundle.json",
+  "authorizationActions": [
+    "apply",
+    "resume",
+    "rollback",
+    "finalize",
+    "lock-clear",
+    "image-transfer"
+  ],
+  "states": [
+    "not_started",
+    "authorized",
+    "running",
+    "awaiting_verification",
+    "succeeded",
+    "failed",
+    "awaiting_rollback_verification",
+    "rolled_back",
+    "rollback_failed",
+    "blocked"
+  ],
   "phases": [
     {
       "phase": 0,

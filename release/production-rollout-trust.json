@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "ed25519",
+  "fingerprintEncoding": "spki-der-sha256",
+  "publicKeySha256": "sha256:957296b2fd6b9c4a744fd113f851e6de65f556789d6a0351fd2e6a258e903438",
+  "productionKeyPath": "/srv/projectai/authorization/production-rollout-public-key.pem",
+  "productionMarkerPath": "/srv/projectai/authorization/rollout-enabled.json",
+  "productionClaimHelperPath": "/srv/projectai/scripts/release/production-authorization-claim.mjs",
+  "productionClaimHelperSha256": "sha256:632de6435594ef46ef37537931e1669f1d4b8ec510a321596664ba4ed134fbde",
+  "productionClaimBundlePath": "/srv/projectai/release/production-authorization-claim-bundle.json",
+  "productionClaimBundleSha256": "sha256:d7a9bde693a4b7357784e72d006afa443bb3d14582db2c9364fef2cd9d2e2018"
+}

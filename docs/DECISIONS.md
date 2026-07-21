@@ -256,7 +256,14 @@
 ## DEC-021 — B3-C2A 使用签名授权和逐 Phase 执行
 
 - 状态：Accepted。
-- 决策：B3-C2A 只开发 Rollout Executor，不执行 Production。formal Authorization 使用 Ed25519 签名并绑定 Session/SHA/App 与 db-tools Image/Baseline/Go-No-Go/Phase/过期时间；本阶段不生成 formal Authorization。
+- 决策：B3-C2A 只开发 Rollout Executor，不执行 Production。formal Authorization 使用 Ed25519 签名并绑定 Session/SHA/App 与 db-tools Image/Baseline/Go-No-Go/Phase/Action/过期时间；Action 固定为 `apply`、`resume`、`rollback`、`finalize`、`lock-clear` 或 `image-transfer`，本阶段不生成 formal Authorization。
 - 执行：Phase 0–6 独立调用、独立报告、非零观察窗口和前置报告；状态保存在原子 Lock 与 Digest Journal，支持 Status/Resume/Rollback，禁止一键全阶段和 `docker compose down`。
 - 原因：JSON 布尔值和可重算 Digest 不能代表独立操作授权；签名、短有效期、阶段范围和实时基线共同降低误操作与重放风险。
 - 范围：C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling、Agent Execution 未开始。正式变更属于 B3-C2B。
+
+## DEC-022 — Production Trust、Verification 与 Egress 必须独立固定
+
+- 状态：Accepted。
+- 决策：Production 不接受 Caller Key/Verification/Image Env；只使用 root-owned 固定 Key/Marker、受审查 Fingerprint、工具实时 Inventory 和 Manifest Image。每个 Authorization 只授权一个 Phase/Action，并在任何 rollout 副作用前发布不可覆盖、逐 Authorization 的原子 claim；并发失败者固定返回 `already_consumed`。Replay Journal 另行以 owner/mode/no-symlink/单链接、完整 Digest chain、单次 append、文件与目录 `fsync` 保护；claim 后 append 中断由下一次 replay 在同一互斥区补齐，dead-PID 或不确定 mutex 永不自动删除。Image Transfer 只能调用固定路径、固定 Digest 的远端 helper，helper 在动态加载前验证完整依赖 bundle，并且调用方必须验证结构化 claim receipt。
+- 执行：Mutation 与 Verify 分离，Rollback 必须倒序且另行验证；Lock 采用完整文件 no-replace 发布，Acquire/Update/Release/Clear 共用固定 lifecycle guard 目录，预先 fsync 的完整 metadata 以 hard-link no-replace 取得 guard 所有权，只有空目录可安全复用，完整 guard 只能 rename 为永久 `guardId + Digest` receipt，禁止固定路径 unlink；非空未知目录或损坏 metadata 失败关闭且不得覆盖。CAS/Release 精确绑定 Session、Lock ID、轮换 Lease、PID/hostname/UID 与 Digest，并在临界区内重新采样 Lease/Heartbeat 时间；Release 持 guard 到 exact unlink + directory fsync，长命令持续 Heartbeat，stale Lock/orphan guard 只能 review + signed clear，clear→reacquire 中断可由 Phase/Verify/Rollback/Finalize reconcile，Phase 0 也必须保锁到 rollback verification。Phase Journal 使用 previous-Digest append claim 防并发分叉；claim-before-append 中断仅在同主机同 UID、超时且 PID 确认死亡时，通过固定 recovery guard 补写 claim 内唯一事件，guard 同样只可转存为永久 Digest receipt，等待恢复时必须重新采样时钟。补写其他事件或发现 tail 前进后必须返回 `PRODUCTION_ROLLOUT_STATE_CHANGED`，禁止把旧快照决策透明重链；Finalize 两条 reacquire 分支在 tail 确认变化时只能 CAS 领取并释放本次刚创建的精确 idle Lock，append 状态未知时必须保留该 Lock 供后续 reconcile，避免 orphan claim 补出指向不存在 Lock 的事件。Finalize 只有在七份 Verification Report 与 Journal Digest 对齐、最终 live Inventory/七类 active count/Manifest App 与双 Worker Image 全部通过后，才按 `prepared → exact release → completed` 两阶段完成；恢复还必须显式确认超时且 dead-owner。网络只允许 App/Embedding Worker加入 Egress。
+- 原因：调用者可写参数、同 Session 文件锁、手写通过 JSON 和纯 internal 网络分别造成授权绕过、并发误判、虚假成功与 Provider 不可达风险。

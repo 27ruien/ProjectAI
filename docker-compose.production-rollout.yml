@@ -61,6 +61,7 @@ services:
       - "127.0.0.1:3100:3000"
     networks:
       - projectai-production-internal
+      - projectai-production-egress
     depends_on:
       projectai-postgres:
         condition: service_healthy
@@ -92,6 +93,8 @@ services:
       - path: /srv/projectai/.env.storage-production
         required: true
       - path: /srv/projectai/.env.document-production
+        required: true
+      - path: /srv/projectai/.env.embedding-production
         required: true
     environment:
       <<: *document-environment
@@ -132,6 +135,7 @@ services:
       NEXT_PUBLIC_APP_ENV: production
     networks:
       - projectai-production-internal
+      - projectai-production-egress
     depends_on:
       projectai-postgres:
         condition: service_healthy
@@ -276,6 +280,8 @@ networks:
   projectai-production-internal:
     name: projectai-production-internal
     internal: true
+  projectai-production-egress:
+    name: projectai-production-egress
 
 volumes:
   projectai-production-postgres:

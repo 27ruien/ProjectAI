@@ -91,7 +91,7 @@ for (const filename of releaseReportFiles) {
   } catch {
     throw new Error(`Release report companion JSON is invalid: ${jsonFilename}`);
   }
-  if (report.producerVersion === "b3-c2-v1") {
+  if (report.producerVersion === "b3-c2-v2") {
     if (
       report.producer !== "projectai-release-tool" ||
       !/^production-[a-z0-9-]+$/.test(report.reportType) ||

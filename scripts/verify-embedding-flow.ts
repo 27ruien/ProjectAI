@@ -20,7 +20,11 @@ import {
 
 const prepare = process.argv.includes("--prepare");
 const verify = process.argv.includes("--verify");
-assert(prepare !== verify, "Select exactly one Embedding smoke mode.");
+const live = process.argv.includes("--live");
+assert(
+  [prepare, verify, live].filter(Boolean).length === 1,
+  "Select exactly one Embedding smoke mode.",
+);
 
 const environment = documentVerificationEnvironment();
 const runId = requiredEnvironment("EMBEDDING_SMOKE_RUN_ID");
@@ -205,6 +209,37 @@ try {
       })}\n`,
     );
   } else {
+    if (live) {
+      await cleanupAll();
+      managerA = await signIn({
+        environment,
+        email: managerAEmail,
+        password: managerAPassword,
+        userAgent: managerAUserAgent,
+      });
+      managerB = await signIn({
+        environment,
+        email: managerBEmail,
+        password: managerBPassword,
+        userAgent: managerBUserAgent,
+      });
+      const first = await uploadFixture({
+        session: managerA,
+        projectId: environment.projectAId,
+        label: "Project-A-Chinese",
+        text: "这是完全虚构的向量验收资料：灯塔计划的里程碑日期是十月十五日。",
+      });
+      const second = await uploadFixture({
+        session: managerB,
+        projectId: environment.projectBId,
+        label: "Project-B-Mixed",
+        text: "Project AI 虚构 mixed-language 验收：beta milestone 是 November 20，状态为 ready ✅。",
+      });
+      await Promise.all([
+        waitForIngestion(first.document.id, first.version.id),
+        waitForIngestion(second.document.id, second.version.id),
+      ]);
+    }
     const initialRows = await fixtureRows();
     assert(initialRows.length === 2, "Prepared Embedding fixtures are missing.");
     const projectA = initialRows.find((row) => row.project_id === environment.projectAId);
@@ -214,8 +249,13 @@ try {
       waitForEmbedding(projectA.document_id, projectA.version_id),
       waitForEmbedding(projectB.document_id, projectB.version_id),
     ]);
+    const newDocumentAutoEnqueue = [jobA, jobB].every(
+      (job) => job.provider_call_count > 0 && job.completed_chunk_count === job.chunk_count,
+    );
     assert(
-      Number(jobA.input_token_count) > 0 && Number(jobB.input_token_count) > 0,
+      newDocumentAutoEnqueue &&
+        Number(jobA.input_token_count) > 0 &&
+        Number(jobB.input_token_count) > 0,
       "Real Embedding Provider Usage was not persisted.",
     );
     const vectorState = await getPool().query<{
@@ -246,18 +286,20 @@ try {
        order by j.project_id`,
       [[jobA.id, jobB.id], EMBEDDING_BUDGET_RULE_VERSION],
     );
-    assert(
+    const vectorMetadataVerified =
       vectorState.rows.length === 2 &&
-        vectorState.rows.every(
-          (row) =>
-            row.vector_count > 0 &&
-            row.valid_dimensions &&
-            row.model_valid &&
-            row.batch_size_valid &&
-            row.cost_unestimated &&
-            row.reservation_covers_usage &&
-            row.budget_rule_valid,
-        ),
+      vectorState.rows.every(
+        (row) =>
+          row.vector_count > 0 &&
+          row.valid_dimensions &&
+          row.model_valid &&
+          row.batch_size_valid &&
+          row.cost_unestimated &&
+          row.reservation_covers_usage &&
+          row.budget_rule_valid,
+      );
+    assert(
+      vectorMetadataVerified,
       "Stored Embedding metadata failed validation.",
     );
     const scopeProbe = await getPool().query<{
@@ -281,10 +323,12 @@ try {
        limit 5`,
       [environment.projectAId, projectA.version_id],
     );
-    assert(
+    const exactScopeProbe =
       scopeProbe.rows.length > 0 &&
-        scopeProbe.rows.every((row) => row.project_id === environment.projectAId) &&
-        Math.abs(scopeProbe.rows[0]!.distance) < 1e-9,
+      scopeProbe.rows.every((row) => row.project_id === environment.projectAId) &&
+      Math.abs(scopeProbe.rows[0]!.distance) < 1e-9;
+    assert(
+      exactScopeProbe,
       "Exact vector scope Probe crossed the project boundary or missed itself.",
     );
 
@@ -334,9 +378,10 @@ try {
       limit: 1,
       apply: true,
     });
-    assert(replayBackfill.enqueuedJobs === 0, "Backfill replay was not idempotent.");
+    const backfillIdempotent = replayBackfill.enqueuedJobs === 0;
+    assert(backfillIdempotent, "Backfill replay was not idempotent.");
 
-    managerA = await signIn({
+    managerA ??= await signIn({
       environment,
       email: managerAEmail,
       password: managerAPassword,
@@ -368,10 +413,12 @@ try {
        where document_id = $3`,
       [projectA.version_id, versionTwo.version.id, projectA.document_id],
     );
-    assert(
+    const oldVersionExcluded =
       versionValidity.rows[0]?.old_current === 0 &&
-        Number(versionValidity.rows[0]?.old_invalid) > 0 &&
-        Number(versionValidity.rows[0]?.new_current) > 0,
+      Number(versionValidity.rows[0]?.old_invalid) > 0 &&
+      Number(versionValidity.rows[0]?.new_current) > 0;
+    assert(
+      oldVersionExcluded,
       "Old and current version Embedding validity is incorrect.",
     );
     const batchCountAfter = await getPool().query<{ count: number }>(
@@ -392,18 +439,30 @@ try {
        from document_embedding_jobs
        where status in ('pending', 'running')`,
     );
-    assert(pending.rows[0]?.count === 0, "Embedding queue is not idle after cleanup.");
+    const cleanupComplete = pending.rows[0]?.count === 0;
+    assert(cleanupComplete, "Embedding queue is not idle after cleanup.");
+    const realProviderJobs = [jobA, jobB, incremental].filter(
+      (job) => job.provider_call_count > 0,
+    ).length;
+    const verified =
+      newDocumentAutoEnqueue &&
+      realProviderJobs === 3 &&
+      vectorMetadataVerified &&
+      exactScopeProbe &&
+      backfillIdempotent &&
+      oldVersionExcluded &&
+      cleanupComplete;
     process.stdout.write(
       `${JSON.stringify({
-        verified: true,
-        realProviderJobs: 3,
-        dimensions: 1024,
-        exactScopeProbe: true,
-        chineseAndMixedLanguageReservationVerified: true,
+        verified,
+        newDocumentAutoEnqueue,
+        realProviderJobs,
+        dimensions: vectorMetadataVerified ? 1024 : null,
+        exactScopeProbe,
+        chineseAndMixedLanguageReservationVerified: vectorMetadataVerified,
         budgetRuleVersion: EMBEDDING_BUDGET_RULE_VERSION,
-        staleLeaseRecovered: true,
-        backfillIdempotent: true,
-        oldVersionExcluded: true,
+        backfillIdempotent,
+        oldVersionExcluded,
         cleanup,
       })}\n`,
     );

@@ -139,13 +139,13 @@ test("indexes every CI Release JSON and Markdown digest with report identity", a
     ["release-database-rehearsal", "database-rehearsal", "b3-c1-v3"],
     ["release-disabled-image-rehearsal", "disabled-image", "b3-c1-v3"],
     ["release-smoke", "smoke", "b3-c1-v3"],
-    ["production-authorization-contract", "production-authorization-contract", "b3-c2-v1"],
-    ["production-phase-state-machine", "production-phase-state-machine", "b3-c2-v1"],
-    ["production-rollout-rehearsal", "production-rollout-rehearsal", "b3-c2-v1"],
-    ["production-rollout-rollback", "production-rollout-rollback", "b3-c2-v1"],
-    ["production-rollout-resume", "production-rollout-resume", "b3-c2-v1"],
-    ["production-compose-contract", "production-compose-contract", "b3-c2-v1"],
-    ["production-secret-boundary", "production-secret-boundary", "b3-c2-v1"],
+    ["production-authorization-contract", "production-authorization-contract", "b3-c2-v2"],
+    ["production-phase-state-machine", "production-phase-state-machine", "b3-c2-v2"],
+    ["production-rollout-rehearsal", "production-rollout-rehearsal", "b3-c2-v2"],
+    ["production-rollout-rollback", "production-rollout-rollback", "b3-c2-v2"],
+    ["production-rollout-resume", "production-rollout-resume", "b3-c2-v2"],
+    ["production-compose-contract", "production-compose-contract", "b3-c2-v2"],
+    ["production-secret-boundary", "production-secret-boundary", "b3-c2-v2"],
   ];
   try {
     await mkdir(path.join(root, "review-artifacts/screenshots"), { recursive: true });

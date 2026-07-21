@@ -1,13 +1,68 @@
 name: projectai-rollout-rehearsal
 
 services:
+  fake-qwen:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    command: ["node", "-e", "require('http').createServer((q,r)=>{r.end('fictional-qwen-ok')}).listen(8080,'0.0.0.0')"]
+    restart: "no"
+    networks:
+      - rollout-rehearsal-egress
+
+  app-egress-probe:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    command: ["node", "-e", "fetch('http://fake-qwen:8080').then(async r=>{if((await r.text())!=='fictional-qwen-ok')process.exit(1)}).catch(()=>process.exit(1))"]
+    restart: "no"
+    networks: [rollout-rehearsal-internal, rollout-rehearsal-egress]
+    depends_on: [fake-qwen]
+
+  embedding-egress-probe:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    command: ["node", "-e", "fetch('http://fake-qwen:8080').then(async r=>{if((await r.text())!=='fictional-qwen-ok')process.exit(1)}).catch(()=>process.exit(1))"]
+    restart: "no"
+    networks: [rollout-rehearsal-internal, rollout-rehearsal-egress]
+    depends_on: [fake-qwen]
+
+  database-no-egress-probe:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    command: ["node", "-e", "require('dns').lookup('fake-qwen',e=>process.exit(e?0:1))"]
+    restart: "no"
+    networks: [rollout-rehearsal-internal]
+
+  minio-no-egress-probe:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    command: ["node", "-e", "require('dns').lookup('fake-qwen',e=>process.exit(e?0:1))"]
+    restart: "no"
+    networks: [rollout-rehearsal-internal]
+
   rollout-probe:
     image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
     command: ["node", "-e", "setInterval(() => {}, 1000)"]
     restart: "no"
-    networks:
-      - rollout-rehearsal-internal
+    networks: [rollout-rehearsal-internal]
     volumes:
+      - rollout-rehearsal-state:/state
+    pids_limit: 64
+    mem_limit: 128m
+
+  lock-race-probe:
+    image: node:22-alpine@sha256:16e22a550f3863206a3f701448c45f7912c6896a62de43add43bb9c86130c3e2
+    entrypoint: ["node", "/workspace/scripts/release/production-lock-container-rehearsal.mjs"]
+    working_dir: /workspace
+    user: "0:0"
+    environment:
+      NODE_ENV: test
+    restart: "no"
+    network_mode: none
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./scripts/release/production-lock-container-rehearsal.mjs:/workspace/scripts/release/production-lock-container-rehearsal.mjs:ro
+      - ./scripts/release/production-rollout-contract.mjs:/workspace/scripts/release/production-rollout-contract.mjs:ro
+      - ./scripts/release/contract.mjs:/workspace/scripts/release/contract.mjs:ro
       - rollout-rehearsal-state:/state
     pids_limit: 64
     mem_limit: 128m
@@ -15,6 +70,7 @@ services:
 networks:
   rollout-rehearsal-internal:
     internal: true
+  rollout-rehearsal-egress: {}
 
 volumes:
   rollout-rehearsal-state:

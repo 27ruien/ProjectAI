@@ -22,6 +22,7 @@ import type {
 import { QwenEmbeddingProvider } from "../lib/ai/embeddings/qwen-provider";
 import { runEmbeddingWorker } from "../lib/ai/embeddings/worker";
 import { embeddingBatchReservedInputTokens } from "../lib/ai/embeddings/jobs";
+import { selectEmbeddingBackfillCandidatesWithinChunkLimit } from "../lib/ai/embeddings/operations";
 import { readFile, readdir, rm } from "node:fs/promises";
 
 const originalEnvironment = { ...process.env };
@@ -81,6 +82,53 @@ function providerResult(vectorCount = 1): EmbeddingProviderResult {
     dispatchClassification: "successful_response",
   };
 }
+
+describe("Phase 4 Backfill Chunk limit", () => {
+  it("caps cumulative missing Chunks rather than Versions or Documents", () => {
+    const candidates = [
+      {
+        projectId: "project-a",
+        documentId: "document-a",
+        versionId: "version-a",
+        createdBy: "user-a",
+        missingChunkCount: 60,
+      },
+      {
+        projectId: "project-a",
+        documentId: "document-b",
+        versionId: "version-b",
+        createdBy: "user-a",
+        missingChunkCount: 50,
+      },
+      {
+        projectId: "project-a",
+        documentId: "document-c",
+        versionId: "version-c",
+        createdBy: "user-a",
+        missingChunkCount: 40,
+      },
+      {
+        projectId: "project-a",
+        documentId: "document-d",
+        versionId: "version-d",
+        createdBy: "user-a",
+        missingChunkCount: 101,
+      },
+    ];
+    const selected = selectEmbeddingBackfillCandidatesWithinChunkLimit(
+      candidates,
+      100,
+    );
+    assert.deepEqual(
+      selected.map((candidate) => candidate.versionId),
+      ["version-a", "version-c"],
+    );
+    assert.equal(
+      selected.reduce((total, candidate) => total + candidate.missingChunkCount, 0),
+      100,
+    );
+  });
+});
 
 describe("embedding configuration and Gateway", () => {
   it("pins the read-only profile, dimensions, batch size, and fake-provider boundary", () => {

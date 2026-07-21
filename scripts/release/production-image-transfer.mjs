@@ -22,6 +22,18 @@ import {
   readJson,
   requiredOption,
 } from "./contract.mjs";
+import {
+  executeAuthorizedImageTransfer,
+} from "./production-image-transfer-sequence.mjs";
+import {
+  assertAuthorizationMarkerValue,
+  PRODUCTION_AUTHORIZATION_CLAIM_BUNDLE_PATH,
+  PRODUCTION_AUTHORIZATION_CLAIM_HELPER_PATH,
+  PRODUCTION_AUTHORIZATION_KEY_PATH,
+  PRODUCTION_ROLLOUT_MARKER_PATH,
+  PRODUCTION_TRUST_CONTRACT_PATH,
+  publicKeyFingerprint,
+} from "./production-rollout-trust.mjs";
 
 const command = process.argv[2];
 const { options } = parseArguments(process.argv.slice(3));
@@ -36,6 +48,14 @@ function run(program, args, spawnOptions = {}) {
     throw new Error(`${program} failed without a valid result.`);
   }
   return String(result.stdout ?? "").trim();
+}
+
+function runWithStatus(program, args, spawnOptions = {}) {
+  return spawnSync(program, args, {
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+    ...spawnOptions,
+  });
 }
 
 function imageMetadata(reference) {
@@ -204,16 +224,14 @@ async function transferCommand() {
       "Production image transfer kill switch is disabled.",
     );
   }
+  const remoteHost = "gridworks.cn";
+  if (options["remote-host"] !== undefined && options["remote-host"] !== remoteHost) {
+    throw new ProductionRolloutError(
+      "PRODUCTION_AUTHORIZATION_TRUST_INVALID",
+      "Production image transfer host is fixed.",
+    );
+  }
   const authorization = await readJson(options.authorization);
-  const publicKey = await readFile(
-    path.resolve(requiredOption(options, "authorization-public-key")),
-    "utf8",
-  );
-  assertProductionAuthorization(authorization, {
-    environment: "production",
-    phase: 0,
-    publicKey,
-  });
   const appArchive = path.resolve(requiredOption(options, "app-archive"));
   const toolsArchive = path.resolve(requiredOption(options, "db-tools-archive"));
   const appArchiveName = path.basename(appArchive);
@@ -252,51 +270,174 @@ async function transferCommand() {
       "Local image archive checksum does not match the transfer contract.",
     );
   }
-  const remoteHost = requiredOption(options, "remote-host");
-  if (!/^[A-Za-z0-9.-]+$/.test(remoteHost)) throw new Error("Invalid remote host.");
-  const remoteRoot = `/srv/projectai/releases/${authorization.releaseSessionId}/images`;
-  run("ssh", ["-o", "BatchMode=yes", remoteHost, "install", "-d", "-m", "0700", remoteRoot]);
-  run("scp", ["-p", "--", appArchive, toolsArchive, `${remoteHost}:${remoteRoot}/`]);
-  run("ssh", [
-    "-o",
-    "BatchMode=yes",
-    remoteHost,
-    "bash",
-    "-s",
-    "--",
-    remoteRoot,
-    appArchiveName,
-    toolsArchiveName,
-    appArchiveDigest,
-    toolsArchiveDigest,
-    appDigest,
-    toolsDigest,
-    authorization.releaseCandidateSha,
+  const trustContract = await readJson(PRODUCTION_TRUST_CONTRACT_PATH);
+  if (
+    trustContract.schemaVersion !== 1 ||
+    trustContract.algorithm !== "ed25519" ||
+    trustContract.fingerprintEncoding !== "spki-der-sha256" ||
+    trustContract.productionKeyPath !== PRODUCTION_AUTHORIZATION_KEY_PATH ||
+    trustContract.productionMarkerPath !== PRODUCTION_ROLLOUT_MARKER_PATH ||
+    trustContract.productionClaimHelperPath !== PRODUCTION_AUTHORIZATION_CLAIM_HELPER_PATH ||
+    trustContract.productionClaimBundlePath !== PRODUCTION_AUTHORIZATION_CLAIM_BUNDLE_PATH
+  ) {
+    throw new ProductionRolloutError(
+      "PRODUCTION_AUTHORIZATION_TRUST_INVALID",
+      "Reviewed Production Trust Contract is invalid.",
+    );
+  }
+  assertDigest(trustContract.publicKeySha256, "publicKeySha256");
+  assertDigest(
+    trustContract.productionClaimHelperSha256,
+    "productionClaimHelperSha256",
+  );
+  assertDigest(
+    trustContract.productionClaimBundleSha256,
+    "productionClaimBundleSha256",
+  );
+  const trustOutput = run("ssh", [
+    "-o", "BatchMode=yes", remoteHost, "bash", "-s", "--",
+    PRODUCTION_AUTHORIZATION_KEY_PATH,
+    PRODUCTION_ROLLOUT_MARKER_PATH,
+    PRODUCTION_AUTHORIZATION_CLAIM_HELPER_PATH,
+    PRODUCTION_AUTHORIZATION_CLAIM_BUNDLE_PATH,
   ], {
     input: [
       "set -Eeuo pipefail",
-      "root=$1",
-      "app=$2",
-      "tools=$3",
-      "app_archive_digest=$4",
-      "tools_archive_digest=$5",
-      "app_digest=$6",
-      "tools_digest=$7",
-      "expected_sha=$8",
-      "[[ $root == /srv/projectai/releases/rs-*/images ]]",
-      "[[ $(sha256sum \"$root/$app\" | awk '{print \"sha256:\" $1}') == \"$app_archive_digest\" ]]",
-      "[[ $(sha256sum \"$root/$tools\" | awk '{print \"sha256:\" $1}') == \"$tools_archive_digest\" ]]",
-      "docker load --input \"$root/$app\" >/dev/null",
-      "docker load --input \"$root/$tools\" >/dev/null",
-      "inspect_image() {",
-      "  local digest=$1",
-      "  local metadata",
-      "  metadata=$(docker image inspect --format '{{.Id}}|{{.Os}}|{{.Architecture}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}}|{{index .Config.Labels \"com.projectai.release.environment\"}}' \"$digest\")",
-      "  [[ $metadata == \"$digest|linux|amd64|$expected_sha|production\" ]]",
-      "}",
-      "inspect_image \"$app_digest\"",
-      "inspect_image \"$tools_digest\"",
+      "[[ $(id -u) == 0 ]]",
+      "key=$1",
+      "marker=$2",
+      "helper=$3",
+      "bundle=$4",
+      "[[ -f $key && ! -L $key && $(stat -c %u \"$key\") == 0 ]]",
+      "[[ $(stat -c %a \"$key\") =~ ^(400|444)$ ]]",
+      "[[ -f $marker && ! -L $marker && $(stat -c %u \"$marker\") == 0 ]]",
+      "[[ $(stat -c %a \"$marker\") =~ ^(400|600)$ ]]",
+      "[[ -f $helper && ! -L $helper && $(stat -c %u \"$helper\") == 0 ]]",
+      "[[ $(stat -c %a \"$helper\") =~ ^(500|555)$ ]]",
+      "[[ -f $bundle && ! -L $bundle && $(stat -c %u \"$bundle\") == 0 ]]",
+      "[[ $(stat -c %a \"$bundle\") =~ ^(400|444)$ ]]",
+      "base64 -w0 \"$key\"",
+      "printf '\\n'",
+      "base64 -w0 \"$marker\"",
+      "printf '\\n'",
+      "sha256sum \"$helper\" | awk '{print \"sha256:\" $1}'",
+      "sha256sum \"$bundle\" | awk '{print \"sha256:\" $1}'",
     ].join("\n"),
+  }).split("\n");
+  if (trustOutput.length < 4) {
+    throw new ProductionRolloutError(
+      "PRODUCTION_AUTHORIZATION_TRUST_INVALID",
+      "Remote Production Trust Anchor could not be read safely.",
+    );
+  }
+  const publicKey = Buffer.from(trustOutput[0], "base64").toString("utf8");
+  const marker = JSON.parse(Buffer.from(trustOutput[1], "base64").toString("utf8"));
+  if (
+    publicKeyFingerprint(publicKey) !== trustContract.publicKeySha256 ||
+    trustOutput[2] !== trustContract.productionClaimHelperSha256 ||
+    trustOutput[3] !== trustContract.productionClaimBundleSha256
+  ) {
+    throw new ProductionRolloutError(
+      "PRODUCTION_AUTHORIZATION_TRUST_INVALID",
+      "Remote Production Trust Anchor fingerprint is not pinned.",
+    );
+  }
+  assertProductionAuthorization(authorization, {
+    environment: "production",
+    phase: 0,
+    action: "image-transfer",
+    publicKey,
+  });
+  assertAuthorizationMarkerValue({
+    marker,
+    authorization,
+    phase: 0,
+    action: "image-transfer",
+  });
+  const remoteRoot = `/srv/projectai/releases/${authorization.releaseSessionId}/images`;
+  await executeAuthorizedImageTransfer({
+    authorization,
+    claimAuthorization: () => {
+      const claimResult = runWithStatus("ssh", [
+        "-o",
+        "BatchMode=yes",
+        remoteHost,
+        `cd /srv/projectai && exec node ${PRODUCTION_AUTHORIZATION_CLAIM_HELPER_PATH} --environment=production --phase=0 --action=image-transfer`,
+      ], {
+        input: `${JSON.stringify(authorization)}\n`,
+      });
+      if (claimResult.status === 79) {
+        throw new ProductionRolloutError(
+          "PRODUCTION_AUTHORIZATION_REPLAYED",
+          "already_consumed: Production Authorization has already been consumed.",
+        );
+      }
+      if (claimResult.status !== 0) {
+        throw new ProductionRolloutError(
+          "PRODUCTION_ROLLOUT_STATE_UNKNOWN",
+          "Production image transfer Authorization could not be claimed safely.",
+        );
+      }
+      return claimResult.stdout;
+    },
+    createRemoteDirectory: () => run("ssh", [
+      "-o",
+      "BatchMode=yes",
+      remoteHost,
+      "install",
+      "-d",
+      "-m",
+      "0700",
+      remoteRoot,
+    ]),
+    transferArchives: () => run("scp", [
+      "-p",
+      "--",
+      appArchive,
+      toolsArchive,
+      `${remoteHost}:${remoteRoot}/`,
+    ]),
+    loadAndVerifyImages: () => run("ssh", [
+      "-o",
+      "BatchMode=yes",
+      remoteHost,
+      "bash",
+      "-s",
+      "--",
+      remoteRoot,
+      appArchiveName,
+      toolsArchiveName,
+      appArchiveDigest,
+      toolsArchiveDigest,
+      appDigest,
+      toolsDigest,
+      authorization.releaseCandidateSha,
+    ], {
+      input: [
+        "set -Eeuo pipefail",
+        "root=$1",
+        "app=$2",
+        "tools=$3",
+        "app_archive_digest=$4",
+        "tools_archive_digest=$5",
+        "app_digest=$6",
+        "tools_digest=$7",
+        "expected_sha=$8",
+        "[[ $root == /srv/projectai/releases/rs-*/images ]]",
+        "[[ $(sha256sum \"$root/$app\" | awk '{print \"sha256:\" $1}') == \"$app_archive_digest\" ]]",
+        "[[ $(sha256sum \"$root/$tools\" | awk '{print \"sha256:\" $1}') == \"$tools_archive_digest\" ]]",
+        "docker load --input \"$root/$app\" >/dev/null",
+        "docker load --input \"$root/$tools\" >/dev/null",
+        "inspect_image() {",
+        "  local digest=$1",
+        "  local metadata",
+        "  metadata=$(docker image inspect --format '{{.Id}}|{{.Os}}|{{.Architecture}}|{{index .Config.Labels \"org.opencontainers.image.revision\"}}|{{index .Config.Labels \"com.projectai.release.environment\"}}' \"$digest\")",
+        "  [[ $metadata == \"$digest|linux|amd64|$expected_sha|production\" ]]",
+        "}",
+        "inspect_image \"$app_digest\"",
+        "inspect_image \"$tools_digest\"",
+      ].join("\n"),
+    }),
   });
   process.stdout.write(`${appDigest}\n`);
 }

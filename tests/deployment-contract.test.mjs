@@ -95,6 +95,15 @@ test("B3-C2A Production Compose is private, immutable, scoped, and never uses co
   assert.doesNotMatch(compose.match(/projectai-document-worker:[\s\S]+?projectai-embedding-worker:/)?.[0] ?? "", /qwen_api_key/);
   assert.match(compose, /admin policy attach admin projectai-production-files/);
   assert.match(compose, /projectai-production-files\/projects\/\*/);
+  const app = serviceBlock(compose, "projectai-app", "projectai-document-worker");
+  const document = serviceBlock(compose, "projectai-document-worker", "projectai-embedding-worker");
+  const embedding = serviceBlock(compose, "projectai-embedding-worker", "projectai-postgres");
+  assert.match(app, /projectai-production-egress/);
+  assert.match(embedding, /projectai-production-egress/);
+  assert.doesNotMatch(document, /projectai-production-egress/);
+  assert.match(document, /\.env\.embedding-production/);
+  assert.doesNotMatch(document, /qwen_api_key/);
+  assert.match(compose, /projectai-production-internal:[\s\S]+internal: true/);
   assert.match(operations, /PROJECTAI_PRODUCTION_ROLLOUT_EXECUTION_ENABLED/);
   assert.doesNotMatch(operations, /docker compose down|compose down/);
   assert.doesNotMatch(operations, /printenv|\.Config\.Env/);
