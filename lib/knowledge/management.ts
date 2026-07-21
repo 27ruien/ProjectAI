@@ -43,6 +43,72 @@ type AuditInput = {
   db: DatabaseExecutor;
 };
 
+function noMatchingSpaceViewDeny(principal: AuthenticatedPrincipal) {
+  return sql`not exists (
+    select 1
+    from knowledge_space_grants denied_space
+    where denied_space.knowledge_space_id = ${knowledgeSpace.id}
+      and denied_space.permission = 'view'
+      and denied_space.effect = 'deny'
+      and (
+        (denied_space.subject_type = 'organization'
+          and denied_space.subject_id = ${knowledgeSpace.organizationId})
+        or (denied_space.subject_type = 'user'
+          and denied_space.subject_id = ${principal.user.id})
+        or (
+          denied_space.subject_type = 'department'
+          and exists (
+            select 1 from department_members denied_space_department
+            where denied_space_department.department_id = denied_space.subject_id
+              and denied_space_department.organization_id = ${knowledgeSpace.organizationId}
+              and denied_space_department.user_id = ${principal.user.id}
+              and denied_space_department.is_active
+          )
+        )
+        or (
+          denied_space.subject_type = 'project'
+          and exists (
+            select 1
+            from project_members denied_space_project_member
+            join projects denied_space_project
+              on denied_space_project.id = denied_space_project_member.project_id
+              and denied_space_project.organization_id = ${knowledgeSpace.organizationId}
+            where denied_space_project_member.project_id = denied_space.subject_id
+              and denied_space_project_member.user_id = ${principal.user.id}
+          )
+        )
+        or (
+          denied_space.subject_type = 'role'
+          and (
+            exists (
+              select 1 from organization_members denied_space_org_role
+              where denied_space_org_role.organization_id = ${knowledgeSpace.organizationId}
+                and denied_space_org_role.user_id = ${principal.user.id}
+                and denied_space_org_role.is_active
+                and denied_space_org_role.role::text = denied_space.subject_id
+            )
+            or exists (
+              select 1 from department_members denied_space_dept_role
+              where denied_space_dept_role.organization_id = ${knowledgeSpace.organizationId}
+                and denied_space_dept_role.user_id = ${principal.user.id}
+                and denied_space_dept_role.is_active
+                and denied_space_dept_role.role::text = denied_space.subject_id
+            )
+            or exists (
+              select 1
+              from project_members denied_space_project_role
+              join projects denied_space_role_project
+                on denied_space_role_project.id = denied_space_project_role.project_id
+                and denied_space_role_project.organization_id = ${knowledgeSpace.organizationId}
+              where denied_space_project_role.user_id = ${principal.user.id}
+                and denied_space_project_role.role::text = denied_space.subject_id
+            )
+          )
+        )
+      )
+  )`;
+}
+
 async function requireValidGrantSubject(input: {
   organizationId: string;
   subjectType: GrantSubjectType;
@@ -478,7 +544,12 @@ export async function listKnowledgeAdministration(
       db
         .select()
         .from(knowledgeSpace)
-        .where(inArray(knowledgeSpace.organizationId, organizationIds))
+        .where(
+          and(
+            inArray(knowledgeSpace.organizationId, organizationIds),
+            noMatchingSpaceViewDeny(principal),
+          ),
+        )
         .orderBy(asc(knowledgeSpace.name)),
       db
         .select()
@@ -492,11 +563,14 @@ export async function listKnowledgeAdministration(
         .orderBy(sql`${permissionAudit.createdAt} desc`)
         .limit(200),
     ]);
+    const visibleSpaceIds = new Set(spaces.map((space) => space.id));
     return {
       organizations,
       departments,
       knowledgeSpaces: spaces,
-      grants,
+      grants: grants.filter((grant) =>
+        visibleSpaceIds.has(grant.knowledgeSpaceId),
+      ),
       permissionAudits,
     };
   }
@@ -569,6 +643,7 @@ export async function listKnowledgeAdministration(
     .where(
       and(
         inArray(knowledgeSpace.organizationId, organizationIds),
+        noMatchingSpaceViewDeny(principal),
         or(
           adminOrganizationIds.length
             ? inArray(knowledgeSpace.organizationId, adminOrganizationIds)

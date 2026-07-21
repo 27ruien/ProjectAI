@@ -22,6 +22,7 @@ import {
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
 import {
   createKnowledgeGrant,
+  listKnowledgeAdministration,
   listUploadableKnowledgeSpaces,
   mountProjectKnowledgeSource,
   setDocumentGrant,
@@ -269,6 +270,48 @@ describe("Phase 1 default-deny authorization matrix", () => {
       (await scope(systemAdmin, "project-001", "view")).has(privateDocumentId),
       false,
     );
+  });
+
+  it("does not serialize denied knowledge-space titles or identifiers", async () => {
+    await getDb().insert(knowledgeSpaceGrant).values([
+      {
+        id: `${prefix}viewer-space-list-deny`,
+        organizationId: "org-legacy-default",
+        knowledgeSpaceId: "ks-organization-shared-test",
+        subjectType: "user",
+        subjectId: viewer.id,
+        permission: "view",
+        effect: "deny",
+        createdBy: manager.id,
+      },
+      {
+        id: `${prefix}system-admin-space-list-deny`,
+        organizationId: "org-legacy-default",
+        knowledgeSpaceId: "ks-organization-shared-test",
+        subjectType: "user",
+        subjectId: systemAdmin.id,
+        permission: "view",
+        effect: "deny",
+        createdBy: manager.id,
+      },
+    ]);
+    for (const currentUser of [viewer, systemAdmin]) {
+      const administration = await listKnowledgeAdministration(
+        principal(currentUser),
+      );
+      assert.equal(
+        administration.knowledgeSpaces.some(
+          (space) => space.id === "ks-organization-shared-test",
+        ),
+        false,
+      );
+      assert.equal(
+        administration.grants.some(
+          (grant) => grant.knowledgeSpaceId === "ks-organization-shared-test",
+        ),
+        false,
+      );
+    }
   });
 
   it("does not let privileged membership bypass a space deny while mounting", async () => {

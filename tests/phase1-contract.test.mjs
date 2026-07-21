@@ -106,6 +106,7 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
     );
     assert.match(management, /upload_grant\.permission = 'upload'/);
     assert.match(management, /matchingGrant\("deny"\)/);
+    assert.match(management, /noMatchingSpaceViewDeny/);
     assert.match(
       management,
       /knowledgeSpace\.departmentId}[\s\S]+knowledgeSpace\.departmentId} = \$\{target\.departmentId}/,
