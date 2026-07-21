@@ -74,7 +74,11 @@ test("真实需求提取经人工编辑审核后才写入正式需求", async ({
     page.getByRole("heading", { name: "需求提取与审核" }),
   ).toBeVisible();
 
-  await page.getByRole("checkbox", { name: new RegExp(displayName) }).check();
+  await page
+    .locator("label")
+    .filter({ hasText: displayName })
+    .getByRole("checkbox")
+    .check();
   await page.getByRole("button", { name: "生成草稿" }).click();
   await expect(page.getByRole("status")).toContainText("已生成 1 条草稿", {
     timeout: 20_000,
