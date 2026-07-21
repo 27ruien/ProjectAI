@@ -6,10 +6,12 @@ import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   department,
   documentGrant,
+  auditEvent,
   knowledgeSpaceGrant,
   knowledgeSpace,
   organization,
   organizationMember,
+  permissionAudit,
   project,
   projectDocument,
   projectKnowledgeSource,
@@ -23,6 +25,7 @@ import {
   listUploadableKnowledgeSpaces,
   mountProjectKnowledgeSource,
   setDocumentGrant,
+  unmountProjectKnowledgeSource,
   upsertOrganizationMember,
 } from "../../lib/knowledge/management";
 import { KnowledgeManagementError } from "../../lib/knowledge/errors";
@@ -47,6 +50,7 @@ let systemAdmin: UserRecord;
 let viewer: UserRecord;
 let outsider: UserRecord;
 let otherDepartment: UserRecord;
+let removableSourceId: string | null = null;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -190,6 +194,13 @@ describe("Phase 1 default-deny authorization matrix", () => {
         .where(
           sql`${projectKnowledgeSource.id} = ${maliciousSourceId} or ${projectKnowledgeSource.projectId} = ${secondaryProjectId}`,
         );
+      if (removableSourceId) {
+        await tx.delete(permissionAudit).where(eq(permissionAudit.resourceId, removableSourceId));
+        await tx.delete(auditEvent).where(eq(auditEvent.entityId, removableSourceId));
+        await tx
+          .delete(projectKnowledgeSource)
+          .where(eq(projectKnowledgeSource.id, removableSourceId));
+      }
       await tx.delete(projectMember).where(eq(projectMember.projectId, secondaryProjectId));
       await tx.delete(knowledgeSpace).where(eq(knowledgeSpace.projectId, secondaryProjectId));
       await tx.delete(project).where(eq(project.id, secondaryProjectId));
@@ -286,6 +297,24 @@ describe("Phase 1 default-deny authorization matrix", () => {
   });
 
   it("does not let a project manager bypass an explicit permission-management deny", async () => {
+    const grantInput = {
+      principal: principal(manager),
+      projectId: "project-001",
+      documentId: privateDocumentId,
+      subjectType: "user" as const,
+      subjectId: viewer.id,
+      permission: "download" as const,
+      effect: "allow" as const,
+      requestHeaders: headers,
+    };
+    const firstGrant = await setDocumentGrant(grantInput);
+    const replayedGrant = await setDocumentGrant(grantInput);
+    assert.equal(replayedGrant.id, firstGrant.id);
+    await getDb().transaction(async (tx) => {
+      await tx.delete(permissionAudit).where(eq(permissionAudit.resourceId, firstGrant.id));
+      await tx.delete(auditEvent).where(eq(auditEvent.entityId, firstGrant.id));
+      await tx.delete(documentGrant).where(eq(documentGrant.id, firstGrant.id));
+    });
     await getDb().insert(documentGrant).values({
       id: `${prefix}manager-permission-deny`,
       organizationId: "org-legacy-default",
@@ -345,6 +374,31 @@ describe("Phase 1 default-deny authorization matrix", () => {
         error instanceof KnowledgeManagementError &&
         error.code === "RESOURCE_NOT_FOUND",
     );
+  });
+
+  it("lets a project manager explicitly unmount an external source with audit", async () => {
+    const mounted = await mountProjectKnowledgeSource({
+      principal: principal(manager),
+      projectId: "project-001",
+      sourceType: "knowledge_space",
+      knowledgeSpaceId: "ks-organization-shared-test",
+      requestHeaders: headers,
+    });
+    removableSourceId = mounted.id;
+    const unmounted = await unmountProjectKnowledgeSource({
+      principal: principal(manager),
+      projectId: "project-001",
+      sourceId: mounted.id,
+      requestHeaders: headers,
+    });
+    assert.equal(unmounted.isActive, false);
+    const [audit] = await getDb()
+      .select({ eventType: permissionAudit.eventType })
+      .from(permissionAudit)
+      .where(eq(permissionAudit.resourceId, mounted.id))
+      .orderBy(sql`${permissionAudit.createdAt} desc`)
+      .limit(1);
+    assert.equal(audit?.eventType, "project_knowledge_source_unmounted");
   });
 
   it("does not accept a cross-organization source even if a row is injected", async () => {

@@ -187,7 +187,7 @@ npm run retrieval:status
 
 ## 第一阶段：项目知识与管理门禁
 
-- `npm run phase1:migration-upgrade` 在非空隔离数据库执行 `0007 → 0014`，保留旧项目/文件/索引/AI 数据，验证默认知识空间回填、文档空间 Scope Trigger，以及 `system_admin` 也不能绕过匹配的显式内容 Deny。
+- `npm run phase1:migration-upgrade` 在非空隔离数据库执行 `0007 → 0015`，保留旧项目/文件/索引/AI 数据，验证默认知识空间回填、文档/项目部门 Scope Trigger，以及 `system_admin` 也不能绕过匹配的显式内容 Deny。
 - `npm run test:phase1-integration` 验证 Organization/Department/Project/Space/File 的 default deny、View/Download 分离、跨组织与跨部门隔离、受限空间、上传目的地、Deny 优先、最后管理员保护和数据库复合约束。
 - Round 2 集成验证权限感知的 Lexical/Vector/RRF/Citation 与 Requirement/Scope 人工审核；Round 3 集成验证 Action/Risk/Weekly/Dashboard/Audit/Export、Owner 归属、Dependency Cycle、不可变发布版本和项目隔离。
 - Playwright 覆盖 System/Organization/Department Admin、Project Manager/Member/Viewer、Other Department/Outsider 的可见性与写入边界。`phase1:staging-smoke` 通过公网 HTTP 另行验证真实 Worker、真实 Qwen、受限空间上传、项目挂载、AI 来源、人工审核和清理。

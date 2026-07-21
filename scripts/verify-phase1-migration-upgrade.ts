@@ -68,6 +68,7 @@ async function main(): Promise<void> {
         "0012_parallel_stellaris.sql",
         "0013_knowledge_space_scope_guard.sql",
         "0014_authorization_deny_priority.sql",
+        "0015_project_department_scope_guard.sql",
       ]) {
         await applyMigration(upgrade, filename);
       }
@@ -90,6 +91,7 @@ async function main(): Promise<void> {
       management_ai_executions_table: string | null;
       requirement_skill_column: string | null;
       scope_guard_trigger_count: string;
+      department_scope_guard_trigger_count: string;
     }>(`
       select
         (select count(*)::text from projects
@@ -133,6 +135,12 @@ async function main(): Promise<void> {
             and tgname = 'project_documents_scope_guard_trigger'
             and not tgisinternal
         ) as scope_guard_trigger_count
+        ,(
+          select count(*)::text from pg_trigger
+          where tgrelid = 'projects'::regclass
+            and tgname = 'projects_department_scope_guard_trigger'
+            and not tgisinternal
+        ) as department_scope_guard_trigger_count
     `);
     const row = verified.rows[0];
     if (
@@ -149,7 +157,8 @@ async function main(): Promise<void> {
       row.management_ai_executions_table !==
         "project_management_ai_executions" ||
       row.requirement_skill_column !== "skill_id" ||
-      row.scope_guard_trigger_count !== "1"
+      row.scope_guard_trigger_count !== "1" ||
+      row.department_scope_guard_trigger_count !== "1"
     ) {
       throw new Error(
         `Phase 1 non-empty upgrade contract failed: ${JSON.stringify(row)}`,
@@ -187,6 +196,38 @@ async function main(): Promise<void> {
       throw new Error("Phase 1 knowledge-space scope guard accepted cross-department data");
     }
     await upgrade.query(`
+      insert into knowledge_spaces (
+        id, organization_id, department_id, space_type, visibility, name, created_by
+      ) values (
+        'phase1-upgrade-current-department-space', 'org-legacy-default',
+        'dept-legacy-default', 'department', 'department_shared',
+        'Current Department Space', 'phase1-upgrade-user'
+      );
+      insert into project_knowledge_sources (
+        id, project_id, source_type, knowledge_space_id, created_by
+      ) values (
+        'phase1-upgrade-current-department-source', 'phase1-upgrade-project',
+        'knowledge_space', 'phase1-upgrade-current-department-space',
+        'phase1-upgrade-user'
+      );
+    `);
+    let rejectedDepartmentDrift = false;
+    try {
+      await upgrade.query(
+        `update projects set department_id = $1 where id = $2`,
+        ["dept-other-test", "phase1-upgrade-project"],
+      );
+    } catch (error) {
+      rejectedDepartmentDrift =
+        error !== null &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "23514";
+    }
+    if (!rejectedDepartmentDrift) {
+      throw new Error("Phase 1 project department guard accepted mounted-source drift");
+    }
+    await upgrade.query(`
       update users
       set system_role = 'system_admin'
       where id = 'phase1-upgrade-user';
@@ -210,7 +251,7 @@ async function main(): Promise<void> {
       throw new Error("Phase 1 explicit deny did not constrain a system administrator");
     }
     process.stdout.write(
-      "Non-empty 0007 to 0014 Phase 1 migration upgrade verified.\n",
+      "Non-empty 0007 to 0015 Phase 1 migration upgrade verified.\n",
     );
   } finally {
     if (upgrade) await upgrade.end();

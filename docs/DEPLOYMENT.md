@@ -92,7 +92,7 @@ published ports: none
 4. 启动 PostgreSQL 与 MinIO并等待 Healthy；强制重建 init 任务并等待 exit 0，失败即停止。
 5. 在 rollback trap 与事务 marker 已建立后，短暂停止当前 Staging App、Document Worker 和 Embedding Worker，取得 PostgreSQL/MinIO 同一静默写入边界。
 6. 生成并验证 PostgreSQL custom-format dump；生成 MinIO JSONL inventory 与 mirror，核对对象数和总字节，再恢复到唯一临时 Bucket 并复核/删除。
-7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；先以新代码和 `AI_EMBEDDING_ENABLED=false` 验证旧 Schema 健康，再由 Migration ledger 只执行尚未应用的 committed Migration（当前至 `0014_authorization_deny_priority.sql`，不得修改历史 Migration），不 schema push/reset；随后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、只读 Profile、Batch、不可变 Provider Call、Worker heartbeat、文档—知识空间跨组织/项目/部门约束与显式 Deny 优先级。
+7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；先以新代码和 `AI_EMBEDDING_ENABLED=false` 验证旧 Schema 健康，再由 Migration ledger 只执行尚未应用的 committed Migration（当前至 `0015_project_department_scope_guard.sql`，不得修改历史 Migration），不 schema push/reset；随后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、只读 Profile、Batch、不可变 Provider Call、Worker heartbeat、文档—知识空间跨组织/项目/部门约束、项目部门变更保护与显式 Deny 优先级。
 8. 用 scoped storage operations 执行 `npm run storage:verify`；任何 finding 或存储不可用都失败关闭。
 9. Migration 完成后启动 Document Worker 与 disabled Embedding Worker，并复核已在 Flag=false 下健康的 App；验证 App、两个 Worker、PostgreSQL、MinIO 健康，同一 immutable image、Secret 最小化和无新增端口。
 10. Health 必须显示 Assistant/Embedding disabled 但 Provider configured；在 App 执行 Chat Probe，在专用 Worker 执行固定 `Project AI embedding probe`，均不读取项目资料或输出向量。

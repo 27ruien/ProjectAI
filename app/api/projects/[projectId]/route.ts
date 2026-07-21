@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/authorization";
 import { AuthorizationError, requireApiPrincipal } from "@/lib/auth/session";
 import { getDb } from "@/lib/db/client";
+import { getPostgresErrorCode } from "@/lib/db/errors";
 import { updateProject } from "@/lib/db/repositories/project-repository";
 import { serializeAuthorizedProject, serializeProject } from "@/lib/projects/serialization";
 import { department } from "@/lib/db/schema";
@@ -141,6 +142,17 @@ export async function PATCH(
     }
     return jsonResponse({ project: serializeProject(result.project) });
   } catch (error) {
+    if (getPostgresErrorCode(error) === "23514") {
+      return jsonResponse(
+        {
+          error: {
+            code: "PROJECT_DEPARTMENT_SCOPE_CONFLICT",
+            message: "请先移除与新部门范围冲突的知识来源",
+          },
+        },
+        { status: 409 },
+      );
+    }
     if (error instanceof SyntaxError) {
       return jsonResponse(
         { error: { code: "INVALID_JSON", message: "请求格式无效" } },

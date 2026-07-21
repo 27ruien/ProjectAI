@@ -8,9 +8,10 @@ const source = (path) => readFile(new URL(path, root), "utf8");
 describe("Phase 1 organization and knowledge authorization contract", () => {
   it("commits the complete Round 1 data model and compatibility backfill", async () => {
     const migration = await source("drizzle/0008_material_maggott.sql");
-    const [scopeGuard, denyPriority] = await Promise.all([
+    const [scopeGuard, denyPriority, departmentGuard] = await Promise.all([
       source("drizzle/0013_knowledge_space_scope_guard.sql"),
       source("drizzle/0014_authorization_deny_priority.sql"),
+      source("drizzle/0015_project_department_scope_guard.sql"),
     ]);
     for (const table of [
       "organizations",
@@ -39,6 +40,8 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
         denyPriority.indexOf("cd.system_role = 'system_admin'"),
       "explicit deny must be evaluated before the system-admin membership bypass",
     );
+    assert.match(departmentGuard, /projects_department_scope_guard_trigger/);
+    assert.match(departmentGuard, /active knowledge source/);
   });
 
   it("uses one database authorization scope for lexical, vector, downloads and citations", async () => {
@@ -72,15 +75,18 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
   });
 
   it("exposes real management routes and UI instead of a static knowledge catalog", async () => {
-    const [page, projectPanel] = await Promise.all([
+    const [page, projectPanel, unmountRoute] = await Promise.all([
       source("components/system/global-knowledge-page.tsx"),
       source("components/knowledge/ProjectKnowledgeSourcesPanel.tsx"),
+      source("app/api/projects/[projectId]/knowledge-sources/[sourceId]/route.ts"),
     ]);
     assert.match(page, /\/api\/organizations/);
     assert.match(page, /新增授权规则/);
     assert.doesNotMatch(page, /const assets =/);
     assert.match(projectPanel, /knowledge-sources/);
     assert.match(projectPanel, /保存部门/);
+    assert.match(projectPanel, /项目知识来源已移除/);
+    assert.match(unmountRoute, /unmountProjectKnowledgeSource/);
   });
 
   it("binds uploads to a server-authorized knowledge-space destination", async () => {

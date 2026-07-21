@@ -1239,7 +1239,7 @@ export async function createKnowledgeGrant(input: {
       subjectId: input.subjectId,
       db: tx,
     });
-    const [created] = await tx
+    const [inserted] = await tx
       .insert(knowledgeSpaceGrant)
       .values({
         id: crypto.randomUUID(),
@@ -1251,7 +1251,27 @@ export async function createKnowledgeGrant(input: {
         effect: input.effect,
         createdBy: input.principal.user.id,
       })
+      .onConflictDoNothing()
       .returning();
+    const [created] = inserted
+      ? [inserted]
+      : await tx
+          .select()
+          .from(knowledgeSpaceGrant)
+          .where(
+            and(
+              eq(knowledgeSpaceGrant.knowledgeSpaceId, space.id),
+              eq(knowledgeSpaceGrant.subjectType, input.subjectType),
+              eq(knowledgeSpaceGrant.subjectId, input.subjectId),
+              eq(knowledgeSpaceGrant.permission, input.permission),
+              eq(knowledgeSpaceGrant.effect, input.effect),
+            ),
+          )
+          .limit(1);
+    if (!created) {
+      throw new KnowledgeManagementError(409, "SOURCE_CONFLICT", "授权规则状态冲突");
+    }
+    if (!inserted) return created;
     await auditPermissionMutation({
       principal: input.principal,
       organizationId: space.organizationId,
@@ -1435,6 +1455,73 @@ export async function mountProjectKnowledgeSource(input: {
   });
 }
 
+export async function unmountProjectKnowledgeSource(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  sourceId: string;
+  requestHeaders: Headers;
+}) {
+  return getDb().transaction(async (tx) => {
+    const target = await requireProjectRole(
+      input.principal,
+      input.projectId,
+      ["project_manager"],
+      input.requestHeaders,
+      { db: tx, lockForUpdate: true },
+    );
+    const [record] = await tx
+      .select({
+        source: projectKnowledgeSource,
+        ownedSpaceProjectId: knowledgeSpace.projectId,
+      })
+      .from(projectKnowledgeSource)
+      .leftJoin(
+        knowledgeSpace,
+        eq(knowledgeSpace.id, projectKnowledgeSource.knowledgeSpaceId),
+      )
+      .where(
+        and(
+          eq(projectKnowledgeSource.id, input.sourceId),
+          eq(projectKnowledgeSource.projectId, input.projectId),
+          eq(projectKnowledgeSource.isActive, true),
+        ),
+      )
+      .limit(1)
+      .for("update", { of: projectKnowledgeSource });
+    if (!record) {
+      throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "知识来源不存在");
+    }
+    if (
+      record.source.sourceType === "knowledge_space" &&
+      record.ownedSpaceProjectId === input.projectId
+    ) {
+      throw new KnowledgeManagementError(
+        409,
+        "SOURCE_CONFLICT",
+        "项目默认知识空间不能移除",
+      );
+    }
+    const [updated] = await tx
+      .update(projectKnowledgeSource)
+      .set({ isActive: false })
+      .where(eq(projectKnowledgeSource.id, record.source.id))
+      .returning();
+    await auditPermissionMutation({
+      principal: input.principal,
+      organizationId: target.organizationId,
+      projectId: input.projectId,
+      eventType: "project_knowledge_source_unmounted",
+      resourceType: "project_knowledge_source",
+      resourceId: record.source.id,
+      beforeState: { isActive: true, sourceType: record.source.sourceType },
+      afterState: { isActive: false, sourceType: record.source.sourceType },
+      requestHeaders: input.requestHeaders,
+      db: tx,
+    });
+    return updated;
+  });
+}
+
 export async function setDocumentGrant(input: {
   principal: AuthenticatedPrincipal;
   projectId: string;
@@ -1482,7 +1569,7 @@ export async function setDocumentGrant(input: {
       subjectId: input.subjectId,
       db: tx,
     });
-    const [created] = await tx
+    const [inserted] = await tx
       .insert(documentGrant)
       .values({
         id: crypto.randomUUID(),
@@ -1495,7 +1582,27 @@ export async function setDocumentGrant(input: {
         effect: input.effect,
         createdBy: input.principal.user.id,
       })
+      .onConflictDoNothing()
       .returning();
+    const [created] = inserted
+      ? [inserted]
+      : await tx
+          .select()
+          .from(documentGrant)
+          .where(
+            and(
+              eq(documentGrant.documentId, input.documentId),
+              eq(documentGrant.subjectType, input.subjectType),
+              eq(documentGrant.subjectId, input.subjectId),
+              eq(documentGrant.permission, input.permission),
+              eq(documentGrant.effect, input.effect),
+            ),
+          )
+          .limit(1);
+    if (!created) {
+      throw new KnowledgeManagementError(409, "SOURCE_CONFLICT", "授权规则状态冲突");
+    }
+    if (!inserted) return created;
     await auditPermissionMutation({
       principal: input.principal,
       organizationId: target.organizationId,

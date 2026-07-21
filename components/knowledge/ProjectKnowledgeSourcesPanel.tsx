@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckCircle2, FolderKey, Link2, LoaderCircle, RefreshCw } from "lucide-react";
+import {
+  CheckCircle2,
+  FolderKey,
+  Link2,
+  LoaderCircle,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import { withBasePath } from "@/lib/base-path";
 
@@ -121,6 +128,23 @@ export function ProjectKnowledgeSourcesPanel({
     }
   };
 
+  const unmount = async (sourceId: string) => {
+    setSaving(true);
+    setError(null);
+    try {
+      await request(
+        `/api/projects/${encodeURIComponent(project.id)}/knowledge-sources/${encodeURIComponent(sourceId)}`,
+        { method: "DELETE" },
+      );
+      setFeedback("项目知识来源已移除");
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "移除失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const saveDepartment = async () => {
     setSaving(true);
     setError(null);
@@ -153,6 +177,18 @@ export function ProjectKnowledgeSourcesPanel({
             <Link2 className="size-3 text-primary" />
             {item.spaceName ?? item.source.documentId ?? "资料"}
             <small className="text-muted-foreground">{item.spaceType ?? "document"}</small>
+            {(project.projectRole === "project_manager" || project.projectRole === null) &&
+            item.spaceType !== "project" ? (
+              <button
+                type="button"
+                aria-label={`移除 ${item.spaceName ?? "资料"}`}
+                disabled={saving}
+                onClick={() => void unmount(item.source.id)}
+                className="ml-1 rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+              >
+                <X className="size-3" />
+              </button>
+            ) : null}
           </span>
         ))}
       </div>

@@ -13,8 +13,9 @@
 - `0011`–`0012`：Action/Dependency/Source/History/Review、Risk/Source/History/Review、Weekly Draft/Immutable Version、Management Audit 和脱敏 AI Execution。
 - `0013`：数据库触发器拒绝 Document 与 Knowledge Space 的跨 Organization、跨 Project-owned Space 或跨 Department 绑定。
 - `0014`：统一数据库 ACL 的显式 Deny 对所有 Actor 生效，`system_admin` 只绕过项目成员关系，不绕过内容拒绝规则。
+- `0015`：项目所属部门变更前检查现有文档与仍处于 active 的挂载来源，拒绝产生跨部门漂移；外部来源可由项目经理显式移除并保留审计。
 
-Migration 只允许按 ledger 执行 committed SQL。禁止 schema push、修改历史 Migration 或在 Production 执行第一阶段 Migration。非空 `0007 → 0014` 演练会保留旧 Project、Membership、Document、Chunk、Embedding、Thread 和 Citation，并验证旧项目自动获得 Project Knowledge Space。
+Migration 只允许按 ledger 执行 committed SQL。禁止 schema push、修改历史 Migration 或在 Production 执行第一阶段 Migration。非空 `0007 → 0015` 演练会保留旧 Project、Membership、Document、Chunk、Embedding、Thread 和 Citation，并验证旧项目自动获得 Project Knowledge Space。
 
 ## 授权模型
 
