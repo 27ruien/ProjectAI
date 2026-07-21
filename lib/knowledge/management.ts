@@ -570,12 +570,7 @@ export async function listUploadableKnowledgeSpaces(input: {
           or (upload_grant.subject_type = 'user' and upload_grant.subject_id = ${input.principal.user.id})
           or (
             upload_grant.subject_type = 'department'
-            and exists (
-              select 1 from department_members upload_department_member
-              where upload_department_member.department_id = upload_grant.subject_id
-                and upload_department_member.user_id = ${input.principal.user.id}
-                and upload_department_member.is_active
-            )
+            and upload_grant.subject_id = ${target.departmentId}
           )
           or (
             upload_grant.subject_type = 'role'
@@ -591,6 +586,7 @@ export async function listUploadableKnowledgeSpaces(input: {
               or exists (
                 select 1 from department_members upload_department_role
                 where upload_department_role.organization_id = ${target.organizationId}
+                  and upload_department_role.department_id = ${target.departmentId}
                   and upload_department_role.user_id = ${input.principal.user.id}
                   and upload_department_role.is_active
                   and upload_department_role.role::text = upload_grant.subject_id

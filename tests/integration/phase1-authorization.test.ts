@@ -6,6 +6,7 @@ import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   department,
   documentGrant,
+  knowledgeSpaceGrant,
   knowledgeSpace,
   organization,
   organizationMember,
@@ -18,6 +19,7 @@ import {
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
 import { upsertOrganizationMember } from "../../lib/knowledge/management";
+import { listUploadableKnowledgeSpaces } from "../../lib/knowledge/management";
 import { KnowledgeManagementError } from "../../lib/knowledge/errors";
 
 const prefix = "phase1-acl-test-";
@@ -38,6 +40,7 @@ let manager: UserRecord;
 let managerB: UserRecord;
 let viewer: UserRecord;
 let outsider: UserRecord;
+let otherDepartment: UserRecord;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -72,9 +75,10 @@ describe("Phase 1 default-deny authorization matrix", () => {
       findUserByEmail(required("SEED_MANAGER_B_EMAIL")),
       findUserByEmail(required("SEED_VIEWER_A_EMAIL")),
       findUserByEmail(required("SEED_OUTSIDER_EMAIL")),
+      findUserByEmail(required("SEED_OTHER_DEPT_EMAIL")),
     ]);
     assert.ok(users.every(Boolean));
-    [manager, managerB, viewer, outsider] = users as UserRecord[];
+    [manager, managerB, viewer, outsider, otherDepartment] = users as UserRecord[];
 
     await getDb().transaction(async (tx) => {
       await tx.insert(projectDocument).values([
@@ -169,6 +173,9 @@ describe("Phase 1 default-deny authorization matrix", () => {
   after(async () => {
     await getDb().transaction(async (tx) => {
       await tx.delete(documentGrant).where(sql`${documentGrant.id} like ${`${prefix}%`}`);
+      await tx
+        .delete(knowledgeSpaceGrant)
+        .where(sql`${knowledgeSpaceGrant.id} like ${`${prefix}%`}`);
       await tx.delete(projectDocument).where(sql`${projectDocument.id} like ${`${prefix}%`}`);
       await tx
         .delete(projectKnowledgeSource)
@@ -230,6 +237,28 @@ describe("Phase 1 default-deny authorization matrix", () => {
   it("does not accept a cross-organization source even if a row is injected", async () => {
     assert.equal((await scope(manager, "project-001", "view")).has(secondaryDocumentId), false);
     assert.equal((await scope(outsider, secondaryProjectId, "view")).has(secondaryDocumentId), true);
+  });
+
+  it("does not treat an administrator role from another department as an upload grant", async () => {
+    await getDb().insert(knowledgeSpaceGrant).values({
+      id: `${prefix}department-admin-upload`,
+      organizationId: "org-legacy-default",
+      knowledgeSpaceId: "ks-department-shared-test",
+      subjectType: "role",
+      subjectId: "department_admin",
+      permission: "upload",
+      effect: "allow",
+      createdBy: manager.id,
+    });
+    const destinations = await listUploadableKnowledgeSpaces({
+      principal: principal(otherDepartment),
+      projectId: "project-004",
+      requestHeaders: headers,
+    });
+    assert.equal(
+      destinations.some((space) => space.id === "ks-department-shared-test"),
+      false,
+    );
   });
 
   it("protects the last organization administrator", async () => {
