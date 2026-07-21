@@ -75,6 +75,10 @@ export async function PATCH(
     requireTrustedMutationRequest(request);
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
+    // Authenticate the URL resource before validating mutable fields so an
+    // inaccessible project has the same 404 contract for valid and tampered
+    // request bodies.
+    await requireProjectAccess(principal, projectId, request.headers);
     const parsed = projectPatchSchema.safeParse(await request.json());
     if (!parsed.success) {
       return jsonResponse(

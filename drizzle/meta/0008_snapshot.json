@@ -1673,7 +1673,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "knowledge_spaces_created_by_users_id_fk": {

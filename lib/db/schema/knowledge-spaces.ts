@@ -29,7 +29,7 @@ export const knowledgeSpace = pgTable(
       onDelete: "restrict",
     }),
     projectId: text("project_id").references(() => project.id, {
-      onDelete: "restrict",
+      onDelete: "cascade",
     }),
     type: knowledgeSpaceTypeEnum("space_type").notNull(),
     visibility: knowledgeVisibilityEnum("visibility")

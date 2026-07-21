@@ -234,7 +234,7 @@ describe("project authorization boundary", () => {
     assert.deepEqual(managerBProjects.map((item) => item.id), ["project-002"]);
     assert.deepEqual(
       new Set(adminProjects.map((item) => item.id)),
-      new Set(["project-001", "project-002", "project-003"]),
+      new Set(["project-001", "project-002", "project-003", "project-004"]),
     );
   });
 
