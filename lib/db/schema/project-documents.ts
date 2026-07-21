@@ -16,6 +16,8 @@ import { sql } from "drizzle-orm";
 import { documentStatusEnum, documentStorageStatusEnum } from "./enums";
 import { project } from "./projects";
 import { user } from "./users";
+import { knowledgeSpace } from "./knowledge-spaces";
+import { knowledgeVisibilityEnum } from "./enums";
 
 /**
  * A logical document. Objects are deliberately not deleted when a document is
@@ -28,6 +30,13 @@ export const projectDocument = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "restrict" }),
+    knowledgeSpaceId: text("knowledge_space_id")
+      .notNull()
+      .default("__project_default__")
+      .references(() => knowledgeSpace.id, { onDelete: "restrict" }),
+    visibility: knowledgeVisibilityEnum("visibility")
+      .notNull()
+      .default("private"),
     displayName: varchar("display_name", { length: 240 }).notNull(),
     status: documentStatusEnum("document_status").notNull().default("pending"),
     createdBy: text("created_by")
@@ -51,6 +60,11 @@ export const projectDocument = pgTable(
       table.updatedAt,
     ),
     index("project_documents_created_by_idx").on(table.createdBy),
+    index("project_documents_space_visibility_idx").on(
+      table.knowledgeSpaceId,
+      table.visibility,
+      table.status,
+    ),
     unique("project_documents_id_project_unique").on(table.id, table.projectId),
     check(
       "project_documents_display_name_nonempty",

@@ -45,7 +45,7 @@ export async function GET(
       documentId,
       request.headers,
     );
-    const versions = await listProjectDocumentVersions(projectId, documentId);
+    const versions = await listProjectDocumentVersions(document.projectId, documentId);
     return jsonResponse({
       document: await serializeProjectDocument(
         document,
@@ -87,6 +87,7 @@ export async function POST(
       projectId,
       documentId,
       request.headers,
+      "manage_versions",
     );
     const { file } = await readUploadForm(request);
     const result = await uploadDocument({

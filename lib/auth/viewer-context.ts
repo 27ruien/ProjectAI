@@ -44,6 +44,8 @@ export async function buildViewerContext(
     const roster = rosterByProjectId.get(project.id);
     return {
       id: project.id,
+      organizationId: project.organizationId,
+      departmentId: project.departmentId,
       name: project.name,
       clientName: project.clientName,
       description: project.description,

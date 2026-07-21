@@ -26,6 +26,8 @@ export type ProjectRosterSummary = {
 
 const projectSelection = {
   id: project.id,
+  organizationId: project.organizationId,
+  departmentId: project.departmentId,
   name: project.name,
   clientName: project.clientName,
   description: project.description,
@@ -173,6 +175,7 @@ export async function updateProject(
       | "stage"
       | "health"
       | "targetLaunchDate"
+      | "departmentId"
     >
   >,
   db: DatabaseExecutor = getDb(),

@@ -108,6 +108,18 @@ export function renameProjectDocument(
   );
 }
 
+export function setProjectDocumentVisibility(
+  projectId: string,
+  documentId: string,
+  visibility: ProjectDocumentResponse["document"]["visibility"],
+): Promise<ProjectDocumentResponse> {
+  return jsonMutation<ProjectDocumentResponse>(
+    documentPath(projectId, documentId),
+    "PATCH",
+    { visibility },
+  );
+}
+
 export function listProjectDocumentVersions(
   projectId: string,
   documentId: string,

@@ -61,6 +61,8 @@ function evidence(): ProjectKnowledgeEvidence[] {
       headingPath: ["上线计划"],
       source: { type: "pdf_page", pageNumber: 8 },
       score: 0.9,
+      knowledgeSpaceId: "knowledge-space-test",
+      sourceScope: "project",
     },
   ];
 }

@@ -36,6 +36,7 @@ import type {
   KnowledgeSearchResultDto,
 } from "@/types/knowledge-search";
 import { ProjectAssistantPanel } from "./ProjectAssistantPanel";
+import { ProjectKnowledgeSourcesPanel } from "./ProjectKnowledgeSourcesPanel";
 
 interface ProjectKnowledgePageProps {
   project: AuthorizedProjectSummary;
@@ -209,6 +210,8 @@ export function ProjectKnowledgePage({
             AI 回答只使用当前项目有效资料，并在返回前校验引用；下方搜索结果仍是原始资料片段。
           </p>
         </aside>
+
+        <ProjectKnowledgeSourcesPanel project={project} />
 
         <ProjectAssistantPanel project={project} />
 

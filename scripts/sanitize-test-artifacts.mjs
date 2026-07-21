@@ -369,10 +369,14 @@ async function collectSecrets() {
     "QWEN_API_KEY",
     "QWEN_BASE_URL",
     "SEED_ADMIN_PASSWORD",
+    "SEED_ORG_ADMIN_PASSWORD",
+    "SEED_DEPT_ADMIN_PASSWORD",
     "SEED_MANAGER_A_PASSWORD",
     "SEED_MANAGER_B_PASSWORD",
     "SEED_MEMBER_A_PASSWORD",
     "SEED_VIEWER_A_PASSWORD",
+    "SEED_OTHER_DEPT_PASSWORD",
+    "SEED_OUTSIDER_PASSWORD",
   ];
   for (const key of secretEnvironmentKeys) {
     addSecretVariants(secrets, process.env[key]);

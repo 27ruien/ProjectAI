@@ -879,18 +879,23 @@ export async function setDocumentArchived(input: {
   });
 }
 
-export async function updateDocumentDisplayName(input: {
+export async function updateDocumentMetadata(input: {
   principal: AuthenticatedPrincipal;
   projectId: string;
   documentId: string;
-  displayName: string;
+  displayName?: string;
+  visibility?: ProjectDocumentRecord["visibility"];
   requestHeaders: Headers;
 }): Promise<ProjectDocumentRecord> {
-  const displayName = normalizedDisplayName(input.displayName, "");
+  const displayName =
+    input.displayName === undefined
+      ? undefined
+      : normalizedDisplayName(input.displayName, "");
   return authorizedDocumentTransaction({
     principal: input.principal,
     projectId: input.projectId,
-    allowedRoles: documentRoles.upload,
+    allowedRoles:
+      input.visibility === undefined ? documentRoles.upload : documentRoles.manage,
     requestHeaders: input.requestHeaders,
     operation: async (tx) => {
       const document = await findProjectDocument(
@@ -904,9 +909,33 @@ export async function updateDocumentDisplayName(input: {
       }
       const [updated] = await tx
         .update(projectDocument)
-        .set({ displayName, updatedAt: new Date() })
+        .set({
+          ...(displayName === undefined ? {} : { displayName }),
+          ...(input.visibility === undefined
+            ? {}
+            : { visibility: input.visibility }),
+          updatedAt: new Date(),
+        })
         .where(eq(projectDocument.id, document.id))
         .returning();
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          projectId: input.projectId,
+          eventType: "document_metadata_changed",
+          entityType: "project_document",
+          entityId: document.id,
+          result: "succeeded",
+          metadata: {
+            changedFields: [
+              ...(displayName === undefined ? [] : ["displayName"]),
+              ...(input.visibility === undefined ? [] : ["visibility"]),
+            ],
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
       return updated;
     },
   });

@@ -42,6 +42,7 @@ import { requireProjectAssistantProfile } from "./profiles";
 import type { ProjectAssistantHistoryMessage } from "./grounding";
 import type { ValidatedGroundedAnswer } from "./citations";
 import type { AiGatewayResult } from "./gateway";
+import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 
 const RUNNING_EXECUTION_STATUSES = [
   "reserved",
@@ -231,6 +232,15 @@ export async function loadOwnedThread(input: {
       "对话不存在",
     );
   }
+  const authorizedDocuments = new Set(
+    (
+      await listAuthorizedDocumentScope({
+        principal: input.principal,
+        projectId: input.projectId,
+        permission: "view",
+      })
+    ).map((item) => item.documentId),
+  );
   const [messages, citations, executions] = await Promise.all([
     getDb()
       .select()
@@ -275,6 +285,7 @@ export async function loadOwnedThread(input: {
     typeof citations
   >();
   for (const citation of citations) {
+    if (!authorizedDocuments.has(citation.documentId)) continue;
     const values = citationsByMessage.get(citation.assistantMessageId) ?? [];
     values.push(citation);
     citationsByMessage.set(citation.assistantMessageId, values);
@@ -944,6 +955,28 @@ export async function finalizeSuccessfulExecution(input: {
       .for("update", { of: aiExecution });
     if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) {
       return;
+    }
+    const expectedDocumentIds = [
+      ...new Set(input.answer.citations.map(({ evidence }) => evidence.documentId)),
+    ];
+    const authorizedResult = await tx.execute<{ document_id: string }>(sql`
+      select document_id
+      from projectai_authorized_documents(
+        ${locked.actorUserId},
+        ${locked.projectId},
+        'view'::knowledge_permission
+      )
+      where document_id in (${sql.join(
+        expectedDocumentIds.map((documentId) => sql`${documentId}`),
+        sql`, `,
+      )})
+    `);
+    if (authorizedResult.rows.length !== expectedDocumentIds.length) {
+      throw new ProjectAssistantError(
+        409,
+        "AI_CITATION_VALIDATION_FAILED",
+        "来源权限已变化，请重新提问",
+      );
     }
     await tx
       .update(aiMessage)

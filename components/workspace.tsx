@@ -71,7 +71,7 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   else if (section === "workflows") page = <StandardPage><WorkflowsPage data={workspaceData} editableProject={editableProject} onOpenReviews={() => router.push("/reviews")} /></StandardPage>;
   else if (section === "reviews") page = <StandardPage flush><ReviewsPage data={workspaceData} projects={viewer.projects} /></StandardPage>;
   else if (section === "skills") page = <StandardPage><SkillsPage data={workspaceData} initialSkillId={entityId} /></StandardPage>;
-  else if (section === "knowledge") page = <StandardPage><GlobalKnowledgePage /></StandardPage>;
+  else if (section === "knowledge") page = <StandardPage><GlobalKnowledgePage viewer={viewer} /></StandardPage>;
   else if (section === "analytics") page = <StandardPage><AnalyticsPage projects={viewer.projects} /></StandardPage>;
   else if (section === "settings" && viewer.user.systemRole !== "system_admin") page = <StandardPage><AccessDeniedPage /></StandardPage>;
   else if (section === "settings" && entityId === "ai-models") page = <StandardPage><AIModelsPage data={workspaceData} initialProfileId={child} /></StandardPage>;

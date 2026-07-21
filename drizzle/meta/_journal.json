@@ -57,6 +57,13 @@
       "when": 1784390441795,
       "tag": "0007_cynical_whizzer",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1784648301006,
+      "tag": "0008_material_maggott",
+      "breakpoints": true
     }
   ]
 }

@@ -5,6 +5,11 @@ import {
   account,
   aiModelProfile,
   aiRetrievalProfile,
+  department,
+  departmentMember,
+  knowledgeSpace,
+  organization,
+  organizationMember,
   project,
   projectMember,
   user,
@@ -16,7 +21,16 @@ import {
 } from "../../lib/db/schema";
 import { normalizeEmail } from "../../lib/db/repositories/user-repository";
 
-type SeedUserKey = "ADMIN" | "MANAGER_A" | "MANAGER_B" | "MEMBER_A" | "VIEWER_A";
+type SeedUserKey =
+  | "ADMIN"
+  | "ORG_ADMIN"
+  | "DEPT_ADMIN"
+  | "MANAGER_A"
+  | "MANAGER_B"
+  | "MEMBER_A"
+  | "VIEWER_A"
+  | "OTHER_DEPT"
+  | "OUTSIDER";
 
 type SeedUserSpec = {
   key: SeedUserKey;
@@ -26,11 +40,15 @@ type SeedUserSpec = {
 };
 
 const seedUsers: SeedUserSpec[] = [
-  { key: "ADMIN", id: "seed-admin", displayName: "系统管理员", systemRole: "system_admin" },
-  { key: "MANAGER_A", id: "seed-manager-a", displayName: "项目经理 A", systemRole: "standard_user" },
-  { key: "MANAGER_B", id: "seed-manager-b", displayName: "项目经理 B", systemRole: "standard_user" },
-  { key: "MEMBER_A", id: "seed-member-a", displayName: "项目成员 A", systemRole: "standard_user" },
-  { key: "VIEWER_A", id: "seed-viewer-a", displayName: "只读成员 A", systemRole: "standard_user" },
+  { key: "ADMIN", id: "seed-admin", displayName: "[TEST] 系统管理员", systemRole: "system_admin" },
+  { key: "ORG_ADMIN", id: "seed-org-admin", displayName: "[TEST] 组织管理员", systemRole: "standard_user" },
+  { key: "DEPT_ADMIN", id: "seed-dept-admin", displayName: "[TEST] 部门管理员", systemRole: "standard_user" },
+  { key: "MANAGER_A", id: "seed-manager-a", displayName: "[TEST] 项目经理 A", systemRole: "standard_user" },
+  { key: "MANAGER_B", id: "seed-manager-b", displayName: "[TEST] 项目经理 B", systemRole: "standard_user" },
+  { key: "MEMBER_A", id: "seed-member-a", displayName: "[TEST] 项目成员 A", systemRole: "standard_user" },
+  { key: "VIEWER_A", id: "seed-viewer-a", displayName: "[TEST] 只读成员 A", systemRole: "standard_user" },
+  { key: "OTHER_DEPT", id: "seed-other-dept", displayName: "[TEST] 其他部门用户", systemRole: "standard_user" },
+  { key: "OUTSIDER", id: "seed-outsider", displayName: "[TEST] 组织外用户", systemRole: "standard_user" },
 ];
 
 type SeedProject = {
@@ -43,6 +61,7 @@ type SeedProject = {
   health: ProjectHealth;
   targetLaunchDate: string;
   createdByKey: SeedUserKey;
+  departmentId: string;
 };
 
 const seedProjects: SeedProject[] = [
@@ -56,6 +75,7 @@ const seedProjects: SeedProject[] = [
     health: "attention",
     targetLaunchDate: "2026-08-28",
     createdByKey: "MANAGER_A",
+    departmentId: "dept-legacy-default",
   },
   {
     id: "project-002",
@@ -67,6 +87,7 @@ const seedProjects: SeedProject[] = [
     health: "healthy",
     targetLaunchDate: "2026-09-18",
     createdByKey: "MANAGER_B",
+    departmentId: "dept-legacy-default",
   },
   {
     id: "project-003",
@@ -78,6 +99,19 @@ const seedProjects: SeedProject[] = [
     health: "attention",
     targetLaunchDate: "2026-08-15",
     createdByKey: "ADMIN",
+    departmentId: "dept-legacy-default",
+  },
+  {
+    id: "project-004",
+    name: "其他部门隔离验证项目",
+    clientName: "虚构隔离客户",
+    description: "用于 Staging 跨部门与跨项目隔离验证的虚构项目。",
+    status: "active",
+    stage: "planning",
+    health: "healthy",
+    targetLaunchDate: "2026-10-30",
+    createdByKey: "OTHER_DEPT",
+    departmentId: "dept-other-test",
   },
 ];
 
@@ -93,6 +127,7 @@ const memberships: Array<{
   { id: "seed-membership-a-viewer", projectId: "project-001", userKey: "VIEWER_A", role: "viewer", createdByKey: "MANAGER_A" },
   { id: "seed-membership-b-manager", projectId: "project-002", userKey: "MANAGER_B", role: "project_manager", createdByKey: "ADMIN" },
   { id: "seed-membership-c-manager", projectId: "project-003", userKey: "ADMIN", role: "project_manager", createdByKey: "ADMIN" },
+  { id: "seed-membership-d-manager", projectId: "project-004", userKey: "OTHER_DEPT", role: "project_manager", createdByKey: "ADMIN" },
 ];
 
 function requiredEnvironment(name: string): string {
@@ -156,6 +191,13 @@ async function seedIdentity(spec: SeedUserSpec): Promise<string> {
 }
 
 async function main(): Promise<void> {
+  const seedEnvironment = requiredEnvironment("PROJECTAI_SEED_ENVIRONMENT");
+  if (
+    !["test", "staging"].includes(seedEnvironment) ||
+    process.env.NEXT_PUBLIC_APP_ENV === "production"
+  ) {
+    throw new Error("SEED_PRODUCTION_FORBIDDEN");
+  }
   await getDb()
     .insert(aiRetrievalProfile)
     .values({
@@ -195,11 +237,144 @@ async function main(): Promise<void> {
   }
 
   const db = getDb();
+  const organizationId = "org-legacy-default";
+  const organizationCreator = userIds.get("ADMIN")!;
+  await db
+    .insert(organization)
+    .values({
+      id: organizationId,
+      name: "ProjectAI Test Organization",
+      slug: "projectai-test-organization",
+      createdBy: organizationCreator,
+    })
+    .onConflictDoNothing({ target: organization.id });
+
+  const organizationRoles: Array<{
+    key: SeedUserKey;
+    role: "organization_admin" | "organization_member";
+  }> = seedUsers
+    .filter((spec) => spec.key !== "OUTSIDER")
+    .map((spec) => ({
+      key: spec.key,
+      role:
+        spec.key === "ADMIN" || spec.key === "ORG_ADMIN"
+          ? "organization_admin"
+          : "organization_member",
+    }));
+  for (const membership of organizationRoles) {
+    await db
+      .insert(organizationMember)
+      .values({
+        id: `seed-org-member-${membership.key.toLowerCase()}`,
+        organizationId,
+        userId: userIds.get(membership.key)!,
+        role: membership.role,
+        createdBy: organizationCreator,
+      })
+      .onConflictDoNothing({
+        target: [organizationMember.organizationId, organizationMember.userId],
+      });
+  }
+
+  const seedDepartments = [
+    {
+      id: "dept-legacy-default",
+      name: "交付与项目管理部",
+      code: "DEFAULT-DELIVERY",
+    },
+    {
+      id: "dept-other-test",
+      name: "隔离验证部",
+      code: "OTHER-TEST",
+    },
+  ] as const;
+  for (const item of seedDepartments) {
+    await db
+      .insert(department)
+      .values({
+        ...item,
+        organizationId,
+        description: "仅用于非生产环境的虚构部门。",
+        createdBy: organizationCreator,
+      })
+      .onConflictDoNothing({ target: department.id });
+  }
+  const departmentMemberships: Array<{
+    id: string;
+    departmentId: string;
+    userKey: SeedUserKey;
+    role: "department_admin" | "department_member";
+  }> = [
+    { id: "seed-dept-admin", departmentId: "dept-legacy-default", userKey: "DEPT_ADMIN", role: "department_admin" },
+    { id: "seed-dept-manager-a", departmentId: "dept-legacy-default", userKey: "MANAGER_A", role: "department_member" },
+    { id: "seed-dept-manager-b", departmentId: "dept-legacy-default", userKey: "MANAGER_B", role: "department_member" },
+    { id: "seed-dept-member-a", departmentId: "dept-legacy-default", userKey: "MEMBER_A", role: "department_member" },
+    { id: "seed-dept-viewer-a", departmentId: "dept-legacy-default", userKey: "VIEWER_A", role: "department_member" },
+    { id: "seed-dept-other-admin", departmentId: "dept-other-test", userKey: "OTHER_DEPT", role: "department_admin" },
+  ];
+  for (const item of departmentMemberships) {
+    await db
+      .insert(departmentMember)
+      .values({
+        id: item.id,
+        organizationId,
+        departmentId: item.departmentId,
+        userId: userIds.get(item.userKey)!,
+        role: item.role,
+        createdBy: organizationCreator,
+      })
+      .onConflictDoNothing({
+        target: [departmentMember.departmentId, departmentMember.userId],
+      });
+  }
+
+  const sharedSpaces = [
+    {
+      id: "ks-organization-shared-test",
+      type: "organization" as const,
+      visibility: "organization_shared" as const,
+      name: "公司共享知识",
+      departmentId: null,
+    },
+    {
+      id: "ks-department-shared-test",
+      type: "department" as const,
+      visibility: "department_shared" as const,
+      name: "交付部共享知识",
+      departmentId: "dept-legacy-default",
+    },
+    {
+      id: "ks-department-restricted-test",
+      type: "restricted" as const,
+      visibility: "restricted" as const,
+      name: "交付部受限知识",
+      departmentId: "dept-legacy-default",
+    },
+  ];
+  for (const item of sharedSpaces) {
+    await db
+      .insert(knowledgeSpace)
+      .values({
+        id: item.id,
+        organizationId,
+        departmentId: item.departmentId,
+        projectId: null,
+        type: item.type,
+        visibility: item.visibility,
+        name: item.name,
+        description: "仅使用虚构资料的非生产知识空间。",
+        createdBy: organizationCreator,
+      })
+      .onConflictDoNothing({ target: knowledgeSpace.id });
+  }
+
   for (const item of seedProjects) {
     await db
       .insert(project)
       .values({
         id: item.id,
+        organizationId,
+        departmentId: item.departmentId,
         name: item.name,
         clientName: item.clientName,
         description: item.description,

@@ -78,6 +78,8 @@ export interface ProjectDocumentPermissionsDto {
 export interface ProjectDocumentDto {
   id: string;
   projectId: string;
+  knowledgeSpaceId: string;
+  visibility: "private" | "organization_shared" | "department_shared" | "restricted";
   displayName: string;
   status: ProjectDocumentStatus;
   createdBy: DocumentActorDto;

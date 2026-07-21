@@ -16,6 +16,8 @@ export interface ProjectUiPermissions {
 
 export interface AuthorizedProjectSummary {
   id: string;
+  organizationId: string;
+  departmentId: string | null;
   name: string;
   clientName: string;
   description: string;

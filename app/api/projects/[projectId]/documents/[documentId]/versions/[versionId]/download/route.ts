@@ -32,6 +32,7 @@ export async function GET(
       documentId,
       versionId,
       request.headers,
+      "download",
     );
     if (version.storageStatus !== "stored") {
       throw new FileOperationError(

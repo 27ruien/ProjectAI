@@ -9,19 +9,26 @@ import { listProjectDocumentVersions } from "@/lib/db/repositories/document-repo
 import { requireProjectDocumentResource } from "@/lib/files/authorization";
 import {
   documentRoles,
-  updateDocumentDisplayName,
+  updateDocumentMetadata,
 } from "@/lib/files/document-service";
 import { FileOperationError } from "@/lib/files/errors";
 import { fileRouteErrorResponse } from "@/lib/files/http";
 import { serializeProjectDocument } from "@/lib/files/serialization";
+import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 
 type DocumentRouteContext = {
   params: Promise<{ projectId: string; documentId: string }>;
 };
 
 const patchSchema = z
-  .object({ displayName: z.string().trim().min(1).max(240) })
-  .strict();
+  .object({
+    displayName: z.string().trim().min(1).max(240).optional(),
+    visibility: z
+      .enum(["private", "organization_shared", "department_shared", "restricted"])
+      .optional(),
+  })
+  .strict()
+  .refine((value) => Object.keys(value).length > 0);
 
 export async function GET(
   request: Request,
@@ -41,13 +48,29 @@ export async function GET(
       documentId,
       request.headers,
     );
-    const versions = await listProjectDocumentVersions(projectId, documentId);
+    const [versions, downloadScope, versionScope, archiveScope] = await Promise.all([
+      listProjectDocumentVersions(document.projectId, documentId),
+      listAuthorizedDocumentScope({ principal, projectId, permission: "download" }),
+      listAuthorizedDocumentScope({
+        principal,
+        projectId,
+        permission: "manage_versions",
+      }),
+      listAuthorizedDocumentScope({ principal, projectId, permission: "archive" }),
+    ]);
+    const has = (scope: { documentId: string }[]) =>
+      scope.some((item) => item.documentId === documentId);
     return jsonResponse({
       document: await serializeProjectDocument(
         document,
         principal,
         authorizedProject.projectRole,
         versions.find((version) => version.isCurrent) ?? null,
+        {
+          download: has(downloadScope),
+          manageVersions: has(versionScope),
+          archive: has(archiveScope),
+        },
       ),
     });
   } catch (error) {
@@ -63,10 +86,16 @@ export async function PATCH(
     requireTrustedMutationRequest(request);
     const { projectId, documentId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
+    const parsed = patchSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      throw new FileOperationError(400, "INVALID_REQUEST", "资料信息无效");
+    }
     const authorizedProject = await requireProjectRole(
       principal,
       projectId,
-      documentRoles.upload,
+      parsed.data.visibility === undefined
+        ? documentRoles.upload
+        : documentRoles.manage,
       request.headers,
     );
     await requireProjectDocumentResource(
@@ -74,16 +103,15 @@ export async function PATCH(
       projectId,
       documentId,
       request.headers,
+      parsed.data.visibility === undefined
+        ? "edit_metadata"
+        : "manage_permissions",
     );
-    const parsed = patchSchema.safeParse(await request.json());
-    if (!parsed.success) {
-      throw new FileOperationError(400, "INVALID_REQUEST", "资料名称无效");
-    }
-    const document = await updateDocumentDisplayName({
+    const document = await updateDocumentMetadata({
       principal,
       projectId,
       documentId,
-      displayName: parsed.data.displayName,
+      ...parsed.data,
       requestHeaders: request.headers,
     });
     const versions = await listProjectDocumentVersions(projectId, documentId);

@@ -26,6 +26,7 @@ import {
   listProjectDocuments,
   reindexProjectDocumentVersion,
   restoreProjectDocument,
+  setProjectDocumentVisibility,
 } from "@/lib/documents/client";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import type {
@@ -375,6 +376,24 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     }
   };
 
+  const changeVisibility = async (
+    document: ProjectDocumentDto,
+    visibility: ProjectDocumentDto["visibility"],
+  ) => {
+    const actionKey = `visibility:${document.id}`;
+    setPendingAction(actionKey);
+    setActionError(null);
+    try {
+      await setProjectDocumentVisibility(project.id, document.id, visibility);
+      toast(`“${document.displayName}”的可见范围已更新`, "success");
+      await loadDocuments({ background: true });
+    } catch (caught) {
+      setActionError(documentErrorMessage(caught));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   return (
     <div className="min-h-full bg-background">
       <ProjectContextHeader project={project} activeTab="documents" />
@@ -513,6 +532,9 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
               onVersions={setVersionDocument}
               onUploadVersion={openVersionUpload}
               onReindex={(document, version) => void reindex(document, version)}
+              onVisibility={(document, visibility) =>
+                void changeVisibility(document, visibility)
+              }
               onLifecycle={(document, kind) => setConfirmAction({ document, kind })}
             />
           ) : null}
@@ -603,6 +625,7 @@ function DocumentTable({
   onVersions,
   onUploadVersion,
   onReindex,
+  onVisibility,
   onLifecycle,
 }: {
   documents: ProjectDocumentDto[];
@@ -613,6 +636,10 @@ function DocumentTable({
   onReindex: (
     document: ProjectDocumentDto,
     version: ProjectDocumentVersionDto,
+  ) => void;
+  onVisibility: (
+    document: ProjectDocumentDto,
+    visibility: ProjectDocumentDto["visibility"],
   ) => void;
   onLifecycle: (document: ProjectDocumentDto, kind: "archive" | "restore") => void;
 }) {
@@ -626,6 +653,7 @@ function DocumentTable({
             <th className="px-3 py-3">当前版本</th>
             <th className="px-3 py-3">文件大小</th>
             <th className="px-3 py-3">存储状态</th>
+            <th className="px-3 py-3">可见范围</th>
             <th className="px-3 py-3">解析与索引</th>
             <th className="px-3 py-3">上传者</th>
             <th className="px-3 py-3">更新时间</th>
@@ -663,6 +691,36 @@ function DocumentTable({
                 </td>
                 <td className="px-3 py-3.5 text-xs tabular-nums text-foreground">{version ? formatBytes(version.sizeBytes) : "—"}</td>
                 <td className="px-3 py-3.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}>{status.label}</span></td>
+                <td className="px-3 py-3.5">
+                  {document.permissions.canArchive && document.status === "active" ? (
+                    <select
+                      aria-label={`设置 ${document.displayName} 的可见范围`}
+                      value={document.visibility}
+                      disabled={Boolean(pendingAction)}
+                      onChange={(event) =>
+                        onVisibility(
+                          document,
+                          event.target.value as ProjectDocumentDto["visibility"],
+                        )
+                      }
+                      className="h-8 rounded-md border bg-background px-2 text-[10px]"
+                    >
+                      <option value="private">项目私有</option>
+                      <option value="department_shared">部门共享</option>
+                      <option value="organization_shared">公司共享</option>
+                      <option value="restricted">受限授权</option>
+                    </select>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">
+                      {{
+                        private: "项目私有",
+                        department_shared: "部门共享",
+                        organization_shared: "公司共享",
+                        restricted: "受限授权",
+                      }[document.visibility]}
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-3.5">
                   <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}>{ingestion.label}</span>
                   <p className="mt-1 max-w-52 text-[9px] text-muted-foreground">{ingestion.detail}</p>
