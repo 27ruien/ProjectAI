@@ -3701,4 +3701,9 @@ test("formal executor pins CWD, Trust paths, images, Verify, and Finalize contra
   assert.match(verifier, /egressExpectation \? egressMembers\(\) : \[\]/);
   assert.match(verifier, /phase >= 3 \? databaseMetrics\(\) : null/);
   assert.match(operations, /compose up --detach --no-deps projectai-document-worker/);
+  assert.match(
+    rollout,
+    /result\.command === "projectai-internal bounded-backfill --limit=100"/,
+  );
+  assert.doesNotMatch(rollout, /bounded-embedding-backfill/);
 });

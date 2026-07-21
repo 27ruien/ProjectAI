@@ -1476,7 +1476,8 @@ async function verifyCommand({ rollback = false } = {}) {
   });
   if (!rollback && phase === 4) {
     const backfillResult = applyReport.commandResults.find(
-      (result) => result.command === "projectai-internal bounded-embedding-backfill",
+      (result) =>
+        result.command === "projectai-internal bounded-backfill --limit=100",
     );
     const appliedChunkCount = backfillResult?.evidence?.backfillChunkCount;
     if (

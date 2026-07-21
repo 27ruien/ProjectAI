@@ -253,6 +253,7 @@ try {
   const phaseDigests = [];
   const phaseInventories = [];
   const verificationValues = {};
+  const rehearsalBackfillResult = { backfillChunkCount: 100, enqueuedJobs: 1 };
   let currentInventory = structuredClone(baseline);
   for (let phase = 0; phase <= 6; phase += 1) {
     const postInventory = structuredClone(currentInventory);
@@ -306,7 +307,8 @@ try {
       embeddingUnknownIncrease: 0,
       jobBacklog: 0,
       jobBacklogLimit: 10,
-      backfillChunkCount: phase === 4 ? 100 : 0,
+      backfillChunkCount:
+        phase === 4 ? rehearsalBackfillResult.backfillChunkCount : 0,
       newDocumentAutoEnqueue: phase === 4,
       dataCounts: {
         documents: 0,
@@ -365,10 +367,28 @@ try {
       `--go-no-go=${files.goNoGo}`,
       `--qwen-secret=${files.qwenSecret}`,
     ];
+    const rehearsalCommands = phase === 4
+      ? {
+          [JSON.stringify([
+            "projectai-internal",
+            "bounded-backfill",
+            "--limit=100",
+          ])]: {
+            status: 0,
+            stdout: JSON.stringify(rehearsalBackfillResult),
+            stderr: "",
+          },
+        }
+      : null;
     await execFileAsync(
       process.execPath,
       args,
-      commandOptions({ PROJECTAI_ROLLOUT_TEST_INVENTORY: JSON.stringify(currentInventory) }),
+      commandOptions({
+        PROJECTAI_ROLLOUT_TEST_INVENTORY: JSON.stringify(currentInventory),
+        ...(rehearsalCommands
+          ? { PROJECTAI_ROLLOUT_TEST_COMMANDS: JSON.stringify(rehearsalCommands) }
+          : {}),
+      }),
     );
     await new Promise((resolve) => setTimeout(resolve, 5_100));
     const result = await execFileAsync(
