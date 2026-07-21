@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
@@ -9,6 +10,7 @@ import { getRequestAuditContext } from "@/lib/auth/request-context";
 import {
   createProjectAssistantGateway,
   requireAiAssistantEnabled,
+  type AiGatewayResult,
 } from "@/lib/ai/project-assistant";
 import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
@@ -20,6 +22,7 @@ import {
   actionItemReview,
   actionItemSource,
   projectManagementAudit,
+  projectManagementAiExecution,
   projectMember,
   requirement,
   risk,
@@ -117,6 +120,88 @@ type Source = {
   content: string;
   citation: Record<string, unknown>;
 };
+
+type ManagementAiSkill =
+  | "action-generation"
+  | "risk-generation"
+  | "weekly-report-generation";
+
+function managementSourceDigest(values: string[]): string {
+  return createHash("sha256")
+    .update([...values].sort().join("\n"))
+    .digest("hex");
+}
+
+async function beginManagementAiExecution(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  skillId: ManagementAiSkill;
+  modelProfileId: string;
+  sourceSelectionDigest: string;
+  sourceCount: number;
+  allowedRoles: Array<"project_manager" | "project_member">;
+  requestHeaders: Headers;
+}): Promise<string> {
+  const id = crypto.randomUUID();
+  await getDb().transaction(async (tx) => {
+    await requireProjectRole(
+      input.principal,
+      input.projectId,
+      input.allowedRoles,
+      input.requestHeaders,
+      { db: tx, lockForUpdate: true },
+    );
+    await tx.insert(projectManagementAiExecution).values({
+      id,
+      projectId: input.projectId,
+      actorUserId: input.principal.user.id,
+      skillId: input.skillId,
+      modelProfileId: input.modelProfileId,
+      sourceSelectionDigest: input.sourceSelectionDigest,
+      sourceCount: input.sourceCount,
+    });
+  });
+  return id;
+}
+
+async function completeManagementAiExecution(input: {
+  db: DatabaseExecutor;
+  id: string;
+  result: AiGatewayResult;
+  outputCount: number;
+}): Promise<void> {
+  await input.db
+    .update(projectManagementAiExecution)
+    .set({
+      status: "succeeded",
+      provider: input.result.provider,
+      actualModel: input.result.actualModel,
+      inputTokens: input.result.inputTokens,
+      outputTokens: input.result.outputTokens,
+      latencyMs: input.result.latencyMs,
+      outputCount: input.outputCount,
+      completedAt: new Date(),
+    })
+    .where(eq(projectManagementAiExecution.id, input.id));
+}
+
+async function failManagementAiExecution(
+  id: string,
+  error: unknown,
+): Promise<void> {
+  const candidate =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : undefined;
+  const failureCode =
+    typeof candidate === "string" && /^[A-Z0-9_]{2,80}$/.test(candidate)
+      ? candidate
+      : "AI_EXECUTION_FAILED";
+  await getDb()
+    .update(projectManagementAiExecution)
+    .set({ status: "failed", failureCode, completedAt: new Date() })
+    .where(eq(projectManagementAiExecution.id, id));
+}
 
 function parseJson(text: string): unknown {
   try {
@@ -344,17 +429,15 @@ async function audit(input: {
   requestHeaders: Headers;
   db: DatabaseExecutor;
 }) {
-  await input.db
-    .insert(projectManagementAudit)
-    .values({
-      id: crypto.randomUUID(),
-      projectId: input.projectId,
-      actorUserId: input.principal.user.id,
-      eventType: input.eventType,
-      resourceType: input.resourceType,
-      resourceId: input.resourceId,
-      metadata: input.metadata ?? {},
-    });
+  await input.db.insert(projectManagementAudit).values({
+    id: crypto.randomUUID(),
+    projectId: input.projectId,
+    actorUserId: input.principal.user.id,
+    eventType: input.eventType,
+    resourceType: input.resourceType,
+    resourceId: input.resourceId,
+    metadata: input.metadata ?? {},
+  });
   await writeAuditEvent(
     {
       actorUserId: input.principal.user.id,
@@ -473,67 +556,92 @@ export async function generateActionDrafts(input: {
   );
   const selected = await sources(input);
   const config = requireAiAssistantEnabled();
-  const result = await createProjectAssistantGateway(config).generate({
-    purpose: "action_generation",
-    systemPrompt:
-      "只根据编号来源输出 JSON actions 草稿，不得创建正式任务，不得分配未提供用户。",
-    userPrompt: selected
-      .map((source, index) => `[S${index}] ${source.title}\n${source.content}`)
-      .join("\n\n"),
+  const aiExecutionId = await beginManagementAiExecution({
+    principal: input.principal,
+    projectId: input.projectId,
+    skillId: "action-generation",
+    modelProfileId: config.profileId,
+    sourceSelectionDigest: managementSourceDigest(
+      selected.map((source) => `${source.type}:${source.id}`),
+    ),
+    sourceCount: selected.length,
+    allowedRoles: ["project_manager", "project_member"],
+    requestHeaders: input.requestHeaders,
   });
-  const parsed = aiActions.safeParse(parseJson(result.text));
-  if (
-    !parsed.success ||
-    parsed.data.actions.some((item) => item.sourceIndex >= selected.length)
-  )
-    throw new ProjectManagementError(
-      422,
-      "AI_OUTPUT_INVALID",
-      "AI Action 草稿格式无效",
-    );
-  return getDb().transaction(async (tx) => {
-    await requireProjectRole(
-      input.principal,
-      input.projectId,
-      ["project_manager", "project_member"],
-      input.requestHeaders,
-      { db: tx, lockForUpdate: true },
-    );
-    const created = [];
-    for (const candidate of parsed.data.actions) {
-      const source = selected[candidate.sourceIndex]!;
-      const [draft] = await tx
-        .insert(actionItemDraft)
-        .values({
-          id: crypto.randomUUID(),
-          projectId: input.projectId,
-          title: candidate.title,
-          description: candidate.description,
-          ownerUserId: null,
-          startDate: null,
-          dueDate: null,
-          priority: candidate.priority,
-          blocker: candidate.blocker,
-          sourceType: source.type,
-          sourceCitation: source.citation,
-          relatedRequirementId:
-            source.type === "requirement" ? source.id : null,
-          relatedScopeItemId: null,
-          createdBy: input.principal.user.id,
-        })
-        .returning();
-      created.push(draft);
-    }
-    await audit({
-      ...input,
-      db: tx,
-      eventType: "action_drafts_generated",
-      resourceType: "action_item_draft",
-      resourceId: created[0]!.id,
-      metadata: { count: created.length },
+  try {
+    const result = await createProjectAssistantGateway(config).generate({
+      purpose: "action_generation",
+      systemPrompt:
+        "只根据编号来源输出 JSON actions 草稿，不得创建正式任务，不得分配未提供用户。",
+      userPrompt: selected
+        .map(
+          (source, index) => `[S${index}] ${source.title}\n${source.content}`,
+        )
+        .join("\n\n"),
     });
-    return { drafts: created };
-  });
+    const parsed = aiActions.safeParse(parseJson(result.text));
+    if (
+      !parsed.success ||
+      parsed.data.actions.some((item) => item.sourceIndex >= selected.length)
+    )
+      throw new ProjectManagementError(
+        422,
+        "AI_OUTPUT_INVALID",
+        "AI Action 草稿格式无效",
+      );
+    return await getDb().transaction(async (tx) => {
+      await requireProjectRole(
+        input.principal,
+        input.projectId,
+        ["project_manager", "project_member"],
+        input.requestHeaders,
+        { db: tx, lockForUpdate: true },
+      );
+      const created = [];
+      for (const candidate of parsed.data.actions) {
+        const source = selected[candidate.sourceIndex]!;
+        const [draft] = await tx
+          .insert(actionItemDraft)
+          .values({
+            id: crypto.randomUUID(),
+            projectId: input.projectId,
+            title: candidate.title,
+            description: candidate.description,
+            ownerUserId: null,
+            startDate: null,
+            dueDate: null,
+            priority: candidate.priority,
+            blocker: candidate.blocker,
+            sourceType: source.type,
+            sourceCitation: source.citation,
+            relatedRequirementId:
+              source.type === "requirement" ? source.id : null,
+            relatedScopeItemId: null,
+            createdBy: input.principal.user.id,
+          })
+          .returning();
+        created.push(draft);
+      }
+      await completeManagementAiExecution({
+        db: tx,
+        id: aiExecutionId,
+        result,
+        outputCount: created.length,
+      });
+      await audit({
+        ...input,
+        db: tx,
+        eventType: "action_drafts_generated",
+        resourceType: "action_item_draft",
+        resourceId: created[0]!.id,
+        metadata: { count: created.length, aiExecutionId },
+      });
+      return { drafts: created };
+    });
+  } catch (error) {
+    await failManagementAiExecution(aiExecutionId, error);
+    throw error;
+  }
 }
 
 export async function createManualAction(input: {
@@ -581,17 +689,15 @@ export async function createManualAction(input: {
         createdBy: input.principal.user.id,
       })
       .returning();
-    await tx
-      .insert(actionItemHistory)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        actionItemId: created.id,
-        versionNumber: 1,
-        snapshot: actionSnapshot(parsed.data),
-        changeReason: "manual_create",
-        actorUserId: input.principal.user.id,
-      });
+    await tx.insert(actionItemHistory).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      actionItemId: created.id,
+      versionNumber: 1,
+      snapshot: actionSnapshot(parsed.data),
+      changeReason: "manual_create",
+      actorUserId: input.principal.user.id,
+    });
     await audit({
       ...input,
       db: tx,
@@ -658,16 +764,14 @@ export async function reviewActionDraft(input: {
         db: tx,
       });
     if (input.decision === "reject") {
-      await tx
-        .insert(actionItemReview)
-        .values({
-          id: crypto.randomUUID(),
-          projectId: input.projectId,
-          draftId: draft.id,
-          reviewerUserId: input.principal.user.id,
-          decision: "reject",
-          note: input.note,
-        });
+      await tx.insert(actionItemReview).values({
+        id: crypto.randomUUID(),
+        projectId: input.projectId,
+        draftId: draft.id,
+        reviewerUserId: input.principal.user.id,
+        decision: "reject",
+        note: input.note,
+      });
       await tx
         .update(actionItemDraft)
         .set({ status: "rejected", reviewedAt: new Date() })
@@ -725,41 +829,35 @@ export async function reviewActionDraft(input: {
       })
       .returning();
     const reviewId = crypto.randomUUID();
-    await tx
-      .insert(actionItemReview)
-      .values({
-        id: reviewId,
-        projectId: input.projectId,
-        draftId: draft.id,
-        actionItemId: created.id,
-        reviewerUserId: input.principal.user.id,
-        decision: input.decision,
-        note: input.note,
-      });
-    await tx
-      .insert(actionItemHistory)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        actionItemId: created.id,
-        versionNumber: 1,
-        snapshot: actionSnapshot(parsed.data),
-        changeReason: "draft_accepted",
-        actorUserId: input.principal.user.id,
-      });
-    await tx
-      .insert(actionItemSource)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        actionItemId: created.id,
-        sourceType: draft.sourceType,
-        sourceId:
-          draft.sourceType === "requirement"
-            ? draft.relatedRequirementId!
-            : String(draft.sourceCitation.documentId),
-        citation: draft.sourceCitation,
-      });
+    await tx.insert(actionItemReview).values({
+      id: reviewId,
+      projectId: input.projectId,
+      draftId: draft.id,
+      actionItemId: created.id,
+      reviewerUserId: input.principal.user.id,
+      decision: input.decision,
+      note: input.note,
+    });
+    await tx.insert(actionItemHistory).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      actionItemId: created.id,
+      versionNumber: 1,
+      snapshot: actionSnapshot(parsed.data),
+      changeReason: "draft_accepted",
+      actorUserId: input.principal.user.id,
+    });
+    await tx.insert(actionItemSource).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      actionItemId: created.id,
+      sourceType: draft.sourceType,
+      sourceId:
+        draft.sourceType === "requirement"
+          ? draft.relatedRequirementId!
+          : String(draft.sourceCitation.documentId),
+      citation: draft.sourceCitation,
+    });
     await tx
       .update(actionItemDraft)
       .set({ status: "accepted", reviewedAt: new Date() })
@@ -841,17 +939,15 @@ export async function updateAction(input: {
       .set({ ...parsed.data, currentVersion: version, updatedAt: new Date() })
       .where(eq(actionItem.id, current.id))
       .returning();
-    await tx
-      .insert(actionItemHistory)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        actionItemId: current.id,
-        versionNumber: version,
-        snapshot: actionSnapshot(parsed.data),
-        changeReason: input.changeReason,
-        actorUserId: input.principal.user.id,
-      });
+    await tx.insert(actionItemHistory).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      actionItemId: current.id,
+      versionNumber: version,
+      snapshot: actionSnapshot(parsed.data),
+      changeReason: input.changeReason,
+      actorUserId: input.principal.user.id,
+    });
     await audit({
       ...input,
       db: tx,
@@ -935,21 +1031,19 @@ export async function bulkUpdateActionStatus(input: {
         })
         .where(eq(actionItem.id, row.id))
         .returning();
-      await tx
-        .insert(actionItemHistory)
-        .values({
-          id: crypto.randomUUID(),
-          projectId: input.projectId,
-          actionItemId: row.id,
-          versionNumber: version,
-          snapshot: actionSnapshot({
-            ...row,
-            status: input.status,
-            progress: input.status === "done" ? 100 : row.progress,
-          }),
-          changeReason: "bulk_status_update",
-          actorUserId: input.principal.user.id,
-        });
+      await tx.insert(actionItemHistory).values({
+        id: crypto.randomUUID(),
+        projectId: input.projectId,
+        actionItemId: row.id,
+        versionNumber: version,
+        snapshot: actionSnapshot({
+          ...row,
+          status: input.status,
+          progress: input.status === "done" ? 100 : row.progress,
+        }),
+        changeReason: "bulk_status_update",
+        actorUserId: input.principal.user.id,
+      });
       updated.push(next);
     }
     await audit({
@@ -1124,67 +1218,92 @@ export async function generateRiskDrafts(input: {
   );
   const selected = await sources(input);
   const config = requireAiAssistantEnabled();
-  const result = await createProjectAssistantGateway(config).generate({
-    purpose: "risk_generation",
-    systemPrompt: "只根据编号来源输出 JSON risks 草稿。不得创建正式风险。",
-    userPrompt: selected
-      .map((source, index) => `[S${index}] ${source.title}\n${source.content}`)
-      .join("\n\n"),
+  const aiExecutionId = await beginManagementAiExecution({
+    principal: input.principal,
+    projectId: input.projectId,
+    skillId: "risk-generation",
+    modelProfileId: config.profileId,
+    sourceSelectionDigest: managementSourceDigest(
+      selected.map((source) => `${source.type}:${source.id}`),
+    ),
+    sourceCount: selected.length,
+    allowedRoles: ["project_manager", "project_member"],
+    requestHeaders: input.requestHeaders,
   });
-  const parsed = aiRisks.safeParse(parseJson(result.text));
-  if (
-    !parsed.success ||
-    parsed.data.risks.some((item) => item.sourceIndex >= selected.length)
-  )
-    throw new ProjectManagementError(
-      422,
-      "AI_OUTPUT_INVALID",
-      "AI Risk 草稿格式无效",
-    );
-  return getDb().transaction(async (tx) => {
-    await requireProjectRole(
-      input.principal,
-      input.projectId,
-      ["project_manager", "project_member"],
-      input.requestHeaders,
-      { db: tx, lockForUpdate: true },
-    );
-    const created = [];
-    for (const candidate of parsed.data.risks) {
-      const source = selected[candidate.sourceIndex]!;
-      const [draft] = await tx
-        .insert(riskDraft)
-        .values({
-          id: crypto.randomUUID(),
-          projectId: input.projectId,
-          title: candidate.title,
-          description: candidate.description,
-          probability: candidate.probability,
-          impact: candidate.impact,
-          ownerUserId: null,
-          mitigation: candidate.mitigation,
-          trigger: candidate.trigger,
-          dueDate: null,
-          sourceType: source.type,
-          sourceCitation: source.citation,
-          relatedRequirementId:
-            source.type === "requirement" ? source.id : null,
-          relatedActionItemId: null,
-          createdBy: input.principal.user.id,
-        })
-        .returning();
-      created.push(draft);
-    }
-    await audit({
-      ...input,
-      db: tx,
-      eventType: "risk_drafts_generated",
-      resourceType: "risk_draft",
-      resourceId: created[0]!.id,
-      metadata: { count: created.length },
+  try {
+    const result = await createProjectAssistantGateway(config).generate({
+      purpose: "risk_generation",
+      systemPrompt: "只根据编号来源输出 JSON risks 草稿。不得创建正式风险。",
+      userPrompt: selected
+        .map(
+          (source, index) => `[S${index}] ${source.title}\n${source.content}`,
+        )
+        .join("\n\n"),
     });
-    return { drafts: created };
-  });
+    const parsed = aiRisks.safeParse(parseJson(result.text));
+    if (
+      !parsed.success ||
+      parsed.data.risks.some((item) => item.sourceIndex >= selected.length)
+    )
+      throw new ProjectManagementError(
+        422,
+        "AI_OUTPUT_INVALID",
+        "AI Risk 草稿格式无效",
+      );
+    return await getDb().transaction(async (tx) => {
+      await requireProjectRole(
+        input.principal,
+        input.projectId,
+        ["project_manager", "project_member"],
+        input.requestHeaders,
+        { db: tx, lockForUpdate: true },
+      );
+      const created = [];
+      for (const candidate of parsed.data.risks) {
+        const source = selected[candidate.sourceIndex]!;
+        const [draft] = await tx
+          .insert(riskDraft)
+          .values({
+            id: crypto.randomUUID(),
+            projectId: input.projectId,
+            title: candidate.title,
+            description: candidate.description,
+            probability: candidate.probability,
+            impact: candidate.impact,
+            ownerUserId: null,
+            mitigation: candidate.mitigation,
+            trigger: candidate.trigger,
+            dueDate: null,
+            sourceType: source.type,
+            sourceCitation: source.citation,
+            relatedRequirementId:
+              source.type === "requirement" ? source.id : null,
+            relatedActionItemId: null,
+            createdBy: input.principal.user.id,
+          })
+          .returning();
+        created.push(draft);
+      }
+      await completeManagementAiExecution({
+        db: tx,
+        id: aiExecutionId,
+        result,
+        outputCount: created.length,
+      });
+      await audit({
+        ...input,
+        db: tx,
+        eventType: "risk_drafts_generated",
+        resourceType: "risk_draft",
+        resourceId: created[0]!.id,
+        metadata: { count: created.length, aiExecutionId },
+      });
+      return { drafts: created };
+    });
+  } catch (error) {
+    await failManagementAiExecution(aiExecutionId, error);
+    throw error;
+  }
 }
 
 export async function createManualRisk(input: {
@@ -1233,17 +1352,15 @@ export async function createManualRisk(input: {
         createdBy: input.principal.user.id,
       })
       .returning();
-    await tx
-      .insert(riskHistory)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        riskId: created.id,
-        versionNumber: 1,
-        snapshot: parsed.data,
-        changeReason: "manual_create",
-        actorUserId: input.principal.user.id,
-      });
+    await tx.insert(riskHistory).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      riskId: created.id,
+      versionNumber: 1,
+      snapshot: parsed.data,
+      changeReason: "manual_create",
+      actorUserId: input.principal.user.id,
+    });
     await audit({
       ...input,
       db: tx,
@@ -1310,16 +1427,14 @@ export async function reviewRiskDraft(input: {
         db: tx,
       });
     if (input.decision === "reject") {
-      await tx
-        .insert(riskReview)
-        .values({
-          id: crypto.randomUUID(),
-          projectId: input.projectId,
-          draftId: draft.id,
-          reviewerUserId: input.principal.user.id,
-          decision: "reject",
-          note: input.note,
-        });
+      await tx.insert(riskReview).values({
+        id: crypto.randomUUID(),
+        projectId: input.projectId,
+        draftId: draft.id,
+        reviewerUserId: input.principal.user.id,
+        decision: "reject",
+        note: input.note,
+      });
       await tx
         .update(riskDraft)
         .set({ status: "rejected", reviewedAt: new Date() })
@@ -1374,41 +1489,35 @@ export async function reviewRiskDraft(input: {
       })
       .returning();
     const reviewId = crypto.randomUUID();
-    await tx
-      .insert(riskReview)
-      .values({
-        id: reviewId,
-        projectId: input.projectId,
-        draftId: draft.id,
-        riskId: created.id,
-        reviewerUserId: input.principal.user.id,
-        decision: input.decision,
-        note: input.note,
-      });
-    await tx
-      .insert(riskHistory)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        riskId: created.id,
-        versionNumber: 1,
-        snapshot: parsed.data,
-        changeReason: "draft_accepted",
-        actorUserId: input.principal.user.id,
-      });
-    await tx
-      .insert(riskSource)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        riskId: created.id,
-        sourceType: draft.sourceType,
-        sourceId:
-          draft.sourceType === "requirement"
-            ? draft.relatedRequirementId!
-            : String(draft.sourceCitation.documentId),
-        citation: draft.sourceCitation,
-      });
+    await tx.insert(riskReview).values({
+      id: reviewId,
+      projectId: input.projectId,
+      draftId: draft.id,
+      riskId: created.id,
+      reviewerUserId: input.principal.user.id,
+      decision: input.decision,
+      note: input.note,
+    });
+    await tx.insert(riskHistory).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      riskId: created.id,
+      versionNumber: 1,
+      snapshot: parsed.data,
+      changeReason: "draft_accepted",
+      actorUserId: input.principal.user.id,
+    });
+    await tx.insert(riskSource).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      riskId: created.id,
+      sourceType: draft.sourceType,
+      sourceId:
+        draft.sourceType === "requirement"
+          ? draft.relatedRequirementId!
+          : String(draft.sourceCitation.documentId),
+      citation: draft.sourceCitation,
+    });
     await tx
       .update(riskDraft)
       .set({ status: "accepted", reviewedAt: new Date() })
@@ -1478,17 +1587,15 @@ export async function updateRisk(input: {
       })
       .where(eq(risk.id, current.id))
       .returning();
-    await tx
-      .insert(riskHistory)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
-        riskId: current.id,
-        versionNumber: version,
-        snapshot: parsed.data,
-        changeReason: input.changeReason,
-        actorUserId: input.principal.user.id,
-      });
+    await tx.insert(riskHistory).values({
+      id: crypto.randomUUID(),
+      projectId: input.projectId,
+      riskId: current.id,
+      versionNumber: version,
+      snapshot: parsed.data,
+      changeReason: input.changeReason,
+      actorUserId: input.principal.user.id,
+    });
     await audit({
       ...input,
       db: tx,
@@ -1634,60 +1741,88 @@ export async function generateWeeklyReport(input: {
     riskIds: risks.map((row) => row.id),
   };
   const config = requireAiAssistantEnabled();
-  const result = await createProjectAssistantGateway(config).generate({
-    purpose: "weekly_report",
-    systemPrompt: "仅根据正式项目数据摘要输出周报 JSON，不得补充无来源事实。",
-    userPrompt: JSON.stringify({
-      periodStart: input.periodStart,
-      periodEnd: input.periodEnd,
-      requirements,
-      scopeItems,
-      actions,
-      risks,
-    }),
+  const sourceKeys = Object.entries(sourceManifest).flatMap(([kind, ids]) =>
+    ids.map((id) => `${kind}:${id}`),
+  );
+  const aiExecutionId = await beginManagementAiExecution({
+    principal: input.principal,
+    projectId: input.projectId,
+    skillId: "weekly-report-generation",
+    modelProfileId: config.profileId,
+    sourceSelectionDigest: managementSourceDigest(sourceKeys),
+    sourceCount: sourceKeys.length,
+    allowedRoles: ["project_manager"],
+    requestHeaders: input.requestHeaders,
   });
-  const parsed = weeklySectionsSchema.safeParse(parseJson(result.text));
-  if (!parsed.success)
-    throw new ProjectManagementError(
-      422,
-      "AI_OUTPUT_INVALID",
-      "AI 周报草稿格式无效",
-    );
-  return getDb().transaction(async (tx) => {
-    await requireProjectRole(
-      input.principal,
-      input.projectId,
-      ["project_manager"],
-      input.requestHeaders,
-      { db: tx, lockForUpdate: true },
-    );
-    const [draft] = await tx
-      .insert(weeklyReportDraft)
-      .values({
-        id: crypto.randomUUID(),
-        projectId: input.projectId,
+  try {
+    const result = await createProjectAssistantGateway(config).generate({
+      purpose: "weekly_report",
+      systemPrompt: "仅根据正式项目数据摘要输出周报 JSON，不得补充无来源事实。",
+      userPrompt: JSON.stringify({
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
-        sections: parsed.data,
-        sourceManifest,
-        modelProfileId: config.profileId,
-        createdBy: input.principal.user.id,
-      })
-      .returning();
-    await audit({
-      ...input,
-      db: tx,
-      eventType: "weekly_report_draft_generated",
-      resourceType: "weekly_report_draft",
-      resourceId: draft.id,
-      metadata: {
-        counts: Object.fromEntries(
-          Object.entries(sourceManifest).map(([key, ids]) => [key, ids.length]),
-        ),
-      },
+        requirements,
+        scopeItems,
+        actions,
+        risks,
+      }),
     });
-    return draft;
-  });
+    const parsed = weeklySectionsSchema.safeParse(parseJson(result.text));
+    if (!parsed.success)
+      throw new ProjectManagementError(
+        422,
+        "AI_OUTPUT_INVALID",
+        "AI 周报草稿格式无效",
+      );
+    return await getDb().transaction(async (tx) => {
+      await requireProjectRole(
+        input.principal,
+        input.projectId,
+        ["project_manager"],
+        input.requestHeaders,
+        { db: tx, lockForUpdate: true },
+      );
+      const [draft] = await tx
+        .insert(weeklyReportDraft)
+        .values({
+          id: crypto.randomUUID(),
+          projectId: input.projectId,
+          periodStart: input.periodStart,
+          periodEnd: input.periodEnd,
+          sections: parsed.data,
+          sourceManifest,
+          modelProfileId: config.profileId,
+          createdBy: input.principal.user.id,
+        })
+        .returning();
+      await completeManagementAiExecution({
+        db: tx,
+        id: aiExecutionId,
+        result,
+        outputCount: 1,
+      });
+      await audit({
+        ...input,
+        db: tx,
+        eventType: "weekly_report_draft_generated",
+        resourceType: "weekly_report_draft",
+        resourceId: draft.id,
+        metadata: {
+          counts: Object.fromEntries(
+            Object.entries(sourceManifest).map(([key, ids]) => [
+              key,
+              ids.length,
+            ]),
+          ),
+          aiExecutionId,
+        },
+      });
+      return draft;
+    });
+  } catch (error) {
+    await failManagementAiExecution(aiExecutionId, error);
+    throw error;
+  }
 }
 
 export async function publishWeeklyReport(input: {

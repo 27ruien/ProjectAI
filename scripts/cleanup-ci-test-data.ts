@@ -23,7 +23,9 @@ function assertCiCleanupBoundary(): void {
   }
   const bucket = process.env.OBJECT_STORAGE_BUCKET?.trim() || "";
   if (!/^projectai-ci-[A-Za-z0-9-]+$/.test(bucket)) {
-    throw new Error("CI cleanup refused a non-ephemeral object-storage bucket.");
+    throw new Error(
+      "CI cleanup refused a non-ephemeral object-storage bucket.",
+    );
   }
 }
 
@@ -51,6 +53,7 @@ try {
     await tx.execute(sql`delete from action_item_reviews`);
     await tx.execute(sql`delete from action_items`);
     await tx.execute(sql`delete from action_item_drafts`);
+    await tx.execute(sql`delete from project_management_ai_executions`);
     await tx.execute(sql`delete from project_management_audits`);
     await tx.execute(sql`delete from scope_diff_reviews`);
     await tx.execute(sql`delete from scope_diff_items`);
@@ -123,6 +126,7 @@ try {
     actions: number;
     risks: number;
     weekly_reports: number;
+    management_ai_executions: number;
   }>(sql`
     select
       (select count(*)::int from sessions) as sessions,
@@ -146,6 +150,7 @@ try {
       (select count(*)::int from action_items) as actions,
       (select count(*)::int from risks) as risks,
       (select count(*)::int from weekly_report_versions) as weekly_reports,
+      (select count(*)::int from project_management_ai_executions) as management_ai_executions,
       (
         select count(*)::int
         from document_ingestion_jobs
@@ -173,7 +178,11 @@ try {
   const temporaryFiles = (await readdir("/tmp")).filter((entry) =>
     entry.startsWith("projectai-"),
   ).length;
-  const result = { ...counts.rows[0], objects, temporary_files: temporaryFiles };
+  const result = {
+    ...counts.rows[0],
+    objects,
+    temporary_files: temporaryFiles,
+  };
   if (Object.values(result).some((value) => Number(value) !== 0)) {
     throw new Error(`CI cleanup left test state: ${JSON.stringify(result)}`);
   }

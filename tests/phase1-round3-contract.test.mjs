@@ -47,3 +47,16 @@ test("dependency graph rejects self and recursive cycles", async () => {
   assert.match(service, /with recursive path/);
   assert.match(service, /DEPENDENCY_CYCLE/);
 });
+
+test("every management AI call records a sanitized execution", async () => {
+  const schema = await source("lib/db/schema/work-management.ts");
+  const service = await source("lib/project-management/work-management.ts");
+  assert.match(schema, /project_management_ai_executions/);
+  assert.match(schema, /skillId/);
+  assert.match(schema, /sourceSelectionDigest/);
+  assert.match(schema, /inputTokens/);
+  assert.match(schema, /costUsdMicros/);
+  assert.match(service, /completeManagementAiExecution/);
+  assert.match(service, /failManagementAiExecution/);
+  assert.doesNotMatch(schema, /prompt|source_content|provider_payload/i);
+});

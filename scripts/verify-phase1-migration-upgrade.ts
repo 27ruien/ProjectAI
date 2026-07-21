@@ -18,7 +18,8 @@ async function applyMigration(client: Client, filename: string): Promise<void> {
 async function main(): Promise<void> {
   const baseUrl = databaseUrl();
   const databaseName = `projectai_phase1_upgrade_${process.pid}_${Date.now()}`;
-  if (!/^[a-z0-9_]+$/.test(databaseName)) throw new Error("Unsafe database name.");
+  if (!/^[a-z0-9_]+$/.test(databaseName))
+    throw new Error("Unsafe database name.");
   const admin = new Client({ connectionString: baseUrl.toString() });
   await admin.connect();
   let upgrade: Client | undefined;
@@ -64,6 +65,7 @@ async function main(): Promise<void> {
         "0009_fair_tiger_shark.sql",
         "0010_steep_squadron_supreme.sql",
         "0011_giant_living_lightning.sql",
+        "0012_parallel_stellaris.sql",
       ]) {
         await applyMigration(upgrade, filename);
       }
@@ -83,6 +85,8 @@ async function main(): Promise<void> {
       action_items_table: string | null;
       risks_table: string | null;
       weekly_reports_table: string | null;
+      management_ai_executions_table: string | null;
+      requirement_skill_column: string | null;
     }>(`
       select
         (select count(*)::text from projects
@@ -112,7 +116,14 @@ async function main(): Promise<void> {
         ) as source_selection_column,
         to_regclass('public.action_items')::text as action_items_table,
         to_regclass('public.risks')::text as risks_table,
-        to_regclass('public.weekly_report_versions')::text as weekly_reports_table
+        to_regclass('public.weekly_report_versions')::text as weekly_reports_table,
+        to_regclass('public.project_management_ai_executions')::text as management_ai_executions_table,
+        (
+          select column_name from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'requirement_extraction_runs'
+            and column_name = 'skill_id'
+        ) as requirement_skill_column
     `);
     const row = verified.rows[0];
     if (
@@ -125,11 +136,18 @@ async function main(): Promise<void> {
       row.source_selection_column !== "source_selection_digest" ||
       row.action_items_table !== "action_items" ||
       row.risks_table !== "risks" ||
-      row.weekly_reports_table !== "weekly_report_versions"
+      row.weekly_reports_table !== "weekly_report_versions" ||
+      row.management_ai_executions_table !==
+        "project_management_ai_executions" ||
+      row.requirement_skill_column !== "skill_id"
     ) {
-      throw new Error(`Phase 1 non-empty upgrade contract failed: ${JSON.stringify(row)}`);
+      throw new Error(
+        `Phase 1 non-empty upgrade contract failed: ${JSON.stringify(row)}`,
+      );
     }
-    process.stdout.write("Non-empty 0007 to 0011 Phase 1 migration upgrade verified.\n");
+    process.stdout.write(
+      "Non-empty 0007 to 0012 Phase 1 migration upgrade verified.\n",
+    );
   } finally {
     if (upgrade) await upgrade.end();
     await admin.query(`drop database if exists "${databaseName}" with (force)`);

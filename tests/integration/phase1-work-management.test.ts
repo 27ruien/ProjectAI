@@ -14,6 +14,7 @@ import {
   actionItemReview,
   actionItemSource,
   projectManagementAudit,
+  projectManagementAiExecution,
   requirement,
   risk,
   riskDraft,
@@ -105,6 +106,9 @@ async function clear() {
     await tx
       .delete(projectManagementAudit)
       .where(eq(projectManagementAudit.projectId, projectId));
+    await tx
+      .delete(projectManagementAiExecution)
+      .where(eq(projectManagementAiExecution.projectId, projectId));
     await tx.delete(requirement).where(eq(requirement.id, requirementId));
   });
 }
@@ -386,6 +390,28 @@ describe("Phase 1 Round 3 work management", () => {
     assert.ok(rows.some((row) => row.eventType === "weekly_report_published"));
     assert.doesNotMatch(
       JSON.stringify(rows),
+      /用于验证 Action、Risk 和周报来源边界/,
+    );
+    const executions = await getDb()
+      .select()
+      .from(projectManagementAiExecution)
+      .where(eq(projectManagementAiExecution.projectId, projectId));
+    assert.deepEqual(
+      new Set(executions.map((row) => row.skillId)),
+      new Set([
+        "action-generation",
+        "risk-generation",
+        "weekly-report-generation",
+      ]),
+    );
+    assert.ok(executions.every((row) => row.status === "succeeded"));
+    assert.ok(
+      executions.every((row) =>
+        /^[0-9a-f]{64}$/.test(row.sourceSelectionDigest),
+      ),
+    );
+    assert.doesNotMatch(
+      JSON.stringify(executions),
       /用于验证 Action、Risk 和周报来源边界/,
     );
   });

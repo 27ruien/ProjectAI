@@ -567,3 +567,60 @@ export const projectManagementAudit = pgTable(
     ),
   ],
 );
+
+export const projectManagementAiExecution = pgTable(
+  "project_management_ai_executions",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "cascade" }),
+    actorUserId: text("actor_user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    skillId: varchar("skill_id", { length: 80 }).notNull(),
+    modelProfileId: varchar("model_profile_id", { length: 120 }).notNull(),
+    provider: varchar("provider", { length: 40 }),
+    actualModel: varchar("actual_model", { length: 120 }),
+    status: varchar("status", { length: 24 }).notNull().default("running"),
+    sourceSelectionDigest: varchar("source_selection_digest", {
+      length: 64,
+    }).notNull(),
+    sourceCount: integer("source_count").notNull(),
+    outputCount: integer("output_count"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsdMicros: integer("cost_usd_micros"),
+    latencyMs: integer("latency_ms"),
+    failureCode: varchar("failure_code", { length: 80 }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+  },
+  (table) => [
+    index("project_management_ai_executions_project_created_idx").on(
+      table.projectId,
+      table.createdAt,
+    ),
+    index("project_management_ai_executions_actor_created_idx").on(
+      table.actorUserId,
+      table.createdAt,
+    ),
+    check(
+      "project_management_ai_executions_status_check",
+      sql`${table.status} in ('running', 'succeeded', 'failed')`,
+    ),
+    check(
+      "project_management_ai_executions_digest_check",
+      sql`${table.sourceSelectionDigest} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      "project_management_ai_executions_counts_check",
+      sql`${table.sourceCount} >= 0 and (${table.outputCount} is null or ${table.outputCount} >= 0)`,
+    ),
+  ],
+);
