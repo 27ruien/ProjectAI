@@ -134,10 +134,11 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
   it("creates formal data only after accept and reject creates none", async () => {
     const pending = await getDb().select().from(requirementDraft).where(eq(requirementDraft.projectId, projectId));
     assert.equal(pending.length, 1);
+    const originalDraftId = pending[0]!.id;
     const accepted = await reviewRequirementDraft({ principal: principal(), projectId, draftId: pending[0]!.id, decision: "edit_accept", fields: { title: "人工确认的组织知识搜索", description: pending[0]!.description, type: pending[0]!.type, priority: pending[0]!.priority, ownerUserId: null, acceptanceCriteria: pending[0]!.acceptanceCriteria, assumptions: pending[0]!.assumptions, openQuestions: pending[0]!.openQuestions }, note: "虚构集成审核", requestHeaders: headers });
     assert.ok(accepted.requirement);
     const second = await extractRequirementDrafts({ principal: principal(), projectId, documentIds: [documentId], idempotencyKey: randomUUID(), requestHeaders: headers });
-    assert.ok(second.drafts[0]!.duplicateOfDraftId);
+    assert.equal(second.drafts[0]!.duplicateOfDraftId, originalDraftId);
     const rejected = await reviewRequirementDraft({ principal: principal(), projectId, draftId: second.drafts[0]!.id, decision: "reject", note: "重复需求", requestHeaders: headers });
     assert.equal(rejected.requirement, null);
     assert.equal((await getDb().select().from(requirement).where(eq(requirement.projectId, projectId))).length, 1);

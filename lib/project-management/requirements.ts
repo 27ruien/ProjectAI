@@ -443,16 +443,6 @@ export async function extractRequirementDrafts(input: {
       );
     }
     const byLabel = new Map(evidence.map((item) => [item.label, item]));
-    const normalizedTitles = new Map<string, string>();
-    const existingTitles = await getDb()
-      .select({ id: requirement.id, title: requirement.title })
-      .from(requirement)
-      .where(eq(requirement.projectId, input.projectId));
-    for (const item of existingTitles)
-      normalizedTitles.set(
-        item.title.trim().toLocaleLowerCase("zh-CN"),
-        item.id,
-      );
     const drafts = await getDb().transaction(async (tx) => {
       await requireProjectRole(
         input.principal,
@@ -461,6 +451,27 @@ export async function extractRequirementDrafts(input: {
         input.requestHeaders,
         { db: tx, lockForUpdate: true },
       );
+      const normalizedTitles = new Map<string, string>();
+      const existingDraftTitles = await tx
+        .select({ id: requirementDraft.id, title: requirementDraft.title })
+        .from(requirementDraft)
+        .where(eq(requirementDraft.projectId, input.projectId));
+      for (const item of existingDraftTitles) {
+        normalizedTitles.set(
+          item.title.trim().toLocaleLowerCase("zh-CN"),
+          item.id,
+        );
+      }
+      const existingRequirementTitles = await tx
+        .select({ id: requirement.id, title: requirement.title })
+        .from(requirement)
+        .where(eq(requirement.projectId, input.projectId));
+      for (const item of existingRequirementTitles) {
+        const normalized = item.title.trim().toLocaleLowerCase("zh-CN");
+        if (!normalizedTitles.has(normalized)) {
+          normalizedTitles.set(normalized, item.id);
+        }
+      }
       const created = [];
       for (const candidate of parsed.data.requirements) {
         const source = byLabel.get(candidate.sourceLabel);
