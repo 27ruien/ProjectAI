@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
+import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 import {
   getHybridRetrievalRuntimeConfig,
   finalizeFailedRetrievalRunForExecution,
@@ -38,6 +40,7 @@ const questionSchema = z
   .object({
     question: z.string().trim().min(2).max(2_000),
     modelProfileId: z.string().trim().min(1).max(120),
+    sourceDocumentIds: z.array(z.string().min(1).max(200)).max(50).optional().default([]),
   })
   .strict();
 
@@ -133,6 +136,27 @@ export async function askProjectAssistant(input: {
       "问题或模型配置无效",
     );
   }
+  const selectedSourceIds = [...new Set(parsed.data.sourceDocumentIds)].sort();
+  if (selectedSourceIds.length !== parsed.data.sourceDocumentIds.length) {
+    throw new ProjectAssistantError(400, "AI_INVALID_REQUEST", "知识来源选择存在重复项");
+  }
+  if (selectedSourceIds.length) {
+    const authorized = new Set(
+      (
+        await listAuthorizedDocumentScope({
+          principal: input.principal,
+          projectId: input.projectId,
+          permission: "view",
+        })
+      ).map((item) => item.documentId),
+    );
+    if (selectedSourceIds.some((documentId) => !authorized.has(documentId))) {
+      throw new ProjectAssistantError(404, "AI_SOURCE_NOT_FOUND", "知识来源不存在");
+    }
+  }
+  const sourceSelectionDigest = createHash("sha256")
+    .update(selectedSourceIds.join("\n"))
+    .digest("hex");
   const reservation = await reserveAssistantExecution({
     principal: input.principal,
     projectId: input.projectId,
@@ -144,6 +168,7 @@ export async function askProjectAssistant(input: {
     executionStaleAfterMs: config.executionStaleAfterMs,
     retrievalProfileId: retrievalConfig.profileId,
     retrievalMode: retrievalConfig.mode,
+    sourceSelectionDigest,
   });
   if (reservation.replayed) {
     return responseForExecution({
@@ -173,6 +198,7 @@ export async function askProjectAssistant(input: {
         mode: retrievalConfig.mode,
         retrievalProfileId: retrievalConfig.profileId,
         execution: reservation.execution,
+        sourceDocumentIds: selectedSourceIds,
       }),
     ]);
     const evidence = retrieval.evidence;

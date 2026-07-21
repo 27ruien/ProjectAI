@@ -64,6 +64,20 @@
       "when": 1784648301006,
       "tag": "0008_material_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1784651639534,
+      "tag": "0009_fair_tiger_shark",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1784652846805,
+      "tag": "0010_steep_squadron_supreme",
+      "breakpoints": true
     }
   ]
 }

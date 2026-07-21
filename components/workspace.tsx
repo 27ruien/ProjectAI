@@ -67,8 +67,8 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   else if (exactProject && exactProjectData && child === "meetings") page = <ProjectSection project={exactProject} tab="meetings"><MeetingsPage project={exactProject} data={exactProjectData} /></ProjectSection>;
   else if (exactProject && exactProjectData && child === "risks") page = <ProjectSection project={exactProject} tab="risks"><RisksPage project={exactProject} data={exactProjectData} /></ProjectSection>;
   else if (section === "workflows" && !canUseWriteWorkflows) page = <StandardPage><AccessDeniedPage /></StandardPage>;
-  else if (section === "workflows" && entityId === "requirement-extraction" && editableProject) page = <StandardPage><RequirementExtractionPage editableProject={editableProject} onBack={() => router.push("/workflows")} onOpenReviews={() => router.push("/reviews")} /></StandardPage>;
-  else if (section === "workflows") page = <StandardPage><WorkflowsPage data={workspaceData} editableProject={editableProject} onOpenReviews={() => router.push("/reviews")} /></StandardPage>;
+  else if (section === "workflows" && entityId === "requirement-extraction" && editableProject) page = <StandardPage><RequirementExtractionPage editableProject={editableProject} onBack={() => router.push("/workflows")} onOpenReviews={() => router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
+  else if (section === "workflows") page = <StandardPage><WorkflowsPage data={workspaceData} editableProject={editableProject} onOpenReviews={() => editableProject && router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
   else if (section === "reviews") page = <StandardPage flush><ReviewsPage data={workspaceData} projects={viewer.projects} /></StandardPage>;
   else if (section === "skills") page = <StandardPage><SkillsPage data={workspaceData} initialSkillId={entityId} /></StandardPage>;
   else if (section === "knowledge") page = <StandardPage><GlobalKnowledgePage viewer={viewer} /></StandardPage>;

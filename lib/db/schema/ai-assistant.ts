@@ -203,6 +203,9 @@ export const aiExecution = pgTable(
     latencyMs: integer("latency_ms"),
     providerRequestId: varchar("provider_request_id", { length: 240 }),
     questionSha256: varchar("question_sha256", { length: 64 }).notNull(),
+    sourceSelectionDigest: varchar("source_selection_digest", { length: 64 })
+      .notNull()
+      .default("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
     idempotencyKey: varchar("idempotency_key", { length: 200 }).notNull(),
     failureCode: varchar("failure_code", { length: 80 }),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
@@ -247,6 +250,10 @@ export const aiExecution = pgTable(
       table.createdAt,
     ),
     index("ai_executions_retrieval_run_idx").on(table.retrievalRunId),
+    check(
+      "ai_executions_source_selection_digest_check",
+      sql`${table.sourceSelectionDigest} ~ '^[0-9a-f]{64}$'`,
+    ),
     foreignKey({
       name: "ai_executions_thread_owner_scope_fk",
       columns: [table.threadId, table.projectId, table.actorUserId],

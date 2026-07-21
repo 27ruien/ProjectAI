@@ -84,7 +84,25 @@ export class FakeProjectAssistantProvider
     }
 
     let text: string;
-    if (request.purpose === "probe") {
+    if (request.purpose === "requirement_extraction") {
+      text = JSON.stringify({
+        requirements: [
+          {
+            title: "确认虚构项目上线日期",
+            description: "项目必须在已确认的虚构上线日期前完成可验收交付。",
+            type: "business_rule",
+            priority: "high",
+            acceptanceCriteria: ["上线日期由项目经理确认", "交付前完成验收记录"],
+            assumptions: ["来源资料为当前有效版本"],
+            openQuestions: ["最终验收负责人是谁？"],
+            sourceLabel: "E1",
+            confidence: 0.92,
+          },
+        ],
+      });
+    } else if (request.purpose === "weekly_report") {
+      text = JSON.stringify({ summary: "虚构项目周报草稿", sourceLabels: ["E1"] });
+    } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (
       request.userPrompt.includes("FAKE_REPAIR_FAIL") ||

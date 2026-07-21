@@ -394,6 +394,14 @@ jobs:
           npm run test:phase1 2>&1 | tee test-logs/phase1-contract.log
           npm run test:phase1-integration 2>&1 | tee test-logs/phase1-integration.log
 
+      - name: Phase 1 ACL-aware AI, requirement, and Scope tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:phase1-round2 2>&1 | tee test-logs/phase1-round2-contract.log
+          npm run test:phase1-round2-integration 2>&1 | tee test-logs/phase1-round2-integration.log
+
       - name: Write sanitized Retrieval verification summary
         run: npm run retrieval:ci-evidence
 

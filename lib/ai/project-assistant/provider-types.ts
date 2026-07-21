@@ -1,4 +1,9 @@
-export type ProjectAssistantProviderPurpose = "answer" | "repair" | "probe";
+export type ProjectAssistantProviderPurpose =
+  | "answer"
+  | "repair"
+  | "probe"
+  | "requirement_extraction"
+  | "weekly_report";
 
 export type ProjectAssistantProviderRequest = {
   model: string;

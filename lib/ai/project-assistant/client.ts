@@ -95,6 +95,7 @@ export function askProjectAssistant(
   threadId: string,
   question: string,
   requestId: string,
+  sourceDocumentIds: string[] = [],
 ): Promise<ProjectAssistantMessageResponse> {
   return api(
     projectPath(projectId, `/${encodeURIComponent(threadId)}/messages`),
@@ -107,6 +108,7 @@ export function askProjectAssistant(
       body: JSON.stringify({
         question,
         modelProfileId: PROJECT_ASSISTANT_MODEL_PROFILE_ID,
+        sourceDocumentIds,
       }),
     },
   );

@@ -14,6 +14,7 @@ export type ProjectAssistantErrorCode =
   | "AI_CONCURRENCY_LIMIT_REACHED"
   | "AI_IDEMPOTENCY_CONFLICT"
   | "AI_INVALID_REQUEST"
+  | "AI_SOURCE_NOT_FOUND"
   | "AI_THREAD_NOT_FOUND";
 
 export class ProjectAssistantError extends Error {

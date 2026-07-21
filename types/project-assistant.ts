@@ -13,6 +13,8 @@ export type ProjectAssistantCitationDto = {
   excerpt: string;
   documentId: string;
   versionId: string;
+  knowledgeSpaceId: string;
+  sourceScope: "organization" | "department" | "project" | "restricted";
 };
 
 export type ProjectAssistantMessageDto = {
@@ -69,4 +71,5 @@ export type ProjectAssistantMessageResponse = {
 export type ProjectAssistantQuestionRequest = {
   question: string;
   modelProfileId: typeof PROJECT_ASSISTANT_MODEL_PROFILE_ID;
+  sourceDocumentIds?: string[];
 };

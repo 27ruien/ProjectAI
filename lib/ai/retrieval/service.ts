@@ -155,10 +155,14 @@ function selectHybridEvidence(
 async function embeddingCoverage(input: {
   actorUserId: string;
   projectId: string;
+  sourceDocumentIds: string[];
 }): Promise<{
   basisPoints: number;
   chunkCount: number;
 }> {
+  const documentFilter = input.sourceDocumentIds.length
+    ? sql`and c.document_id in (${sql.join(input.sourceDocumentIds.map((id) => sql`${id}`), sql`, `)})`
+    : sql``;
   const result = await getDb().execute<{
     chunk_count: string | number;
     embedding_count: string | number;
@@ -200,6 +204,7 @@ async function embeddingCoverage(input: {
       and v.storage_status = 'stored'
       and v.is_current = true
       and j.status = 'succeeded'
+      ${documentFilter}
   `);
   const row = result.rows[0];
   const chunks = Number(row?.chunk_count ?? 0);
@@ -276,9 +281,13 @@ async function exactVectorCandidates(input: {
   actorUserId: string;
   projectId: string;
   vector: number[];
+  sourceDocumentIds: string[];
 }): Promise<RankedRetrievalCandidate<ProjectKnowledgeEvidence>[]> {
   const runtime = getHybridRetrievalRuntimeConfig();
   const vectorLiteral = `[${input.vector.join(",")}]`;
+  const documentFilter = input.sourceDocumentIds.length
+    ? sql`and c.document_id in (${sql.join(input.sourceDocumentIds.map((id) => sql`${id}`), sql`, `)})`
+    : sql``;
   const result = await getDb().transaction(async (tx) => {
     await tx.execute(
       sql`select set_config('statement_timeout', ${String(runtime.vectorSqlTimeoutMs)}, true)`,
@@ -332,6 +341,7 @@ async function exactVectorCandidates(input: {
         and v.storage_status = 'stored'
         and v.is_current = true
         and j.status = 'succeeded'
+        ${documentFilter}
         and (e.embedding <=> ${vectorLiteral}::vector) <= ${HYBRID_RETRIEVAL_PROFILE.vectorMaxDistance}
       order by (e.embedding <=> ${vectorLiteral}::vector) asc, c.id asc
       limit ${HYBRID_RETRIEVAL_PROFILE.vectorCandidateLimit}
@@ -380,6 +390,7 @@ export async function retrieveProjectEvidence(input: {
   mode: RetrievalMode;
   retrievalProfileId: string;
   execution: AiExecutionRecord;
+  sourceDocumentIds: string[];
 }): Promise<RetrievalEvidenceResult> {
   await requireProjectAccess(input.principal, input.projectId, input.requestHeaders);
   const runtime = getHybridRetrievalRuntimeConfig();
@@ -400,6 +411,7 @@ export async function retrieveProjectEvidence(input: {
     projectId: input.projectId,
     query,
     limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit,
+    documentIds: input.sourceDocumentIds,
   });
   const lexicalLatencyMs = elapsed(lexicalStarted);
   const lexicalEvidence = selectLexicalEvidence(lexical);
@@ -424,6 +436,7 @@ export async function retrieveProjectEvidence(input: {
       const coverage = await embeddingCoverage({
         actorUserId: input.principal.user.id,
         projectId: input.projectId,
+        sourceDocumentIds: input.sourceDocumentIds,
       });
       coverageBps = coverage.basisPoints;
       if (coverage.chunkCount === 0) {
@@ -450,6 +463,7 @@ export async function retrieveProjectEvidence(input: {
               actorUserId: input.principal.user.id,
               projectId: input.projectId,
               vector: embedded.vector,
+              sourceDocumentIds: input.sourceDocumentIds,
             });
             vectorLatencyMs = elapsed(vectorStarted);
           } catch (error) {

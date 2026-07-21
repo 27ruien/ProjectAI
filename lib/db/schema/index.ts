@@ -7,6 +7,7 @@ export * from "./project-members";
 export * from "./organizations";
 export * from "./knowledge-spaces";
 export * from "./knowledge-grants";
+export * from "./requirements-scope";
 export * from "./audit-events";
 export * from "./project-documents";
 export * from "./document-ingestion";

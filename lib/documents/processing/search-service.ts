@@ -174,12 +174,13 @@ export async function retrieveLexicalProjectCandidates(input: {
   projectId: string;
   query: string;
   limit: number;
+  documentIds?: string[];
 }): Promise<RankedProjectKnowledgeEvidence[]> {
   const rows = await queryProjectKnowledgeRows({
     actorUserId: input.actorUserId,
     projectId: input.projectId,
     query: input.query,
-    documentIds: [],
+    documentIds: input.documentIds ?? [],
     limit: input.limit,
   });
   return rows
