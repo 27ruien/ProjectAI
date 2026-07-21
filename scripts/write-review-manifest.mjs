@@ -7,6 +7,8 @@ import { assertEvidenceIndex } from "./review-evidence-contract.mjs";
 import {
   assertProducerContract,
   assertDigest,
+  assertFullSha,
+  assertReleaseSessionId,
   digestObject,
 } from "./release/contract.mjs";
 
@@ -41,6 +43,20 @@ const requiredReleaseReports = [
   "release-disabled-image-rehearsal.md",
   "release-smoke.json",
   "release-smoke.md",
+  "production-authorization-contract.json",
+  "production-authorization-contract.md",
+  "production-phase-state-machine.json",
+  "production-phase-state-machine.md",
+  "production-rollout-rehearsal.json",
+  "production-rollout-rehearsal.md",
+  "production-rollout-rollback.json",
+  "production-rollout-rollback.md",
+  "production-rollout-resume.json",
+  "production-rollout-resume.md",
+  "production-compose-contract.json",
+  "production-compose-contract.md",
+  "production-secret-boundary.json",
+  "production-secret-boundary.md",
 ];
 const retrievalReportFiles = [];
 for (const file of requiredRetrievalReports) {
@@ -75,7 +91,20 @@ for (const filename of releaseReportFiles) {
   } catch {
     throw new Error(`Release report companion JSON is invalid: ${jsonFilename}`);
   }
-  assertProducerContract(report, report.reportType, { allowSynthetic: false });
+  if (report.producerVersion === "b3-c2-v2") {
+    if (
+      report.producer !== "projectai-release-tool" ||
+      !/^production-[a-z0-9-]+$/.test(report.reportType) ||
+      report.sourceMode !== "ci-artifact"
+    ) {
+      throw new Error(`CI Production rollout report has an invalid Producer Contract: ${filename}`);
+    }
+    assertFullSha(report.releaseCandidateSha, `${jsonFilename}.releaseCandidateSha`);
+    assertDigest(report.releaseImageDigest, `${jsonFilename}.releaseImageDigest`);
+    assertReleaseSessionId(report.releaseSessionId);
+  } else {
+    assertProducerContract(report, report.reportType, { allowSynthetic: false });
+  }
   if (report.sourceMode !== "ci-artifact") {
     throw new Error(`CI Release report has invalid sourceMode: ${filename}`);
   }

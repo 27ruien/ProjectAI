@@ -29,6 +29,10 @@ container_exists() {
   sudo -n docker container inspect "$1" >/dev/null 2>&1
 }
 
+container_running() {
+  [[ "$(sudo -n docker container inspect --format '{{.State.Status}}' "$1" 2>/dev/null || true)" == "running" ]]
+}
+
 mount_present() {
   local container="$1"
   local pattern="$2"
@@ -42,6 +46,12 @@ mount_present() {
 
 container_field() {
   sudo -n docker inspect --format "$2" "$1"
+}
+
+image_contract() {
+  sudo -n docker image inspect --format \
+    '{{.Os}}|{{.Architecture}}|{{index .Config.Labels "org.opencontainers.image.revision"}}|{{index .Config.Labels "com.projectai.release.environment"}}' \
+    "$1"
 }
 
 nginx_hash() {
@@ -100,13 +110,13 @@ fi
 
 if [[ "$environment" == "production" ]]; then
   app=project-ai-os
-  compose_file=/srv/projectai/docker-compose.prod.yml
+  compose_file=/srv/projectai/docker-compose.production-rollout.yml
   base_url=http://127.0.0.1:3100/tool/projectai
   public_url=https://gridworks.cn/tool/projectai/
   backup_root=/srv/projectai/backups
   postgres=project-ai-os-postgres
   minio=project-ai-os-minio
-  document_worker=project-ai-os-worker
+  document_worker=project-ai-os-document-worker
   embedding_worker=project-ai-os-embedding-worker
   migration_lock=/srv/projectai/.production-migration-lock
 else
@@ -129,13 +139,18 @@ fi
 emit app.containerId "$(container_field "$app" '{{.Id}}')"
 app_image="$(container_field "$app" '{{.Image}}')"
 emit app.imageDigest "$app_image"
+IFS='|' read -r app_image_os app_image_architecture app_image_revision app_image_environment <<<"$(image_contract "$app_image")"
+emit app.imageOs "${app_image_os:-null}"
+emit app.imageArchitecture "${app_image_architecture:-null}"
+emit app.imageRevision "${app_image_revision:-null}"
+emit app.imageEnvironment "${app_image_environment:-null}"
 emit app.createdAt "$(container_field "$app" '{{.Created}}')"
 emit app.startedAt "$(container_field "$app" '{{.State.StartedAt}}')"
 emit app.restartCount "$(container_field "$app" '{{.RestartCount}}')"
 emit app.status "$(container_field "$app" '{{.State.Status}}')"
 emit app.health "$(container_field "$app" '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
 emit app.composeProject "$(container_field "$app" '{{index .Config.Labels "com.docker.compose.project"}}')"
-app_commit="$(sudo -n docker exec "$app" sh -c 'printf "%s" "$NEXT_PUBLIC_COMMIT_SHA"' 2>/dev/null || true)"
+app_commit="$app_image_revision"
 if [[ "$app_commit" =~ ^[0-9a-f]{40}$ ]]; then
   emit app.commitSha "$app_commit"
 else
@@ -242,8 +257,7 @@ SQL
     clear|held) ;;
     *) migration_advisory=unknown ;;
   esac
-  if [[ "$environment" == "staging" ]]; then
-    active="$(sudo -n docker exec -i "$postgres" sh -c 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+  active="$(sudo -n docker exec -i "$postgres" sh -c 'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
 select
   (select count(*) from document_ingestion_jobs where status in ('pending','running')) || '|' ||
   (select count(*) from document_embedding_jobs where status in ('pending','running')) || '|' ||
@@ -254,8 +268,20 @@ select
   (select count(*) from ai_executions where status in ('reserved','retrieving','calling_provider','validating'));
 SQL
 )"
-    IFS='|' read -r document_jobs embedding_jobs embedding_batches embedding_calls retrieval_runs query_calls executions <<<"$active"
-  fi
+  IFS='|' read -r document_jobs embedding_jobs embedding_batches embedding_calls retrieval_runs query_calls executions <<<"$active"
+  for active_count in \
+    "$document_jobs" \
+    "$embedding_jobs" \
+    "$embedding_batches" \
+    "$embedding_calls" \
+    "$retrieval_runs" \
+    "$query_calls" \
+    "$executions"; do
+    [[ "$active_count" =~ ^[0-9]+$ ]] || {
+      printf 'Active workload inventory is incomplete.\n' >&2
+      exit 70
+    }
+  done
 else
   emit database.present false
   emit database.inventoryKnown not-applicable
@@ -266,6 +292,23 @@ else
   emit database.sizeBytes 0
   emit database.pgvectorVersion absent
   emit database.migrationCount none
+  if [[ "$environment" == "production" ]]; then
+    document_jobs=null
+    embedding_jobs=null
+    embedding_batches=null
+    embedding_calls=null
+    retrieval_runs=null
+    query_calls=null
+    executions=null
+  else
+    document_jobs=0
+    embedding_jobs=0
+    embedding_batches=0
+    embedding_calls=0
+    retrieval_runs=0
+    query_calls=0
+    executions=0
+  fi
 fi
 
 if container_exists "$minio"; then
@@ -346,32 +389,56 @@ else
   emit objectStorage.bucketCount 0
 fi
 
-if container_exists "$document_worker"; then
+if container_running "$document_worker"; then
   emit services.documentWorker true
+  document_worker_image="$(container_field "$document_worker" '{{.Image}}')"
+  emit services.documentWorkerImageDigest "$document_worker_image"
+  IFS='|' read -r worker_os worker_architecture worker_revision worker_environment <<<"$(image_contract "$document_worker_image")"
+  emit services.documentWorkerImageOs "${worker_os:-null}"
+  emit services.documentWorkerImageArchitecture "${worker_architecture:-null}"
+  emit services.documentWorkerImageRevision "${worker_revision:-null}"
+  emit services.documentWorkerImageEnvironment "${worker_environment:-null}"
   emit services.documentWorkerHealth "$(container_field "$document_worker" '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
   emit services.documentWorkerRestartCount "$(container_field "$document_worker" '{{.RestartCount}}')"
 else
   emit services.documentWorker false
+  emit services.documentWorkerImageDigest null
+  emit services.documentWorkerImageOs null
+  emit services.documentWorkerImageArchitecture null
+  emit services.documentWorkerImageRevision null
+  emit services.documentWorkerImageEnvironment null
   emit services.documentWorkerHealth absent
   emit services.documentWorkerRestartCount 0
 fi
-if container_exists "$embedding_worker"; then
+if container_running "$embedding_worker"; then
   emit services.embeddingWorker true
+  embedding_worker_image="$(container_field "$embedding_worker" '{{.Image}}')"
+  emit services.embeddingWorkerImageDigest "$embedding_worker_image"
+  IFS='|' read -r worker_os worker_architecture worker_revision worker_environment <<<"$(image_contract "$embedding_worker_image")"
+  emit services.embeddingWorkerImageOs "${worker_os:-null}"
+  emit services.embeddingWorkerImageArchitecture "${worker_architecture:-null}"
+  emit services.embeddingWorkerImageRevision "${worker_revision:-null}"
+  emit services.embeddingWorkerImageEnvironment "${worker_environment:-null}"
   emit services.embeddingWorkerHealth "$(container_field "$embedding_worker" '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}')"
   emit services.embeddingWorkerRestartCount "$(container_field "$embedding_worker" '{{.RestartCount}}')"
 else
   emit services.embeddingWorker false
+  emit services.embeddingWorkerImageDigest null
+  emit services.embeddingWorkerImageOs null
+  emit services.embeddingWorkerImageArchitecture null
+  emit services.embeddingWorkerImageRevision null
+  emit services.embeddingWorkerImageEnvironment null
   emit services.embeddingWorkerHealth absent
   emit services.embeddingWorkerRestartCount 0
 fi
 
-emit active.documentJobs "${document_jobs:-0}"
-emit active.embeddingJobs "${embedding_jobs:-0}"
-emit active.embeddingBatches "${embedding_batches:-0}"
-emit active.embeddingProviderCalls "${embedding_calls:-0}"
-emit active.retrievalRuns "${retrieval_runs:-0}"
-emit active.queryEmbeddingCalls "${query_calls:-0}"
-emit active.aiExecutions "${executions:-0}"
+emit active.documentJobs "$document_jobs"
+emit active.embeddingJobs "$embedding_jobs"
+emit active.embeddingBatches "$embedding_batches"
+emit active.embeddingProviderCalls "$embedding_calls"
+emit active.retrievalRuns "$retrieval_runs"
+emit active.queryEmbeddingCalls "$query_calls"
+emit active.aiExecutions "$executions"
 
 IFS=$'\t' read -r backup_state backup_size backup_time <<<"$(latest_backup "$backup_root")"
 emit backup.directory "$backup_root"
@@ -417,11 +484,11 @@ else
 fi
 
 if [[ "$environment" == "production" ]]; then
-  deployment_lock=/srv/projectai/.production-deploy-lock
+  deployment_lock=/srv/projectai/.production-rollout-lock
 else
   deployment_lock=/srv/projectai-staging/.staging-deploy-lock
 fi
-if sudo -n test -e "$deployment_lock"; then
+if sudo -n test -e "$deployment_lock" || sudo -n test -e "${deployment_lock}.lifecycle"; then
   emit locks.deployment true
 else
   emit locks.deployment false

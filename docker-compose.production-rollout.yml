@@ -1,0 +1,302 @@
+name: projectai-production
+
+x-common-runtime: &common-runtime
+  restart: unless-stopped
+  init: true
+  pids_limit: 256
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: "3"
+
+x-document-environment: &document-environment
+  DOCUMENT_WORKER_POLL_MS: ${DOCUMENT_WORKER_POLL_MS:-2000}
+  DOCUMENT_WORKER_LEASE_SECONDS: ${DOCUMENT_WORKER_LEASE_SECONDS:-120}
+  DOCUMENT_WORKER_MAX_ATTEMPTS: ${DOCUMENT_WORKER_MAX_ATTEMPTS:-3}
+  DOCUMENT_MAX_PAGES: ${DOCUMENT_MAX_PAGES:-1000}
+  DOCUMENT_MAX_SLIDES: ${DOCUMENT_MAX_SLIDES:-1000}
+  DOCUMENT_MAX_SHEETS: ${DOCUMENT_MAX_SHEETS:-100}
+  DOCUMENT_MAX_ROWS: ${DOCUMENT_MAX_ROWS:-100000}
+  DOCUMENT_MAX_COLUMNS: ${DOCUMENT_MAX_COLUMNS:-1000}
+  DOCUMENT_MAX_CELLS: ${DOCUMENT_MAX_CELLS:-500000}
+  DOCUMENT_MAX_CHARACTERS: ${DOCUMENT_MAX_CHARACTERS:-10000000}
+  DOCUMENT_MAX_SECTIONS: ${DOCUMENT_MAX_SECTIONS:-20000}
+  DOCUMENT_MAX_CHUNKS: ${DOCUMENT_MAX_CHUNKS:-50000}
+  DOCUMENT_PARSE_TIMEOUT_MS: ${DOCUMENT_PARSE_TIMEOUT_MS:-120000}
+  DOCUMENT_PARSER_VERSION: ${DOCUMENT_PARSER_VERSION:-1}
+  DOCUMENT_CHUNKER_VERSION: ${DOCUMENT_CHUNKER_VERSION:-1}
+
+x-embedding-environment: &embedding-environment
+  AI_EMBEDDING_PROFILE_ID: qwen-text-embedding-cn-v1
+  AI_EMBEDDING_DIMENSIONS: "1024"
+  AI_EMBEDDING_BATCH_SIZE: "10"
+  AI_EMBEDDING_BATCH_MAX_CHARACTERS: "30000"
+  AI_EMBEDDING_DAILY_JOB_LIMIT: "500"
+  AI_EMBEDDING_DAILY_TOKEN_LIMIT: "5000000"
+
+services:
+  projectai-app:
+    <<: *common-runtime
+    image: ${PRODUCTION_APP_IMAGE:?immutable PRODUCTION_APP_IMAGE digest is required}
+    container_name: project-ai-os
+    env_file:
+      - path: /srv/projectai/.env.database-production
+        required: true
+      - path: /srv/projectai/.env.auth-production
+        required: true
+      - path: /srv/projectai/.env.storage-production
+        required: true
+      - path: /srv/projectai/.env.ai-production
+        required: true
+      - path: /srv/projectai/.env.embedding-production
+        required: true
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: 0.0.0.0
+      NEXT_PUBLIC_BASE_PATH: /tool/projectai
+      NEXT_PUBLIC_APP_ENV: production
+    ports:
+      - "127.0.0.1:3100:3000"
+    networks:
+      - projectai-production-internal
+      - projectai-production-egress
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3000/tool/projectai/api/health').then(async r=>{if(!r.ok||(await r.json()).status!=='ok')process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 30s
+    cpus: 2.0
+    mem_limit: 1g
+
+  projectai-document-worker:
+    <<: *common-runtime
+    image: ${PRODUCTION_APP_IMAGE:?immutable PRODUCTION_APP_IMAGE digest is required}
+    container_name: project-ai-os-document-worker
+    command: npm run worker:documents
+    env_file:
+      - path: /srv/projectai/.env.database-production
+        required: true
+      - path: /srv/projectai/.env.storage-production
+        required: true
+      - path: /srv/projectai/.env.document-production
+        required: true
+      - path: /srv/projectai/.env.embedding-production
+        required: true
+    environment:
+      <<: *document-environment
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: production
+    networks:
+      - projectai-production-internal
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "scripts/worker-healthcheck.mjs", "document"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    cpus: 1.0
+    mem_limit: 768m
+
+  projectai-embedding-worker:
+    <<: *common-runtime
+    profiles: ["embedding"]
+    image: ${PRODUCTION_APP_IMAGE:?immutable PRODUCTION_APP_IMAGE digest is required}
+    container_name: project-ai-os-embedding-worker
+    command: npm run worker:embeddings
+    env_file:
+      - path: /srv/projectai/.env.database-production
+        required: true
+      - path: /srv/projectai/.env.ai-production
+        required: true
+      - path: /srv/projectai/.env.embedding-production
+        required: true
+    environment:
+      <<: *embedding-environment
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: production
+    networks:
+      - projectai-production-internal
+      - projectai-production-egress
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "scripts/worker-healthcheck.mjs", "embedding"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    cpus: 1.0
+    mem_limit: 768m
+
+  projectai-postgres:
+    <<: *common-runtime
+    image: pgvector/pgvector:0.8.1-pg17@sha256:3e8b3adfd27b5707128f60956f62a793c3c9326ea8cfaf0eab7adccb5d700b21
+    container_name: project-ai-os-postgres
+    environment:
+      POSTGRES_DB: projectai
+      POSTGRES_USER: projectai
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - postgres_password
+    volumes:
+      - projectai-production-postgres:/var/lib/postgresql/data
+    networks:
+      - projectai-production-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U projectai -d projectai"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    cpus: 1.5
+    mem_limit: 1g
+
+  projectai-minio:
+    <<: *common-runtime
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    container_name: project-ai-os-minio
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    secrets:
+      - minio_root_user
+      - minio_root_password
+    volumes:
+      - projectai-production-minio:/data
+    networks:
+      - projectai-production-internal
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    cpus: 1.0
+    mem_limit: 768m
+
+  projectai-minio-init:
+    image: quay.io/minio/mc@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    container_name: project-ai-os-minio-init
+    restart: "no"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        root_user="$$(cat /run/secrets/minio_root_user)"
+        root_password="$$(cat /run/secrets/minio_root_password)"
+        app_user="$$(cat /run/secrets/minio_app_access_key)"
+        app_password="$$(cat /run/secrets/minio_app_secret_key)"
+        config="$$(mktemp -d /tmp/projectai-mc.XXXXXX)"
+        policy="$$(mktemp /tmp/projectai-policy.XXXXXX)"
+        trap 'rm -rf "$${config}" "$${policy}"' EXIT
+        mc --quiet --config-dir "$${config}" alias set admin http://projectai-minio:9000 "$${root_user}" "$${root_password}"
+        mc --quiet --config-dir "$${config}" mb --ignore-existing admin/projectai-production-files
+        mc --quiet --config-dir "$${config}" anonymous set none admin/projectai-production-files
+        if ! mc --quiet --config-dir "$${config}" admin user info admin "$${app_user}" >/dev/null 2>&1; then
+          mc --quiet --config-dir "$${config}" admin user add admin "$${app_user}" "$${app_password}"
+        fi
+        printf '%s' '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::projectai-production-files"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::projectai-production-files/projects/*"]}]}' > "$${policy}"
+        mc --quiet --config-dir "$${config}" admin policy create admin projectai-production-files "$${policy}"
+        mc --quiet --config-dir "$${config}" admin policy attach admin projectai-production-files --user "$${app_user}"
+    secrets:
+      - minio_root_user
+      - minio_root_password
+      - minio_app_access_key
+      - minio_app_secret_key
+    networks:
+      - projectai-production-internal
+    depends_on:
+      projectai-minio:
+        condition: service_healthy
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+
+  projectai-migrate:
+    profiles: ["operations"]
+    image: ${PRODUCTION_DB_TOOLS_IMAGE:?immutable PRODUCTION_DB_TOOLS_IMAGE digest is required}
+    container_name: project-ai-os-migrate
+    restart: "no"
+    command: npm run db:migrate
+    env_file:
+      - path: /srv/projectai/.env.database-production
+        required: true
+    environment:
+      NODE_ENV: production
+    networks:
+      - projectai-production-internal
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 256
+
+  projectai-storage-operations:
+    profiles: ["operations"]
+    image: ${PRODUCTION_DB_TOOLS_IMAGE:?immutable PRODUCTION_DB_TOOLS_IMAGE digest is required}
+    container_name: project-ai-os-storage-operations
+    restart: "no"
+    env_file:
+      - path: /srv/projectai/.env.database-production
+        required: true
+      - path: /srv/projectai/.env.storage-production
+        required: true
+      - path: /srv/projectai/.env.ai-production
+        required: true
+      - path: /srv/projectai/.env.embedding-production
+        required: true
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: production
+    networks:
+      - projectai-production-internal
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 256
+
+networks:
+  projectai-production-internal:
+    name: projectai-production-internal
+    internal: true
+  projectai-production-egress:
+    name: projectai-production-egress
+
+volumes:
+  projectai-production-postgres:
+    name: projectai-production-postgres
+  projectai-production-minio:
+    name: projectai-production-minio
+
+secrets:
+  postgres_password:
+    file: /srv/projectai/secrets/postgres_password
+  minio_root_user:
+    file: /srv/projectai/secrets/minio_root_user
+  minio_root_password:
+    file: /srv/projectai/secrets/minio_root_password
+  minio_app_access_key:
+    file: /srv/projectai/secrets/minio_app_access_key
+  minio_app_secret_key:
+    file: /srv/projectai/secrets/minio_app_secret_key

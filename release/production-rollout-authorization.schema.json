@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://projectai.invalid/schemas/production-rollout-authorization.schema.json",
+  "title": "ProjectAI Production Rollout Authorization",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "reportType",
+    "producer",
+    "producerVersion",
+    "sourceMode",
+    "authorizationId",
+    "releaseSessionId",
+    "releaseCandidateSha",
+    "releaseImageDigest",
+    "databaseToolsImageDigest",
+    "productionBaselineDigest",
+    "goNoGoDigest",
+    "authorizedPhases",
+    "action",
+    "authorizedAt",
+    "expiresAt",
+    "independentReview",
+    "machineReadiness",
+    "openP0",
+    "openP1",
+    "openP2",
+    "productionRolloutAuthorized",
+    "signatureAlgorithm",
+    "authorizationSignature",
+    "digest"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "reportType": { "const": "production-rollout-authorization" },
+    "producer": { "const": "projectai-release-tool" },
+    "producerVersion": { "const": "b3-c2-v2" },
+    "sourceMode": {
+      "enum": ["production-approval", "rehearsal-command", "synthetic-test"]
+    },
+    "authorizationId": {
+      "type": "string",
+      "pattern": "^pa-[0-9a-f]{32}$"
+    },
+    "releaseSessionId": {
+      "type": "string",
+      "pattern": "^rs-[0-9a-f]{32}$"
+    },
+    "releaseCandidateSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "releaseImageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "databaseToolsImageDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "productionBaselineDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "goNoGoDigest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "authorizedPhases": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 0, "maximum": 6 }
+    },
+    "action": {
+      "enum": ["apply", "resume", "rollback", "finalize", "lock-clear", "image-transfer"]
+    },
+    "authorizedAt": { "type": "string", "format": "date-time" },
+    "expiresAt": { "type": "string", "format": "date-time" },
+    "independentReview": { "const": "passed" },
+    "machineReadiness": { "const": "GO" },
+    "openP0": { "const": 0 },
+    "openP1": { "const": 0 },
+    "openP2": { "const": 0 },
+    "productionRolloutAuthorized": { "const": true },
+    "signatureAlgorithm": { "const": "ed25519" },
+    "authorizationSignature": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9+/]{86}==$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

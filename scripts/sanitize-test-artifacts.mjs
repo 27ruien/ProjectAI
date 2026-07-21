@@ -51,6 +51,8 @@ const allowedTestLogs = new Set([
   "release-database-rehearsal.log",
   "release-disabled-image-rehearsal.log",
   "release-tooling.log",
+  "production-rollout-tooling.log",
+  "production-rollout-rehearsal.log",
   "typecheck.log",
 ]);
 const allowedReviewReports = new Set([
@@ -66,6 +68,20 @@ const allowedReviewReports = new Set([
   "release-disabled-image-rehearsal.md",
   "release-smoke.json",
   "release-smoke.md",
+  "production-authorization-contract.json",
+  "production-authorization-contract.md",
+  "production-phase-state-machine.json",
+  "production-phase-state-machine.md",
+  "production-rollout-rehearsal.json",
+  "production-rollout-rehearsal.md",
+  "production-rollout-rollback.json",
+  "production-rollout-rollback.md",
+  "production-rollout-resume.json",
+  "production-rollout-resume.md",
+  "production-compose-contract.json",
+  "production-compose-contract.md",
+  "production-secret-boundary.json",
+  "production-secret-boundary.md",
 ]);
 const requiredRetrievalReports = [
   "retrieval-calibration.json",
@@ -82,6 +98,20 @@ const requiredReleaseReports = [
   "release-disabled-image-rehearsal.md",
   "release-smoke.json",
   "release-smoke.md",
+  "production-authorization-contract.json",
+  "production-authorization-contract.md",
+  "production-phase-state-machine.json",
+  "production-phase-state-machine.md",
+  "production-rollout-rehearsal.json",
+  "production-rollout-rehearsal.md",
+  "production-rollout-rollback.json",
+  "production-rollout-rollback.md",
+  "production-rollout-resume.json",
+  "production-rollout-resume.md",
+  "production-compose-contract.json",
+  "production-compose-contract.md",
+  "production-secret-boundary.json",
+  "production-secret-boundary.md",
 ];
 const outputRoot = path.resolve("product-review-evidence");
 const redacted = "[REDACTED]";

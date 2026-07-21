@@ -15,6 +15,27 @@ export type EmbeddingBackfillCandidate = {
   missingChunkCount: number;
 };
 
+export function selectEmbeddingBackfillCandidatesWithinChunkLimit(
+  candidates: EmbeddingBackfillCandidate[],
+  chunkLimit: number,
+): EmbeddingBackfillCandidate[] {
+  if (!Number.isSafeInteger(chunkLimit) || chunkLimit < 1 || chunkLimit > 10_000) {
+    throw new Error("Embedding Backfill Chunk limit is invalid.");
+  }
+  let selectedChunks = 0;
+  return candidates.filter((candidate) => {
+    if (
+      !Number.isSafeInteger(candidate.missingChunkCount) ||
+      candidate.missingChunkCount < 1 ||
+      selectedChunks + candidate.missingChunkCount > chunkLimit
+    ) {
+      return false;
+    }
+    selectedChunks += candidate.missingChunkCount;
+    return true;
+  });
+}
+
 export async function listEmbeddingBackfillCandidates(input: {
   projectId?: string;
   limit: number;
@@ -67,15 +88,16 @@ export async function listEmbeddingBackfillCandidates(input: {
       ${projectFilter}
     group by c.project_id, c.document_id, c.version_id, v.uploaded_by
     order by c.project_id asc, c.document_id asc, c.version_id asc
-    limit ${Math.min(Math.max(input.limit, 1), 10_000)}
+    limit 10000
   `);
-  return result.rows.map((row) => ({
+  const candidates = result.rows.map((row) => ({
     projectId: row.project_id,
     documentId: row.document_id,
     versionId: row.version_id,
     createdBy: row.created_by,
     missingChunkCount: Number(row.missing_chunk_count),
   }));
+  return selectEmbeddingBackfillCandidatesWithinChunkLimit(candidates, input.limit);
 }
 
 export async function enqueueEmbeddingBackfill(input: {
@@ -125,6 +147,7 @@ export async function getEmbeddingStatus(): Promise<{
   missingEmbeddings: number;
   staleLeases: number;
   inputTokenUsage: number;
+  unknownProviderCalls: number;
 }> {
   const result = await getDb().execute<{
     pending: number | string;
@@ -134,6 +157,7 @@ export async function getEmbeddingStatus(): Promise<{
     missing_embeddings: number | string;
     stale_leases: number | string;
     input_token_usage: number | string;
+    unknown_provider_calls: number | string;
   }>(sql`
     select
       (select count(*) from document_embedding_jobs where status = 'pending') as pending,
@@ -173,7 +197,14 @@ export async function getEmbeddingStatus(): Promise<{
         select coalesce(sum(input_token_count), 0)
         from document_embedding_provider_calls
         where status = 'succeeded'
-      ) as input_token_usage
+          and created_at >= date_trunc('day', now() at time zone 'UTC') at time zone 'UTC'
+          and created_at < date_trunc('day', now() at time zone 'UTC') at time zone 'UTC' + interval '1 day'
+      ) as input_token_usage,
+      (
+        select count(*)
+        from document_embedding_provider_calls
+        where status = 'unknown'
+      ) as unknown_provider_calls
   `);
   const row = result.rows[0];
   return {
@@ -184,6 +215,7 @@ export async function getEmbeddingStatus(): Promise<{
     missingEmbeddings: Number(row?.missing_embeddings ?? 0),
     staleLeases: Number(row?.stale_leases ?? 0),
     inputTokenUsage: Number(row?.input_token_usage ?? 0),
+    unknownProviderCalls: Number(row?.unknown_provider_calls ?? 0),
   };
 }
 

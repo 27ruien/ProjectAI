@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "producerVersion": "b3-c2-v2",
+  "lockPath": "/srv/projectai/.production-rollout-lock",
+  "journalRoot": "/srv/projectai/releases",
+  "trustContract": "release/production-rollout-trust.json",
+  "authorizationKeyPath": "/srv/projectai/authorization/production-rollout-public-key.pem",
+  "authorizationMarkerPath": "/srv/projectai/authorization/rollout-enabled.json",
+  "authorizationClaimHelperPath": "/srv/projectai/scripts/release/production-authorization-claim.mjs",
+  "authorizationClaimBundlePath": "/srv/projectai/release/production-authorization-claim-bundle.json",
+  "authorizationActions": [
+    "apply",
+    "resume",
+    "rollback",
+    "finalize",
+    "lock-clear",
+    "image-transfer"
+  ],
+  "states": [
+    "not_started",
+    "authorized",
+    "running",
+    "awaiting_verification",
+    "succeeded",
+    "failed",
+    "awaiting_rollback_verification",
+    "rolled_back",
+    "rollback_failed",
+    "blocked"
+  ],
+  "phases": [
+    {
+      "phase": 0,
+      "name": "baseline-lock-backup",
+      "observationSeconds": 60,
+      "prerequisitePhase": null
+    },
+    {
+      "phase": 1,
+      "name": "data-plane-bootstrap",
+      "observationSeconds": 300,
+      "prerequisitePhase": 0
+    },
+    {
+      "phase": 2,
+      "name": "disabled-application-rollout",
+      "observationSeconds": 900,
+      "prerequisitePhase": 1
+    },
+    {
+      "phase": 3,
+      "name": "assistant-lexical-enablement",
+      "observationSeconds": 1800,
+      "prerequisitePhase": 2
+    },
+    {
+      "phase": 4,
+      "name": "embedding-and-bounded-backfill",
+      "observationSeconds": 1800,
+      "prerequisitePhase": 3,
+      "firstBatchChunkLimit": 100
+    },
+    {
+      "phase": 5,
+      "name": "shadow-retrieval",
+      "observationSeconds": 1800,
+      "minimumControlledRequests": 30,
+      "prerequisitePhase": 4
+    },
+    {
+      "phase": 6,
+      "name": "hybrid-retrieval",
+      "observationSeconds": 1800,
+      "minimumControlledRequests": 30,
+      "prerequisitePhase": 5
+    }
+  ]
+}

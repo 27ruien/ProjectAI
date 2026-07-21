@@ -49,3 +49,7 @@
 旧 Image/Flag 与 Manifest 一致；Health、Restart Count、登录、Session、项目权限、文件、词法检索和跨项目 404 通过；数据库/对象一致性通过；无 active Migration/Job/Execution；Nginx/Compose 未漂移；Secret mount 符合阶段；审计和时间记录完整。
 
 回滚失败、基线继续变化或 Restore Checksum 不一致时停止自动动作并升级为人工事故响应。不得删除 Volume、向量表或最近有效 Backup。
+
+## B3-C2A executable rollback contract
+
+`production:rollback` 只允许从 `failed` 或 `succeeded` 进入 `rolled_back`，并写入 append-only Journal 和独立报告。Phase 1 保留新 Volume；Phase 2 恢复旧 immutable App；Phase 3 关闭 Assistant 并移除 App Qwen mount；Phase 4 停止 Embedding Worker、关闭 Embedding 并保留向量；Phase 5/6 回 lexical。缺少签名 Authorization、错误 Session/Phase 或无法解释的 Journal 状态均失败关闭。本阶段只演练，不对 Production 执行。

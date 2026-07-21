@@ -9,6 +9,18 @@ const execFileAsync = promisify(execFile);
 const deployScript = new URL("../scripts/deploy-staging.sh", import.meta.url);
 const stagingCompose = new URL("../docker-compose.staging.yml", import.meta.url);
 const productionCompose = new URL("../docker-compose.prod.yml", import.meta.url);
+const productionRolloutCompose = new URL(
+  "../docker-compose.production-rollout.yml",
+  import.meta.url,
+);
+const productionAiCompose = new URL(
+  "../docker-compose.production-ai.yml",
+  import.meta.url,
+);
+const productionRolloutOperations = new URL(
+  "../scripts/release/production-rollout-operations.sh",
+  import.meta.url,
+);
 const ciWorkflow = new URL("../.github/workflows/ci.yml", import.meta.url);
 const stagingNginx = new URL(
   "../deploy/nginx-projectai-staging.conf",
@@ -57,6 +69,45 @@ test("Staging PostgreSQL readiness checks the final TCP listener", async () => {
     script,
     /PGPASSWORD="\$POSTGRES_PASSWORD" psql \\\n+\s+--host=127\.0\.0\.1/,
   );
+});
+
+test("B3-C2A Production Compose is private, immutable, scoped, and never uses compose down", async () => {
+  const [compose, aiCompose, operations] = await Promise.all([
+    readFile(productionRolloutCompose, "utf8"),
+    readFile(productionAiCompose, "utf8"),
+    readFile(productionRolloutOperations, "utf8"),
+  ]);
+  assert.match(compose, /^name: projectai-production$/m);
+  assert.match(compose, /127\.0\.0\.1:3100:3000/);
+  assert.match(compose, /pgvector\/pgvector:0\.8\.1-pg17@sha256:/);
+  assert.match(compose, /quay\.io\/minio\/minio:RELEASE\.[^\s]+@sha256:/);
+  assert.doesNotMatch(compose, /image:\s*[^\n]*:latest\b/);
+  for (const service of ["projectai-postgres", "projectai-minio"]) {
+    const block = serviceBlock(
+      compose,
+      service,
+      service === "projectai-postgres" ? "projectai-minio" : "projectai-minio-init",
+    );
+    assert.doesNotMatch(block, /^\s+ports:/m);
+  }
+  assert.match(aiCompose, /projectai-app:[\s\S]+qwen_api_key/);
+  assert.match(aiCompose, /projectai-embedding-worker:[\s\S]+qwen_api_key/);
+  assert.doesNotMatch(compose.match(/projectai-document-worker:[\s\S]+?projectai-embedding-worker:/)?.[0] ?? "", /qwen_api_key/);
+  assert.match(compose, /admin policy attach admin projectai-production-files/);
+  assert.match(compose, /projectai-production-files\/projects\/\*/);
+  const app = serviceBlock(compose, "projectai-app", "projectai-document-worker");
+  const document = serviceBlock(compose, "projectai-document-worker", "projectai-embedding-worker");
+  const embedding = serviceBlock(compose, "projectai-embedding-worker", "projectai-postgres");
+  assert.match(app, /projectai-production-egress/);
+  assert.match(embedding, /projectai-production-egress/);
+  assert.doesNotMatch(document, /projectai-production-egress/);
+  assert.match(document, /\.env\.embedding-production/);
+  assert.doesNotMatch(document, /qwen_api_key/);
+  assert.match(compose, /projectai-production-internal:[\s\S]+internal: true/);
+  assert.match(operations, /PROJECTAI_PRODUCTION_ROLLOUT_EXECUTION_ENABLED/);
+  assert.doesNotMatch(operations, /docker compose down|compose down/);
+  assert.doesNotMatch(operations, /printenv|\.Config\.Env/);
+  await execFileAsync("bash", ["-n", productionRolloutOperations.pathname]);
 });
 
 test("Staging MinIO is pinned, private, persistent, and resource bounded", async () => {

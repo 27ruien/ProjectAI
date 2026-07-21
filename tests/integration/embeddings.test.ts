@@ -30,6 +30,7 @@ import type {
 } from "../../lib/ai/embeddings";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
+import { activateOrQueueVersionIndex } from "../../lib/documents/processing/jobs";
 import {
   aiEmbeddingProfile,
   auditEvent,
@@ -899,6 +900,11 @@ describe("pgvector schema and embedding pipeline", () => {
     await createFixture({ projectId: eligible.projectId, name: "archived", contents: ["Archived"], documentStatus: "archived" });
     await createFixture({ projectId: eligible.projectId, name: "needs-ocr", contents: ["OCR"], ingestionStatus: "needs_ocr" });
     await createFixture({ projectId: eligible.projectId, name: "not-effective", contents: ["Inactive"], effective: false });
+    const oversized = await createFixture({
+      projectId: eligible.projectId,
+      name: "over-100-chunks",
+      contents: Array.from({ length: 101 }, (_, index) => `Oversized Chunk ${index}`),
+    });
     const otherProject = await createFixture({ name: "probe-other", contents: ["Exact probe beta"] });
 
     const candidates = await listEmbeddingBackfillCandidates({
@@ -906,6 +912,13 @@ describe("pgvector schema and embedding pipeline", () => {
       limit: 100,
     });
     assert.deepEqual(candidates.map((candidate) => candidate.versionId), [eligible.versionId]);
+    assert.equal(
+      candidates.some((candidate) => candidate.versionId === oversized.versionId),
+      false,
+    );
+    assert.ok(
+      candidates.reduce((total, candidate) => total + candidate.missingChunkCount, 0) <= 100,
+    );
     const dryRun = await enqueueEmbeddingBackfill({
       projectId: eligible.projectId,
       limit: 100,
@@ -990,6 +1003,76 @@ describe("pgvector schema and embedding pipeline", () => {
         "code" in error &&
         error.code === "DAILY_JOB_LIMIT_REACHED",
     );
+  });
+
+  it("propagates the Phase 4 embedding flag through document activation and rollback", async () => {
+    const original = process.env.AI_EMBEDDING_ENABLED;
+    try {
+      const before = await createFixture({ name: "phase4-before", contents: ["Before Phase 4"] });
+      process.env.AI_EMBEDDING_ENABLED = "false";
+      await activateOrQueueVersionIndex({
+        projectId: before.projectId,
+        documentId: before.documentId,
+        versionId: before.versionId,
+        actorUserId: manager.id,
+        reason: "current_version",
+        db: getDb(),
+      });
+      assert.equal(
+        (await getDb().select().from(documentEmbeddingJob).where(eq(documentEmbeddingJob.versionId, before.versionId))).length,
+        0,
+      );
+
+      const enabled = await createFixture({ name: "phase4-enabled", contents: ["During Phase 4"] });
+      process.env.AI_EMBEDDING_ENABLED = "true";
+      await activateOrQueueVersionIndex({
+        projectId: enabled.projectId,
+        documentId: enabled.documentId,
+        versionId: enabled.versionId,
+        actorUserId: manager.id,
+        reason: "current_version",
+        db: getDb(),
+      });
+      assert.equal(
+        (await getDb().select().from(documentEmbeddingJob).where(eq(documentEmbeddingJob.versionId, enabled.versionId))).length,
+        1,
+      );
+      await runEmbeddingWorker({ once: true, workerId: "phase4-propagation-worker" });
+      const vectorsBeforeRollback = (
+        await getDb()
+          .select()
+          .from(documentChunkEmbedding)
+          .where(eq(documentChunkEmbedding.versionId, enabled.versionId))
+      ).length;
+      assert.ok(vectorsBeforeRollback > 0);
+
+      const rolledBack = await createFixture({ name: "phase4-rollback", contents: ["After rollback"] });
+      process.env.AI_EMBEDDING_ENABLED = "false";
+      await activateOrQueueVersionIndex({
+        projectId: rolledBack.projectId,
+        documentId: rolledBack.documentId,
+        versionId: rolledBack.versionId,
+        actorUserId: manager.id,
+        reason: "current_version",
+        db: getDb(),
+      });
+      assert.equal(
+        (await getDb().select().from(documentEmbeddingJob).where(eq(documentEmbeddingJob.versionId, rolledBack.versionId))).length,
+        0,
+      );
+      assert.equal(
+        (
+          await getDb()
+            .select()
+            .from(documentChunkEmbedding)
+            .where(eq(documentChunkEmbedding.versionId, enabled.versionId))
+        ).length,
+        vectorsBeforeRollback,
+      );
+    } finally {
+      if (original === undefined) delete process.env.AI_EMBEDDING_ENABLED;
+      else process.env.AI_EMBEDDING_ENABLED = original;
+    }
   });
 
   it("persists calling before the Provider and converts a crash to unknown without an automatic second charge", async () => {

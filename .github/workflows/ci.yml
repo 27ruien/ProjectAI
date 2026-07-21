@@ -402,6 +402,13 @@ jobs:
           mkdir -p test-logs
           npm run test:release 2>&1 | tee test-logs/release-tooling.log
 
+      - name: Production rollout executor contract tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:production-rollout 2>&1 | tee test-logs/production-rollout-tooling.log
+
       - name: Isolated release backup, restore, and migration rehearsal
         shell: bash
         env:
@@ -471,6 +478,13 @@ jobs:
             echo "RELEASE_CI_APP_DIGEST=$app_digest"
             echo "RELEASE_CI_SESSION=$release_session"
           } >> "$GITHUB_ENV"
+
+      - name: Isolated guarded Production rollout rehearsal
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run production:rehearsal 2>&1 | tee test-logs/production-rollout-rehearsal.log
 
       - name: Playwright identity, isolation, and MVP flows
         shell: bash
