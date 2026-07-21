@@ -349,7 +349,7 @@ WITH target_context AS (
 	WHERE p.id = target_project_id
 		AND (
 			u.system_role = 'system_admin'
-			OR (pm.user_id IS NOT NULL AND om.user_id IS NOT NULL)
+			OR pm.user_id IS NOT NULL
 		)
 ), actor_roles AS (
 	SELECT tc.organization_id, tc.department_id, role_name
