@@ -48,7 +48,13 @@ export async function GET(
       documentId,
       request.headers,
     );
-    const [versions, downloadScope, versionScope, archiveScope] = await Promise.all([
+    const [
+      versions,
+      downloadScope,
+      versionScope,
+      archiveScope,
+      permissionScope,
+    ] = await Promise.all([
       listProjectDocumentVersions(document.projectId, documentId),
       listAuthorizedDocumentScope({ principal, projectId, permission: "download" }),
       listAuthorizedDocumentScope({
@@ -57,6 +63,11 @@ export async function GET(
         permission: "manage_versions",
       }),
       listAuthorizedDocumentScope({ principal, projectId, permission: "archive" }),
+      listAuthorizedDocumentScope({
+        principal,
+        projectId,
+        permission: "manage_permissions",
+      }),
     ]);
     const has = (scope: { documentId: string }[]) =>
       scope.some((item) => item.documentId === documentId);
@@ -70,6 +81,7 @@ export async function GET(
           download: has(downloadScope),
           manageVersions: has(versionScope),
           archive: has(archiveScope),
+          managePermissions: has(permissionScope),
         },
       ),
     });

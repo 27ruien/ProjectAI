@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AlertCircle,
   Archive,
@@ -12,6 +19,7 @@ import {
   History,
   Inbox,
   Info,
+  KeyRound,
   RefreshCw,
   Search,
   Upload,
@@ -23,10 +31,13 @@ import {
   archiveProjectDocument,
   documentErrorMessage,
   downloadProjectDocumentVersion,
+  listProjectDocumentGrants,
   listProjectDocuments,
   reindexProjectDocumentVersion,
   restoreProjectDocument,
   setProjectDocumentVisibility,
+  setProjectDocumentGrant,
+  type ProjectDocumentGrantDto,
 } from "@/lib/documents/client";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import type {
@@ -190,6 +201,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
   const [uploadTarget, setUploadTarget] = useState<DocumentUploadTarget>(null);
   const [versionDocument, setVersionDocument] = useState<ProjectDocumentDto | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [grantDocument, setGrantDocument] = useState<ProjectDocumentDto | null>(null);
 
   const loadDocuments = useCallback(
     async (options: { signal?: AbortSignal; background?: boolean } = {}) => {
@@ -536,6 +548,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
                 void changeVisibility(document, visibility)
               }
               onLifecycle={(document, kind) => setConfirmAction({ document, kind })}
+              onGrant={setGrantDocument}
             />
           ) : null}
         </section>
@@ -570,6 +583,20 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         onCancel={() => setConfirmAction(null)}
         onConfirm={() => void confirmLifecycleAction()}
       />
+
+      {grantDocument ? (
+        <DocumentGrantDialog
+          key={grantDocument.id}
+          projectId={project.id}
+          document={grantDocument}
+          onCancel={() => setGrantDocument(null)}
+          onCreated={async () => {
+            setGrantDocument(null);
+            toast("文件授权规则已保存", "success");
+            await loadDocuments({ background: true });
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -628,6 +655,7 @@ function DocumentTable({
   onReindex,
   onVisibility,
   onLifecycle,
+  onGrant,
 }: {
   documents: ProjectDocumentDto[];
   pendingAction: string | null;
@@ -643,6 +671,7 @@ function DocumentTable({
     visibility: ProjectDocumentDto["visibility"],
   ) => void;
   onLifecycle: (document: ProjectDocumentDto, kind: "archive" | "restore") => void;
+  onGrant: (document: ProjectDocumentDto) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -748,6 +777,20 @@ function DocumentTable({
                     <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`查看 ${document.displayName} 的版本历史`} title="版本历史" disabled={Boolean(pendingAction)} onClick={() => onVersions(document)}>
                       <History className="size-3.5" />
                     </Button>
+                    {document.permissions.canManagePermissions ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label={`管理 ${document.displayName} 的文件授权`}
+                        title="文件授权"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => onGrant(document)}
+                      >
+                        <KeyRound className="size-3.5" />
+                      </Button>
+                    ) : null}
                     {version &&
                     document.permissions.canReindex &&
                     document.status === "active" &&
@@ -788,6 +831,196 @@ function DocumentTable({
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function DocumentGrantDialog({
+  projectId,
+  document,
+  onCancel,
+  onCreated,
+}: {
+  projectId: string;
+  document: ProjectDocumentDto;
+  onCancel: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const [subjectType, setSubjectType] = useState<
+    "organization" | "department" | "project" | "role" | "user"
+  >("user");
+  const [subjectId, setSubjectId] = useState("");
+  const [permission, setPermission] = useState<
+    | "view"
+    | "download"
+    | "upload"
+    | "edit_metadata"
+    | "manage_versions"
+    | "archive"
+    | "manage_permissions"
+    | "manage_members"
+  >("view");
+  const [effect, setEffect] = useState<"allow" | "deny">("allow");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [grants, setGrants] = useState<ProjectDocumentGrantDto[]>([]);
+  const [loadingGrants, setLoadingGrants] = useState(true);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void listProjectDocumentGrants(projectId, document.id, controller.signal)
+      .then((result) => setGrants(result.grants))
+      .catch((caught: unknown) => {
+        if (!isAbortError(caught)) setError(documentErrorMessage(caught));
+      })
+      .finally(() => setLoadingGrants(false));
+    return () => controller.abort();
+  }, [document.id, projectId]);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!subjectId.trim()) {
+      setError("请输入组织、部门、项目、角色或用户 ID");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await setProjectDocumentGrant(projectId, document.id, {
+        subjectType,
+        subjectId: subjectId.trim(),
+        permission,
+        effect,
+      });
+      await onCreated();
+    } catch (caught) {
+      setError(documentErrorMessage(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[90] grid place-items-center px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="document-grant-title"
+    >
+      <button
+        type="button"
+        className="absolute inset-0 bg-[var(--overlay)]"
+        aria-label="关闭文件授权窗口"
+        onClick={onCancel}
+      />
+      <form
+        onSubmit={(event) => void submit(event)}
+        className="relative w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-float)]"
+      >
+        <span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary">
+          <KeyRound className="size-5" />
+        </span>
+        <h2 id="document-grant-title" className="mt-4 text-base font-semibold">
+          文件授权 · {document.displayName}
+        </h2>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+          规则由服务端校验；显式拒绝优先，查看与下载相互独立。
+        </p>
+        <section className="mt-4 rounded-lg border bg-muted/30 p-3">
+          <h3 className="text-xs font-semibold">当前显式规则</h3>
+          {loadingGrants ? (
+            <p className="mt-2 text-xs text-muted-foreground">正在加载授权规则…</p>
+          ) : grants.length ? (
+            <div className="mt-2 max-h-28 space-y-1.5 overflow-y-auto">
+              {grants.map((grant) => (
+                <p key={grant.id} className="font-mono text-[10px] text-muted-foreground">
+                  {grant.effect.toUpperCase()} · {grant.permission} · {grant.subjectType}:
+                  {grant.subjectId}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-xs text-muted-foreground">暂无显式规则，未匹配时默认拒绝。</p>
+          )}
+        </section>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <label className="space-y-1.5 text-xs font-medium">
+            授权对象
+            <select
+              value={subjectType}
+              onChange={(event) =>
+                setSubjectType(event.target.value as typeof subjectType)
+              }
+              className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            >
+              <option value="user">用户</option>
+              <option value="project">项目</option>
+              <option value="department">部门</option>
+              <option value="organization">组织</option>
+              <option value="role">角色</option>
+            </select>
+          </label>
+          <label className="space-y-1.5 text-xs font-medium">
+            对象 ID / Role
+            <input
+              value={subjectId}
+              onChange={(event) => setSubjectId(event.target.value)}
+              maxLength={200}
+              placeholder="输入受控标识"
+              className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            />
+          </label>
+          <label className="space-y-1.5 text-xs font-medium">
+            权限
+            <select
+              value={permission}
+              onChange={(event) =>
+                setPermission(event.target.value as typeof permission)
+              }
+              className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            >
+              {[
+                "view",
+                "download",
+                "upload",
+                "edit_metadata",
+                "manage_versions",
+                "archive",
+                "manage_permissions",
+                "manage_members",
+              ].map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1.5 text-xs font-medium">
+            效果
+            <select
+              value={effect}
+              onChange={(event) => setEffect(event.target.value as typeof effect)}
+              className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
+            >
+              <option value="allow">允许</option>
+              <option value="deny">拒绝</option>
+            </select>
+          </label>
+        </div>
+        {error ? (
+          <p role="alert" className="mt-4 text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-6 flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+            取消
+          </Button>
+          <Button type="submit" loading={submitting} disabled={submitting}>
+            保存授权
+          </Button>
+        </div>
+      </form>
     </div>
   );
 }

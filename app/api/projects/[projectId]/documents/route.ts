@@ -49,7 +49,13 @@ export async function GET(
     if (status !== "active" && status !== "archived") {
       throw new FileOperationError(400, "INVALID_REQUEST", "资料状态筛选无效");
     }
-    const [viewScope, downloadScope, versionScope, archiveScope] =
+    const [
+      viewScope,
+      downloadScope,
+      versionScope,
+      archiveScope,
+      permissionScope,
+    ] =
       await Promise.all([
         listAuthorizedDocumentScope({ principal, projectId, permission: "view" }),
         listAuthorizedDocumentScope({
@@ -67,6 +73,11 @@ export async function GET(
           projectId,
           permission: "archive",
         }),
+        listAuthorizedDocumentScope({
+          principal,
+          projectId,
+          permission: "manage_permissions",
+        }),
       ]);
     const viewIds = viewScope.map((item) => item.documentId);
     const [documents, counts] = await Promise.all([
@@ -76,6 +87,9 @@ export async function GET(
     const downloadIds = new Set(downloadScope.map((item) => item.documentId));
     const versionIds = new Set(versionScope.map((item) => item.documentId));
     const archiveIds = new Set(archiveScope.map((item) => item.documentId));
+    const permissionIds = new Set(
+      permissionScope.map((item) => item.documentId),
+    );
     const admin = principal.user.systemRole === "system_admin";
     const canUpload =
       admin ||
@@ -100,6 +114,7 @@ export async function GET(
               download: downloadIds.has(documentId),
               manageVersions: versionIds.has(documentId),
               archive: archiveIds.has(documentId),
+              managePermissions: permissionIds.has(documentId),
             },
           ]),
         ),

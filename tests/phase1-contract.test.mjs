@@ -84,12 +84,15 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
   });
 
   it("binds uploads to a server-authorized knowledge-space destination", async () => {
-    const [management, documentService, uploadUi, seed] = await Promise.all([
+    const [management, documentService, uploadUi, documentsUi, grantRoute, seed] =
+      await Promise.all([
       source("lib/knowledge/management.ts"),
       source("lib/files/document-service.ts"),
       source("components/project/DocumentUploadDrawer.tsx"),
+      source("components/project/DocumentsPage.tsx"),
+      source("app/api/projects/[projectId]/documents/[documentId]/grants/route.ts"),
       source("scripts/db/seed.ts"),
-    ]);
+      ]);
     assert.match(management, /listUploadableKnowledgeSpaces/);
     assert.match(
       management,
@@ -104,6 +107,10 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
     assert.match(documentService, /该幂等键已绑定其他知识空间/);
     assert.match(documentService, /knowledgeSpaceId: destination\.id/);
     assert.match(uploadUi, /仅显示服务端确认可上传的空间/);
+    assert.match(documentsUi, /文件授权/);
+    assert.match(documentsUi, /setProjectDocumentGrant/);
+    assert.match(grantRoute, /setDocumentGrant/);
+    assert.match(management, /permission: "manage_permissions"/);
     assert.match(seed, /seed-membership-a-dept-admin/);
   });
 });

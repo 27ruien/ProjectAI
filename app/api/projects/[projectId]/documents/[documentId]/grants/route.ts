@@ -2,7 +2,10 @@ import { z } from "zod";
 import { jsonResponse, requireTrustedMutationRequest } from "@/lib/auth/http";
 import { requireApiPrincipal } from "@/lib/auth/session";
 import { knowledgeManagementErrorResponse } from "@/lib/knowledge/http";
-import { setDocumentGrant } from "@/lib/knowledge/management";
+import {
+  listDocumentGrants,
+  setDocumentGrant,
+} from "@/lib/knowledge/management";
 
 const schema = z
   .object({
@@ -21,6 +24,26 @@ const schema = z
     effect: z.enum(["allow", "deny"]),
   })
   .strict();
+
+export async function GET(
+  request: Request,
+  context: { params: Promise<{ projectId: string; documentId: string }> },
+): Promise<Response> {
+  try {
+    const { projectId, documentId } = await context.params;
+    const principal = await requireApiPrincipal(request.headers);
+    return jsonResponse({
+      grants: await listDocumentGrants({
+        principal,
+        projectId,
+        documentId,
+        requestHeaders: request.headers,
+      }),
+    });
+  } catch (error) {
+    return knowledgeManagementErrorResponse(error);
+  }
+}
 
 export async function POST(
   request: Request,

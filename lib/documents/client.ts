@@ -120,6 +120,59 @@ export function setProjectDocumentVisibility(
   );
 }
 
+export function setProjectDocumentGrant(
+  projectId: string,
+  documentId: string,
+  input: {
+    subjectType: "organization" | "department" | "project" | "role" | "user";
+    subjectId: string;
+    permission:
+      | "view"
+      | "download"
+      | "upload"
+      | "edit_metadata"
+      | "manage_versions"
+      | "archive"
+      | "manage_permissions"
+      | "manage_members";
+    effect: "allow" | "deny";
+  },
+): Promise<{ grant: { id: string } }> {
+  return jsonMutation<{ grant: { id: string } }>(
+    documentPath(projectId, documentId, "/grants"),
+    "POST",
+    input,
+  );
+}
+
+export type ProjectDocumentGrantDto = {
+  id: string;
+  subjectType: "organization" | "department" | "project" | "role" | "user";
+  subjectId: string;
+  permission:
+    | "view"
+    | "download"
+    | "upload"
+    | "edit_metadata"
+    | "manage_versions"
+    | "archive"
+    | "manage_permissions"
+    | "manage_members";
+  effect: "allow" | "deny";
+  createdAt: string;
+};
+
+export function listProjectDocumentGrants(
+  projectId: string,
+  documentId: string,
+  signal?: AbortSignal,
+): Promise<{ grants: ProjectDocumentGrantDto[] }> {
+  return jsonRequest<{ grants: ProjectDocumentGrantDto[] }>(
+    documentPath(projectId, documentId, "/grants"),
+    { signal },
+  );
+}
+
 export function listProjectDocumentVersions(
   projectId: string,
   documentId: string,

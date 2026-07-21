@@ -180,6 +180,115 @@ async function canMountKnowledgeSpace(input: {
   );
 }
 
+async function listMountableKnowledgeSpaceIds(input: {
+  principal: AuthenticatedPrincipal;
+  target: Awaited<ReturnType<typeof requireProjectRole>>;
+  db: DatabaseExecutor;
+}): Promise<Set<string>> {
+  const result = await input.db.execute<{ id: string }>(sql`
+    select distinct space.id
+    from project_knowledge_sources source
+    join knowledge_spaces space
+      on space.id = source.knowledge_space_id
+      and space.organization_id = ${input.target.organizationId}
+      and space.is_active
+    where source.project_id = ${input.target.id}
+      and source.source_type = 'knowledge_space'
+      and source.is_active
+      and not exists (
+        select 1
+        from knowledge_space_grants denied
+        where denied.knowledge_space_id = space.id
+          and denied.permission = 'view'
+          and denied.effect = 'deny'
+          and (
+            (denied.subject_type = 'organization' and denied.subject_id = ${input.target.organizationId})
+            or (denied.subject_type = 'department' and denied.subject_id = ${input.target.departmentId})
+            or (denied.subject_type = 'project' and denied.subject_id = ${input.target.id})
+            or (denied.subject_type = 'user' and denied.subject_id = ${input.principal.user.id})
+            or (
+              denied.subject_type = 'role'
+              and (
+                denied.subject_id = ${input.target.projectRole}
+                or exists (
+                  select 1 from organization_members deny_org_role
+                  where deny_org_role.organization_id = ${input.target.organizationId}
+                    and deny_org_role.user_id = ${input.principal.user.id}
+                    and deny_org_role.is_active
+                    and deny_org_role.role::text = denied.subject_id
+                )
+                or exists (
+                  select 1 from department_members deny_dept_role
+                  where deny_dept_role.organization_id = ${input.target.organizationId}
+                    and deny_dept_role.department_id = ${input.target.departmentId}
+                    and deny_dept_role.user_id = ${input.principal.user.id}
+                    and deny_dept_role.is_active
+                    and deny_dept_role.role::text = denied.subject_id
+                )
+              )
+            )
+          )
+      )
+      and (
+        ${input.principal.user.systemRole} = 'system_admin'
+        or space.project_id = ${input.target.id}
+        or exists (
+          select 1 from organization_members mount_org_admin
+          where mount_org_admin.organization_id = ${input.target.organizationId}
+            and mount_org_admin.user_id = ${input.principal.user.id}
+            and mount_org_admin.role = 'organization_admin'
+            and mount_org_admin.is_active
+        )
+        or exists (
+          select 1 from knowledge_space_members mount_space_member
+          where mount_space_member.knowledge_space_id = space.id
+            and mount_space_member.user_id = ${input.principal.user.id}
+            and mount_space_member.is_active
+        )
+        or exists (
+          select 1
+          from knowledge_space_grants allowed
+          where allowed.knowledge_space_id = space.id
+            and allowed.permission = 'view'
+            and allowed.effect = 'allow'
+            and (
+              (allowed.subject_type = 'organization' and allowed.subject_id = ${input.target.organizationId})
+              or (allowed.subject_type = 'department' and allowed.subject_id = ${input.target.departmentId})
+              or (allowed.subject_type = 'project' and allowed.subject_id = ${input.target.id})
+              or (allowed.subject_type = 'user' and allowed.subject_id = ${input.principal.user.id})
+              or (
+                allowed.subject_type = 'role'
+                and (
+                  allowed.subject_id = ${input.target.projectRole}
+                  or exists (
+                    select 1 from organization_members allow_org_role
+                    where allow_org_role.organization_id = ${input.target.organizationId}
+                      and allow_org_role.user_id = ${input.principal.user.id}
+                      and allow_org_role.is_active
+                      and allow_org_role.role::text = allowed.subject_id
+                  )
+                  or exists (
+                    select 1 from department_members allow_dept_role
+                    where allow_dept_role.organization_id = ${input.target.organizationId}
+                      and allow_dept_role.department_id = ${input.target.departmentId}
+                      and allow_dept_role.user_id = ${input.principal.user.id}
+                      and allow_dept_role.is_active
+                      and allow_dept_role.role::text = allowed.subject_id
+                  )
+                )
+              )
+            )
+        )
+        or space.visibility = 'organization_shared'
+        or (
+          space.visibility = 'department_shared'
+          and space.department_id = ${input.target.departmentId}
+        )
+      )
+  `);
+  return new Set(result.rows.map((row) => row.id));
+}
+
 async function auditPermissionMutation(input: AuditInput): Promise<void> {
   await input.db.insert(permissionAudit).values({
     id: crypto.randomUUID(),
@@ -1045,6 +1154,72 @@ export async function createKnowledgeGrant(input: {
     if (!space) {
       throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "知识空间不存在");
     }
+    const denyResult = await tx.execute<{ denied: boolean }>(sql`
+      select exists (
+        select 1
+        from knowledge_space_grants denied
+        where denied.knowledge_space_id = ${space.id}
+          and denied.permission = 'manage_permissions'
+          and denied.effect = 'deny'
+          and (
+            (denied.subject_type = 'organization' and denied.subject_id = ${space.organizationId})
+            or (denied.subject_type = 'user' and denied.subject_id = ${input.principal.user.id})
+            or (
+              denied.subject_type = 'department'
+              and exists (
+                select 1 from department_members denied_department_member
+                where denied_department_member.organization_id = ${space.organizationId}
+                  and denied_department_member.department_id = denied.subject_id
+                  and denied_department_member.user_id = ${input.principal.user.id}
+                  and denied_department_member.is_active
+              )
+            )
+            or (
+              denied.subject_type = 'project'
+              and exists (
+                select 1
+                from project_members denied_project_member
+                join projects denied_project
+                  on denied_project.id = denied_project_member.project_id
+                  and denied_project.organization_id = ${space.organizationId}
+                where denied_project_member.project_id = denied.subject_id
+                  and denied_project_member.user_id = ${input.principal.user.id}
+              )
+            )
+            or (
+              denied.subject_type = 'role'
+              and (
+                exists (
+                  select 1 from organization_members denied_org_role
+                  where denied_org_role.organization_id = ${space.organizationId}
+                    and denied_org_role.user_id = ${input.principal.user.id}
+                    and denied_org_role.is_active
+                    and denied_org_role.role::text = denied.subject_id
+                )
+                or exists (
+                  select 1 from department_members denied_dept_role
+                  where denied_dept_role.organization_id = ${space.organizationId}
+                    and denied_dept_role.user_id = ${input.principal.user.id}
+                    and denied_dept_role.is_active
+                    and denied_dept_role.role::text = denied.subject_id
+                )
+                or exists (
+                  select 1
+                  from project_members denied_project_role
+                  join projects denied_role_project
+                    on denied_role_project.id = denied_project_role.project_id
+                    and denied_role_project.organization_id = ${space.organizationId}
+                  where denied_project_role.user_id = ${input.principal.user.id}
+                    and denied_project_role.role::text = denied.subject_id
+                )
+              )
+            )
+          )
+      ) as denied
+    `);
+    if (denyResult.rows[0]?.denied) {
+      throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "知识空间不存在");
+    }
     if (space.departmentId) {
       await requireDepartmentAdmin(input.principal, space.departmentId, tx);
     } else if (space.projectId) {
@@ -1128,36 +1303,18 @@ export async function listProjectKnowledgeSources(input: {
       ),
     )
     .orderBy(asc(projectKnowledgeSource.createdAt));
-  const candidateSpaceIds = rows.flatMap((row) =>
-    row.source.knowledgeSpaceId ? [row.source.knowledgeSpaceId] : [],
-  );
-  const spaces = candidateSpaceIds.length
-    ? await db
-        .select()
-        .from(knowledgeSpace)
-        .where(inArray(knowledgeSpace.id, candidateSpaceIds))
-    : [];
-  const [spaceVisibility, documentScope] = await Promise.all([
-    Promise.all(
-      spaces.map(async (space) => ({
-        id: space.id,
-        allowed: await canMountKnowledgeSpace({
-          principal: input.principal,
-          target,
-          space,
-          db,
-        }),
-      })),
-    ),
+  const [spaceIds, documentScope] = await Promise.all([
+    listMountableKnowledgeSpaceIds({
+      principal: input.principal,
+      target,
+      db,
+    }),
     listAuthorizedDocumentScope({
       principal: input.principal,
       projectId: target.id,
       permission: "view",
     }),
   ]);
-  const spaceIds = new Set(
-    spaceVisibility.filter((space) => space.allowed).map((space) => space.id),
-  );
   const documentIds = new Set(documentScope.map((scope) => scope.documentId));
   return rows.filter((row) =>
     row.source.sourceType === "knowledge_space"
@@ -1309,6 +1466,16 @@ export async function setDocumentGrant(input: {
     if (!ownedDocument) {
       throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "资料不存在");
     }
+    const authorized = await findAuthorizedDocument({
+      principal: input.principal,
+      projectId: input.projectId,
+      documentId: input.documentId,
+      permission: "manage_permissions",
+      db: tx,
+    });
+    if (!authorized) {
+      throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "资料不存在");
+    }
     await requireValidGrantSubject({
       organizationId: target.organizationId,
       subjectType: input.subjectType,
@@ -1348,4 +1515,46 @@ export async function setDocumentGrant(input: {
     });
     return created;
   });
+}
+
+export async function listDocumentGrants(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  documentId: string;
+  requestHeaders: Headers;
+}) {
+  const db = getDb();
+  await requireProjectRole(
+    input.principal,
+    input.projectId,
+    ["project_manager"],
+    input.requestHeaders,
+  );
+  const authorized = await findAuthorizedDocument({
+    principal: input.principal,
+    projectId: input.projectId,
+    documentId: input.documentId,
+    permission: "manage_permissions",
+    db,
+  });
+  if (!authorized || authorized.document.projectId !== input.projectId) {
+    throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "资料不存在");
+  }
+  return db
+    .select({
+      id: documentGrant.id,
+      subjectType: documentGrant.subjectType,
+      subjectId: documentGrant.subjectId,
+      permission: documentGrant.permission,
+      effect: documentGrant.effect,
+      createdAt: documentGrant.createdAt,
+    })
+    .from(documentGrant)
+    .where(
+      and(
+        eq(documentGrant.projectId, input.projectId),
+        eq(documentGrant.documentId, input.documentId),
+      ),
+    )
+    .orderBy(asc(documentGrant.createdAt));
 }

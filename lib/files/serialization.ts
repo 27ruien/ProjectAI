@@ -99,6 +99,7 @@ export function documentPermissions(
     download: boolean;
     manageVersions: boolean;
     archive: boolean;
+    managePermissions?: boolean;
   },
 ): ProjectDocumentPermissionsDto {
   const admin = principal.user.systemRole === "system_admin";
@@ -113,6 +114,7 @@ export function documentPermissions(
     canSetCurrent:
       (authorized?.manageVersions ?? manager) && status === "active",
     canReindex: (authorized?.manageVersions ?? manager) && status === "active",
+    canManagePermissions: authorized?.managePermissions ?? manager,
   };
 }
 
@@ -125,6 +127,7 @@ export async function serializeProjectDocument(
     download: boolean;
     manageVersions: boolean;
     archive: boolean;
+    managePermissions?: boolean;
   },
 ): Promise<ProjectDocumentDto> {
   const creator = await findUserById(document.createdBy);
@@ -162,7 +165,12 @@ export async function serializeDocumentList(
   projectRole: ProjectRole | null,
   authorizedPermissions?: Map<
     string,
-    { download: boolean; manageVersions: boolean; archive: boolean }
+    {
+      download: boolean;
+      manageVersions: boolean;
+      archive: boolean;
+      managePermissions?: boolean;
+    }
   >,
 ): Promise<ProjectDocumentDto[]> {
   const summaries = await ingestionSummariesForVersions(

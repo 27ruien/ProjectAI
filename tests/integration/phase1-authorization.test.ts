@@ -19,8 +19,10 @@ import {
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
 import {
+  createKnowledgeGrant,
   listUploadableKnowledgeSpaces,
   mountProjectKnowledgeSource,
+  setDocumentGrant,
   upsertOrganizationMember,
 } from "../../lib/knowledge/management";
 import { KnowledgeManagementError } from "../../lib/knowledge/errors";
@@ -275,6 +277,68 @@ describe("Phase 1 default-deny authorization matrix", () => {
         projectId: "project-002",
         sourceType: "knowledge_space",
         knowledgeSpaceId: "ks-department-shared-test",
+        requestHeaders: headers,
+      }),
+      (error: unknown) =>
+        error instanceof KnowledgeManagementError &&
+        error.code === "RESOURCE_NOT_FOUND",
+    );
+  });
+
+  it("does not let a project manager bypass an explicit permission-management deny", async () => {
+    await getDb().insert(documentGrant).values({
+      id: `${prefix}manager-permission-deny`,
+      organizationId: "org-legacy-default",
+      projectId: "project-001",
+      documentId: privateDocumentId,
+      subjectType: "user",
+      subjectId: manager.id,
+      permission: "manage_permissions",
+      effect: "deny",
+      createdBy: manager.id,
+    });
+    await assert.rejects(
+      setDocumentGrant({
+        principal: principal(manager),
+        projectId: "project-001",
+        documentId: privateDocumentId,
+        subjectType: "user",
+        subjectId: viewer.id,
+        permission: "view",
+        effect: "allow",
+        requestHeaders: headers,
+      }),
+      (error: unknown) =>
+        error instanceof KnowledgeManagementError &&
+        error.code === "RESOURCE_NOT_FOUND",
+    );
+  });
+
+  it("does not let a space manager bypass an explicit permission-management deny", async () => {
+    const [projectSpace] = await getDb()
+      .select({ id: knowledgeSpace.id })
+      .from(knowledgeSpace)
+      .where(eq(knowledgeSpace.projectId, "project-001"))
+      .limit(1);
+    assert.ok(projectSpace);
+    await getDb().insert(knowledgeSpaceGrant).values({
+      id: `${prefix}space-permission-deny`,
+      organizationId: "org-legacy-default",
+      knowledgeSpaceId: projectSpace.id,
+      subjectType: "user",
+      subjectId: manager.id,
+      permission: "manage_permissions",
+      effect: "deny",
+      createdBy: manager.id,
+    });
+    await assert.rejects(
+      createKnowledgeGrant({
+        principal: principal(manager),
+        knowledgeSpaceId: projectSpace.id,
+        subjectType: "user",
+        subjectId: viewer.id,
+        permission: "view",
+        effect: "allow",
         requestHeaders: headers,
       }),
       (error: unknown) =>

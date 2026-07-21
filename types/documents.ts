@@ -72,6 +72,7 @@ export interface ProjectDocumentPermissionsDto {
   canRestore: boolean;
   canSetCurrent: boolean;
   canReindex: boolean;
+  canManagePermissions: boolean;
 }
 
 /** A logical project document with its current, immutable object version. */

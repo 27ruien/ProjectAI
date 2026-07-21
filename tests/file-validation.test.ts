@@ -170,6 +170,7 @@ function uploadDocument(
       canRestore: false,
       canSetCurrent: true,
       canReindex: true,
+      canManagePermissions: true,
     },
     ...overrides,
   };
