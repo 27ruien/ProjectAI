@@ -10,6 +10,7 @@ export function fileRouteErrorResponse(error: unknown): Response {
 export async function readUploadForm(request: Request): Promise<{
   file: File;
   displayName: string | null;
+  knowledgeSpaceId: string | null;
 }> {
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (
@@ -26,13 +27,22 @@ export async function readUploadForm(request: Request): Promise<{
   }
   const file = form.get("file");
   const displayName = form.get("displayName");
+  const knowledgeSpaceId = form.get("knowledgeSpaceId");
   if (!(file instanceof File)) {
     throw new FileOperationError(400, "INVALID_REQUEST", "请选择一个文件");
   }
   if (displayName !== null && typeof displayName !== "string") {
     throw new FileOperationError(400, "INVALID_REQUEST", "资料名称无效");
   }
-  return { file, displayName };
+  if (
+    knowledgeSpaceId !== null &&
+    (typeof knowledgeSpaceId !== "string" ||
+      knowledgeSpaceId.length < 1 ||
+      knowledgeSpaceId.length > 200)
+  ) {
+    throw new FileOperationError(400, "INVALID_REQUEST", "知识空间无效");
+  }
+  return { file, displayName, knowledgeSpaceId };
 }
 
 export function idempotencyKeyFrom(request: Request): string {

@@ -125,6 +125,7 @@ const memberships: Array<{
   { id: "seed-membership-a-manager", projectId: "project-001", userKey: "MANAGER_A", role: "project_manager", createdByKey: "ADMIN" },
   { id: "seed-membership-a-member", projectId: "project-001", userKey: "MEMBER_A", role: "project_member", createdByKey: "MANAGER_A" },
   { id: "seed-membership-a-viewer", projectId: "project-001", userKey: "VIEWER_A", role: "viewer", createdByKey: "MANAGER_A" },
+  { id: "seed-membership-a-dept-admin", projectId: "project-001", userKey: "DEPT_ADMIN", role: "project_member", createdByKey: "MANAGER_A" },
   { id: "seed-membership-b-manager", projectId: "project-002", userKey: "MANAGER_B", role: "project_manager", createdByKey: "ADMIN" },
   { id: "seed-membership-c-manager", projectId: "project-003", userKey: "ADMIN", role: "project_manager", createdByKey: "ADMIN" },
   { id: "seed-membership-d-manager", projectId: "project-004", userKey: "OTHER_DEPT", role: "project_manager", createdByKey: "ADMIN" },

@@ -203,6 +203,7 @@ export type UploadProjectDocumentInput = {
   documentId?: string;
   file: File;
   displayName?: string;
+  knowledgeSpaceId?: string;
   idempotencyKey: string;
   signal?: AbortSignal;
   onProgress?: (progress: DocumentUploadProgress) => void;
@@ -276,6 +277,9 @@ export function uploadProjectDocument(
     const form = new FormData();
     form.set("file", input.file, input.file.name);
     if (input.displayName?.trim()) form.set("displayName", input.displayName.trim());
+    if (!input.documentId && input.knowledgeSpaceId) {
+      form.set("knowledgeSpaceId", input.knowledgeSpaceId);
+    }
     xhr.send(form);
   });
 }

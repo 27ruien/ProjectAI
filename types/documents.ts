@@ -101,8 +101,18 @@ export interface DocumentUploadPolicyDto {
   allowedExtensions: string[];
 }
 
+export interface KnowledgeSpaceUploadDestinationDto {
+  id: string;
+  name: string;
+  type: "organization" | "department" | "project" | "restricted";
+  visibility: "private" | "organization_shared" | "department_shared" | "restricted";
+  departmentId: string | null;
+  projectId: string | null;
+}
+
 export interface DocumentListPermissionsDto {
   canUpload: boolean;
+  uploadDestinations: KnowledgeSpaceUploadDestinationDto[];
 }
 
 export interface ProjectDocumentListResponse {

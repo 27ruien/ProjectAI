@@ -89,7 +89,14 @@ export async function POST(
       request.headers,
       "manage_versions",
     );
-    const { file } = await readUploadForm(request);
+    const { file, knowledgeSpaceId } = await readUploadForm(request);
+    if (knowledgeSpaceId) {
+      throw new FileOperationError(
+        400,
+        "INVALID_REQUEST",
+        "新版本不能改变知识空间",
+      );
+    }
     const result = await uploadDocument({
       principal,
       projectId,

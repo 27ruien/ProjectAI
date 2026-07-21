@@ -547,6 +547,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           projectId={project.id}
           target={uploadTarget}
           policy={policy}
+          destinations={listPermissions?.uploadDestinations ?? []}
           onClose={() => setUploadOpen(false)}
           onUploaded={uploaded}
         />

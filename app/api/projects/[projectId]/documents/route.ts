@@ -29,6 +29,7 @@ import {
   serializeProjectDocument,
 } from "@/lib/files/serialization";
 import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
+import { listUploadableKnowledgeSpaces } from "@/lib/knowledge/management";
 
 type DocumentsRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -80,6 +81,13 @@ export async function GET(
       admin ||
       authorizedProject.projectRole === "project_manager" ||
       authorizedProject.projectRole === "project_member";
+    const uploadDestinations = canUpload
+      ? await listUploadableKnowledgeSpaces({
+          principal,
+          projectId,
+          requestHeaders: request.headers,
+        })
+      : [];
     return jsonResponse({
       documents: await serializeDocumentList(
         documents,
@@ -101,7 +109,7 @@ export async function GET(
         maxBytes: maxUploadBytes(),
         allowedExtensions: [...allowedUploadExtensions()],
       },
-      permissions: { canUpload },
+      permissions: { canUpload, uploadDestinations },
     });
   } catch (error) {
     return fileRouteErrorResponse(error);
@@ -129,7 +137,7 @@ export async function POST(
       documentRoles.upload,
       request.headers,
     );
-    const { file, displayName } = await readUploadForm(request);
+    const { file, displayName, knowledgeSpaceId } = await readUploadForm(request);
     const result = await uploadDocument({
       principal,
       projectId,
@@ -137,6 +145,7 @@ export async function POST(
       idempotencyKey: idempotencyKeyFrom(request),
       file,
       displayName,
+      knowledgeSpaceId,
     });
     const versions = await listProjectDocumentVersions(projectId, result.document.id);
     const current = versions.find((version) => version.isCurrent) ?? null;

@@ -74,6 +74,7 @@ type VersionDto = {
 type DocumentDto = {
   id: string;
   projectId: string;
+  knowledgeSpaceId: string;
   displayName: string;
   status: string;
   currentVersion: VersionDto | null;
@@ -197,10 +198,14 @@ async function uploadViaRoute(input: {
   file: File;
   idempotencyKey?: string;
   displayName?: string;
+  knowledgeSpaceId?: string;
 }): Promise<Response> {
   const form = new FormData();
   form.set("file", input.file);
   if (input.displayName !== undefined) form.set("displayName", input.displayName);
+  if (input.knowledgeSpaceId !== undefined) {
+    form.set("knowledgeSpaceId", input.knowledgeSpaceId);
+  }
   const headers = actorHeaders(input.actor);
   headers.set("idempotency-key", input.idempotencyKey ?? crypto.randomUUID());
   return createDocumentRoute(
@@ -425,11 +430,13 @@ class MissingShaMetadataStorage implements ObjectStorage {
 let admin: ApiActor;
 let managerA: ApiActor;
 let managerB: ApiActor;
+let departmentAdmin: ApiActor;
 let memberA: ApiActor;
 let viewerA: ApiActor;
 let projectAId = "";
 let projectBId = "";
 let storage: ObjectStorage;
+const departmentUploadDocumentIds = new Set<string>();
 
 async function dropFinalizeFailureTrigger(): Promise<void> {
   await getDb().execute(
@@ -491,10 +498,11 @@ before(async () => {
     findUserByEmail(required("SEED_MANAGER_B_EMAIL")),
     findUserByEmail(required("SEED_MEMBER_A_EMAIL")),
     findUserByEmail(required("SEED_VIEWER_A_EMAIL")),
+    findUserByEmail(required("SEED_DEPT_ADMIN_EMAIL")),
   ]);
   for (const currentUser of users) assert.ok(currentUser, "seed user should exist");
-  const [adminUser, managerAUser, managerBUser, memberAUser, viewerAUser] =
-    users as [SeedUser, SeedUser, SeedUser, SeedUser, SeedUser];
+  const [adminUser, managerAUser, managerBUser, memberAUser, viewerAUser, departmentAdminUser] =
+    users as [SeedUser, SeedUser, SeedUser, SeedUser, SeedUser, SeedUser];
   await getDb().delete(session).where(
     inArray(session.userId, users.map((currentUser) => currentUser!.id)),
   );
@@ -538,6 +546,14 @@ before(async () => {
       required("SEED_VIEWER_A_EMAIL"),
       required("SEED_VIEWER_A_PASSWORD"),
       "198.51.100.184",
+    ),
+  };
+  departmentAdmin = {
+    user: departmentAdminUser,
+    cookie: await signIn(
+      required("SEED_DEPT_ADMIN_EMAIL"),
+      required("SEED_DEPT_ADMIN_PASSWORD"),
+      "198.51.100.185",
     ),
   };
 
@@ -599,6 +615,31 @@ after(async () => {
     await Promise.all(
       [projectAId, projectBId].filter(Boolean).map(deleteProjectObjects),
     );
+    if (departmentUploadDocumentIds.size > 0) {
+      const documentIds = [...departmentUploadDocumentIds];
+      const versions = await getDb()
+        .select({ objectKey: projectDocumentVersion.objectKey })
+        .from(projectDocumentVersion)
+        .where(inArray(projectDocumentVersion.documentId, documentIds));
+      await Promise.all(
+        versions.map((version) => storage.deleteObject(version.objectKey)),
+      );
+      await getDb()
+        .delete(documentChunk)
+        .where(inArray(documentChunk.documentId, documentIds));
+      await getDb()
+        .delete(documentSection)
+        .where(inArray(documentSection.documentId, documentIds));
+      await getDb()
+        .delete(documentIngestionJob)
+        .where(inArray(documentIngestionJob.documentId, documentIds));
+      await getDb()
+        .delete(projectDocumentVersion)
+        .where(inArray(projectDocumentVersion.documentId, documentIds));
+      await getDb()
+        .delete(projectDocument)
+        .where(inArray(projectDocument.id, documentIds));
+    }
     const projectIds = [projectAId, projectBId].filter(Boolean);
     if (projectIds.length > 0) {
       await getDb().delete(auditEvent).where(inArray(auditEvent.projectId, projectIds));
@@ -622,7 +663,7 @@ after(async () => {
         .where(inArray(projectMember.projectId, projectIds));
       await getDb().delete(project).where(inArray(project.id, projectIds));
     }
-    const users = [admin, managerA, managerB, memberA, viewerA]
+    const users = [admin, managerA, managerB, memberA, viewerA, departmentAdmin]
       .filter(Boolean)
       .map((actor) => actor.user.id);
     if (users.length > 0) {
@@ -635,6 +676,63 @@ after(async () => {
 });
 
 describe("Project Files real PostgreSQL and MinIO integration", () => {
+  it("binds Department Admin uploads and idempotency to an authorized knowledge space", async () => {
+    const destinationResponse = await listDocuments(departmentAdmin, "project-001");
+    assert.equal(destinationResponse.status, 200);
+    const destinationPayload = await responseJson<{
+      permissions: {
+        uploadDestinations: Array<{ id: string; projectId: string | null }>;
+      };
+    }>(destinationResponse);
+    const departmentSpace = destinationPayload.permissions.uploadDestinations.find(
+      (destination) => destination.id === "ks-department-shared-test",
+    );
+    const projectSpace = destinationPayload.permissions.uploadDestinations.find(
+      (destination) => destination.projectId === "project-001",
+    );
+    assert.ok(departmentSpace);
+    assert.ok(projectSpace);
+
+    const managerDenied = await uploadViaRoute({
+      actor: managerA,
+      projectId: "project-001",
+      file: createTextFixture("部门空间越权拒绝.txt"),
+      knowledgeSpaceId: departmentSpace.id,
+    });
+    assert.equal(managerDenied.status, 404);
+    assert.equal(
+      (await responseJson<ErrorResponse>(managerDenied)).error.code,
+      "KNOWLEDGE_SPACE_NOT_FOUND",
+    );
+
+    const idempotencyKey = crypto.randomUUID();
+    const file = createTextFixture("部门管理员虚构资料.txt", "仅用于知识空间上传验证");
+    const createdResponse = await uploadViaRoute({
+      actor: departmentAdmin,
+      projectId: "project-001",
+      file,
+      knowledgeSpaceId: departmentSpace.id,
+      idempotencyKey,
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = await responseJson<UploadResponse>(createdResponse);
+    departmentUploadDocumentIds.add(created.document.id);
+    assert.equal(created.document.knowledgeSpaceId, departmentSpace.id);
+
+    const rebound = await uploadViaRoute({
+      actor: departmentAdmin,
+      projectId: "project-001",
+      file,
+      knowledgeSpaceId: projectSpace.id,
+      idempotencyKey,
+    });
+    assert.equal(rebound.status, 409);
+    assert.equal(
+      (await responseJson<ErrorResponse>(rebound)).error.code,
+      "UPLOAD_ALREADY_EXISTS",
+    );
+  });
+
   it("enforces authentication, upload roles, admin bypass, and project isolation", async () => {
     const managerResponse = await uploadViaRoute({
       actor: managerA,

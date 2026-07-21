@@ -543,6 +543,130 @@ export async function listKnowledgeAdministration(
   };
 }
 
+export async function listUploadableKnowledgeSpaces(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  requestHeaders: Headers;
+  db?: DatabaseExecutor;
+}) {
+  const db = input.db ?? getDb();
+  const target = await requireProjectRole(
+    input.principal,
+    input.projectId,
+    ["project_manager", "project_member"],
+    input.requestHeaders,
+    { db },
+  );
+  const matchingGrant = (effect: GrantEffect) => sql`
+    exists (
+      select 1
+      from knowledge_space_grants upload_grant
+      where upload_grant.knowledge_space_id = ${knowledgeSpace.id}
+        and upload_grant.permission = 'upload'
+        and upload_grant.effect = ${effect}::grant_effect
+        and (
+          (upload_grant.subject_type = 'organization' and upload_grant.subject_id = ${target.organizationId})
+          or (upload_grant.subject_type = 'project' and upload_grant.subject_id = ${target.id})
+          or (upload_grant.subject_type = 'user' and upload_grant.subject_id = ${input.principal.user.id})
+          or (
+            upload_grant.subject_type = 'department'
+            and exists (
+              select 1 from department_members upload_department_member
+              where upload_department_member.department_id = upload_grant.subject_id
+                and upload_department_member.user_id = ${input.principal.user.id}
+                and upload_department_member.is_active
+            )
+          )
+          or (
+            upload_grant.subject_type = 'role'
+            and (
+              upload_grant.subject_id = ${target.projectRole}
+              or exists (
+                select 1 from organization_members upload_organization_member
+                where upload_organization_member.organization_id = ${target.organizationId}
+                  and upload_organization_member.user_id = ${input.principal.user.id}
+                  and upload_organization_member.is_active
+                  and upload_organization_member.role::text = upload_grant.subject_id
+              )
+              or exists (
+                select 1 from department_members upload_department_role
+                where upload_department_role.organization_id = ${target.organizationId}
+                  and upload_department_role.user_id = ${input.principal.user.id}
+                  and upload_department_role.is_active
+                  and upload_department_role.role::text = upload_grant.subject_id
+              )
+            )
+          )
+        )
+    )
+  `;
+  return db
+    .select({
+      id: knowledgeSpace.id,
+      name: knowledgeSpace.name,
+      type: knowledgeSpace.type,
+      visibility: knowledgeSpace.visibility,
+      departmentId: knowledgeSpace.departmentId,
+      projectId: knowledgeSpace.projectId,
+    })
+    .from(knowledgeSpace)
+    .where(
+      and(
+        eq(knowledgeSpace.organizationId, target.organizationId),
+        eq(knowledgeSpace.isActive, true),
+        sql`not (${matchingGrant("deny")})`,
+        or(
+          eq(knowledgeSpace.projectId, target.id),
+          input.principal.user.systemRole === "system_admin" ? sql`true` : sql`false`,
+          sql`exists (
+            select 1 from organization_members upload_org_admin
+            where upload_org_admin.organization_id = ${target.organizationId}
+              and upload_org_admin.user_id = ${input.principal.user.id}
+              and upload_org_admin.role = 'organization_admin'
+              and upload_org_admin.is_active
+          )`,
+          sql`exists (
+            select 1 from department_members upload_dept_admin
+            where upload_dept_admin.department_id = ${knowledgeSpace.departmentId}
+              and upload_dept_admin.user_id = ${input.principal.user.id}
+              and upload_dept_admin.role = 'department_admin'
+              and upload_dept_admin.is_active
+          )`,
+          sql`exists (
+            select 1 from knowledge_space_members upload_space_member
+            where upload_space_member.knowledge_space_id = ${knowledgeSpace.id}
+              and upload_space_member.user_id = ${input.principal.user.id}
+              and upload_space_member.role in ('manager', 'editor')
+              and upload_space_member.is_active
+          )`,
+          matchingGrant("allow"),
+        ),
+      ),
+    )
+    .orderBy(asc(knowledgeSpace.name));
+}
+
+export async function requireUploadableKnowledgeSpace(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  knowledgeSpaceId: string | null;
+  requestHeaders: Headers;
+  db?: DatabaseExecutor;
+}) {
+  const spaces = await listUploadableKnowledgeSpaces(input);
+  const selected = input.knowledgeSpaceId
+    ? spaces.find((space) => space.id === input.knowledgeSpaceId)
+    : spaces.find((space) => space.projectId === input.projectId);
+  if (!selected) {
+    throw new KnowledgeManagementError(
+      404,
+      "RESOURCE_NOT_FOUND",
+      "知识空间不存在或不可上传",
+    );
+  }
+  return selected;
+}
+
 export async function createOrganization(input: {
   principal: AuthenticatedPrincipal;
   name: string;
