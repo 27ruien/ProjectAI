@@ -527,7 +527,7 @@ export function DocumentUploadDrawer({
         ) : null}
 
         <p className="rounded-lg border border-info/15 bg-info-soft px-3 py-2.5 text-xs leading-5 text-info">
-          文件上传后不会自动解析，也不会进入 AI 知识索引。
+          文件安全存储后会进入独立 Worker 的异步解析队列；只有当前有效且授权通过的 Chunk 才能参与检索。
         </p>
       </div>
     </Drawer>

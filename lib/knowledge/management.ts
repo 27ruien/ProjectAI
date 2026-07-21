@@ -98,7 +98,6 @@ async function canMountKnowledgeSpace(input: {
   space: typeof knowledgeSpace.$inferSelect;
   db: DatabaseExecutor;
 }): Promise<boolean> {
-  if (input.principal.user.systemRole === "system_admin") return true;
   const [[orgMembership], [deptMembership], [spaceMembership], grants] =
     await Promise.all([
       input.db
@@ -146,16 +145,8 @@ async function canMountKnowledgeSpace(input: {
           ),
         ),
     ]);
-  if (!orgMembership) return false;
-  if (
-    orgMembership.role === "organization_admin" ||
-    input.space.projectId === input.target.id ||
-    spaceMembership
-  ) {
-    return true;
-  }
   const roles = new Set<string>(
-    [input.target.projectRole, orgMembership.role, deptMembership?.role].filter(
+    [input.target.projectRole, orgMembership?.role, deptMembership?.role].filter(
       Boolean,
     ) as string[],
   );
@@ -174,6 +165,15 @@ async function canMountKnowledgeSpace(input: {
     }
   });
   if (matching.some((grant) => grant.effect === "deny")) return false;
+  if (input.principal.user.systemRole === "system_admin") return true;
+  if (!orgMembership) return false;
+  if (
+    orgMembership.role === "organization_admin" ||
+    input.space.projectId === input.target.id ||
+    spaceMembership
+  ) {
+    return true;
+  }
   if (matching.some((grant) => grant.effect === "allow")) return true;
   if (input.space.visibility === "organization_shared") return true;
   return (
@@ -1103,7 +1103,8 @@ export async function listProjectKnowledgeSources(input: {
     ["project_manager", "project_member", "viewer"],
     input.requestHeaders,
   );
-  const rows = await getDb()
+  const db = getDb();
+  const rows = await db
     .select({
       source: projectKnowledgeSource,
       spaceName: knowledgeSpace.name,
@@ -1122,9 +1123,27 @@ export async function listProjectKnowledgeSources(input: {
       ),
     )
     .orderBy(asc(projectKnowledgeSource.createdAt));
-  if (input.principal.user.systemRole === "system_admin") return rows;
-  const [administration, documentScope] = await Promise.all([
-    listKnowledgeAdministration(input.principal),
+  const candidateSpaceIds = rows.flatMap((row) =>
+    row.source.knowledgeSpaceId ? [row.source.knowledgeSpaceId] : [],
+  );
+  const spaces = candidateSpaceIds.length
+    ? await db
+        .select()
+        .from(knowledgeSpace)
+        .where(inArray(knowledgeSpace.id, candidateSpaceIds))
+    : [];
+  const [spaceVisibility, documentScope] = await Promise.all([
+    Promise.all(
+      spaces.map(async (space) => ({
+        id: space.id,
+        allowed: await canMountKnowledgeSpace({
+          principal: input.principal,
+          target,
+          space,
+          db,
+        }),
+      })),
+    ),
     listAuthorizedDocumentScope({
       principal: input.principal,
       projectId: target.id,
@@ -1132,7 +1151,7 @@ export async function listProjectKnowledgeSources(input: {
     }),
   ]);
   const spaceIds = new Set(
-    administration.knowledgeSpaces.map((space) => space.id),
+    spaceVisibility.filter((space) => space.allowed).map((space) => space.id),
   );
   const documentIds = new Set(documentScope.map((scope) => scope.documentId));
   return rows.filter((row) =>

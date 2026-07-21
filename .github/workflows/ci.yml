@@ -277,7 +277,7 @@ jobs:
           mkdir -p test-logs
           npm run retrieval:migration-upgrade 2>&1 | tee test-logs/retrieval-migration-upgrade.log
 
-      - name: Verify non-empty 0007 to 0013 Phase 1 upgrade
+      - name: Verify non-empty 0007 to 0014 Phase 1 upgrade
         shell: bash
         run: |
           set -o pipefail

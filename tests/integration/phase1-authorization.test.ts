@@ -18,8 +18,11 @@ import {
   type UserRecord,
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
-import { upsertOrganizationMember } from "../../lib/knowledge/management";
-import { listUploadableKnowledgeSpaces } from "../../lib/knowledge/management";
+import {
+  listUploadableKnowledgeSpaces,
+  mountProjectKnowledgeSource,
+  upsertOrganizationMember,
+} from "../../lib/knowledge/management";
 import { KnowledgeManagementError } from "../../lib/knowledge/errors";
 
 const prefix = "phase1-acl-test-";
@@ -38,6 +41,7 @@ const headers = new Headers({
 
 let manager: UserRecord;
 let managerB: UserRecord;
+let systemAdmin: UserRecord;
 let viewer: UserRecord;
 let outsider: UserRecord;
 let otherDepartment: UserRecord;
@@ -73,12 +77,14 @@ describe("Phase 1 default-deny authorization matrix", () => {
     const users = await Promise.all([
       findUserByEmail(required("SEED_MANAGER_A_EMAIL")),
       findUserByEmail(required("SEED_MANAGER_B_EMAIL")),
+      findUserByEmail(required("SEED_ADMIN_EMAIL")),
       findUserByEmail(required("SEED_VIEWER_A_EMAIL")),
       findUserByEmail(required("SEED_OUTSIDER_EMAIL")),
       findUserByEmail(required("SEED_OTHER_DEPT_EMAIL")),
     ]);
     assert.ok(users.every(Boolean));
-    [manager, managerB, viewer, outsider, otherDepartment] = users as UserRecord[];
+    [manager, managerB, systemAdmin, viewer, outsider, otherDepartment] =
+      users as UserRecord[];
 
     await getDb().transaction(async (tx) => {
       await tx.insert(projectDocument).values([
@@ -232,6 +238,49 @@ describe("Phase 1 default-deny authorization matrix", () => {
       createdBy: manager.id,
     });
     assert.equal((await scope(viewer, "project-001", "view")).has(restrictedDocumentId), false);
+  });
+
+  it("does not let system administrators bypass an explicit content deny", async () => {
+    await getDb().insert(documentGrant).values({
+      id: `${prefix}system-admin-view-deny`,
+      organizationId: "org-legacy-default",
+      projectId: "project-001",
+      documentId: privateDocumentId,
+      subjectType: "user",
+      subjectId: systemAdmin.id,
+      permission: "view",
+      effect: "deny",
+      createdBy: manager.id,
+    });
+    assert.equal(
+      (await scope(systemAdmin, "project-001", "view")).has(privateDocumentId),
+      false,
+    );
+  });
+
+  it("does not let privileged membership bypass a space deny while mounting", async () => {
+    await getDb().insert(knowledgeSpaceGrant).values({
+      id: `${prefix}manager-mount-deny`,
+      organizationId: "org-legacy-default",
+      knowledgeSpaceId: "ks-department-shared-test",
+      subjectType: "user",
+      subjectId: managerB.id,
+      permission: "view",
+      effect: "deny",
+      createdBy: manager.id,
+    });
+    await assert.rejects(
+      mountProjectKnowledgeSource({
+        principal: principal(managerB),
+        projectId: "project-002",
+        sourceType: "knowledge_space",
+        knowledgeSpaceId: "ks-department-shared-test",
+        requestHeaders: headers,
+      }),
+      (error: unknown) =>
+        error instanceof KnowledgeManagementError &&
+        error.code === "RESOURCE_NOT_FOUND",
+    );
   });
 
   it("does not accept a cross-organization source even if a row is injected", async () => {

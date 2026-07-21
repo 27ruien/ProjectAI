@@ -99,6 +99,13 @@
       "when": 1784657651894,
       "tag": "0013_knowledge_space_scope_guard",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1784658049240,
+      "tag": "0014_authorization_deny_priority",
+      "breakpoints": true
     }
   ]
 }

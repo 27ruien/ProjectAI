@@ -67,6 +67,7 @@ async function main(): Promise<void> {
         "0011_giant_living_lightning.sql",
         "0012_parallel_stellaris.sql",
         "0013_knowledge_space_scope_guard.sql",
+        "0014_authorization_deny_priority.sql",
       ]) {
         await applyMigration(upgrade, filename);
       }
@@ -155,6 +156,12 @@ async function main(): Promise<void> {
       );
     }
     await upgrade.query(`
+      insert into departments (
+        id, organization_id, name, code, created_by
+      ) values (
+        'dept-other-test', 'org-legacy-default',
+        'Fictional Other Department', 'PHASE1-OTHER', 'phase1-upgrade-user'
+      );
       insert into knowledge_spaces (
         id, organization_id, department_id, space_type, visibility, name, created_by
       ) values (
@@ -179,8 +186,31 @@ async function main(): Promise<void> {
     if (!rejectedInvalidScope) {
       throw new Error("Phase 1 knowledge-space scope guard accepted cross-department data");
     }
+    await upgrade.query(`
+      update users
+      set system_role = 'system_admin'
+      where id = 'phase1-upgrade-user';
+      insert into document_grants (
+        id, organization_id, project_id, document_id, subject_type,
+        subject_id, permission, effect, created_by
+      ) values (
+        'phase1-upgrade-system-admin-deny', 'org-legacy-default',
+        'phase1-upgrade-project', 'phase1-upgrade-document', 'user',
+        'phase1-upgrade-user', 'view', 'deny', 'phase1-upgrade-user'
+      );
+    `);
+    const deniedSystemAdmin = await upgrade.query<{ count: string }>(`
+      select count(*)::text as count
+      from projectai_authorized_documents(
+        'phase1-upgrade-user', 'phase1-upgrade-project', 'view'
+      )
+      where document_id = 'phase1-upgrade-document'
+    `);
+    if (deniedSystemAdmin.rows[0]?.count !== "0") {
+      throw new Error("Phase 1 explicit deny did not constrain a system administrator");
+    }
     process.stdout.write(
-      "Non-empty 0007 to 0013 Phase 1 migration upgrade verified.\n",
+      "Non-empty 0007 to 0014 Phase 1 migration upgrade verified.\n",
     );
   } finally {
     if (upgrade) await upgrade.end();

@@ -416,7 +416,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           <Info className="mt-0.5 size-4 shrink-0" />
           <p>
             <strong className="font-semibold">文件已真实存储；</strong>
-            当前有效版本会异步建立全文知识索引；AI 综合问答将在下一阶段启用。
+            当前有效版本会由独立 Worker 异步解析并建立全文知识索引，项目助手只使用服务端授权的有效来源。
           </p>
         </aside>
 
