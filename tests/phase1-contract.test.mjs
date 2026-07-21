@@ -97,6 +97,10 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
     );
     assert.match(management, /upload_grant\.permission = 'upload'/);
     assert.match(management, /matchingGrant\("deny"\)/);
+    assert.match(
+      management,
+      /knowledgeSpace\.departmentId}[\s\S]+knowledgeSpace\.departmentId} = \$\{target\.departmentId}/,
+    );
     assert.match(documentService, /该幂等键已绑定其他知识空间/);
     assert.match(documentService, /knowledgeSpaceId: destination\.id/);
     assert.match(uploadUi, /仅显示服务端确认可上传的空间/);

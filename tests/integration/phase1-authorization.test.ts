@@ -289,16 +289,28 @@ describe("Phase 1 default-deny authorization matrix", () => {
   });
 
   it("does not treat an administrator role from another department as an upload grant", async () => {
-    await getDb().insert(knowledgeSpaceGrant).values({
-      id: `${prefix}department-admin-upload`,
-      organizationId: "org-legacy-default",
-      knowledgeSpaceId: "ks-department-shared-test",
-      subjectType: "role",
-      subjectId: "department_admin",
-      permission: "upload",
-      effect: "allow",
-      createdBy: manager.id,
-    });
+    await getDb().insert(knowledgeSpaceGrant).values([
+      {
+        id: `${prefix}department-admin-upload`,
+        organizationId: "org-legacy-default",
+        knowledgeSpaceId: "ks-department-shared-test",
+        subjectType: "role",
+        subjectId: "department_admin",
+        permission: "upload",
+        effect: "allow",
+        createdBy: manager.id,
+      },
+      {
+        id: `${prefix}cross-department-project-upload`,
+        organizationId: "org-legacy-default",
+        knowledgeSpaceId: "ks-department-shared-test",
+        subjectType: "project",
+        subjectId: "project-004",
+        permission: "upload",
+        effect: "allow",
+        createdBy: manager.id,
+      },
+    ]);
     const destinations = await listUploadableKnowledgeSpaces({
       principal: principal(otherDepartment),
       projectId: "project-004",

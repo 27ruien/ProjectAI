@@ -611,6 +611,10 @@ export async function listUploadableKnowledgeSpaces(input: {
       and(
         eq(knowledgeSpace.organizationId, target.organizationId),
         eq(knowledgeSpace.isActive, true),
+        sql`(
+          ${knowledgeSpace.departmentId} is null
+          or ${knowledgeSpace.departmentId} = ${target.departmentId}
+        )`,
         sql`not (${matchingGrant("deny")})`,
         or(
           eq(knowledgeSpace.projectId, target.id),
