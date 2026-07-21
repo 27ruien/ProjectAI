@@ -480,6 +480,26 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(dockerfile, /USER node/);
 });
 
+test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
+  const [script, compose, verifier] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(stagingCompose, "utf8"),
+    readFile(new URL("../scripts/verify-phase1-staging.mjs", import.meta.url), "utf8"),
+  ]);
+  const service = serviceBlock(compose, "projectai-phase1-smoke", "projectai-staging");
+  assert.match(service, /profiles:\n\s+- operations/);
+  assert.match(service, /DATABASE_URL/);
+  assert.match(service, /OBJECT_STORAGE_ACCESS_KEY/);
+  assert.match(service, /SEED_DEPT_ADMIN_EMAIL/);
+  assert.doesNotMatch(service, /QWEN_API_KEY|qwen_api_key|secrets:/);
+  assert.match(script, /projectai-phase1-smoke npm run phase1:staging-smoke/);
+  assert.match(verifier, /KNOWLEDGE_SPACE_NOT_FOUND/);
+  assert.match(verifier, /not_mentioned/);
+  assert.match(verifier, /weekly_report_published/);
+  assert.match(verifier, /delete from projects where id = \$1/);
+  assert.doesNotMatch(verifier, /projectai\/api|\/srv\/projectai(?:\/|\b)/);
+});
+
 test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker", async () => {
   const [script, compose, production] = await Promise.all([
     readFile(deployScript, "utf8"),

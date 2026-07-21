@@ -947,7 +947,7 @@ export async function createKnowledgeSpace(input: {
       (input.type === "organization" && !input.departmentId && !input.projectId) ||
       (input.type === "department" && Boolean(input.departmentId) && !input.projectId) ||
       (input.type === "project" && Boolean(input.projectId) && !input.departmentId) ||
-      input.type === "restricted";
+      (input.type === "restricted" && !(input.departmentId && input.projectId));
     if (!validScope) {
       throw new KnowledgeManagementError(
         400,
@@ -955,7 +955,10 @@ export async function createKnowledgeSpace(input: {
         "知识空间范围无效",
       );
     }
-    if (input.type === "department" && input.departmentId) {
+    if (
+      (input.type === "department" || input.type === "restricted") &&
+      input.departmentId
+    ) {
       const access = await requireDepartmentAdmin(
         input.principal,
         input.departmentId,
@@ -964,7 +967,10 @@ export async function createKnowledgeSpace(input: {
       if (access.department.organizationId !== input.organizationId) {
         throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "部门不存在");
       }
-    } else if (input.type === "project" && input.projectId) {
+    } else if (
+      (input.type === "project" || input.type === "restricted") &&
+      input.projectId
+    ) {
       const projectAccess = await requireProjectRole(
         input.principal,
         input.projectId,

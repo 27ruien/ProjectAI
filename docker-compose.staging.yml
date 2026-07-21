@@ -383,6 +383,61 @@ services:
         max-file: "2"
     command: npm run assistant:smoke
 
+  projectai-phase1-smoke:
+    profiles:
+      - operations
+    image: ${STAGING_DB_TOOLS_IMAGE:-project-ai-os-staging-db-tools:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    build:
+      context: .
+      target: db-tools
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_APP_ENV: staging
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:?SEED_ADMIN_EMAIL is required}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?SEED_ADMIN_PASSWORD is required}
+      SEED_DEPT_ADMIN_EMAIL: ${SEED_DEPT_ADMIN_EMAIL:?SEED_DEPT_ADMIN_EMAIL is required}
+      SEED_DEPT_ADMIN_PASSWORD: ${SEED_DEPT_ADMIN_PASSWORD:?SEED_DEPT_ADMIN_PASSWORD is required}
+      SEED_MANAGER_A_EMAIL: ${SEED_MANAGER_A_EMAIL:?SEED_MANAGER_A_EMAIL is required}
+      SEED_MANAGER_A_PASSWORD: ${SEED_MANAGER_A_PASSWORD:?SEED_MANAGER_A_PASSWORD is required}
+      SEED_MEMBER_A_EMAIL: ${SEED_MEMBER_A_EMAIL:?SEED_MEMBER_A_EMAIL is required}
+      SEED_MEMBER_A_PASSWORD: ${SEED_MEMBER_A_PASSWORD:?SEED_MEMBER_A_PASSWORD is required}
+      SEED_VIEWER_A_EMAIL: ${SEED_VIEWER_A_EMAIL:?SEED_VIEWER_A_EMAIL is required}
+      SEED_VIEWER_A_PASSWORD: ${SEED_VIEWER_A_PASSWORD:?SEED_VIEWER_A_PASSWORD is required}
+      SEED_OTHER_DEPT_EMAIL: ${SEED_OTHER_DEPT_EMAIL:?SEED_OTHER_DEPT_EMAIL is required}
+      SEED_OTHER_DEPT_PASSWORD: ${SEED_OTHER_DEPT_PASSWORD:?SEED_OTHER_DEPT_PASSWORD is required}
+      SEED_OUTSIDER_EMAIL: ${SEED_OUTSIDER_EMAIL:?SEED_OUTSIDER_EMAIL is required}
+      SEED_OUTSIDER_PASSWORD: ${SEED_OUTSIDER_PASSWORD:?SEED_OUTSIDER_PASSWORD is required}
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+      projectai-document-worker:
+        condition: service_healthy
+      projectai-staging:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    restart: "no"
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "2"
+    command: npm run phase1:staging-smoke
+
   projectai-staging:
     image: ${STAGING_APP_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     build:

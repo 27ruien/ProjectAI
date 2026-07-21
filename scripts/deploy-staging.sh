@@ -2651,6 +2651,17 @@ printf 'Verifying the public real-Qwen grounded assistant flow.\n'
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-ai-smoke npm run assistant:smoke
 
+printf 'Waiting for one protected login rate-limit window before Phase 1 verification.\n'
+for _ in $(seq 1 14); do
+  sleep 5
+done
+
+printf 'Verifying the complete Phase 1 organization, ACL, AI-review, and work-management flow.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=$public_base_url" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-phase1-smoke npm run phase1:staging-smoke
+
 printf 'Rechecking PostgreSQL and MinIO consistency after public verification.\n'
 "${compose_run[@]}" projectai-storage-ops npm run storage:verify
 

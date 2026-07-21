@@ -78,6 +78,10 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
       source("scripts/db/seed.ts"),
     ]);
     assert.match(management, /listUploadableKnowledgeSpaces/);
+    assert.match(
+      management,
+      /input\.type === "department" \|\| input\.type === "restricted"/,
+    );
     assert.match(management, /upload_grant\.permission = 'upload'/);
     assert.match(management, /matchingGrant\("deny"\)/);
     assert.match(documentService, /该幂等键已绑定其他知识空间/);
