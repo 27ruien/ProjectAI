@@ -104,6 +104,17 @@ describe("Phase 1 default-deny authorization matrix", () => {
           createdBy: manager.id,
         },
       ]);
+      await tx.insert(documentGrant).values({
+        id: `${prefix}viewer-download-deny`,
+        organizationId: "org-legacy-default",
+        projectId: "project-001",
+        documentId: privateDocumentId,
+        subjectType: "user",
+        subjectId: viewer.id,
+        permission: "download",
+        effect: "deny",
+        createdBy: manager.id,
+      });
 
       await tx.insert(organization).values({
         id: secondaryOrganizationId,
