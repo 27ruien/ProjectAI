@@ -277,7 +277,7 @@ jobs:
           mkdir -p test-logs
           npm run retrieval:migration-upgrade 2>&1 | tee test-logs/retrieval-migration-upgrade.log
 
-      - name: Verify non-empty 0007 to 0008 Phase 1 upgrade
+      - name: Verify non-empty 0007 to 0011 Phase 1 upgrade
         shell: bash
         run: |
           set -o pipefail
@@ -401,6 +401,14 @@ jobs:
           mkdir -p test-logs
           npm run test:phase1-round2 2>&1 | tee test-logs/phase1-round2-contract.log
           npm run test:phase1-round2-integration 2>&1 | tee test-logs/phase1-round2-integration.log
+
+      - name: Phase 1 Action, Risk, weekly report, audit, and export tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:phase1-round3 2>&1 | tee test-logs/phase1-round3-contract.log
+          npm run test:phase1-round3-integration 2>&1 | tee test-logs/phase1-round3-integration.log
 
       - name: Write sanitized Retrieval verification summary
         run: npm run retrieval:ci-evidence

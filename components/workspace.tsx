@@ -16,6 +16,8 @@ import { ScopePage } from "@/components/scope";
 import { ActionsPage } from "@/components/action-plan";
 import { MeetingsPage } from "@/components/meeting";
 import { RisksPage } from "@/components/risk";
+import { WeeklyReportsPage } from "@/components/report";
+import { ProjectAuditPage } from "@/components/audit";
 import { SkillsPage } from "@/components/skill";
 import { AIModelsPage } from "@/components/model-management";
 import { AccessDeniedPage, AnalyticsPage, GlobalKnowledgePage, NotFoundPage, SettingsPage } from "@/components/system";
@@ -66,6 +68,9 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   else if (exactProject && exactProjectData && child === "actions") page = <ProjectSection project={exactProject} tab="actions"><ActionsPage project={exactProject} data={exactProjectData} /></ProjectSection>;
   else if (exactProject && exactProjectData && child === "meetings") page = <ProjectSection project={exactProject} tab="meetings"><MeetingsPage project={exactProject} data={exactProjectData} /></ProjectSection>;
   else if (exactProject && exactProjectData && child === "risks") page = <ProjectSection project={exactProject} tab="risks"><RisksPage project={exactProject} data={exactProjectData} /></ProjectSection>;
+  else if (exactProject && exactProjectData && child === "reports") page = <ProjectSection project={exactProject} tab="reports"><WeeklyReportsPage project={exactProject} /></ProjectSection>;
+  else if (exactProject && exactProjectData && child === "audit" && exactProject.permissions.canViewAudit) page = <ProjectSection project={exactProject} tab="audit"><ProjectAuditPage project={exactProject} /></ProjectSection>;
+  else if (exactProject && exactProjectData && child === "audit") page = <AccessDeniedPage obscureResource />;
   else if (section === "workflows" && !canUseWriteWorkflows) page = <StandardPage><AccessDeniedPage /></StandardPage>;
   else if (section === "workflows" && entityId === "requirement-extraction" && editableProject) page = <StandardPage><RequirementExtractionPage editableProject={editableProject} onBack={() => router.push("/workflows")} onOpenReviews={() => router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
   else if (section === "workflows") page = <StandardPage><WorkflowsPage data={workspaceData} editableProject={editableProject} onOpenReviews={() => editableProject && router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;

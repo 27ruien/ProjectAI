@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { jsonResponse, requireTrustedMutationRequest } from "@/lib/auth/http";
 import { requireApiPrincipal } from "@/lib/auth/session";
+import { requireProjectAccess } from "@/lib/auth/authorization";
 import { listRequirements, updateFormalRequirement } from "@/lib/project-management/requirements";
 import { projectManagementErrorResponse } from "@/lib/project-management/http";
 
@@ -32,6 +33,7 @@ export async function PATCH(request: Request, context: { params: Promise<{ proje
     requireTrustedMutationRequest(request);
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
+    await requireProjectAccess(principal, projectId, request.headers);
     const parsed = patchSchema.safeParse(await request.json());
     if (!parsed.success) return jsonResponse({ error: { code: "INVALID_REQUEST", message: "需求字段无效" } }, { status: 400 });
     const { requirementId, ...fields } = parsed.data;

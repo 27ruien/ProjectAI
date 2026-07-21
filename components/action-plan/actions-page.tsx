@@ -1,242 +1,681 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { AuthorizedProjectSummary, ProjectMockPayload } from "@/lib/auth/ui-types";
-import {
-  setLocalStorageSnapshot,
-  useLocalStorageSnapshot,
-} from "@/lib/browser-snapshot";
-import { storageKey } from "@/lib/storage-key";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  CalendarRange,
   Check,
-  CheckCircle2,
-  ChevronDown,
-  CircleDot,
-  Columns3,
-  Filter,
+  Link2,
   ListTodo,
+  LoaderCircle,
   Plus,
-  Search,
-  SlidersHorizontal,
+  Sparkles,
   X,
 } from "lucide-react";
+import type {
+  AuthorizedProjectSummary,
+  ProjectMockPayload,
+} from "@/lib/auth/ui-types";
+import { listProjectDocuments } from "@/lib/documents/client";
 import {
-  ActionItemRow,
-  ACTION_REFERENCE_TIME,
-  actionStatusConfig,
-  formatDate,
-  priorityConfig,
-  sourceLabel,
-  type ActionItemView,
-} from "./action-item-row";
+  projectManagementMutation,
+  projectManagementRequest,
+} from "@/lib/project-management/client";
 
-type ViewMode = "table" | "timeline";
+type ActionStatus = "todo" | "in_progress" | "blocked" | "done" | "cancelled";
+type Action = {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  ownerUserId: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  status: ActionStatus;
+  priority: "low" | "medium" | "high" | "critical";
+  progress: number;
+  blocker: string;
+  relatedRequirementId: string | null;
+  relatedScopeItemId: string | null;
+  currentVersion: number;
+};
+type Draft = {
+  id: string;
+  title: string;
+  description: string;
+  ownerUserId: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  priority: Action["priority"];
+  blocker: string;
+  sourceType: string;
+  sourceCitation: Record<string, unknown>;
+  relatedRequirementId: string | null;
+  relatedScopeItemId: string | null;
+  status: string;
+};
+type Member = { userId: string; displayName: string; role: string };
+type Requirement = { id: string; code: string; title: string };
+type Payload = {
+  items: Action[];
+  drafts: Draft[];
+  dependencies: Array<{
+    id: string;
+    actionItemId: string;
+    dependsOnActionItemId: string;
+  }>;
+  projectRole: string | null;
+  actorUserId: string;
+};
 
-interface ActionsPageProps {
+function emptyAction(): Omit<Action, "id" | "code" | "currentVersion"> {
+  return {
+    title: "",
+    description: "",
+    ownerUserId: null,
+    startDate: null,
+    dueDate: null,
+    status: "todo",
+    priority: "medium",
+    progress: 0,
+    blocker: "",
+    relatedRequirementId: null,
+    relatedScopeItemId: null,
+  };
+}
+
+export function ActionsPage({
+  project,
+}: {
   project: AuthorizedProjectSummary;
   data: ProjectMockPayload;
-}
-
-function parseActionStatuses(raw: string | null): Record<string, string> {
-  if (!raw) return {};
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    return Object.fromEntries(
-      Object.entries(parsed).filter(
-        (entry): entry is [string, string] => typeof entry[1] === "string",
-      ),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function persistActionStatuses(items: ActionItemView[]) {
-  return setLocalStorageSnapshot(
-    storageKey("action-statuses"),
-    JSON.stringify(Object.fromEntries(items.map((item) => [item.id, item.status]))),
+}) {
+  const [payload, setPayload] = useState<Payload>({
+    items: [],
+    drafts: [],
+    dependencies: [],
+    projectRole: null,
+    actorUserId: "",
+  });
+  const [members, setMembers] = useState<Member[]>([]);
+  const [requirements, setRequirements] = useState<Requirement[]>([]);
+  const [documents, setDocuments] = useState<
+    Array<{ id: string; displayName: string }>
+  >([]);
+  const [sourceRequirementIds, setSourceRequirementIds] = useState<string[]>(
+    [],
   );
-}
-
-export function ActionsPage({ project, data }: ActionsPageProps) {
-  const sourceActions = data.actions as unknown as ActionItemView[];
-  const canEdit = project.permissions.canEditProject;
-  const storedStatusesRaw = useLocalStorageSnapshot(storageKey("action-statuses"));
-  const storedStatuses = useMemo(
-    () => parseActionStatuses(storedStatusesRaw),
-    [storedStatusesRaw],
+  const [sourceDocumentIds, setSourceDocumentIds] = useState<string[]>([]);
+  const [manual, setManual] = useState(emptyAction());
+  const [selected, setSelected] = useState<string[]>([]);
+  const [statusFilter, setStatusFilter] = useState<"all" | ActionStatus>("all");
+  const [sort, setSort] = useState<"due" | "priority" | "progress">("due");
+  const [dependency, setDependency] = useState({
+    actionItemId: "",
+    dependsOnActionItemId: "",
+  });
+  const [phase, setPhase] = useState<"loading" | "ready" | "working" | "error">(
+    "loading",
   );
-  const [view, setView] = useState<ViewMode>("table");
-  const [search, setSearch] = useState("");
-  const [ownerFilter, setOwnerFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("all");
-  const [priorityFilter, setPriorityFilter] = useState("all");
-  const [overdueOnly, setOverdueOnly] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  const projectName = () => project.name;
-  const scopedItems = useMemo(
-    () =>
-      sourceActions.map((item) => {
-        const status = storedStatuses[item.id];
-        return status ? { ...item, status } : item;
-      }),
-    [sourceActions, storedStatuses],
-  );
-  const owners = Array.from(new Set(scopedItems.map((item) => item.owner)));
-  const filtered = useMemo(() => {
-    return scopedItems.filter((item) => {
-      const overdue = new Date(item.dueDate).getTime() < ACTION_REFERENCE_TIME && !["completed", "cancelled"].includes(item.status);
-      return (
-        `${item.actionId} ${item.title} ${item.owner}`.toLowerCase().includes(search.toLowerCase()) &&
-        (ownerFilter === "all" || item.owner === ownerFilter) &&
-        (statusFilter === "all" || item.status === statusFilter) &&
-        (priorityFilter === "all" || item.priority === priorityFilter) &&
-        (!overdueOnly || overdue)
+  const load = useCallback(async () => {
+    setPhase("loading");
+    try {
+      const [actions, memberPayload, requirementPayload, docs] =
+        await Promise.all([
+          projectManagementRequest<Payload>(
+            `/api/projects/${encodeURIComponent(project.id)}/actions`,
+          ),
+          projectManagementRequest<{ members: Member[] }>(
+            `/api/projects/${encodeURIComponent(project.id)}/members`,
+          ),
+          projectManagementRequest<{ requirements: Requirement[] }>(
+            `/api/projects/${encodeURIComponent(project.id)}/requirements`,
+          ),
+          listProjectDocuments(project.id, "active"),
+        ]);
+      setPayload(actions);
+      setMembers(memberPayload.members);
+      setRequirements(requirementPayload.requirements);
+      setDocuments(
+        docs.documents.map(({ id, displayName }) => ({ id, displayName })),
       );
-    });
-  }, [overdueOnly, ownerFilter, priorityFilter, scopedItems, search, statusFilter]);
-
-  const updateStatus = (id: string, status: string) => {
-    const next = scopedItems.map((item) =>
-      item.id === id ? { ...item, status, updatedAt: new Date().toISOString() } : item,
-    );
-    setFeedback(
-      persistActionStatuses(next)
-        ? `Action 状态已更新为「${actionStatusConfig[status]?.label ?? status}」`
-        : "浏览器未能保存 Action 状态",
-    );
-  };
-
-  const bulkUpdate = (status: string) => {
-    const next = scopedItems.map((item) =>
-      selectedIds.includes(item.id) ? { ...item, status } : item,
-    );
-    setFeedback(
-      persistActionStatuses(next)
-        ? `已更新 ${selectedIds.length} 条 Action`
-        : "浏览器未能保存 Action 状态",
-    );
-    setSelectedIds([]);
-  };
-
+      setPhase("ready");
+    } catch (error) {
+      setFeedback(
+        error instanceof Error ? error.message : "Action 数据加载失败",
+      );
+      setPhase("error");
+    }
+  }, [project.id]);
   useEffect(() => {
-    if (!feedback) return;
-    const timer = window.setTimeout(() => setFeedback(null), 2200);
+    const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
-  }, [feedback]);
+  }, [load]);
 
-  const overdueCount = scopedItems.filter((item) => new Date(item.dueDate).getTime() < ACTION_REFERENCE_TIME && !["completed", "cancelled"].includes(item.status)).length;
+  const visible = useMemo(
+    () =>
+      payload.items
+        .filter(
+          (item) => statusFilter === "all" || item.status === statusFilter,
+        )
+        .sort((a, b) =>
+          sort === "due"
+            ? String(a.dueDate ?? "9999").localeCompare(
+                String(b.dueDate ?? "9999"),
+              )
+            : sort === "priority"
+              ? { critical: 0, high: 1, medium: 2, low: 3 }[a.priority] -
+                { critical: 0, high: 1, medium: 2, low: 3 }[b.priority]
+              : b.progress - a.progress,
+        ),
+    [payload.items, sort, statusFilter],
+  );
+  const pendingDrafts = payload.drafts.filter(
+    (draft) => draft.status === "pending_review",
+  );
+  const canManage = project.permissions.canManageMembers;
+  const canWrite = project.permissions.canEditProject;
+  const canUpdate = (item: Action) =>
+    canManage ||
+    (payload.projectRole === "project_member" &&
+      item.ownerUserId === payload.actorUserId);
+  const memberName = (id: string | null) =>
+    members.find((member) => member.userId === id)?.displayName ?? "未分配";
+  const run = async (operation: () => Promise<unknown>, success: string) => {
+    setPhase("working");
+    setFeedback(null);
+    try {
+      await operation();
+      setFeedback(success);
+      await load();
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : "操作失败");
+      setPhase("ready");
+    }
+  };
+  const generate = () =>
+    run(
+      () =>
+        projectManagementMutation(
+          `/api/projects/${encodeURIComponent(project.id)}/actions/drafts`,
+          "POST",
+          {
+            requirementIds: sourceRequirementIds,
+            documentIds: sourceDocumentIds,
+          },
+        ),
+      "Action 草稿已生成，尚未写入正式任务。",
+    );
+  const review = (draft: Draft, decision: "accept" | "reject") =>
+    run(
+      () =>
+        projectManagementMutation(
+          `/api/projects/${encodeURIComponent(project.id)}/actions/drafts/${encodeURIComponent(draft.id)}/review`,
+          "POST",
+          {
+            decision,
+            note: "Reviewed in ProjectAI",
+            fields:
+              decision === "accept"
+                ? {
+                    title: draft.title,
+                    description: draft.description,
+                    ownerUserId: draft.ownerUserId,
+                    startDate: draft.startDate,
+                    dueDate: draft.dueDate,
+                    status: "todo",
+                    priority: draft.priority,
+                    progress: 0,
+                    blocker: draft.blocker,
+                    relatedRequirementId: draft.relatedRequirementId,
+                    relatedScopeItemId: draft.relatedScopeItemId,
+                  }
+                : undefined,
+          },
+        ),
+      decision === "accept"
+        ? "Action 草稿已人工接受。"
+        : "Action 草稿已拒绝，未创建正式任务。",
+    );
+  const create = () =>
+    run(
+      () =>
+        projectManagementMutation(
+          `/api/projects/${encodeURIComponent(project.id)}/actions`,
+          "POST",
+          { fields: manual },
+        ),
+      "Action 已手工创建。 ",
+    );
+  const updateStatus = (item: Action, status: ActionStatus) =>
+    run(
+      () =>
+        projectManagementMutation(
+          `/api/projects/${encodeURIComponent(project.id)}/actions`,
+          "PATCH",
+          {
+            actionItemId: item.id,
+            fields: {
+              ...item,
+              status,
+              progress: status === "done" ? 100 : item.progress,
+            },
+            changeReason: "status_update",
+          },
+        ),
+      "Action 状态已更新。 ",
+    );
+  const bulk = (status: ActionStatus) =>
+    run(
+      () =>
+        projectManagementMutation(
+          `/api/projects/${encodeURIComponent(project.id)}/actions/bulk`,
+          "POST",
+          { actionItemIds: selected, status },
+        ),
+      `已更新 ${selected.length} 条 Action。`,
+    );
+  const addDependency = () =>
+    run(
+      () =>
+        projectManagementMutation(
+          `/api/projects/${encodeURIComponent(project.id)}/actions/dependencies`,
+          "POST",
+          dependency,
+        ),
+      "依赖已添加并完成环检测。 ",
+    );
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-primary"><ListTodo className="size-3.5" /> 可执行交付计划</div>
-          <h1 className="text-2xl font-semibold tracking-tight text-foreground">Action Plan</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">统一跟踪来自会议、需求、Scope 与风险的下一步行动。</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex h-9 items-center gap-1 rounded-lg border border-border bg-card p-1">
-            <ViewButton active={view === "table"} onClick={() => setView("table")} icon={Columns3}>表格</ViewButton>
-            <ViewButton active={view === "timeline"} onClick={() => setView("timeline")} icon={CalendarRange}>Timeline</ViewButton>
-          </div>
-          {canEdit ? <button type="button" onClick={() => setFeedback("已打开新建 Action 表单（演示）")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground"><Plus className="size-4" /> 新建 Action</button> : null}
-        </div>
+  if (phase === "loading")
+    return (
+      <div className="grid min-h-72 place-items-center rounded-xl border border-border bg-card">
+        <LoaderCircle className="size-6 animate-spin text-primary" />
       </div>
-
-      <section className="grid overflow-hidden rounded-xl border border-border bg-card sm:grid-cols-2 xl:grid-cols-4">
-        <Summary label="全部 Action" value={scopedItems.length} detail={`${scopedItems.filter((item) => item.status === "inProgress").length} 项进行中`} icon={ListTodo} />
-        <Summary label="本周到期" value={scopedItems.filter(isDueThisWeek).length} detail="需要关注交付" icon={CalendarRange} />
-        <Summary label="已阻塞" value={scopedItems.filter((item) => item.status === "blocked").length} detail="关联风险待处理" icon={AlertTriangle} tone="text-rose-700" />
-        <Summary label="已逾期" value={overdueCount} detail="建议今日跟进" icon={CircleDot} tone="text-amber-700" />
-      </section>
-
-      <section className="rounded-xl border border-border bg-card">
-        <div className="border-b border-border p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-52 flex-1 sm:max-w-xs">
-              <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索 Action、ID 或负责人" className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-3 text-xs outline-none focus:border-primary" />
-            </div>
-            <SmallSelect label="负责人" value={ownerFilter} onChange={setOwnerFilter}><option value="all">全部负责人</option>{owners.map((owner) => <option key={owner} value={owner}>{owner}</option>)}</SmallSelect>
-            <SmallSelect label="状态" value={statusFilter} onChange={setStatusFilter}><option value="all">全部状态</option>{Object.entries(actionStatusConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}</SmallSelect>
-            <SmallSelect label="优先级" value={priorityFilter} onChange={setPriorityFilter}><option value="all">全部优先级</option>{Object.entries(priorityConfig).map(([value, config]) => <option key={value} value={value}>{config.label}</option>)}</SmallSelect>
-            <label className={`flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 text-[10px] font-medium ${overdueOnly ? "border-amber-500/30 bg-amber-500/10 text-amber-800" : "border-border text-muted-foreground"}`}><input type="checkbox" checked={overdueOnly} onChange={(event) => setOverdueOnly(event.target.checked)} className="sr-only" /><AlertTriangle className="size-3" /> 仅逾期</label>
-          </div>
-          {(search || ownerFilter !== "all" || statusFilter !== "all" || priorityFilter !== "all" || overdueOnly) ? (
-            <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><SlidersHorizontal className="size-3" />找到 {filtered.length} 条记录<button type="button" onClick={() => { setSearch(""); setOwnerFilter("all"); setStatusFilter("all"); setPriorityFilter("all"); setOverdueOnly(false); }} className="text-primary hover:underline">清除筛选</button></div>
-          ) : null}
-        </div>
-
-        {view === "table" ? (
-          <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-left">
-              <thead className="bg-muted/35 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                <tr><th className="w-10 px-3 py-2.5">{canEdit ? <input aria-label="选择全部" type="checkbox" checked={filtered.length > 0 && filtered.every((item) => selectedIds.includes(item.id))} onChange={(event) => setSelectedIds(event.target.checked ? filtered.map((item) => item.id) : [])} className="size-3.5 accent-[var(--primary)]" /> : null}</th><th className="px-2 py-2.5">Action 内容</th><th className="px-2 py-2.5">项目</th><th className="px-2 py-2.5">负责人</th><th className="px-2 py-2.5">截止日期</th><th className="px-2 py-2.5">状态</th><th className="px-2 py-2.5">优先级</th><th className="px-2 py-2.5">来源</th><th /></tr>
-              </thead>
-              <tbody>
-                {filtered.map((item) => (
-                  <ActionItemRow key={item.id} item={item} projectName={projectName()} readOnly={!canEdit} selected={selectedIds.includes(item.id)} onSelectedChange={(checked) => setSelectedIds((current) => checked ? [...current, item.id] : current.filter((id) => id !== item.id))} onStatusChange={(status) => updateStatus(item.id, status)} onOpenSource={() => setFeedback(`来源：${sourceLabel(item.source)} · ${item.actionId}`)} />
-                ))}
-              </tbody>
-            </table>
-            {!filtered.length ? <div className="p-12 text-center text-xs text-muted-foreground">当前筛选下没有 Action Items。</div> : null}
-          </div>
-        ) : (
-          <TimelineView items={filtered} projectName={projectName} readOnly={!canEdit} onStatusChange={updateStatus} />
-        )}
-      </section>
-
-      {canEdit && selectedIds.length ? (
-        <div className="fixed bottom-6 left-1/2 z-40 flex -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-foreground px-4 py-3 text-background shadow-xl">
-          <span className="text-xs font-medium">已选 {selectedIds.length} 项</span><span className="h-4 w-px bg-background/20" />
-          <button type="button" onClick={() => bulkUpdate("inProgress")} className="text-xs text-background/80 hover:text-background">标记进行中</button>
-          <button type="button" onClick={() => bulkUpdate("completed")} className="inline-flex items-center gap-1 text-xs text-emerald-300"><Check className="size-3" /> 标记完成</button>
-          <button type="button" onClick={() => setSelectedIds([])} className="ml-1 text-background/60 hover:text-background"><X className="size-3.5" /></button>
+    );
+  return (
+    <div className="space-y-5">
+      <header>
+        <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
+          <ListTodo className="size-3.5" /> 正式任务与 AI 草稿隔离
+        </p>
+        <h1 className="mt-1 text-2xl font-semibold">Action Plan</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          手工任务可直接创建；AI 生成内容必须由项目经理审核后才成为正式 Action。
+        </p>
+      </header>
+      {feedback ? (
+        <div
+          role="status"
+          className="rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info"
+        >
+          {feedback}
         </div>
       ) : null}
-
-      {feedback ? <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-xs text-foreground shadow-xl"><CheckCircle2 className="size-4 text-emerald-600" />{feedback}</div> : null}
-    </div>
-  );
-}
-
-function TimelineView({ items, projectName, readOnly, onStatusChange }: { items: ActionItemView[]; projectName: (id: string) => string; readOnly: boolean; onStatusChange: (id: string, status: string) => void }) {
-  const dates = items.map((item) => new Date(item.dueDate).getTime()).filter(Number.isFinite);
-  const min = Math.min(...dates, ACTION_REFERENCE_TIME);
-  const max = Math.max(...dates, min + 86_400_000);
-  return (
-    <div className="min-w-[760px] overflow-x-auto p-4">
-      <div className="grid grid-cols-[250px_1fr] border-b border-border pb-2 text-[9px] uppercase tracking-wide text-muted-foreground"><span>Action</span><div className="grid grid-cols-4 text-center"><span>本周</span><span>下周</span><span>第 3 周</span><span>第 4 周</span></div></div>
-      <div className="divide-y divide-border">
-        {items.map((item) => {
-          const position = Math.max(2, Math.min(88, ((new Date(item.dueDate).getTime() - min) / (max - min)) * 88));
-          const statusStyle = item.status === "completed" ? "bg-emerald-500" : item.status === "blocked" ? "bg-rose-500" : "bg-primary";
-          return (
-            <div key={item.id} className="grid min-h-14 grid-cols-[250px_1fr] items-center">
-              <div className="pr-4"><p className="truncate text-xs font-medium text-foreground">{item.title}</p><p className="mt-0.5 text-[9px] text-muted-foreground">{projectName(item.projectId)} · {item.owner}</p></div>
-              <div className="relative h-7 rounded bg-[repeating-linear-gradient(to_right,transparent,transparent_calc(25%-1px),var(--border)_25%)]">
-                {readOnly ? <span className={`absolute top-1/2 flex h-5 -translate-y-1/2 items-center rounded-full px-2 text-[9px] text-white shadow-sm ${statusStyle}`} style={{ left: `${position}%`, transform: "translate(-50%, -50%)" }}>{formatDate(item.dueDate)}</span> : <button type="button" onClick={() => onStatusChange(item.id, item.status === "completed" ? "todo" : "completed")} className={`absolute top-1/2 flex h-5 -translate-y-1/2 items-center rounded-full px-2 text-[9px] text-white shadow-sm ${statusStyle}`} style={{ left: `${position}%`, transform: "translate(-50%, -50%)" }}>{formatDate(item.dueDate)}</button>}
-              </div>
+      {canWrite ? (
+        <section className="grid gap-4 xl:grid-cols-2">
+          <div className="rounded-xl border border-border bg-card p-5">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
+              <Sparkles className="size-4 text-primary" />
+              从需求或会议资料生成 Draft
+            </h2>
+            <div className="mt-3 flex max-h-32 flex-wrap gap-2 overflow-y-auto">
+              {requirements.map((item) => (
+                <Source
+                  key={item.id}
+                  id={item.id}
+                  label={`${item.code} ${item.title}`}
+                  selected={sourceRequirementIds}
+                  setSelected={setSourceRequirementIds}
+                />
+              ))}
+              {documents.map((item) => (
+                <Source
+                  key={item.id}
+                  id={item.id}
+                  label={item.displayName}
+                  selected={sourceDocumentIds}
+                  setSelected={setSourceDocumentIds}
+                />
+              ))}
             </div>
-          );
-        })}
-      </div>
+            <button
+              disabled={
+                phase === "working" ||
+                (!sourceRequirementIds.length && !sourceDocumentIds.length)
+              }
+              onClick={() => void generate()}
+              className="mt-3 rounded-lg bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-40"
+            >
+              生成待审核 Action
+            </button>
+          </div>
+          {canManage ? (
+            <div className="rounded-xl border border-border bg-card p-5">
+              <h2 className="flex items-center gap-2 text-sm font-semibold">
+                <Plus className="size-4 text-primary" />
+                手工创建
+              </h2>
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <input
+                  placeholder="标题"
+                  value={manual.title}
+                  onChange={(e) =>
+                    setManual({ ...manual, title: e.target.value })
+                  }
+                  className="h-9 rounded-lg border border-input px-3 text-xs"
+                />
+                <select
+                  value={manual.ownerUserId ?? ""}
+                  onChange={(e) =>
+                    setManual({
+                      ...manual,
+                      ownerUserId: e.target.value || null,
+                    })
+                  }
+                  className="h-9 rounded-lg border border-input bg-background px-3 text-xs"
+                >
+                  <option value="">未分配</option>
+                  {members.map((member) => (
+                    <option key={member.userId} value={member.userId}>
+                      {member.displayName}
+                    </option>
+                  ))}
+                </select>
+                <textarea
+                  placeholder="描述"
+                  value={manual.description}
+                  onChange={(e) =>
+                    setManual({ ...manual, description: e.target.value })
+                  }
+                  className="rounded-lg border border-input p-3 text-xs sm:col-span-2"
+                />
+                <input
+                  type="date"
+                  value={manual.dueDate ?? ""}
+                  onChange={(e) =>
+                    setManual({ ...manual, dueDate: e.target.value || null })
+                  }
+                  className="h-9 rounded-lg border border-input px-3 text-xs"
+                />
+                <select
+                  value={manual.priority}
+                  onChange={(e) =>
+                    setManual({
+                      ...manual,
+                      priority: e.target.value as Action["priority"],
+                    })
+                  }
+                  className="h-9 rounded-lg border border-input bg-background px-3 text-xs"
+                >
+                  <option value="low">低</option>
+                  <option value="medium">中</option>
+                  <option value="high">高</option>
+                  <option value="critical">紧急</option>
+                </select>
+              </div>
+              <button
+                onClick={() => void create()}
+                disabled={!manual.title || !manual.description}
+                className="mt-3 rounded-lg border border-primary px-3 py-2 text-xs font-medium text-primary disabled:opacity-40"
+              >
+                创建正式 Action
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+      {pendingDrafts.length ? (
+        <section className="rounded-xl border border-warning/30 bg-warning-soft p-5">
+          <h2 className="text-sm font-semibold">
+            待审核 Action Draft · {pendingDrafts.length}
+          </h2>
+          <div className="mt-3 grid gap-3 lg:grid-cols-2">
+            {pendingDrafts.map((draft) => (
+              <article
+                key={draft.id}
+                className="rounded-lg border border-border bg-card p-4"
+              >
+                <h3 className="text-sm font-medium">{draft.title}</h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {draft.description}
+                </p>
+                <p className="mt-2 text-[10px] text-primary">
+                  来源：{draft.sourceType}
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    onClick={() => void review(draft, "accept")}
+                    className="inline-flex items-center gap-1 rounded-lg bg-success px-3 py-1.5 text-xs text-white"
+                  >
+                    <Check className="size-3" />
+                    接受
+                  </button>
+                  <button
+                    onClick={() => void review(draft, "reject")}
+                    className="inline-flex items-center gap-1 rounded-lg border border-destructive/30 px-3 py-1.5 text-xs text-destructive"
+                  >
+                    <X className="size-3" />
+                    拒绝
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
+          <div className="flex gap-2">
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as typeof statusFilter)
+              }
+              className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
+            >
+              <option value="all">全部状态</option>
+              <option value="todo">待开始</option>
+              <option value="in_progress">进行中</option>
+              <option value="blocked">阻塞</option>
+              <option value="done">完成</option>
+              <option value="cancelled">取消</option>
+            </select>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as typeof sort)}
+              className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
+            >
+              <option value="due">按截止日期</option>
+              <option value="priority">按优先级</option>
+              <option value="progress">按进度</option>
+            </select>
+          </div>
+          {selected.length ? (
+            <div className="flex gap-2">
+              <button
+                onClick={() => void bulk("in_progress")}
+                className="rounded-lg border px-2 py-1 text-xs"
+              >
+                批量进行中
+              </button>
+              <button
+                onClick={() => void bulk("done")}
+                className="rounded-lg border border-success/30 px-2 py-1 text-xs text-success"
+              >
+                批量完成
+              </button>
+            </div>
+          ) : null}
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-muted/30 text-[10px] text-muted-foreground">
+              <tr>
+                <th className="p-3">选择</th>
+                <th className="p-3">Action</th>
+                <th className="p-3">Owner</th>
+                <th className="p-3">Deadline</th>
+                <th className="p-3">Progress</th>
+                <th className="p-3">Status</th>
+                <th className="p-3">依赖</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {visible.map((item) => (
+                <tr key={item.id}>
+                  <td className="p-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`选择 ${item.code}`}
+                      disabled={!canUpdate(item)}
+                      checked={selected.includes(item.id)}
+                      onChange={() =>
+                        setSelected((current) =>
+                          current.includes(item.id)
+                            ? current.filter((id) => id !== item.id)
+                            : [...current, item.id],
+                        )
+                      }
+                      className="accent-primary"
+                    />
+                  </td>
+                  <td className="p-3">
+                    <p className="font-mono text-[10px] text-primary">
+                      {item.code}
+                    </p>
+                    <p className="font-medium">{item.title}</p>
+                    {item.blocker ? (
+                      <p className="mt-1 flex items-center gap-1 text-[10px] text-destructive">
+                        <AlertTriangle className="size-3" />
+                        {item.blocker}
+                      </p>
+                    ) : null}
+                  </td>
+                  <td className="p-3">{memberName(item.ownerUserId)}</td>
+                  <td className="p-3">{item.dueDate ?? "—"}</td>
+                  <td className="p-3">{item.progress}%</td>
+                  <td className="p-3">
+                    <select
+                      aria-label={`${item.code} 状态`}
+                      disabled={!canUpdate(item)}
+                      value={item.status}
+                      onChange={(e) =>
+                        void updateStatus(item, e.target.value as ActionStatus)
+                      }
+                      className="rounded border border-input bg-background p-1 text-xs"
+                    >
+                      <option value="todo">待开始</option>
+                      <option value="in_progress">进行中</option>
+                      <option value="blocked">阻塞</option>
+                      <option value="done">完成</option>
+                      <option value="cancelled">取消</option>
+                    </select>
+                  </td>
+                  <td className="p-3 text-[10px] text-muted-foreground">
+                    {payload.dependencies
+                      .filter((dep) => dep.actionItemId === item.id)
+                      .map(
+                        (dep) =>
+                          payload.items.find(
+                            (target) => target.id === dep.dependsOnActionItemId,
+                          )?.code,
+                      )
+                      .filter(Boolean)
+                      .join(", ") || "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {canManage && payload.items.length > 1 ? (
+        <section className="rounded-xl border border-border bg-card p-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Link2 className="size-4" />
+            添加依赖
+          </h2>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <select
+              value={dependency.actionItemId}
+              onChange={(e) =>
+                setDependency({ ...dependency, actionItemId: e.target.value })
+              }
+              className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
+            >
+              <option value="">Action</option>
+              {payload.items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.code}
+                </option>
+              ))}
+            </select>
+            <span className="py-2 text-xs">依赖</span>
+            <select
+              value={dependency.dependsOnActionItemId}
+              onChange={(e) =>
+                setDependency({
+                  ...dependency,
+                  dependsOnActionItemId: e.target.value,
+                })
+              }
+              className="h-8 rounded-lg border border-input bg-background px-2 text-xs"
+            >
+              <option value="">前置 Action</option>
+              {payload.items.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.code}
+                </option>
+              ))}
+            </select>
+            <button
+              disabled={
+                !dependency.actionItemId || !dependency.dependsOnActionItemId
+              }
+              onClick={() => void addDependency()}
+              className="rounded-lg border px-3 text-xs disabled:opacity-40"
+            >
+              添加
+            </button>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
 
-function SmallSelect({ label, value, onChange, children }: { label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
-  return <label className="relative"><span className="sr-only">{label}</span><Filter className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" /><select value={value} onChange={(event) => onChange(event.target.value)} className="h-8 appearance-none rounded-lg border border-border bg-background pl-7 pr-7 text-[10px] text-foreground outline-none"><>{children}</></select><ChevronDown className="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" /></label>;
+function Source({
+  id,
+  label,
+  selected,
+  setSelected,
+}: {
+  id: string;
+  label: string;
+  selected: string[];
+  setSelected: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  const checked = selected.includes(id);
+  return (
+    <label
+      className={`inline-flex cursor-pointer items-center gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] ${checked ? "border-primary text-primary" : "border-border"}`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={() =>
+          setSelected((current) =>
+            checked
+              ? current.filter((value) => value !== id)
+              : [...current, id],
+          )
+        }
+        className="accent-primary"
+      />
+      {label}
+    </label>
+  );
 }
 
-function ViewButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: typeof Columns3; children: React.ReactNode }) { return <button type="button" onClick={onClick} className={`inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[10px] font-medium ${active ? "bg-muted text-foreground" : "text-muted-foreground"}`}><Icon className="size-3" />{children}</button>; }
-
-function Summary({ label, value, detail, icon: Icon, tone = "text-foreground" }: { label: string; value: number; detail: string; icon: typeof ListTodo; tone?: string }) { return <div className="flex items-center gap-3 border-b border-r border-border p-4 last:border-r-0 sm:border-b-0"><span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="size-4" /></span><div><p className="text-[10px] text-muted-foreground">{label}</p><p className={`mt-0.5 text-lg font-semibold ${tone}`}>{value}<span className="ml-2 text-[9px] font-normal text-muted-foreground">{detail}</span></p></div></div>; }
-
-function isDueThisWeek(item: ActionItemView) { const due = new Date(item.dueDate).getTime(); return due >= ACTION_REFERENCE_TIME && due <= ACTION_REFERENCE_TIME + 7 * 86_400_000; }
+export default ActionsPage;

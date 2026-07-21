@@ -100,8 +100,12 @@ export class FakeProjectAssistantProvider
           },
         ],
       });
+    } else if (request.purpose === "action_generation") {
+      text = JSON.stringify({ actions: [{ title: "完成虚构验收准备", description: "根据受控来源准备验收记录。", priority: "high", blocker: "", sourceIndex: 0 }] });
+    } else if (request.purpose === "risk_generation") {
+      text = JSON.stringify({ risks: [{ title: "虚构交付延期风险", description: "若验收准备未按期完成，交付可能延期。", probability: 3, impact: 4, mitigation: "每周核对进度并升级阻塞。", trigger: "关键行动逾期", sourceIndex: 0 }] });
     } else if (request.purpose === "weekly_report") {
-      text = JSON.stringify({ summary: "虚构项目周报草稿", sourceLabels: ["E1"] });
+      text = JSON.stringify({ completed: ["完成虚构需求审核"], inProgress: ["推进虚构行动项"], nextWeek: ["完成虚构验收"], milestones: [], blockers: [], risks: ["持续监控已登记风险"], scopeChanges: [], requirementChanges: [], overdueActions: [], decisionsNeeded: [] });
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

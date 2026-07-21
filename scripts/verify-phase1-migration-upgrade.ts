@@ -59,7 +59,14 @@ async function main(): Promise<void> {
     `);
     await upgrade.query("begin");
     try {
-      await applyMigration(upgrade, "0008_material_maggott.sql");
+      for (const filename of [
+        "0008_material_maggott.sql",
+        "0009_fair_tiger_shark.sql",
+        "0010_steep_squadron_supreme.sql",
+        "0011_giant_living_lightning.sql",
+      ]) {
+        await applyMigration(upgrade, filename);
+      }
       await upgrade.query("commit");
     } catch (error) {
       await upgrade.query("rollback");
@@ -71,6 +78,11 @@ async function main(): Promise<void> {
       project_space_count: string;
       project_source_count: string;
       authorized_count: string;
+      requirements_table: string | null;
+      source_selection_column: string | null;
+      action_items_table: string | null;
+      risks_table: string | null;
+      weekly_reports_table: string | null;
     }>(`
       select
         (select count(*)::text from projects
@@ -90,7 +102,17 @@ async function main(): Promise<void> {
             and source_type = 'knowledge_space' and is_active) as project_source_count,
         (select count(*)::text from projectai_authorized_documents(
           'phase1-upgrade-user', 'phase1-upgrade-project', 'view'
-        ) where document_id = 'phase1-upgrade-document') as authorized_count
+        ) where document_id = 'phase1-upgrade-document') as authorized_count,
+        to_regclass('public.requirements')::text as requirements_table,
+        (
+          select column_name from information_schema.columns
+          where table_schema = 'public'
+            and table_name = 'ai_assistant_executions'
+            and column_name = 'source_selection_digest'
+        ) as source_selection_column,
+        to_regclass('public.action_items')::text as action_items_table,
+        to_regclass('public.risks')::text as risks_table,
+        to_regclass('public.weekly_report_versions')::text as weekly_reports_table
     `);
     const row = verified.rows[0];
     if (
@@ -98,11 +120,16 @@ async function main(): Promise<void> {
       row.document_count !== "1" ||
       row.project_space_count !== "1" ||
       row.project_source_count !== "1" ||
-      row.authorized_count !== "1"
+      row.authorized_count !== "1" ||
+      row.requirements_table !== "requirements" ||
+      row.source_selection_column !== "source_selection_digest" ||
+      row.action_items_table !== "action_items" ||
+      row.risks_table !== "risks" ||
+      row.weekly_reports_table !== "weekly_report_versions"
     ) {
       throw new Error(`Phase 1 non-empty upgrade contract failed: ${JSON.stringify(row)}`);
     }
-    process.stdout.write("Non-empty 0007 to 0008 Phase 1 migration upgrade verified.\n");
+    process.stdout.write("Non-empty 0007 to 0011 Phase 1 migration upgrade verified.\n");
   } finally {
     if (upgrade) await upgrade.end();
     await admin.query(`drop database if exists "${databaseName}" with (force)`);

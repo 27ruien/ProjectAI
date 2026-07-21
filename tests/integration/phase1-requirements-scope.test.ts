@@ -127,6 +127,8 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     assert.equal(storedRuns.length, 1);
     assert.equal(storedDrafts.length, 1);
     assert.equal(formal.length, 0);
+    assert.equal(first.drafts.some((draft) => "sourceChunkId" in draft), false);
+    assert.equal(second.drafts.some((draft) => "sourceChunkId" in draft), false);
   });
 
   it("creates formal data only after accept and reject creates none", async () => {

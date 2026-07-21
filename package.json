@@ -31,6 +31,8 @@
     "test:phase1-integration": "node --import tsx --test --test-concurrency=1 tests/integration/phase1-authorization.test.ts",
     "test:phase1-round2": "node --test tests/phase1-round2-contract.test.mjs",
     "test:phase1-round2-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 node --import tsx --test --test-concurrency=1 tests/integration/phase1-requirements-scope.test.ts",
+    "test:phase1-round3": "node --test tests/phase1-round3-contract.test.mjs",
+    "test:phase1-round3-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 node --import tsx --test --test-concurrency=1 tests/integration/phase1-work-management.test.ts",
     "test:document-integration": "node --import tsx --test --test-concurrency=1 tests/integration/document-processing.test.ts",
     "test:files": "node --import tsx --test --test-concurrency=1 tests/file-validation.test.ts tests/direct-upstream-fetch.test.ts",
     "test:documents": "node --import tsx --test --test-concurrency=1 tests/document-processing.test.ts",

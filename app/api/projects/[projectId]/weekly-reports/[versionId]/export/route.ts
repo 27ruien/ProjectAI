@@ -1,0 +1,4 @@
+import { requireApiPrincipal } from "@/lib/auth/session";
+import { projectManagementErrorResponse } from "@/lib/project-management/http";
+import { exportWeeklyReport } from "@/lib/project-management/work-management";
+export async function GET(request: Request, context: { params: Promise<{ projectId: string; versionId: string }> }) { try { const { projectId, versionId } = await context.params; const principal = await requireApiPrincipal(request.headers); const report = await exportWeeklyReport({ principal, projectId, versionId, requestHeaders: request.headers }); return new Response(report.markdown, { status: 200, headers: { "content-type": "text/markdown; charset=utf-8", "content-disposition": `attachment; filename="projectai-weekly-v${report.versionNumber}.md"`, "cache-control": "private, no-store", "x-content-type-options": "nosniff" } }); } catch (error) { return projectManagementErrorResponse(error); } }

@@ -49,6 +49,7 @@ export async function POST(
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
     const requestContext = getRequestAuditContext(request.headers);
+    await requireProjectAccess(principal, projectId, request.headers);
     const parsed = addMemberSchema.safeParse(await request.json());
     if (!parsed.success) {
       return jsonResponse(

@@ -271,6 +271,33 @@ export const scopeReviewStatusEnum = pgEnum("scope_review_status", [
   "dismissed",
 ]);
 
+export const workDraftStatusEnum = pgEnum("work_draft_status", [
+  "pending_review",
+  "accepted",
+  "rejected",
+]);
+
+export const actionItemStatusEnum = pgEnum("action_item_status", [
+  "todo",
+  "in_progress",
+  "blocked",
+  "done",
+  "cancelled",
+]);
+
+export const riskStatusEnum = pgEnum("risk_status", [
+  "open",
+  "monitoring",
+  "mitigated",
+  "closed",
+]);
+
+export const weeklyReportDraftStatusEnum = pgEnum("weekly_report_draft_status", [
+  "pending_review",
+  "published",
+  "rejected",
+]);
+
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];

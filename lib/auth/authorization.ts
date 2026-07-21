@@ -45,7 +45,8 @@ export function getProjectPermissions(
     canManageDocuments:
       admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
     canCreateProject: admin,
-    canViewAudit: admin,
+    canViewAudit:
+      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
   };
 }
 
