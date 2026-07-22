@@ -42,6 +42,7 @@ import { requireProjectAssistantProfile } from "./profiles";
 import type { ProjectAssistantHistoryMessage } from "./grounding";
 import type { ValidatedGroundedAnswer } from "./citations";
 import type { AiGatewayResult } from "./gateway";
+import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 
 const RUNNING_EXECUTION_STATUSES = [
   "reserved",
@@ -231,6 +232,15 @@ export async function loadOwnedThread(input: {
       "对话不存在",
     );
   }
+  const authorizedDocuments = new Map(
+    (
+      await listAuthorizedDocumentScope({
+        principal: input.principal,
+        projectId: input.projectId,
+        permission: "view",
+      })
+    ).map((item) => [item.documentId, item] as const),
+  );
   const [messages, citations, executions] = await Promise.all([
     getDb()
       .select()
@@ -274,7 +284,12 @@ export async function loadOwnedThread(input: {
     string,
     typeof citations
   >();
+  const revokedCitationMessages = new Set<string>();
   for (const citation of citations) {
+    if (!authorizedDocuments.has(citation.documentId)) {
+      revokedCitationMessages.add(citation.assistantMessageId);
+      continue;
+    }
     const values = citationsByMessage.get(citation.assistantMessageId) ?? [];
     values.push(citation);
     citationsByMessage.set(citation.assistantMessageId, values);
@@ -293,29 +308,40 @@ export async function loadOwnedThread(input: {
     updatedAt: thread.updatedAt.toISOString(),
     archivedAt: thread.archivedAt?.toISOString() ?? null,
     messageCount: messages.length,
-    messages: messages.map((message) => ({
-      id: message.id,
-      role: message.role,
-      status: message.status,
-      content: message.content,
-      createdAt: message.createdAt.toISOString(),
-      fallbackUsed: fallbackByMessage.get(message.id) ?? false,
-      citations: (citationsByMessage.get(message.id) ?? []).map(
-        (citation) => ({
-          index: citation.citationIndex,
-          displayName: citation.displayName,
-          versionNumber: citation.versionNumber,
-          mimeType: citation.mimeType,
-          headingPath: Array.isArray(citation.headingPath)
-            ? citation.headingPath
-            : [],
-          source: validateSourceLocator(citation.sourceLocator),
-          excerpt: citation.excerpt,
-          documentId: citation.documentId,
-          versionId: citation.versionId,
-        }),
-      ),
-    })),
+    messages: messages.map((message) => {
+      const revoked = revokedCitationMessages.has(message.id);
+      return {
+        id: message.id,
+        role: message.role,
+        status: revoked ? "failed" as const : message.status,
+        content: revoked
+          ? "该历史回答的部分来源权限已变化，内容已隐藏。请重新提问。"
+          : message.content,
+        createdAt: message.createdAt.toISOString(),
+        fallbackUsed: fallbackByMessage.get(message.id) ?? false,
+        citations: revoked
+          ? []
+          : (citationsByMessage.get(message.id) ?? []).map(
+              (citation) => ({
+                index: citation.citationIndex,
+                displayName: citation.displayName,
+                versionNumber: citation.versionNumber,
+                mimeType: citation.mimeType,
+                headingPath: Array.isArray(citation.headingPath)
+                  ? citation.headingPath
+                  : [],
+                source: validateSourceLocator(citation.sourceLocator),
+                excerpt: citation.excerpt,
+                documentId: citation.documentId,
+                versionId: citation.versionId,
+              }),
+            ).map((citation) => ({
+              ...citation,
+              knowledgeSpaceId: authorizedDocuments.get(citation.documentId)!.knowledgeSpaceId,
+              sourceScope: authorizedDocuments.get(citation.documentId)!.sourceScope,
+            })),
+      };
+    }),
   };
 }
 
@@ -409,6 +435,7 @@ export async function reserveAssistantExecution(input: {
   executionStaleAfterMs: number;
   retrievalProfileId: string;
   retrievalMode: AiRetrievalMode;
+  sourceSelectionDigest: string;
 }): Promise<Reservation> {
   const scope = [
     input.projectId,
@@ -479,10 +506,13 @@ export async function reserveAssistantExecution(input: {
         existing.modelProfileId === input.modelProfileId;
       const retrievalProfileMatched =
         existing.retrievalProfileId === input.retrievalProfileId;
+      const sourceSelectionMatched =
+        existing.sourceSelectionDigest === input.sourceSelectionDigest;
       if (
         existing.questionSha256 !== incomingQuestionHash ||
         !modelProfileMatched ||
-        !retrievalProfileMatched
+        !retrievalProfileMatched ||
+        !sourceSelectionMatched
       ) {
         await writeAuditEvent(
           {
@@ -498,6 +528,7 @@ export async function reserveAssistantExecution(input: {
               incomingQuestionHash,
               modelProfileMatched,
               retrievalProfileMatched,
+              sourceSelectionMatched,
             },
             ...getRequestAuditContext(input.requestHeaders),
           },
@@ -783,6 +814,7 @@ export async function reserveAssistantExecution(input: {
         retrievalProfileId: input.retrievalProfileId,
         gatewayVersion: AI_GATEWAY_VERSION,
         questionSha256: incomingQuestionHash,
+        sourceSelectionDigest: input.sourceSelectionDigest,
         idempotencyKey: input.idempotencyKey,
       })
       .returning();
@@ -812,6 +844,7 @@ export async function reserveAssistantExecution(input: {
           modelProfileId: input.modelProfileId,
           retrievalProfileId: input.retrievalProfileId,
           requestedRetrievalMode: input.retrievalMode,
+          sourceSelectionDigest: input.sourceSelectionDigest,
         },
         ...getRequestAuditContext(input.requestHeaders),
       },
@@ -944,6 +977,28 @@ export async function finalizeSuccessfulExecution(input: {
       .for("update", { of: aiExecution });
     if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) {
       return;
+    }
+    const expectedDocumentIds = [
+      ...new Set(input.answer.citations.map(({ evidence }) => evidence.documentId)),
+    ];
+    const authorizedResult = await tx.execute<{ document_id: string }>(sql`
+      select document_id
+      from projectai_authorized_documents(
+        ${locked.actorUserId},
+        ${locked.projectId},
+        'view'::knowledge_permission
+      )
+      where document_id in (${sql.join(
+        expectedDocumentIds.map((documentId) => sql`${documentId}`),
+        sql`, `,
+      )})
+    `);
+    if (authorizedResult.rows.length !== expectedDocumentIds.length) {
+      throw new ProjectAssistantError(
+        409,
+        "AI_CITATION_VALIDATION_FAILED",
+        "来源权限已变化，请重新提问",
+      );
     }
     await tx
       .update(aiMessage)

@@ -40,6 +40,7 @@ export async function POST(
       documentId,
       versionId,
       request.headers,
+      "manage_versions",
     );
     const version = await setCurrentDocumentVersion({
       principal,

@@ -84,7 +84,29 @@ export class FakeProjectAssistantProvider
     }
 
     let text: string;
-    if (request.purpose === "probe") {
+    if (request.purpose === "requirement_extraction") {
+      text = JSON.stringify({
+        requirements: [
+          {
+            title: "确认虚构项目上线日期",
+            description: "项目必须在已确认的虚构上线日期前完成可验收交付。",
+            type: "business_rule",
+            priority: "high",
+            acceptanceCriteria: ["上线日期由项目经理确认", "交付前完成验收记录"],
+            assumptions: ["来源资料为当前有效版本"],
+            openQuestions: ["最终验收负责人是谁？"],
+            sourceLabel: "E1",
+            confidence: 0.92,
+          },
+        ],
+      });
+    } else if (request.purpose === "action_generation") {
+      text = JSON.stringify({ actions: [{ title: "完成虚构验收准备", description: "根据受控来源准备验收记录。", priority: "high", blocker: "", sourceIndex: 0 }] });
+    } else if (request.purpose === "risk_generation") {
+      text = JSON.stringify({ risks: [{ title: "虚构交付延期风险", description: "若验收准备未按期完成，交付可能延期。", probability: 3, impact: 4, mitigation: "每周核对进度并升级阻塞。", trigger: "关键行动逾期", sourceIndex: 0 }] });
+    } else if (request.purpose === "weekly_report") {
+      text = JSON.stringify({ completed: ["完成虚构需求审核"], inProgress: ["推进虚构行动项"], nextWeek: ["完成虚构验收"], milestones: [], blockers: [], risks: ["持续监控已登记风险"], scopeChanges: [], requirementChanges: [], overdueActions: [], decisionsNeeded: [] });
+    } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (
       request.userPrompt.includes("FAKE_REPAIR_FAIL") ||

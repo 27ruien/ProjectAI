@@ -19,6 +19,8 @@ import {
   listProjectDocumentVersions,
 } from "@/lib/db/repositories/document-repository";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
+import { KnowledgeManagementError } from "@/lib/knowledge/errors";
+import { requireUploadableKnowledgeSpace } from "@/lib/knowledge/management";
 import {
   projectDocument,
   projectDocumentVersion,
@@ -254,6 +256,13 @@ async function reserveUpload(input: {
   requestedDocumentId?: string;
   uploadId: string;
   displayName: string;
+  knowledgeSpaceId: string | null;
+  knowledgeVisibility:
+    | "private"
+    | "organization_shared"
+    | "department_shared"
+    | "restricted"
+    | null;
   originalFilename: string;
   extension: string;
   declaredMimeType: string;
@@ -307,11 +316,34 @@ async function reserveUpload(input: {
         document = existingDocument;
       } else {
         isNewDocument = true;
+        if (!input.knowledgeSpaceId || !input.knowledgeVisibility) {
+          throw new FileOperationError(
+            400,
+            "INVALID_REQUEST",
+            "新资料必须绑定知识空间",
+          );
+        }
+        const destination = await resolveUploadDestination({
+          principal: input.principal,
+          projectId: input.projectId,
+          knowledgeSpaceId: input.knowledgeSpaceId,
+          requestHeaders: input.requestHeaders,
+          db: tx,
+        });
+        if (destination.visibility !== input.knowledgeVisibility) {
+          throw new FileOperationError(
+            409,
+            "UPLOAD_ALREADY_EXISTS",
+            "知识空间在上传期间发生变化",
+          );
+        }
         const [created] = await tx
           .insert(projectDocument)
           .values({
             id: crypto.randomUUID(),
             projectId: input.projectId,
+            knowledgeSpaceId: destination.id,
+            visibility: destination.visibility,
             displayName: input.displayName,
             status: "pending",
             createdBy: input.principal.user.id,
@@ -382,6 +414,30 @@ async function reserveUpload(input: {
         input.requestedDocumentId,
       );
       if (replay) return replay;
+    }
+    throw error;
+  }
+}
+
+async function resolveUploadDestination(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  knowledgeSpaceId: string | null;
+  requestHeaders: Headers;
+  db?: DatabaseExecutor;
+}) {
+  try {
+    return await requireUploadableKnowledgeSpace(input);
+  } catch (error) {
+    if (
+      error instanceof KnowledgeManagementError ||
+      error instanceof AuthorizationError
+    ) {
+      throw new FileOperationError(
+        404,
+        "KNOWLEDGE_SPACE_NOT_FOUND",
+        "知识空间不存在或不可上传",
+      );
     }
     throw error;
   }
@@ -595,6 +651,7 @@ export async function uploadDocument(input: {
   idempotencyKey: string;
   file: File;
   displayName: string | null;
+  knowledgeSpaceId?: string | null;
   documentId?: string;
   storage?: ObjectStorage;
 }): Promise<{
@@ -613,6 +670,25 @@ export async function uploadDocument(input: {
     uploadId,
     input.documentId,
   );
+  const destination = input.documentId
+    ? null
+    : await resolveUploadDestination({
+        principal: input.principal,
+        projectId: input.projectId,
+        knowledgeSpaceId: input.knowledgeSpaceId ?? null,
+        requestHeaders: input.requestHeaders,
+      });
+  if (
+    replay &&
+    destination &&
+    replay.document.knowledgeSpaceId !== destination.id
+  ) {
+    throw new FileOperationError(
+      409,
+      "UPLOAD_ALREADY_EXISTS",
+      "该幂等键已绑定其他知识空间",
+    );
+  }
   const validated = await validateUploadFile(input.file);
   if (replay && !uploadMetadataMatches(replay.version, validated)) {
     throw new FileOperationError(
@@ -637,6 +713,8 @@ export async function uploadDocument(input: {
         requestedDocumentId: input.documentId,
         uploadId,
         displayName: normalizedDisplayName(input.displayName, validated.displayName),
+        knowledgeSpaceId: destination?.id ?? null,
+        knowledgeVisibility: destination?.visibility ?? null,
         originalFilename: validated.originalFilename,
         extension: validated.extension,
         declaredMimeType: validated.declaredMimeType,
@@ -879,18 +957,23 @@ export async function setDocumentArchived(input: {
   });
 }
 
-export async function updateDocumentDisplayName(input: {
+export async function updateDocumentMetadata(input: {
   principal: AuthenticatedPrincipal;
   projectId: string;
   documentId: string;
-  displayName: string;
+  displayName?: string;
+  visibility?: ProjectDocumentRecord["visibility"];
   requestHeaders: Headers;
 }): Promise<ProjectDocumentRecord> {
-  const displayName = normalizedDisplayName(input.displayName, "");
+  const displayName =
+    input.displayName === undefined
+      ? undefined
+      : normalizedDisplayName(input.displayName, "");
   return authorizedDocumentTransaction({
     principal: input.principal,
     projectId: input.projectId,
-    allowedRoles: documentRoles.upload,
+    allowedRoles:
+      input.visibility === undefined ? documentRoles.upload : documentRoles.manage,
     requestHeaders: input.requestHeaders,
     operation: async (tx) => {
       const document = await findProjectDocument(
@@ -904,9 +987,33 @@ export async function updateDocumentDisplayName(input: {
       }
       const [updated] = await tx
         .update(projectDocument)
-        .set({ displayName, updatedAt: new Date() })
+        .set({
+          ...(displayName === undefined ? {} : { displayName }),
+          ...(input.visibility === undefined
+            ? {}
+            : { visibility: input.visibility }),
+          updatedAt: new Date(),
+        })
         .where(eq(projectDocument.id, document.id))
         .returning();
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          projectId: input.projectId,
+          eventType: "document_metadata_changed",
+          entityType: "project_document",
+          entityId: document.id,
+          result: "succeeded",
+          metadata: {
+            changedFields: [
+              ...(displayName === undefined ? [] : ["displayName"]),
+              ...(input.visibility === undefined ? [] : ["visibility"]),
+            ],
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
       return updated;
     },
   });

@@ -17,6 +17,10 @@ export const project = pgTable(
   "projects",
   {
     id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .default("org-legacy-default"),
+    departmentId: text("department_id"),
     name: varchar("name", { length: 200 }).notNull(),
     clientName: varchar("client_name", { length: 200 }).notNull(),
     description: text("description").notNull().default(""),
@@ -35,6 +39,8 @@ export const project = pgTable(
       .defaultNow(),
   },
   (table) => [
+    index("projects_organization_idx").on(table.organizationId, table.status),
+    index("projects_department_idx").on(table.departmentId, table.status),
     index("projects_status_idx").on(table.status),
     index("projects_created_by_idx").on(table.createdBy),
     index("projects_updated_at_idx").on(table.updatedAt),

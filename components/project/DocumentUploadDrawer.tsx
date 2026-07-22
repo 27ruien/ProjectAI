@@ -19,6 +19,7 @@ import {
 import type {
   DocumentStorageStatus,
   DocumentUploadPolicyDto,
+  KnowledgeSpaceUploadDestinationDto,
   ProjectDocumentUploadResponse,
 } from "@/types/documents";
 
@@ -52,6 +53,7 @@ interface DocumentUploadDrawerProps {
   projectId: string;
   target: DocumentUploadTarget;
   policy: DocumentUploadPolicyDto;
+  destinations: KnowledgeSpaceUploadDestinationDto[];
   onClose: () => void;
   onUploaded: (response: ProjectDocumentUploadResponse) => void | Promise<void>;
 }
@@ -218,6 +220,7 @@ export function DocumentUploadDrawer({
   projectId,
   target,
   policy,
+  destinations,
   onClose,
   onUploaded,
 }: DocumentUploadDrawerProps) {
@@ -226,6 +229,11 @@ export function DocumentUploadDrawer({
   const controllerRef = useRef<AbortController | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [displayName, setDisplayName] = useState(target?.displayName ?? "");
+  const [knowledgeSpaceId, setKnowledgeSpaceId] = useState(
+    destinations.find((destination) => destination.projectId === projectId)?.id ??
+      destinations[0]?.id ??
+      "",
+  );
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [phase, setPhase] = useState<UploadPhase>("idle");
   const [progress, setProgress] = useState(0);
@@ -297,6 +305,7 @@ export function DocumentUploadDrawer({
         documentId: target?.documentId,
         file,
         displayName: isVersionUpload ? undefined : normalizedName,
+        knowledgeSpaceId: isVersionUpload ? undefined : knowledgeSpaceId,
         idempotencyKey: idempotencyKey || crypto.randomUUID(),
         signal: controller.signal,
         onProgress: ({ percent }) => setProgress(percent),
@@ -365,7 +374,10 @@ export function DocumentUploadDrawer({
               type="button"
               onClick={() => void submit()}
               loading={phase === "uploading"}
-              disabled={!file || (!isVersionUpload && !displayName.trim())}
+              disabled={
+                !file ||
+                (!isVersionUpload && (!displayName.trim() || !knowledgeSpaceId))
+              }
             >
               {phase === "error" ? <RotateCw className="size-4" /> : <UploadCloud className="size-4" />}
               {phase === "error" ? "重试上传" : isVersionUpload ? "上传新版本" : "开始上传"}
@@ -425,6 +437,7 @@ export function DocumentUploadDrawer({
         ) : null}
 
         {!isVersionUpload ? (
+          <div className="space-y-4">
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">资料名称</span>
             <input
@@ -439,6 +452,30 @@ export function DocumentUploadDrawer({
               资料名称用于列表展示，不会改变原始文件名。
             </span>
           </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-foreground">知识空间</span>
+            <select
+              value={knowledgeSpaceId}
+              disabled={phase === "uploading" || phase === "success"}
+              onChange={(event) => setKnowledgeSpaceId(event.target.value)}
+              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
+            >
+              {destinations.map((destination) => (
+                <option key={destination.id} value={destination.id}>
+                  {destination.name} · {{
+                    organization: "公司",
+                    department: "部门",
+                    project: "项目",
+                    restricted: "受限",
+                  }[destination.type]}
+                </option>
+              ))}
+            </select>
+            <span className="mt-1.5 block text-[11px] text-muted-foreground">
+              仅显示服务端确认可上传的空间；目标空间同时绑定到幂等请求。
+            </span>
+          </label>
+          </div>
         ) : null}
 
         {phase === "uploading" ? (
@@ -490,7 +527,7 @@ export function DocumentUploadDrawer({
         ) : null}
 
         <p className="rounded-lg border border-info/15 bg-info-soft px-3 py-2.5 text-xs leading-5 text-info">
-          文件上传后不会自动解析，也不会进入 AI 知识索引。
+          文件安全存储后会进入独立 Worker 的异步解析队列；只有当前有效且授权通过的 Chunk 才能参与检索。
         </p>
       </div>
     </Drawer>

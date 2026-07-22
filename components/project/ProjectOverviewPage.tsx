@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronDown,
   FileCheck2,
+  FileText,
   FolderKanban,
   Gauge,
   Lightbulb,
@@ -18,11 +19,13 @@ import {
   Milestone,
   Plus,
   Scale,
+  ShieldAlert,
   Sparkles,
   Target,
 } from "lucide-react";
 import { ProjectContextHeader } from "./ProjectContextHeader";
 import type { AuthorizedProjectSummary, ProjectMockPayload } from "@/lib/auth/ui-types";
+import { projectManagementRequest } from "@/lib/project-management/client";
 import {
   asRecords,
   dateLabel,
@@ -53,6 +56,15 @@ export function ProjectOverviewPage({ project: authorizedProject, data }: Projec
   const [healthExpanded, setHealthExpanded] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<number[]>([]);
   const [resolvedQuestions, setResolvedQuestions] = useState<number[]>([]);
+  const [management, setManagement] = useState<{ requirement_count: number; requirement_done: number; scope_changes: number; action_count: number; action_done: number; overdue_actions: number; open_risks: number; latest_report_id: string | null; latest_report_version: number | null } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void projectManagementRequest<typeof management>(`/api/projects/${encodeURIComponent(id)}/management-dashboard`, { signal: controller.signal })
+      .then(setManagement)
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [id]);
 
   const health = textValue(project, ["health", "healthStatus"], authorizedProject.health || "attention");
   const progress = Math.min(100, numberValue(project, ["progress", "completionRate"], 0));
@@ -83,11 +95,13 @@ export function ProjectOverviewPage({ project: authorizedProject, data }: Projec
     <div className="min-h-full bg-background">
       <ProjectContextHeader project={authorizedProject} activeTab="overview" />
       <main className="px-5 py-6 lg:px-8">
-        <section className="mb-6 grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-4">
-          <OverviewMetric icon={Gauge} label="整体进度" value={`${progress}%`} detail="按当前有效排期" />
-          <OverviewMetric icon={FileCheck2} label="当前 Scope" value={textValue(currentScope, ["version", "name"], "未记录")} detail={currentScope ? "来自当前项目数据" : "暂无记录"} />
-          <OverviewMetric icon={ListChecks} label="未完成 Action" value={String(projectActions.filter((item) => textValue(item, "status", "todo") !== "completed").length)} detail="当前项目记录" />
-          <OverviewMetric icon={AlertTriangle} label="当前风险" value={String(activeRiskCount)} detail="当前项目记录" tone="danger" />
+        <section className="mb-6 grid gap-px overflow-hidden rounded-xl border border-border bg-border md:grid-cols-4 xl:grid-cols-6">
+          <OverviewMetric icon={Gauge} label="需求完成" value={management ? `${management.requirement_done}/${management.requirement_count}` : `${progress}%`} detail="正式 Requirement" />
+          <OverviewMetric icon={FileCheck2} label="Scope Changes" value={String(management?.scope_changes ?? 0)} detail="已排除驳回项" />
+          <OverviewMetric icon={ListChecks} label="Action Progress" value={management?.action_count ? `${management.action_done}/${management.action_count}` : "0/0"} detail="正式 Action" />
+          <OverviewMetric icon={AlertTriangle} label="Overdue Actions" value={String(management?.overdue_actions ?? 0)} detail="按当前日期" tone="danger" />
+          <OverviewMetric icon={ShieldAlert} label="Open Risks" value={String(management?.open_risks ?? activeRiskCount)} detail="Open + Monitoring" tone="danger" />
+          <OverviewMetric icon={FileText} label="Current Weekly" value={management?.latest_report_version ? `v${management.latest_report_version}` : "未发布"} detail="不可覆盖版本" />
         </section>
 
         <div className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(330px,0.75fr)]">

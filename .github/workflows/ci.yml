@@ -59,10 +59,15 @@ jobs:
       AI_HYBRID_VECTOR_SQL_TIMEOUT_MS: "1500"
       AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT: "5000000"
       SEED_ADMIN_EMAIL: admin.ci@projectai.invalid
+      SEED_ORG_ADMIN_EMAIL: org-admin.ci@projectai.invalid
+      SEED_DEPT_ADMIN_EMAIL: dept-admin.ci@projectai.invalid
       SEED_MANAGER_A_EMAIL: manager-a.ci@projectai.invalid
       SEED_MANAGER_B_EMAIL: manager-b.ci@projectai.invalid
       SEED_MEMBER_A_EMAIL: member-a.ci@projectai.invalid
       SEED_VIEWER_A_EMAIL: viewer-a.ci@projectai.invalid
+      SEED_OTHER_DEPT_EMAIL: other-dept.ci@projectai.invalid
+      SEED_OUTSIDER_EMAIL: outsider.ci@projectai.invalid
+      PROJECTAI_SEED_ENVIRONMENT: test
       PLAYWRIGHT_REVIEW_ARTIFACTS: "1"
       DOCUMENT_WORKER_POLL_MS: "2000"
       DOCUMENT_WORKER_LEASE_SECONDS: "120"
@@ -123,10 +128,14 @@ jobs:
             echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "BETTER_AUTH_SECRET=$auth_secret"
             echo "SEED_ADMIN_PASSWORD=$password"
+            echo "SEED_ORG_ADMIN_PASSWORD=$password"
+            echo "SEED_DEPT_ADMIN_PASSWORD=$password"
             echo "SEED_MANAGER_A_PASSWORD=$password"
             echo "SEED_MANAGER_B_PASSWORD=$password"
             echo "SEED_MEMBER_A_PASSWORD=$password"
             echo "SEED_VIEWER_A_PASSWORD=$password"
+            echo "SEED_OTHER_DEPT_PASSWORD=$password"
+            echo "SEED_OUTSIDER_PASSWORD=$password"
           } >> "$GITHUB_ENV"
 
       - name: Start isolated MinIO with ephemeral credentials
@@ -268,6 +277,13 @@ jobs:
           mkdir -p test-logs
           npm run retrieval:migration-upgrade 2>&1 | tee test-logs/retrieval-migration-upgrade.log
 
+      - name: Verify non-empty 0007 to 0015 Phase 1 upgrade
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run phase1:migration-upgrade 2>&1 | tee test-logs/phase1-migration-upgrade.log
+
       - name: Apply committed migrations
         run: npm run db:migrate
 
@@ -369,6 +385,30 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:retrieval-integration 2>&1 | tee test-logs/retrieval-integration.log
+
+      - name: Phase 1 authorization contract and database matrix
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:phase1 2>&1 | tee test-logs/phase1-contract.log
+          npm run test:phase1-integration 2>&1 | tee test-logs/phase1-integration.log
+
+      - name: Phase 1 ACL-aware AI, requirement, and Scope tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:phase1-round2 2>&1 | tee test-logs/phase1-round2-contract.log
+          npm run test:phase1-round2-integration 2>&1 | tee test-logs/phase1-round2-integration.log
+
+      - name: Phase 1 Action, Risk, weekly report, audit, and export tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:phase1-round3 2>&1 | tee test-logs/phase1-round3-contract.log
+          npm run test:phase1-round3-integration 2>&1 | tee test-logs/phase1-round3-integration.log
 
       - name: Write sanitized Retrieval verification summary
         run: npm run retrieval:ci-evidence

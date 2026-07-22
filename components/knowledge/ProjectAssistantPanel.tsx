@@ -27,7 +27,9 @@ import {
 import {
   documentErrorMessage,
   downloadProjectDocumentVersion,
+  listProjectDocuments,
 } from "@/lib/documents/client";
+import type { ProjectDocumentDto } from "@/types/documents";
 import type {
   ProjectAssistantCitationDto,
   ProjectAssistantThreadDto,
@@ -75,6 +77,13 @@ function assistantErrorMessage(error: unknown): string {
   return "项目 AI 助手暂时不可用，请稍后重试。";
 }
 
+const scopeLabels: Record<string, string> = {
+  organization: "公司空间",
+  department: "部门空间",
+  project: "项目空间",
+  restricted: "受限授权",
+};
+
 export function ProjectAssistantPanel({
   project,
 }: {
@@ -90,6 +99,8 @@ export function ProjectAssistantPanel({
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
+  const [availableSources, setAvailableSources] = useState<ProjectDocumentDto[]>([]);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
 
   const loadThread = useCallback(
     async (threadId: string, signal?: AbortSignal) => {
@@ -144,6 +155,18 @@ export function ProjectAssistantPanel({
     };
   }, [project.id, refreshThreads]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    void listProjectDocuments(project.id, "active", controller.signal)
+      .then((response) => setAvailableSources(response.documents))
+      .catch((caught: unknown) => {
+        if (!(caught instanceof DOMException && caught.name === "AbortError")) {
+          setError("知识来源列表暂时不可用，请刷新重试。");
+        }
+      });
+    return () => controller.abort();
+  }, [project.id]);
+
   const createThread = async () => {
     setCreating(true);
     setError(null);
@@ -179,6 +202,7 @@ export function ProjectAssistantPanel({
         target.id,
         normalized,
         crypto.randomUUID(),
+        selectedSourceIds,
       );
       setQuestion("");
       await refreshThreads(result.thread.id);
@@ -284,6 +308,35 @@ export function ProjectAssistantPanel({
           ) : null}
         </div>
       ) : null}
+
+      <div className="border-b border-border bg-muted/10 px-5 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-semibold text-foreground">本次回答的知识来源</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">不选择时使用全部有权来源；选择只会缩小服务端 ACL 范围。</p>
+          </div>
+          {selectedSourceIds.length ? (
+            <button type="button" className="text-[11px] font-medium text-primary hover:underline" onClick={() => setSelectedSourceIds([])}>清除选择</button>
+          ) : null}
+        </div>
+        <div className="mt-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto">
+          {availableSources.map((document) => {
+            const checked = selectedSourceIds.includes(document.id);
+            return (
+              <label key={document.id} className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] ${checked ? "border-primary bg-primary/5 text-primary" : "border-border bg-background text-muted-foreground"}`}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => setSelectedSourceIds((current) => checked ? current.filter((id) => id !== document.id) : [...current, document.id])}
+                  className="size-3 accent-primary"
+                />
+                <span className="max-w-48 truncate">{document.displayName}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px]">{document.visibility === "restricted" ? "受限授权" : document.visibility === "department_shared" ? "部门共享" : document.visibility === "organization_shared" ? "公司共享" : "项目资料"}</span>
+              </label>
+            );
+          })}
+        </div>
+      </div>
 
       <div className="grid min-h-[560px] lg:grid-cols-[260px_1fr]">
         <aside className="border-b border-border bg-muted/20 lg:border-b-0 lg:border-r">
@@ -393,6 +446,9 @@ export function ProjectAssistantPanel({
                                 </p>
                                 <p className="mt-0.5 text-[10px] text-muted-foreground">
                                   v{citation.versionNumber} · {sourceLabel(citation)}
+                                </p>
+                                <p className="mt-0.5 text-[9px] font-medium text-primary">
+                                  {scopeLabels[citation.sourceScope]} · {citation.knowledgeSpaceId}
                                 </p>
                               </div>
                             </div>

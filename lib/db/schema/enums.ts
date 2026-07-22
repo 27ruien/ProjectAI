@@ -148,6 +148,156 @@ export const aiRetrievalQueryEmbeddingCallStatusEnum = pgEnum(
   ],
 );
 
+export const organizationRoleEnum = pgEnum("organization_role", [
+  "organization_admin",
+  "organization_member",
+]);
+
+export const departmentRoleEnum = pgEnum("department_role", [
+  "department_admin",
+  "department_member",
+]);
+
+export const knowledgeSpaceTypeEnum = pgEnum("knowledge_space_type", [
+  "organization",
+  "department",
+  "project",
+  "restricted",
+]);
+
+export const knowledgeVisibilityEnum = pgEnum("knowledge_visibility", [
+  "private",
+  "organization_shared",
+  "department_shared",
+  "restricted",
+]);
+
+export const knowledgeSpaceMemberRoleEnum = pgEnum(
+  "knowledge_space_member_role",
+  ["manager", "editor", "viewer"],
+);
+
+export const knowledgePermissionEnum = pgEnum("knowledge_permission", [
+  "view",
+  "download",
+  "upload",
+  "edit_metadata",
+  "manage_versions",
+  "archive",
+  "manage_permissions",
+  "manage_members",
+]);
+
+export const grantEffectEnum = pgEnum("grant_effect", ["allow", "deny"]);
+
+export const grantSubjectTypeEnum = pgEnum("grant_subject_type", [
+  "organization",
+  "department",
+  "project",
+  "role",
+  "user",
+]);
+
+export const projectKnowledgeSourceTypeEnum = pgEnum(
+  "project_knowledge_source_type",
+  ["knowledge_space", "document"],
+);
+
+export const requirementExtractionStatusEnum = pgEnum(
+  "requirement_extraction_status",
+  ["running", "awaiting_review", "failed"],
+);
+
+export const requirementDraftStatusEnum = pgEnum("requirement_draft_status", [
+  "pending_review",
+  "accepted",
+  "rejected",
+]);
+
+export const requirementTypeEnum = pgEnum("requirement_type", [
+  "functional",
+  "non_functional",
+  "business_rule",
+  "constraint",
+  "compliance",
+]);
+
+export const workPriorityEnum = pgEnum("work_priority", [
+  "low",
+  "medium",
+  "high",
+  "critical",
+]);
+
+export const requirementStatusEnum = pgEnum("requirement_status", [
+  "approved",
+  "in_progress",
+  "done",
+  "cancelled",
+]);
+
+export const reviewDecisionEnum = pgEnum("review_decision", [
+  "accept",
+  "edit_accept",
+  "reject",
+]);
+
+export const scopeVersionStatusEnum = pgEnum("scope_version_status", [
+  "draft",
+  "approved",
+  "superseded",
+]);
+
+export const scopeComparisonStatusEnum = pgEnum("scope_comparison_status", [
+  "running",
+  "awaiting_review",
+  "completed",
+  "failed",
+]);
+
+export const scopeDiffTypeEnum = pgEnum("scope_diff_type", [
+  "added",
+  "removed",
+  "modified",
+  "unchanged",
+  "potentially_out_of_scope",
+  "not_mentioned",
+  "ambiguous",
+]);
+
+export const scopeReviewStatusEnum = pgEnum("scope_review_status", [
+  "pending",
+  "confirmed",
+  "dismissed",
+]);
+
+export const workDraftStatusEnum = pgEnum("work_draft_status", [
+  "pending_review",
+  "accepted",
+  "rejected",
+]);
+
+export const actionItemStatusEnum = pgEnum("action_item_status", [
+  "todo",
+  "in_progress",
+  "blocked",
+  "done",
+  "cancelled",
+]);
+
+export const riskStatusEnum = pgEnum("risk_status", [
+  "open",
+  "monitoring",
+  "mitigated",
+  "closed",
+]);
+
+export const weeklyReportDraftStatusEnum = pgEnum("weekly_report_draft_status", [
+  "pending_review",
+  "published",
+  "rejected",
+]);
+
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];
@@ -181,3 +331,35 @@ export type AiRetrievalCandidateSource =
   (typeof aiRetrievalCandidateSourceEnum.enumValues)[number];
 export type AiRetrievalQueryEmbeddingCallStatus =
   (typeof aiRetrievalQueryEmbeddingCallStatusEnum.enumValues)[number];
+export type OrganizationRole =
+  (typeof organizationRoleEnum.enumValues)[number];
+export type DepartmentRole = (typeof departmentRoleEnum.enumValues)[number];
+export type KnowledgeSpaceType =
+  (typeof knowledgeSpaceTypeEnum.enumValues)[number];
+export type KnowledgeVisibility =
+  (typeof knowledgeVisibilityEnum.enumValues)[number];
+export type KnowledgeSpaceMemberRole =
+  (typeof knowledgeSpaceMemberRoleEnum.enumValues)[number];
+export type KnowledgePermission =
+  (typeof knowledgePermissionEnum.enumValues)[number];
+export type GrantEffect = (typeof grantEffectEnum.enumValues)[number];
+export type GrantSubjectType =
+  (typeof grantSubjectTypeEnum.enumValues)[number];
+export type ProjectKnowledgeSourceType =
+  (typeof projectKnowledgeSourceTypeEnum.enumValues)[number];
+export type RequirementExtractionStatus =
+  (typeof requirementExtractionStatusEnum.enumValues)[number];
+export type RequirementDraftStatus =
+  (typeof requirementDraftStatusEnum.enumValues)[number];
+export type RequirementType = (typeof requirementTypeEnum.enumValues)[number];
+export type WorkPriority = (typeof workPriorityEnum.enumValues)[number];
+export type RequirementStatus =
+  (typeof requirementStatusEnum.enumValues)[number];
+export type ReviewDecision = (typeof reviewDecisionEnum.enumValues)[number];
+export type ScopeVersionStatus =
+  (typeof scopeVersionStatusEnum.enumValues)[number];
+export type ScopeComparisonStatus =
+  (typeof scopeComparisonStatusEnum.enumValues)[number];
+export type ScopeDiffType = (typeof scopeDiffTypeEnum.enumValues)[number];
+export type ScopeReviewStatus =
+  (typeof scopeReviewStatusEnum.enumValues)[number];

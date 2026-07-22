@@ -109,7 +109,7 @@ export function DashboardPage({ viewer }: { viewer: ViewerContext }) {
       </div>
 
       <section className="mt-6 rounded-xl border border-info/20 bg-info-soft px-4 py-3">
-        <div className="flex items-start gap-2.5"><LockKeyhole className="mt-0.5 size-4 shrink-0 text-info" /><div><p className="text-xs font-medium text-foreground">能力边界</p><p className="mt-1 text-xs leading-5 text-muted-foreground">用户、Session、项目与成员关系为真实数据库能力；项目详情中的文档、需求、Scope、Action、会议、风险与 AI 产出仍为当前项目专属 Mock。</p></div></div>
+        <div className="flex items-start gap-2.5"><LockKeyhole className="mt-0.5 size-4 shrink-0 text-info" /><div><p className="text-xs font-medium text-foreground">能力边界</p><p className="mt-1 text-xs leading-5 text-muted-foreground">身份、组织/部门、知识空间、文档、检索、需求、Scope、Action、Risk 与周报已绑定真实数据库和服务端授权；会议与决策展示仍为项目隔离 Mock，不会被 AI 自动写入正式数据。</p></div></div>
       </section>
       <p className="mt-4 text-[11px] text-muted-foreground">项目最近更新时间：{dateLabel(projects[0]?.updatedAt)}</p>
     </main>

@@ -9,7 +9,7 @@
 | SEC-003 | P0 | API Key 不进入浏览器 | 通过 | Secret/Bundle/DTO/Health/日志/Artifact 扫描 | Qwen Secret File、App/Embedding Worker-only mount、公开 DTO 与 Evidence 脱敏 | AI Platform | 真实 Qwen Key 只在 Staging Secret File；浏览器、Document Worker、Git、日志和 Artifact 均不可见 |
 | SEC-004 | P0 | API Key 不进入 Git | 通过 | Git 与工作区扫描 | CI Secret/Artifact 检查 | DevOps | 示例变量无真实值，受保护环境文件不跟踪 |
 | SEC-005 | P0 | 客户文件不进入 Git | 通过 | Git 状态、fixture 与 evidence allowlist 检查 | 测试文件运行时生成，上传原件不发布 | DevOps | 正文只进入私有对象存储；当前验收只使用虚构文件 |
-| SEC-006 | P0 | AI 草稿不能直接覆盖正式数据 | 通过 | AI 写入边界、Schema、导入/Tool 架构扫描 | B3-A 只写 AI Thread/Message/Execution/Citation/Audit；无 Tool/Function Calling | Product/Backend | Requirement、Scope、Action、Risk、Meeting、Project Setting、Document 均不可由 AI 模块写入 |
+| SEC-006 | P0 | AI 草稿不能直接覆盖正式数据 | 通过 | AI 写入边界、Schema、人工审核与数据库集成 | Assistant 只写 Thread/Message/Execution/Citation；Requirement/Action/Risk/Weekly 只先写 Draft，正式记录必须由项目经理审核 | Product/Backend | 无 Tool/Function Calling；AI 不直接分配正式 Action，也不覆盖 Requirement、Scope、Risk、Document 或项目设置 |
 | SEC-007 | P0 | 上传路径不能造成目录穿越 | 通过 | 真实文件名/OOXML 路径安全测试与服务端 Key 审查 | NFKC、分隔符/控制字符/bidi、绝对路径、`..`、ZIP entry/symlink 覆盖 | Backend/Security | Object Key 只含受控 ID 与随机 UUID，不包含用户文件名，也不解压到文件系统 |
 | SEC-008 | P0 | 知识查询按 projectId 和权限过滤 | 通过 | 真实搜索服务、SQL/权限集成、最终 CI 与 Staging | Active/Current/Stored/Succeeded/Effective 过滤、document filter 归属、Viewer 和跨项目 404 全绿 | Backend/AI | B2 为真实词法搜索，不代表 RAG |
 | MVP-001 | P1 | 项目可以创建 | 部分 | 创建 API/UI 与数据库 | 已有管理员持久化集成测试 | Frontend/Backend | 当前只允许 system_admin 创建 |
@@ -21,24 +21,24 @@
 | MVP-007 | P1 | 可以进行项目知识问答 | 通过 | B2 Evidence + Qwen Gateway + 私人 Thread | Grounded Answer、资料不足、Viewer、跨项目/他人 Thread 404 | AI | 使用词法索引，不宣称向量 RAG |
 | MVP-008 | P1 | 回答必须带来源 | 通过 | 服务端 Citation Validation/Repair 与来源快照 | 合法引用、E99 Repair、Repair 失败闭合、来源 DTO 不信任模型元数据 | AI/Product | 回答展示文件、版本、Source Locator、Excerpt 与下载 |
 | MVP-009 | P1 | 来源含文件、章节、页码或片段 | 通过 | PDF/DOCX/XLSX/PPTX/TXT/MD 来源 E2E 与 Staging | Page/Heading+Paragraph/Sheet+Range/Slide/Line 全绿 | AI/Product | 与具体 immutable version 绑定 |
-| MVP-010 | P1 | AI 可以提取结构化需求 | 部分 | Workflow 执行 | Mock AI Gateway | AI | 不把真实上传文件交给 AI |
-| MVP-011 | P1 | 需求有来源证据 | 部分 | 审核来源区 | Mock Workflow E2E | AI/Product | 仅 Mock 证据 |
-| MVP-012 | P1 | 项目经理可以修改 AI 草稿 | 通过 | 审核文本编辑 | Mock Workflow E2E | Frontend | 仅浏览器 Mock 状态 |
-| MVP-013 | P1 | 可以提交审核 | 部分 | Workflow 进入审核中心 | Mock Workflow E2E | Product | 任务未持久化 |
-| MVP-014 | P1 | 可以通过、修改后通过、驳回 | 通过 | 三类按钮状态 | Mock Workflow E2E | Frontend | 仍为 Mock 状态 |
-| MVP-015 | P1 | 审核通过后写入正式需求 | 未完成 | 正式数据层集成测试 | 无 | Backend | v0.5 B2 明确不实现 |
-| MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 部分 | 契约与页面审查 | Mock Workflow E2E | Product/Backend | 数据层未实现 |
-| MVP-017 | P1 | 有审计记录 | 通过 | PostgreSQL 审计集成与最终 CI/Staging 操作链 | AI Thread/Execution success/failure/insufficient/rate-limit/denial 与原文件链路均审计 | AI/Backend | AI 审计保存 Hash/长度/模型/Token/Latency，不保存完整问题、Prompt、Secret 或 Provider Response |
+| MVP-010 | P1 | AI 可以提取结构化需求 | 通过 | 受权 Chunk → Gateway → Requirement Draft | Fake Provider CI、真实 Staging Qwen、非法输出/引用拒绝 | AI | 来源选择与幂等键绑定；AI 不能创建正式 Requirement |
+| MVP-011 | P1 | 需求有来源证据 | 通过 | Requirement Source/Version/Citation 数据链 | 当前有效版本、来源权限复核、撤权隐藏 | AI/Product | 浏览器不获得内部 Chunk ID；正式需求保留不可变来源定位 |
+| MVP-012 | P1 | 项目经理可以修改 AI 草稿 | 通过 | 持久化审核 UI/API | Edit+Accept 数据库集成与 E2E | Frontend/Backend | 字段校验、Owner 项目归属和来源再授权均由服务端执行 |
+| MVP-013 | P1 | 可以提交审核 | 通过 | Requirement Draft 审核队列 | PostgreSQL 状态、幂等并发与 E2E | Product | 刷新后保留，不依赖浏览器 Mock |
+| MVP-014 | P1 | 可以通过、修改后通过、驳回 | 通过 | 三类服务端审核决策 | Accept/Edit+Accept/Reject 集成 | Frontend/Backend | Reject 不创建正式数据；重复审核返回冲突 |
+| MVP-015 | P1 | 审核通过后写入正式需求 | 通过 | Requirement/Version/Source/Review 事务 | 非空数据库集成与迁移升级 | Backend | 只有项目经理审核事务可写正式 Requirement |
+| MVP-016 | P1 | 正式需求与 AI 草稿状态分离 | 通过 | 独立表、状态机和审计 | Draft 为 0 正式写入、审核后单次生成 | Product/Backend | AI Execution/Draft/Review/Formal Version 分层持久化 |
+| MVP-017 | P1 | 有审计记录 | 通过 | PostgreSQL 审计集成与最终 CI/Staging 操作链 | 身份、权限、文件、AI、Requirement、Scope、Action、Risk、Weekly 均审计 | AI/Backend | AI 审计保存 Digest/模型/Token/Latency/受控失败码，不保存完整问题、Prompt、Secret、正文或 Provider Response |
 | MVP-018 | P1 | 主要流程有 Loading、Error、Retry | 通过 | 页面流程与可恢复失败 | 文档处理/搜索 + Assistant Disabled/Empty/Loading/Insufficient/Error/Retry/Fallback | Frontend/AI | 未经 Citation Validation 的回答不显示 |
-| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | B3-B1 公网 Staging、App/DB/MinIO/两个 Worker 健康 | 双 Flag/Probe、真实问答/向量、清理/noindex 与五服务 Healthy | DevOps | Production 精确不变 |
-| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | 当前 Head 完整 CI | B1/B2 回归 + 8 个 B3-A 截图流程；实际 PNG 尺寸进入 Manifest | QA | 无 Trace/Video、Prompt、Provider Response 或 Secret 进入 Evidence |
+| MVP-019 | P1 | Staging 可访问并 noindex | 通过 | 受控 Staging 部署器与公网 HTTP E2E | 双 Flag/Probe、Phase 1 二十项业务/权限验证、清理/noindex 与五服务 Healthy | DevOps | 每次部署前后精确比较 Production 只读基线；不执行 Production 写操作 |
+| MVP-020 | P1 | Playwright 产品与安全流程通过 | 通过 | 当前 Head 完整 CI | 身份、项目隔离、文件、检索、Assistant、Requirement、Action/Risk/Weekly 角色路径 | QA | 无 Trace/Video、Prompt、Provider Response、Secret 或客户内容进入 Evidence |
 | MVP-021 | P1 | Production build 通过 | 通过 | 最终 CI `npm run build`（由 `npm test` 执行） | production build + SSR `7/7` 通过 | Frontend | 仅本地/CI 构建并部署 Staging；未在 Production 主机执行 |
 | OPT-001 | P2 | 更高级搜索过滤 | 部分 | 页面检查 | SSR | Frontend | 资料页有 active/archived 和搜索基础 |
-| OPT-002 | P2 | 更完整统计指标 | 部分 | 数据看板检查 | SSR | Product | 大部分仍为 Mock |
+| OPT-002 | P2 | 更完整统计指标 | 通过 | 项目管理 Dashboard API/UI | Requirement、Scope、Action、逾期、Risk、最新周报集成 | Product | 只聚合正式项目数据；会议展示仍为项目隔离 Mock |
 | OPT-003 | P2 | 移动端适配 | 部分 | 多视口检查 | 后续 E2E | Frontend | 现有响应式基础 |
 | OPT-004 | P2 | 更丰富视觉动效 | 未完成 | 视觉审查 | 无 | Design | 非 MVP 阻塞 |
-| OPT-005 | P2 | 自动生成 Scope | 部分 | Scope 页面检查 | SSR | Product/AI | Mock |
-| OPT-006 | P2 | 自动生成 Action Plan | 部分 | Action 页面检查 | 持久化 E2E | Product/AI | Mock |
+| OPT-005 | P2 | 自动生成 Scope | 通过 | Baseline/Candidate 对比与人工确认 | Added/Removed/Modified/Not Mentioned/Ambiguous 集成 | Product/AI | 未提及不会自动判为删除；所有结果保留版本与审计 |
+| OPT-006 | P2 | 自动生成 Action Plan | 通过 | AI Draft → 项目经理审核 → 正式 Action | Owner/Deadline/依赖/批量/成员更新/循环拒绝 E2E | Product/AI | AI 不直接创建或分配正式 Action |
 | OPT-007 | P2 | 自动测试业务模块 | 未完成 | 产品能力验收 | 无 | Product | v0.4 不实现 |
 | OPT-008 | P2 | 原型和页面生成 | 未完成 | 产品能力验收 | 无 | Product | 当前不实现 |
 
@@ -102,8 +102,8 @@
 ## 统计
 
 - P0：8 条；通过 8，部分 0，未完成 0。
-- P1：21 条；通过 15，部分 5，未完成 1。
-- P2：8 条；通过 0，部分 5，未完成 3。
+- P1：21 条；通过 20，部分 1，未完成 0。
+- P2：8 条；通过 3，部分 2，未完成 3。
 
 统计只计算第一张长期 MVP 表。v0.8 B3-B2、v0.7 B3-B1、v0.6 B3-A、v0.5 B2 与 v0.4 历史门禁单独跟踪；MVP-007/008 已由 Grounded Qwen + 服务端 Citation 闭环。
 

@@ -95,17 +95,26 @@ export function documentPermissions(
   principal: AuthenticatedPrincipal,
   projectRole: ProjectRole | null,
   status: ProjectDocumentRecord["status"],
+  authorized?: {
+    download: boolean;
+    manageVersions: boolean;
+    archive: boolean;
+    managePermissions?: boolean;
+  },
 ): ProjectDocumentPermissionsDto {
   const admin = principal.user.systemRole === "system_admin";
   const writer = admin || projectRole === "project_manager" || projectRole === "project_member";
   const manager = admin || projectRole === "project_manager";
   return {
-    canDownload: true,
-    canUploadVersion: writer && status === "active",
-    canArchive: manager && status === "active",
-    canRestore: manager && status === "archived",
-    canSetCurrent: manager && status === "active",
-    canReindex: manager && status === "active",
+    canDownload: authorized?.download ?? true,
+    canUploadVersion:
+      (authorized?.manageVersions ?? writer) && status === "active",
+    canArchive: (authorized?.archive ?? manager) && status === "active",
+    canRestore: (authorized?.archive ?? manager) && status === "archived",
+    canSetCurrent:
+      (authorized?.manageVersions ?? manager) && status === "active",
+    canReindex: (authorized?.manageVersions ?? manager) && status === "active",
+    canManagePermissions: authorized?.managePermissions ?? manager,
   };
 }
 
@@ -114,6 +123,12 @@ export async function serializeProjectDocument(
   principal: AuthenticatedPrincipal,
   projectRole: ProjectRole | null,
   currentVersion: VersionWithOptionalUploader | null = null,
+  authorizedPermissions?: {
+    download: boolean;
+    manageVersions: boolean;
+    archive: boolean;
+    managePermissions?: boolean;
+  },
 ): Promise<ProjectDocumentDto> {
   const creator = await findUserById(document.createdBy);
   const ingestion = currentVersion
@@ -124,6 +139,8 @@ export async function serializeProjectDocument(
   return {
     id: document.id,
     projectId: document.projectId,
+    knowledgeSpaceId: document.knowledgeSpaceId,
+    visibility: document.visibility,
     displayName: document.displayName,
     status: document.status,
     createdBy: { displayName: creator?.displayName ?? "项目成员" },
@@ -133,7 +150,12 @@ export async function serializeProjectDocument(
     currentVersion: currentVersion
       ? serializeDocumentVersion(currentVersion, "项目成员", ingestion)
       : null,
-    permissions: documentPermissions(principal, projectRole, document.status),
+    permissions: documentPermissions(
+      principal,
+      projectRole,
+      document.status,
+      authorizedPermissions,
+    ),
   };
 }
 
@@ -141,6 +163,15 @@ export async function serializeDocumentList(
   documents: DocumentWithCurrentVersion[],
   principal: AuthenticatedPrincipal,
   projectRole: ProjectRole | null,
+  authorizedPermissions?: Map<
+    string,
+    {
+      download: boolean;
+      manageVersions: boolean;
+      archive: boolean;
+      managePermissions?: boolean;
+    }
+  >,
 ): Promise<ProjectDocumentDto[]> {
   const summaries = await ingestionSummariesForVersions(
     documents
@@ -155,6 +186,8 @@ export async function serializeDocumentList(
       return {
         id: document.id,
         projectId: document.projectId,
+        knowledgeSpaceId: document.knowledgeSpaceId,
+        visibility: document.visibility,
         displayName: document.displayName,
         status: document.status,
         createdBy: { displayName: creator?.displayName ?? "项目成员" },
@@ -172,6 +205,7 @@ export async function serializeDocumentList(
           principal,
           projectRole,
           document.status,
+          authorizedPermissions?.get(document.id),
         ),
       };
     }),

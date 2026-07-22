@@ -33,6 +33,7 @@ export async function POST(
       projectId,
       documentId,
       request.headers,
+      "archive",
     );
     const document = await setDocumentArchived({
       principal,

@@ -84,6 +84,8 @@ type VectorRow = {
   heading_path: unknown;
   source_locator: unknown;
   vector_distance: number | string;
+  knowledge_space_id: string;
+  source_scope: "organization" | "department" | "project" | "restricted";
 };
 
 function elapsed(started: number): number {
@@ -150,10 +152,17 @@ function selectHybridEvidence(
   });
 }
 
-async function embeddingCoverage(projectId: string): Promise<{
+async function embeddingCoverage(input: {
+  actorUserId: string;
+  projectId: string;
+  sourceDocumentIds: string[];
+}): Promise<{
   basisPoints: number;
   chunkCount: number;
 }> {
+  const documentFilter = input.sourceDocumentIds.length
+    ? sql`and c.document_id in (${sql.join(input.sourceDocumentIds.map((id) => sql`${id}`), sql`, `)})`
+    : sql``;
   const result = await getDb().execute<{
     chunk_count: string | number;
     embedding_count: string | number;
@@ -175,6 +184,13 @@ async function embeddingCoverage(projectId: string): Promise<{
     inner join project_documents d
       on d.id = c.document_id
       and d.project_id = c.project_id
+    inner join projectai_authorized_documents(
+      ${input.actorUserId},
+      ${input.projectId},
+      'view'::knowledge_permission
+    ) authorized
+      on authorized.document_id = c.document_id
+      and authorized.source_project_id = c.project_id
     left join document_chunk_embeddings e
       on e.chunk_id = c.id
       and e.project_id = c.project_id
@@ -183,12 +199,12 @@ async function embeddingCoverage(projectId: string): Promise<{
       and e.content_sha256 = c.content_sha256
       and e.embedding_profile_id = ${HYBRID_RETRIEVAL_PROFILE.embeddingProfileId}
       and e.status = 'current'
-    where c.project_id = ${projectId}
-      and c.is_effective = true
+    where c.is_effective = true
       and d.document_status = 'active'
       and v.storage_status = 'stored'
       and v.is_current = true
       and j.status = 'succeeded'
+      ${documentFilter}
   `);
   const row = result.rows[0];
   const chunks = Number(row?.chunk_count ?? 0);
@@ -262,11 +278,16 @@ async function embedQuery(input: {
 }
 
 async function exactVectorCandidates(input: {
+  actorUserId: string;
   projectId: string;
   vector: number[];
+  sourceDocumentIds: string[];
 }): Promise<RankedRetrievalCandidate<ProjectKnowledgeEvidence>[]> {
   const runtime = getHybridRetrievalRuntimeConfig();
   const vectorLiteral = `[${input.vector.join(",")}]`;
+  const documentFilter = input.sourceDocumentIds.length
+    ? sql`and c.document_id in (${sql.join(input.sourceDocumentIds.map((id) => sql`${id}`), sql`, `)})`
+    : sql``;
   const result = await getDb().transaction(async (tx) => {
     await tx.execute(
       sql`select set_config('statement_timeout', ${String(runtime.vectorSqlTimeoutMs)}, true)`,
@@ -283,6 +304,8 @@ async function exactVectorCandidates(input: {
         c.content_sha256,
         c.heading_path,
         c.source_locator,
+        authorized.knowledge_space_id,
+        authorized.source_scope,
         (e.embedding <=> ${vectorLiteral}::vector) as vector_distance
       from document_chunk_embeddings e
       inner join document_chunks c
@@ -304,14 +327,21 @@ async function exactVectorCandidates(input: {
       inner join project_documents d
         on d.id = c.document_id
         and d.project_id = c.project_id
-      where e.project_id = ${input.projectId}
-        and e.embedding_profile_id = ${HYBRID_RETRIEVAL_PROFILE.embeddingProfileId}
+      inner join projectai_authorized_documents(
+        ${input.actorUserId},
+        ${input.projectId},
+        'view'::knowledge_permission
+      ) authorized
+        on authorized.document_id = c.document_id
+        and authorized.source_project_id = c.project_id
+      where e.embedding_profile_id = ${HYBRID_RETRIEVAL_PROFILE.embeddingProfileId}
         and e.status = 'current'
         and c.is_effective = true
         and d.document_status = 'active'
         and v.storage_status = 'stored'
         and v.is_current = true
         and j.status = 'succeeded'
+        ${documentFilter}
         and (e.embedding <=> ${vectorLiteral}::vector) <= ${HYBRID_RETRIEVAL_PROFILE.vectorMaxDistance}
       order by (e.embedding <=> ${vectorLiteral}::vector) asc, c.id asc
       limit ${HYBRID_RETRIEVAL_PROFILE.vectorCandidateLimit}
@@ -338,6 +368,8 @@ async function exactVectorCandidates(input: {
         : [],
       source: validateSourceLocator(row.source_locator),
       score: Math.max(0, 1 - Number(row.vector_distance)),
+      knowledgeSpaceId: row.knowledge_space_id,
+      sourceScope: row.source_scope,
     },
   }));
 }
@@ -358,6 +390,7 @@ export async function retrieveProjectEvidence(input: {
   mode: RetrievalMode;
   retrievalProfileId: string;
   execution: AiExecutionRecord;
+  sourceDocumentIds: string[];
 }): Promise<RetrievalEvidenceResult> {
   await requireProjectAccess(input.principal, input.projectId, input.requestHeaders);
   const runtime = getHybridRetrievalRuntimeConfig();
@@ -374,9 +407,11 @@ export async function retrieveProjectEvidence(input: {
 
   const lexicalStarted = performance.now();
   const lexical = await retrieveLexicalProjectCandidates({
+    actorUserId: input.principal.user.id,
     projectId: input.projectId,
     query,
     limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit,
+    documentIds: input.sourceDocumentIds,
   });
   const lexicalLatencyMs = elapsed(lexicalStarted);
   const lexicalEvidence = selectLexicalEvidence(lexical);
@@ -398,7 +433,11 @@ export async function retrieveProjectEvidence(input: {
     } else if (!profile.definitionMatches) {
       fallbackReason = "RETRIEVAL_PROFILE_MISMATCH";
     } else {
-      const coverage = await embeddingCoverage(input.projectId);
+      const coverage = await embeddingCoverage({
+        actorUserId: input.principal.user.id,
+        projectId: input.projectId,
+        sourceDocumentIds: input.sourceDocumentIds,
+      });
       coverageBps = coverage.basisPoints;
       if (coverage.chunkCount === 0) {
         // Preserve B3-A insufficient-evidence behavior without paying for a
@@ -421,8 +460,10 @@ export async function retrieveProjectEvidence(input: {
           const vectorStarted = performance.now();
           try {
             vector = await exactVectorCandidates({
+              actorUserId: input.principal.user.id,
               projectId: input.projectId,
               vector: embedded.vector,
+              sourceDocumentIds: input.sourceDocumentIds,
             });
             vectorLatencyMs = elapsed(vectorStarted);
           } catch (error) {

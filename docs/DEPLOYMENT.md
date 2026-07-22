@@ -79,7 +79,7 @@ published ports: none
 
 使用 `scripts/deploy-staging.sh`。脚本要求：
 
-- 分支精确为 `agent/hybrid-retrieval-foundation`，工作区 clean，完整 40 位 Commit。
+- 分支精确为 `agent/phase1-project-knowledge-management`，工作区 clean，完整 40 位 Commit。
 - 固定 Compose project `projectai-staging`、目录 `/srv/projectai-staging` 和远端平台。
 - 原子取得 Staging 专属部署锁；发布目录、环境、备份、锁和 marker 均不得是 symlink。
 - 记录 Production 容器 ID、running、restart count、health，进入发布事务后的成功/失败/回滚出口都必须精确一致。
@@ -92,12 +92,12 @@ published ports: none
 4. 启动 PostgreSQL 与 MinIO并等待 Healthy；强制重建 init 任务并等待 exit 0，失败即停止。
 5. 在 rollback trap 与事务 marker 已建立后，短暂停止当前 Staging App、Document Worker 和 Embedding Worker，取得 PostgreSQL/MinIO 同一静默写入边界。
 6. 生成并验证 PostgreSQL custom-format dump；生成 MinIO JSONL inventory 与 mirror，核对对象数和总字节，再恢复到唯一临时 Bucket 并复核/删除。
-7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；先以新代码和 `AI_EMBEDDING_ENABLED=false` 验证旧 Schema 健康，再只执行新增的 `0006_closed_genesis.sql`（不得修改已部署的 `0004/0005`），不 schema push/reset；随后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、只读 Profile、Batch、不可变 Provider Call 与 Worker heartbeat。
+7. 备份成功后才把 Staging PostgreSQL 容器切到锁定的 pgvector 镜像；先以新代码和 `AI_EMBEDDING_ENABLED=false` 验证旧 Schema 健康，再由 Migration ledger 只执行尚未应用的 committed Migration（当前至 `0015_project_department_scope_guard.sql`，不得修改历史 Migration），不 schema push/reset；随后验证 `pg_trgm`、pgvector 0.8.1、`vector(1024)`、只读 Profile、Batch、不可变 Provider Call、Worker heartbeat、文档—知识空间跨组织/项目/部门约束、项目部门变更保护与显式 Deny 优先级。
 8. 用 scoped storage operations 执行 `npm run storage:verify`；任何 finding 或存储不可用都失败关闭。
 9. Migration 完成后启动 Document Worker 与 disabled Embedding Worker，并复核已在 Flag=false 下健康的 App；验证 App、两个 Worker、PostgreSQL、MinIO 健康，同一 immutable image、Secret 最小化和无新增端口。
 10. Health 必须显示 Assistant/Embedding disabled 但 Provider configured；在 App 执行 Chat Probe，在专用 Worker 执行固定 `Project AI embedding probe`，均不读取项目资料或输出向量。
 11. Probe 成功后原子把 `.env.ai` 的 Flag 改为 true，只 `--no-deps --force-recreate` App；重新验证 Health enabled/configured/Gateway Version，Worker 不重启。
-12. 再次运行只读 `storage:verify`；通过 `documents:smoke` 验证 B2，并通过 `assistant:smoke` 的内部上游和公网路径验证真实 Qwen、Citation、资料不足不调用模型、Viewer、私人 Thread、跨项目 404、Token Usage、Audit 和全量清理。
+12. 再次运行只读 `storage:verify`；通过 `documents:smoke` 验证 B2，并通过 `assistant:smoke` 的内部上游和公网路径验证真实 Qwen、Citation、资料不足不调用模型、Viewer、私人 Thread、跨项目 404、Token Usage、Audit 和全量清理。公网验证最后运行 `phase1:staging-smoke`，覆盖 Organization、Department、Department Admin 受限空间上传、Project Mount、View/Download 分离、权限检索、Requirement 人工审核、Scope、Action、Risk、Weekly、Export、Audit 与跨部门/项目拒绝；验证项目、对象和 Session 在结束时清理。
 13. 等待队列为空，短暂停止 Worker，通过 `documents:lease-smoke` 验证独占 Lease、过期恢复、旧 Worker 拒绝提交和双 Worker `SKIP LOCKED`；再以虚构数据运行 Embedding crash-window、shutdown、并发预算及成本一致性 smoke，显式验证 Timeout/Network/非法成功响应为 unknown、无自动重试、人工重试保留旧调用并双重计入预算、额度不足在调用前拒绝；真实 Qwen 双项目流程同时验证纯中文/混合语言 Usage 不超过版本化硬 Reservation。随后恢复同一 immutable image 并重新检查心跳。
 14. 清理本次及失败重试遗留的验证 Session、测试 AI Thread/Message/Execution/Citation、测试文档、版本、Job、Section、Chunk、对象和审计；确认 running Execution、running Job、解析临时文件、恢复 Bucket、partial backup、init 容器和 marker/lock 均为 0。
 15. `nginx -t`、公网 canonical/Host/MIME/noindex 验证以及 Production 精确不变复核；脚本不自动编辑或 reload Nginx。

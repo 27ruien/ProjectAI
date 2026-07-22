@@ -185,6 +185,14 @@ npm run retrieval:status
 - Release JSON/Markdown 和固定日志加入 Evidence allowlist；成功 v0.8 CI 缺少 database rehearsal、disabled-image 或 smoke report 时 sanitizer/finalizer fail-closed。
 - 旧 Production Image 在独立服务器 Network 中验证旁路 0007 数据库存在时登录、Dashboard、项目入口等既有公开路径可运行，且通过 `pg_stat_activity` 未观察到旧 App 数据库连接；结论只覆盖 legacy application shell，不宣称新数据面功能等价。
 
+## 第一阶段：项目知识与管理门禁
+
+- `npm run phase1:migration-upgrade` 在非空隔离数据库执行 `0007 → 0015`，保留旧项目/文件/索引/AI 数据，验证默认知识空间回填、文档/项目部门 Scope Trigger，以及 `system_admin` 也不能绕过匹配的显式内容 Deny。
+- `npm run test:phase1-integration` 验证 Organization/Department/Project/Space/File 的 default deny、View/Download 分离、跨组织与跨部门隔离、受限空间、上传目的地、Deny 优先、最后管理员保护和数据库复合约束。
+- Round 2 集成验证权限感知的 Lexical/Vector/RRF/Citation 与 Requirement/Scope 人工审核；Round 3 集成验证 Action/Risk/Weekly/Dashboard/Audit/Export、Owner 归属、Dependency Cycle、不可变发布版本和项目隔离。
+- Playwright 覆盖 System/Organization/Department Admin、Project Manager/Member/Viewer、Other Department/Outsider 的可见性与写入边界。`phase1:staging-smoke` 通过公网 HTTP 另行验证真实 Worker、真实 Qwen、受限空间上传、项目挂载、AI 来源、人工审核和清理。
+- 只有当前完整 Head 的 CI、Evidence/Provenance、Staging Smoke 和 Production 前后只读基线比较全部通过，第一阶段 PR 才可由 Draft 转为 Ready。
+
 ## B3-C2A rollout executor
 
 - `npm run test:production-rollout` 覆盖固定 Trust Fingerprint 与完整依赖 bundle Digest、Caller Key/Symlink/权限绕过、单 Phase/Action Marker、带同步 barrier 的真实跨进程原子 Authorization claim、同一 ID 的 1 success/N replay、不同 ID 的并发 Digest-chain append、双重 Replay 的 `already_consumed`、Replay Journal symlink/权限/Digest chain、claim→Journal 中断后的 reconciliation、dead-PID 内部 mutex 保持不变并失败关闭、Wrong Action，以及可注入 transport 的 Image Transfer 行为验证（claim 前零副作用、无效 receipt、重放零副作用、错误 Action、传输中断后 Authorization 已消费）。Lock 测试使用独立 Node 进程竞争同一路径，并覆盖唯一 acquire、Lease Token 轮换、wrong-session/ID/lease/PID/hostname/UID release 保留原锁、heartbeat-vs-release 竞争、no-replace hard-link 中断、expired/dead PID/heartbeat timeout 不自动删除、并发 stale-guard takeover、guard receipt 防 ABA、Lock 已移除后的 orphan-guard review/clear/reacquire、仅空 guard 目录可恢复、损坏 metadata 或未知目录内容失败关闭、精确 idle-Lock cleanup，以及 crash → review → explicit clear → reacquire。Phase Journal 测试覆盖同进程/跨进程并发 append 的完整 Digest chain、dead-owner timeout 后只补写一次 orphan claim、等待时重新采样恢复时间、恢复其他状态事件时中止 stale append，以及 `release-completed` 补写后禁止旧 Finalize 快照继续。Finalize CLI 以仅限 test/rehearsal 的定点注入覆盖 prepared 后 reacquire 失败及 Lock 已释放后 completed pre-commit 持久化失败，断言精确故障点、Authorization 恰好消费一次、`STATE_UNKNOWN`、无成功输出、无 completed，并重算及交叉绑定 Digest-linked prepared/report/inventory recovery metadata；rehearsal state-dir 还必须是系统临时目录内 owner-only 的真实目录，拒绝 symlink escape。Docker Lock 演练由 host 控制 `ready → go → armed → attempt` 两级屏障，动态验证一胜一明确拒绝、无 orphan Lock/guard/temp，并仅在 Compose 容器、Volume、Network 全部清理后成功。其他 Finalize 测试覆盖缺少七份 Verification、报告 Digest 篡改、Journal/报告 Digest 绑定、验证后的 state-preserving Lock recovery、`prepared → release → completed` 顺序、显式 dead-owner recovery 文本、七类 active count、App/双 Worker Manifest Image、Health 与 Restart 门禁。

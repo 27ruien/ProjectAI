@@ -11,8 +11,8 @@ import {
 import { getRequestAuditContext } from "@/lib/auth/request-context";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import {
-  countProjectDocumentsByStatus,
-  listProjectDocuments,
+  countAuthorizedDocumentsByStatus,
+  listAuthorizedDocuments,
   listProjectDocumentVersions,
 } from "@/lib/db/repositories/document-repository";
 import { maxUploadBytes, allowedUploadExtensions } from "@/lib/files/config";
@@ -28,6 +28,8 @@ import {
   serializeDocumentVersions,
   serializeProjectDocument,
 } from "@/lib/files/serialization";
+import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
+import { listUploadableKnowledgeSpaces } from "@/lib/knowledge/management";
 
 type DocumentsRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -47,27 +49,82 @@ export async function GET(
     if (status !== "active" && status !== "archived") {
       throw new FileOperationError(400, "INVALID_REQUEST", "资料状态筛选无效");
     }
+    const [
+      viewScope,
+      downloadScope,
+      versionScope,
+      archiveScope,
+      permissionScope,
+    ] =
+      await Promise.all([
+        listAuthorizedDocumentScope({ principal, projectId, permission: "view" }),
+        listAuthorizedDocumentScope({
+          principal,
+          projectId,
+          permission: "download",
+        }),
+        listAuthorizedDocumentScope({
+          principal,
+          projectId,
+          permission: "manage_versions",
+        }),
+        listAuthorizedDocumentScope({
+          principal,
+          projectId,
+          permission: "archive",
+        }),
+        listAuthorizedDocumentScope({
+          principal,
+          projectId,
+          permission: "manage_permissions",
+        }),
+      ]);
+    const viewIds = viewScope.map((item) => item.documentId);
     const [documents, counts] = await Promise.all([
-      listProjectDocuments(projectId, status),
-      countProjectDocumentsByStatus(projectId),
+      listAuthorizedDocuments(viewIds, status),
+      countAuthorizedDocumentsByStatus(viewIds),
     ]);
+    const downloadIds = new Set(downloadScope.map((item) => item.documentId));
+    const versionIds = new Set(versionScope.map((item) => item.documentId));
+    const archiveIds = new Set(archiveScope.map((item) => item.documentId));
+    const permissionIds = new Set(
+      permissionScope.map((item) => item.documentId),
+    );
     const admin = principal.user.systemRole === "system_admin";
     const canUpload =
       admin ||
       authorizedProject.projectRole === "project_manager" ||
       authorizedProject.projectRole === "project_member";
+    const uploadDestinations = canUpload
+      ? await listUploadableKnowledgeSpaces({
+          principal,
+          projectId,
+          requestHeaders: request.headers,
+        })
+      : [];
     return jsonResponse({
       documents: await serializeDocumentList(
         documents,
         principal,
         authorizedProject.projectRole,
+        new Map(
+          viewIds.map((documentId) => [
+            documentId,
+            {
+              download: downloadIds.has(documentId),
+              manageVersions: versionIds.has(documentId),
+              archive: archiveIds.has(documentId),
+              managePermissions: permissionIds.has(documentId),
+            },
+          ]),
+        ),
       ),
       counts: { active: counts.active, archived: counts.archived },
       uploadPolicy: {
         maxBytes: maxUploadBytes(),
         allowedExtensions: [...allowedUploadExtensions()],
       },
-      permissions: { canUpload },
+      permissions: { canUpload, uploadDestinations },
     });
   } catch (error) {
     return fileRouteErrorResponse(error);
@@ -95,7 +152,7 @@ export async function POST(
       documentRoles.upload,
       request.headers,
     );
-    const { file, displayName } = await readUploadForm(request);
+    const { file, displayName, knowledgeSpaceId } = await readUploadForm(request);
     const result = await uploadDocument({
       principal,
       projectId,
@@ -103,6 +160,7 @@ export async function POST(
       idempotencyKey: idempotencyKeyFrom(request),
       file,
       displayName,
+      knowledgeSpaceId,
     });
     const versions = await listProjectDocumentVersions(projectId, result.document.id);
     const current = versions.find((version) => version.isCurrent) ?? null;

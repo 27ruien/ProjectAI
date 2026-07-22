@@ -71,6 +71,9 @@ export class QwenProjectAssistantProvider
             temperature: request.temperature,
             max_tokens: request.maxOutputTokens,
             stream: false,
+            ...(request.responseFormat === "json_object"
+              ? { response_format: { type: "json_object" } }
+              : {}),
           }),
           signal: controller.signal,
         },

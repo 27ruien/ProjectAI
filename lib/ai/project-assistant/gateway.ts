@@ -31,6 +31,19 @@ export type ProjectAssistantGatewayInput = {
   purpose: ProjectAssistantProviderPurpose;
 };
 
+function responseFormatForPurpose(
+  purpose: ProjectAssistantProviderPurpose,
+): "text" | "json_object" {
+  return [
+    "requirement_extraction",
+    "action_generation",
+    "risk_generation",
+    "weekly_report",
+  ].includes(purpose)
+    ? "json_object"
+    : "text";
+}
+
 function controlledProviderFailure(error: unknown): ProjectAssistantError {
   if (error instanceof ProjectAssistantError) return error;
   if (error instanceof AiProviderError && error.code === "TIMEOUT") {
@@ -97,6 +110,7 @@ export class ProjectAssistantGateway {
       systemPrompt: input.systemPrompt,
       userPrompt: input.userPrompt,
       purpose: input.purpose,
+      responseFormat: responseFormatForPurpose(input.purpose),
       timeoutMs: this.config.timeoutMs,
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxOutputTokens,

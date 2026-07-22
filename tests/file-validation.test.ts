@@ -154,6 +154,8 @@ function uploadDocument(
   return {
     id: "document-a",
     projectId: "project-a",
+    knowledgeSpaceId: "knowledge-space-a",
+    visibility: "private",
     displayName: "项目计划",
     status: currentVersion ? "active" : "pending",
     createdBy: { displayName: "项目经理 A" },
@@ -168,6 +170,7 @@ function uploadDocument(
       canRestore: false,
       canSetCurrent: true,
       canReindex: true,
+      canManagePermissions: true,
     },
     ...overrides,
   };

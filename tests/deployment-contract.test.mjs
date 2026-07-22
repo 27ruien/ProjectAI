@@ -376,7 +376,7 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/hybrid-retrieval-foundation"/);
+  assert.match(script, /EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -478,6 +478,26 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   );
   assert.match(dockerfile, /RUN install -d -o node -g node \/app\/review-artifacts/);
   assert.match(dockerfile, /USER node/);
+});
+
+test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
+  const [script, compose, verifier] = await Promise.all([
+    readFile(deployScript, "utf8"),
+    readFile(stagingCompose, "utf8"),
+    readFile(new URL("../scripts/verify-phase1-staging.mjs", import.meta.url), "utf8"),
+  ]);
+  const service = serviceBlock(compose, "projectai-phase1-smoke", "projectai-staging");
+  assert.match(service, /profiles:\n\s+- operations/);
+  assert.match(service, /DATABASE_URL/);
+  assert.match(service, /OBJECT_STORAGE_ACCESS_KEY/);
+  assert.match(service, /SEED_DEPT_ADMIN_EMAIL/);
+  assert.doesNotMatch(service, /QWEN_API_KEY|qwen_api_key|secrets:/);
+  assert.match(script, /projectai-phase1-smoke npm run phase1:staging-smoke/);
+  assert.match(verifier, /KNOWLEDGE_SPACE_NOT_FOUND/);
+  assert.match(verifier, /not_mentioned/);
+  assert.match(verifier, /weekly_report_published/);
+  assert.match(verifier, /delete from projects where id = \$1/);
+  assert.doesNotMatch(verifier, /projectai\/api|\/srv\/projectai(?:\/|\b)/);
 });
 
 test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker", async () => {
@@ -635,7 +655,7 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
     readFile(productionCompose, "utf8"),
     readFile(groundedAiVerifier, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/hybrid-retrieval-foundation"/);
+  assert.match(script, /EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
   const lexical = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"');
   const evaluation = script.indexOf("npm run retrieval:evaluate");
   const shadow = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=shadow"');

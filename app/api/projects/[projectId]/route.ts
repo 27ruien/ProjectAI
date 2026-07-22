@@ -10,8 +10,11 @@ import {
 } from "@/lib/auth/authorization";
 import { AuthorizationError, requireApiPrincipal } from "@/lib/auth/session";
 import { getDb } from "@/lib/db/client";
+import { getPostgresErrorCode } from "@/lib/db/errors";
 import { updateProject } from "@/lib/db/repositories/project-repository";
 import { serializeAuthorizedProject, serializeProject } from "@/lib/projects/serialization";
+import { department } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 
 type ProjectRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -40,6 +43,7 @@ const projectPatchSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
       .optional(),
+    departmentId: z.string().min(1).max(200).nullable().optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0);
@@ -72,12 +76,26 @@ export async function PATCH(
     requireTrustedMutationRequest(request);
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
+    // Authenticate the URL resource before validating mutable fields so an
+    // inaccessible project has the same 404 contract for valid and tampered
+    // request bodies.
+    await requireProjectAccess(principal, projectId, request.headers);
+    const parsed = projectPatchSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return jsonResponse(
+        { error: { code: "INVALID_INPUT", message: "请检查项目字段" } },
+        { status: 400 },
+      );
+    }
     const result = await getDb().transaction(async (tx) => {
+      let authorizedProject;
       try {
-        await requireProjectRole(
+        authorizedProject = await requireProjectRole(
           principal,
           projectId,
-          ["project_manager", "project_member"],
+          parsed.data.departmentId !== undefined
+            ? ["project_manager"]
+            : ["project_manager", "project_member"],
           request.headers,
           { db: tx, lockForUpdate: true },
         );
@@ -88,8 +106,20 @@ export async function PATCH(
         throw error;
       }
 
-      const parsed = projectPatchSchema.safeParse(await request.json());
-      if (!parsed.success) return { kind: "invalid_input" } as const;
+      if (parsed.data.departmentId) {
+        const [validDepartment] = await tx
+          .select({ id: department.id })
+          .from(department)
+          .where(
+            and(
+              eq(department.id, parsed.data.departmentId),
+              eq(department.organizationId, authorizedProject.organizationId),
+              eq(department.isActive, true),
+            ),
+          )
+          .limit(1);
+        if (!validDepartment) return { kind: "invalid_input" } as const;
+      }
 
       const updated = await updateProject(projectId, parsed.data, tx);
       return updated
@@ -112,6 +142,17 @@ export async function PATCH(
     }
     return jsonResponse({ project: serializeProject(result.project) });
   } catch (error) {
+    if (getPostgresErrorCode(error) === "23514") {
+      return jsonResponse(
+        {
+          error: {
+            code: "PROJECT_DEPARTMENT_SCOPE_CONFLICT",
+            message: "请先移除与新部门范围冲突的知识来源",
+          },
+        },
+        { status: 409 },
+      );
+    }
     if (error instanceof SyntaxError) {
       return jsonResponse(
         { error: { code: "INVALID_JSON", message: "请求格式无效" } },

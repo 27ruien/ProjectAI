@@ -45,7 +45,7 @@ export async function GET(
       documentId,
       request.headers,
     );
-    const versions = await listProjectDocumentVersions(projectId, documentId);
+    const versions = await listProjectDocumentVersions(document.projectId, documentId);
     return jsonResponse({
       document: await serializeProjectDocument(
         document,
@@ -87,8 +87,16 @@ export async function POST(
       projectId,
       documentId,
       request.headers,
+      "manage_versions",
     );
-    const { file } = await readUploadForm(request);
+    const { file, knowledgeSpaceId } = await readUploadForm(request);
+    if (knowledgeSpaceId) {
+      throw new FileOperationError(
+        400,
+        "INVALID_REQUEST",
+        "新版本不能改变知识空间",
+      );
+    }
     const result = await uploadDocument({
       principal,
       projectId,

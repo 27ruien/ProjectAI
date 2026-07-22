@@ -1,10 +1,18 @@
-export type ProjectAssistantProviderPurpose = "answer" | "repair" | "probe";
+export type ProjectAssistantProviderPurpose =
+  | "answer"
+  | "repair"
+  | "probe"
+  | "requirement_extraction"
+  | "action_generation"
+  | "risk_generation"
+  | "weekly_report";
 
 export type ProjectAssistantProviderRequest = {
   model: string;
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
+  responseFormat: "text" | "json_object";
   timeoutMs: number;
   temperature: number;
   maxOutputTokens: number;

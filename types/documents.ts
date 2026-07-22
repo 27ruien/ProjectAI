@@ -72,12 +72,15 @@ export interface ProjectDocumentPermissionsDto {
   canRestore: boolean;
   canSetCurrent: boolean;
   canReindex: boolean;
+  canManagePermissions: boolean;
 }
 
 /** A logical project document with its current, immutable object version. */
 export interface ProjectDocumentDto {
   id: string;
   projectId: string;
+  knowledgeSpaceId: string;
+  visibility: "private" | "organization_shared" | "department_shared" | "restricted";
   displayName: string;
   status: ProjectDocumentStatus;
   createdBy: DocumentActorDto;
@@ -99,8 +102,18 @@ export interface DocumentUploadPolicyDto {
   allowedExtensions: string[];
 }
 
+export interface KnowledgeSpaceUploadDestinationDto {
+  id: string;
+  name: string;
+  type: "organization" | "department" | "project" | "restricted";
+  visibility: "private" | "organization_shared" | "department_shared" | "restricted";
+  departmentId: string | null;
+  projectId: string | null;
+}
+
 export interface DocumentListPermissionsDto {
   canUpload: boolean;
+  uploadDestinations: KnowledgeSpaceUploadDestinationDto[];
 }
 
 export interface ProjectDocumentListResponse {

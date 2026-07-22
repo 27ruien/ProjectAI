@@ -1,14 +1,15 @@
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
-import {
-  findProjectDocument,
-  findProjectDocumentVersion,
-} from "@/lib/db/repositories/document-repository";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import type {
   ProjectDocumentRecord,
   ProjectDocumentVersionRecord,
 } from "@/lib/db/schema";
+import type { KnowledgePermission } from "@/lib/db/schema";
+import {
+  findAuthorizedDocument,
+  findAuthorizedDocumentVersion,
+} from "@/lib/knowledge/authorization";
 import { FileOperationError } from "./errors";
 
 async function auditDenied(
@@ -34,13 +35,19 @@ export async function requireProjectDocumentResource(
   projectId: string,
   documentId: string,
   requestHeaders: Headers,
+  permission: KnowledgePermission = "view",
 ): Promise<ProjectDocumentRecord> {
-  const document = await findProjectDocument(projectId, documentId);
-  if (!document) {
+  const authorized = await findAuthorizedDocument({
+    principal,
+    projectId,
+    documentId,
+    permission,
+  });
+  if (!authorized) {
     await auditDenied(principal, projectId, documentId, requestHeaders);
     throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "资料不存在");
   }
-  return document;
+  return authorized.document;
 }
 
 export async function requireProjectDocumentVersionResource(
@@ -49,24 +56,21 @@ export async function requireProjectDocumentVersionResource(
   documentId: string,
   versionId: string,
   requestHeaders: Headers,
+  permission: KnowledgePermission = "view",
 ): Promise<{
   document: ProjectDocumentRecord;
   version: ProjectDocumentVersionRecord;
 }> {
-  const document = await requireProjectDocumentResource(
+  const authorized = await findAuthorizedDocumentVersion({
     principal,
     projectId,
     documentId,
-    requestHeaders,
-  );
-  const version = await findProjectDocumentVersion(
-    projectId,
-    documentId,
     versionId,
-  );
-  if (!version) {
+    permission,
+  });
+  if (!authorized) {
     await auditDenied(principal, projectId, versionId, requestHeaders);
     throw new FileOperationError(404, "VERSION_NOT_FOUND", "文件版本不存在");
   }
-  return { document, version };
+  return { document: authorized.document, version: authorized.version };
 }

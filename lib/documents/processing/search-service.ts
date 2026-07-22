@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireProjectAccess } from "@/lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
 import { getDb } from "@/lib/db/client";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
-import { projectDocument } from "@/lib/db/schema";
+import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 import type {
   KnowledgeSearchResponse,
   KnowledgeSearchResultDto,
@@ -55,6 +55,8 @@ export type SearchRow = {
   heading_path: unknown;
   source_locator: unknown;
   raw_score: number | string;
+  knowledge_space_id: string;
+  source_scope: "organization" | "department" | "project" | "restricted";
 };
 
 export type ProjectKnowledgeEvidence = {
@@ -70,9 +72,12 @@ export type ProjectKnowledgeEvidence = {
   headingPath: string[];
   source: ReturnType<typeof validateSourceLocator>;
   score: number;
+  knowledgeSpaceId: string;
+  sourceScope: "organization" | "department" | "project" | "restricted";
 };
 
 export async function queryProjectKnowledgeRows(input: {
+  actorUserId: string;
   projectId: string;
   query: string;
   documentIds: string[];
@@ -101,6 +106,8 @@ export async function queryProjectKnowledgeRows(input: {
           c.content_sha256,
           c.heading_path,
           c.source_locator,
+          authorized.knowledge_space_id,
+          authorized.source_scope,
           (
             ts_rank_cd(c.search_vector, websearch_to_tsquery('english', ${input.query})) * 2.0
             + case when lower(c.search_text) like lower(${contains}) escape ${escapeCharacter} then 2.5 else 0 end
@@ -120,8 +127,14 @@ export async function queryProjectKnowledgeRows(input: {
         inner join project_documents d
           on d.id = c.document_id
           and d.project_id = c.project_id
-        where c.project_id = ${input.projectId}
-          and c.is_effective = true
+        inner join projectai_authorized_documents(
+          ${input.actorUserId},
+          ${input.projectId},
+          'view'::knowledge_permission
+        ) authorized
+          on authorized.document_id = c.document_id
+          and authorized.source_project_id = c.project_id
+        where c.is_effective = true
           and d.document_status = 'active'
           and v.storage_status = 'stored'
           and v.is_current = true
@@ -157,14 +170,17 @@ export type RankedProjectKnowledgeEvidence = {
 };
 
 export async function retrieveLexicalProjectCandidates(input: {
+  actorUserId: string;
   projectId: string;
   query: string;
   limit: number;
+  documentIds?: string[];
 }): Promise<RankedProjectKnowledgeEvidence[]> {
   const rows = await queryProjectKnowledgeRows({
+    actorUserId: input.actorUserId,
     projectId: input.projectId,
     query: input.query,
-    documentIds: [],
+    documentIds: input.documentIds ?? [],
     limit: input.limit,
   });
   return rows
@@ -188,6 +204,8 @@ export async function retrieveLexicalProjectCandidates(input: {
           : [],
         source: validateSourceLocator(row.source_locator),
         score: normalizedScore(row.raw_score),
+        knowledgeSpaceId: row.knowledge_space_id,
+        sourceScope: row.source_scope,
       },
     }));
 }
@@ -244,6 +262,7 @@ export async function retrieveProjectEvidence(input: {
   const maxChars = Math.min(Math.max(input.maxChars ?? 24_000, 1), 24_000);
   const minimumScore = Math.min(Math.max(input.minimumScore ?? 0.12, 0), 1);
   const candidates = await retrieveLexicalProjectCandidates({
+    actorUserId: input.principal.user.id,
     projectId: input.projectId,
     query,
     limit: candidateLimit,
@@ -278,16 +297,13 @@ export async function searchProjectKnowledge(input: {
     input.requestHeaders,
   );
   if (documentIds.length) {
-    const documents = await getDb()
-      .select({ id: projectDocument.id })
-      .from(projectDocument)
-      .where(
-        and(
-          eq(projectDocument.projectId, input.projectId),
-          inArray(projectDocument.id, documentIds),
-        ),
-      );
-    if (documents.length !== new Set(documentIds).size) {
+    const authorized = await listAuthorizedDocumentScope({
+      principal: input.principal,
+      projectId: input.projectId,
+      permission: "view",
+    });
+    const authorizedIds = new Set(authorized.map((item) => item.documentId));
+    if (documentIds.some((documentId) => !authorizedIds.has(documentId))) {
       await writeAuditEvent({
         actorUserId: input.principal.user.id,
         projectId: input.projectId,
@@ -311,6 +327,7 @@ export async function searchProjectKnowledge(input: {
     }
   }
   const rows = await queryProjectKnowledgeRows({
+    actorUserId: input.principal.user.id,
     projectId: input.projectId,
     query,
     documentIds,

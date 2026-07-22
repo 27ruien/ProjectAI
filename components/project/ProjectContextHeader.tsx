@@ -16,7 +16,9 @@ export type ProjectTab =
   | "scope"
   | "actions"
   | "meetings"
-  | "risks";
+  | "risks"
+  | "reports"
+  | "audit";
 
 const tabs: { id: ProjectTab; label: string; path: string }[] = [
   { id: "overview", label: "项目概览", path: "overview" },
@@ -27,6 +29,8 @@ const tabs: { id: ProjectTab; label: string; path: string }[] = [
   { id: "actions", label: "Action Plan", path: "actions" },
   { id: "meetings", label: "会议与决策", path: "meetings" },
   { id: "risks", label: "风险与状态", path: "risks" },
+  { id: "reports", label: "项目周报", path: "reports" },
+  { id: "audit", label: "审计", path: "audit" },
 ];
 
 interface ProjectContextHeaderProps {
@@ -86,7 +90,7 @@ export function ProjectContextHeader({ project, activeTab, onOpenAI }: ProjectCo
           </div>
         </div>
         <nav className="flex gap-1 overflow-x-auto" aria-label="项目详情导航">
-          {tabs.map((tab) => (
+          {tabs.filter((tab) => tab.id !== "audit" || project.permissions.canViewAudit).map((tab) => (
             <Link key={tab.id} href={`/projects/${project.id}/${tab.path}`} className={`relative whitespace-nowrap px-3 py-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${activeTab === tab.id ? "text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>
               {tab.label}
             </Link>

@@ -728,6 +728,7 @@ describe("grounding, repair, retries and idempotency", () => {
       "incomingQuestionHash",
       "modelProfileMatched",
       "retrievalProfileMatched",
+      "sourceSelectionMatched",
     ]);
     assert.equal(audit?.metadata.modelProfileMatched, true);
     assert.equal(JSON.stringify(audit?.metadata).includes("被拒绝"), false);

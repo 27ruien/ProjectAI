@@ -23,7 +23,9 @@ function assertCiCleanupBoundary(): void {
   }
   const bucket = process.env.OBJECT_STORAGE_BUCKET?.trim() || "";
   if (!/^projectai-ci-[A-Za-z0-9-]+$/.test(bucket)) {
-    throw new Error("CI cleanup refused a non-ephemeral object-storage bucket.");
+    throw new Error(
+      "CI cleanup refused a non-ephemeral object-storage bucket.",
+    );
   }
 }
 
@@ -38,6 +40,32 @@ try {
   `);
 
   await db.transaction(async (tx) => {
+    await tx.execute(sql`delete from weekly_report_versions`);
+    await tx.execute(sql`delete from weekly_report_drafts`);
+    await tx.execute(sql`delete from risk_sources`);
+    await tx.execute(sql`delete from risk_history`);
+    await tx.execute(sql`delete from risk_reviews`);
+    await tx.execute(sql`delete from risks`);
+    await tx.execute(sql`delete from risk_drafts`);
+    await tx.execute(sql`delete from action_item_dependencies`);
+    await tx.execute(sql`delete from action_item_sources`);
+    await tx.execute(sql`delete from action_item_history`);
+    await tx.execute(sql`delete from action_item_reviews`);
+    await tx.execute(sql`delete from action_items`);
+    await tx.execute(sql`delete from action_item_drafts`);
+    await tx.execute(sql`delete from project_management_ai_executions`);
+    await tx.execute(sql`delete from project_management_audits`);
+    await tx.execute(sql`delete from scope_diff_reviews`);
+    await tx.execute(sql`delete from scope_diff_items`);
+    await tx.execute(sql`delete from scope_comparison_runs`);
+    await tx.execute(sql`delete from scope_versions`);
+    await tx.execute(sql`delete from requirement_sources`);
+    await tx.execute(sql`delete from requirement_versions`);
+    await tx.execute(sql`delete from requirement_reviews`);
+    await tx.execute(sql`delete from requirement_drafts`);
+    await tx.execute(sql`delete from requirement_audits`);
+    await tx.execute(sql`delete from requirements`);
+    await tx.execute(sql`delete from requirement_extraction_runs`);
     await tx.execute(sql`delete from ai_message_citations`);
     await tx.execute(sql`delete from ai_retrieval_candidates`);
     await tx.execute(sql`delete from ai_retrieval_query_embedding_calls`);
@@ -94,6 +122,11 @@ try {
     query_embedding_calls: number;
     active_retrieval_runs: number;
     active_query_embedding_calls: number;
+    requirements: number;
+    actions: number;
+    risks: number;
+    weekly_reports: number;
+    management_ai_executions: number;
   }>(sql`
     select
       (select count(*)::int from sessions) as sessions,
@@ -113,6 +146,11 @@ try {
       (select count(*)::int from ai_retrieval_runs) as retrieval_runs,
       (select count(*)::int from ai_retrieval_candidates) as retrieval_candidates,
       (select count(*)::int from ai_retrieval_query_embedding_calls) as query_embedding_calls,
+      (select count(*)::int from requirements) as requirements,
+      (select count(*)::int from action_items) as actions,
+      (select count(*)::int from risks) as risks,
+      (select count(*)::int from weekly_report_versions) as weekly_reports,
+      (select count(*)::int from project_management_ai_executions) as management_ai_executions,
       (
         select count(*)::int
         from document_ingestion_jobs
@@ -140,7 +178,11 @@ try {
   const temporaryFiles = (await readdir("/tmp")).filter((entry) =>
     entry.startsWith("projectai-"),
   ).length;
-  const result = { ...counts.rows[0], objects, temporary_files: temporaryFiles };
+  const result = {
+    ...counts.rows[0],
+    objects,
+    temporary_files: temporaryFiles,
+  };
   if (Object.values(result).some((value) => Number(value) !== 0)) {
     throw new Error(`CI cleanup left test state: ${JSON.stringify(result)}`);
   }
