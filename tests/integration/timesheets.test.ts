@@ -69,7 +69,18 @@ function postgresDiagnostic(error: unknown): string {
 }
 
 async function expectCode(operation: () => Promise<unknown>, code: string): Promise<void> {
-  await assert.rejects(operation, (error: unknown) => error instanceof TimesheetError && error.code === code);
+  await assert.rejects(
+    operation,
+    (error: unknown) =>
+      error instanceof TimesheetError
+        ? error.code === code
+        : Boolean(
+            error &&
+              typeof error === "object" &&
+              "code" in error &&
+              error.code === code,
+          ),
+  );
 }
 
 async function makeRecord(date: string, text: string) {
@@ -310,7 +321,10 @@ describe("daily timesheet ownership, review, and sync integration", () => {
         sourceCount: 1,
         status: "failed",
       }),
-      /AI execution owner does not match its draft/,
+      (error: unknown) =>
+        postgresDiagnostic(error).includes(
+          "AI execution owner does not match its draft",
+        ),
     );
   });
 
