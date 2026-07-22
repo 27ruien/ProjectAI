@@ -297,12 +297,18 @@ async function cleanupStaleVerificationState() {
   let projectIds = [];
   await client.connect();
   try {
-    const [projects, spaces, departments, organizations] = await Promise.all([
-      client.query("select id from projects where name like '[TEST] phase1-staging-%'"),
-      client.query("select id from knowledge_spaces where name like '[TEST] phase1-staging-%'"),
-      client.query("select id from departments where name like '[TEST] phase1-staging-%'"),
-      client.query("select id from organizations where name like '[TEST] phase1-staging-%'"),
-    ]);
+    const projects = await client.query(
+      "select id from projects where name like '[TEST] phase1-staging-%'",
+    );
+    const spaces = await client.query(
+      "select id from knowledge_spaces where name like '[TEST] phase1-staging-%'",
+    );
+    const departments = await client.query(
+      "select id from departments where name like '[TEST] phase1-staging-%'",
+    );
+    const organizations = await client.query(
+      "select id from organizations where name like '[TEST] phase1-staging-%'",
+    );
     projectIds = projects.rows.map((row) => row.id);
     await client.query("begin");
     for (const targetProjectId of projectIds) {
