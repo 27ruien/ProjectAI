@@ -6,13 +6,17 @@
 | --- | --- |
 | 当前开发版本 | `0.8.0-staging`（B3-C1 Production Release Readiness） |
 | `main` 基线 | 已合并 B3-A、B3-B1、B3-B2 |
-| 开发分支 | `agent/production-release-readiness` |
-| Draft PR | 标题 `Add production release readiness`；必须保持 Draft、未 Ready、未合并 |
+| 开发分支 | `agent/pm-daily-report-mvp` |
+| 当前功能 PR | Project Manager Daily Report + WeCom Connector；创建前本地验证中，不自动合并 |
 | 动态交付事实 | PR Head、CI Run、Artifact ID/Digest、Staging image 与 Build Time 只记录在 Draft PR、Provenance Manifest 和受控部署证据 |
 | Staging | https://gridworks.cn/tool/projectai-staging/；保持已验证 hybrid，不重复制造真实 Provider 费用 |
 | Production | https://gridworks.cn/tool/projectai/；B3-C1 只读审计，不部署、不迁移、不重启、不创建 Secret |
 
 ## 当前结论
+
+当前分支在已合并的第一阶段能力上新增 Feature-flagged 项目经理个人日报与独立 Chrome MV3 企业微信连接器。日报包含真实 PostgreSQL 随记/草稿/任务/AI execution/同步摘要、现有 Gateway 的结构化 AI 整理、人工审核确认、JSON 导出和同步中心；扩展包含严格协议、持久队列、Dry Run、iframe Adapter、精确目录匹配和逐条保存。两个 Flag 默认关闭，Production 未启用或变更。
+
+真实企业微信 URL/DOM 尚未提供，因此当前只完成 Mock E2E 与评审构建；真实 Selector、真实 Dry Run、真实单条保存和商店发布仍是明确人工验收门禁。
 
 B3-C1 在已合并 B3-B2 上建立 Production Inventory/Diff、Release Manifest、Preflight、隔离 Backup/Restore/Migration/兼容性演练、Smoke、Rollback、Go/No-Go、监控和 Evidence/Provenance。本轮只调整 Release Control Plane 与镜像元数据 Label，没有业务 Runtime 行为或 Production 外部状态变更。
 

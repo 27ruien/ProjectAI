@@ -134,3 +134,14 @@
 | B3C1-007 | Runbook/Go-No-Go | Phase 0–6、Secret、Rollback、RPO/RTO、监控、成本和 Stop Conditions 可审查 |
 | B3C1-008 | Production 不变 | Container/Image/StartedAt/Restart/Health/Compose/Nginx/服务/Migration/Secret/HTTP 前后精确一致 |
 | B3C1-009 | 范围 | Draft PR；无 Production Rollout、Rerank、HNSW、IVFFlat 或 ANN |
+
+## 项目经理日报与 WeCom Connector 门禁
+
+| ID | 验收项 | 当前状态 | 关闭条件 |
+| --- | --- | --- | --- |
+| PMDR-001 | 当前用户随记 CRUD、组织/所有权/项目 ACL 与审计 | 代码完成，CI 集成待验证 | Migration 0016 升级、所有权/越权/Flag 集成全绿 |
+| PMDR-002 | 结构化 AI 输入/输出、事实约束、一次 Repair、低置信度与人工确认 | 单元通过 | 当前 Head CI、Fake Provider 集成和 ProjectAI E2E 全绿 |
+| PMDR-003 | 版本锁、未确认拒绝、权限丢失、同步幂等和终态一致性 | 代码完成，CI 集成待验证 | PostgreSQL 集成全绿 |
+| PMDR-004 | MV3 协议、Origin、权限最小化、重放/中断恢复和日志脱敏 | 单元/package 通过 | CI package + Mock E2E 全绿 |
+| PMDR-005 | iframe Adapter、精确目录匹配、Dry Run、单条保存、不触碰最终提交 | Mock E2E 通过 | 真实 URL/DOM 审查、真实 Dry Run、一条虚构任务验收 |
+| PMDR-006 | Production 默认关闭且不变 | 通过 | 最终 diff 与只读基线确认无 Production rollout/启用 |

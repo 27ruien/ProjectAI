@@ -54,6 +54,11 @@ const allowedTestLogs = new Set([
   "production-rollout-tooling.log",
   "production-rollout-rehearsal.log",
   "typecheck.log",
+  "timesheets-migration-upgrade.log",
+  "timesheets-unit.log",
+  "timesheets-integration.log",
+  "wecom-extension-package.log",
+  "wecom-extension-e2e.log",
 ]);
 const allowedReviewReports = new Set([
   "retrieval-calibration.json",
@@ -163,6 +168,7 @@ const requiredReviewScreenshots = [
   "screenshots/ai-assistant-provider-error.png",
   "screenshots/ai-assistant-viewer.png",
   "screenshots/ai-assistant-thread-history.png",
+  "screenshots/daily-report-confirmed.png",
 ];
 const metrics = {
   copiedRoots: [],

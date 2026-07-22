@@ -119,7 +119,10 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
         "screenshots/knowledge-search-results.png",
       ),
     );
-    assert.equal(index.requiredScreenshots.length, 30);
+    assert.ok(
+      index.requiredScreenshots.includes("screenshots/daily-report-confirmed.png"),
+    );
+    assert.equal(index.requiredScreenshots.length, 31);
     assert.equal(index.buildTime, buildTime);
     assert.equal(Object.hasOwn(index, "commit"), false);
     assert.equal(Object.hasOwn(index, "artifactId"), false);

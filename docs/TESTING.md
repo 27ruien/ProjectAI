@@ -1,5 +1,21 @@
 # Testing
 
+## 项目经理日报与 WeCom Connector
+
+```bash
+npm run timesheets:migration-upgrade
+npm run test:timesheets
+npm run test:timesheets-integration
+npm run extension:package
+npm run test:extension-package
+npm run test:extension-e2e
+npm run test:e2e -- --grep "项目经理从随记"
+```
+
+`test:timesheets` 使用 Fake Provider，覆盖 API 鉴权/同源合同、事实/Schema/项目/工时/完成状态/来源完整性/低置信度/总工时、消息 Origin、精确 replay、终态不可逆、状态机、restart unknown、日志脱敏和 Selector 禁止项。`test:timesheets-integration` 需要隔离 PostgreSQL 17/pgvector 与 Seed，覆盖 owner 隔离、无记录不调用、stale AI recovery、乐观锁、确认、来源项目冲突、失权、批次 replay、活动批次、伪造终态和 Flag。
+
+扩展 E2E 使用独立本机 HTTP Mock 和 mock-only bundle，不连接 Staging/Production/WeCom。它验证 ProjectAI 消息桥接、Popup JSON 预览、Service Worker 中断恢复、iframe 跨 realm 字段、Dry Run、单条保存、登录/遮罩、重复项目、失败、unknown、DOM 变化、误配最终提交语义和最终提交计数。真实 URL/DOM 未提供时，不得把 Mock 通过解释为真实 WeCom 验收通过。
+
 ## v0.8 B3-B2 测试分层
 
 1. TypeScript：`npm run typecheck`。

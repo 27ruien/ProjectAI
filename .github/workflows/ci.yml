@@ -54,6 +54,9 @@ jobs:
       AI_EMBEDDING_DAILY_JOB_LIMIT: "500"
       AI_EMBEDDING_DAILY_TOKEN_LIMIT: "5000000"
       AI_ASSISTANT_RETRIEVAL_MODE: lexical
+      PM_DAILY_REPORT_ENABLED: "true"
+      WECOM_TIMESHEET_SYNC_ENABLED: "true"
+      PM_DAILY_REPORT_CONFIDENCE_THRESHOLD: "0.85"
       AI_HYBRID_RETRIEVAL_PROFILE_ID: hybrid-rrf-v1
       AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS: "5000"
       AI_HYBRID_VECTOR_SQL_TIMEOUT_MS: "1500"
@@ -284,6 +287,13 @@ jobs:
           mkdir -p test-logs
           npm run phase1:migration-upgrade 2>&1 | tee test-logs/phase1-migration-upgrade.log
 
+      - name: Verify non-empty 0015 to 0016 daily-report upgrade
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run timesheets:migration-upgrade 2>&1 | tee test-logs/timesheets-migration-upgrade.log
+
       - name: Apply committed migrations
         run: npm run db:migrate
 
@@ -409,6 +419,31 @@ jobs:
           mkdir -p test-logs
           npm run test:phase1-round3 2>&1 | tee test-logs/phase1-round3-contract.log
           npm run test:phase1-round3-integration 2>&1 | tee test-logs/phase1-round3-integration.log
+
+      - name: Daily report AI, ownership, sync, and replay tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:timesheets 2>&1 | tee test-logs/timesheets-unit.log
+          npm run test:timesheets-integration 2>&1 | tee test-logs/timesheets-integration.log
+
+      - name: Build, inspect, and exercise the MV3 extension in isolation
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run extension:package 2>&1 | tee test-logs/wecom-extension-package.log
+          npm run test:extension-package 2>&1 | tee -a test-logs/wecom-extension-package.log
+          npm run test:extension-e2e 2>&1 | tee test-logs/wecom-extension-e2e.log
+
+      - name: Upload review-only MV3 package
+        uses: actions/upload-artifact@v4
+        with:
+          name: wecom-timesheet-extension-review-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          path: release/wecom-timesheet-extension-v0.1.0.zip
 
       - name: Write sanitized Retrieval verification summary
         run: npm run retrieval:ci-evidence
