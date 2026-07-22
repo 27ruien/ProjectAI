@@ -28,11 +28,19 @@ npm run extension:build:mock
 For a real approved board URL:
 
 ```bash
-WECOM_TASK_BOARD_URL=https://approved.example/path npm run extension:package
+PROJECTAI_ALLOWED_ORIGIN=https://projectai.example \
+WECOM_ALLOWED_ORIGIN=https://approved.example \
+WECOM_TASK_BOARD_URL=https://approved.example/path \
+WECOM_SELECTOR_CONFIG_PATH=wecom-selector.local.json \
+npm run extension:package
 ```
 
 Load `dist/wecom-timesheet-extension` through Chrome's “Load unpacked” action.
 Use the options page to save the exact board URL and reviewed selector config.
+If the approved board requires query or fragment access parameters, they stay
+only in the ignored local environment and `chrome.storage.local`; the build
+validates the Origin and never embeds the path or access parameters in its
+bundle, manifest, bindings, logs, or review ZIP.
 Start with Dry Run. Clearing local sync history requires a second confirmation
 and never deletes tasks from the target board.
 
@@ -46,13 +54,23 @@ Runtime flow:
 
 ```text
 strict ProjectAI message → persistent queue → exact WeCom Origin
-→ login/overlay/iframe checks → exact field matching → Dry Run or one-item save
-→ explicit page feedback → local state + authenticated ProjectAI summary
+→ exact target pathname + login/overlay/iframe checks → exact field matching
+→ Dry Run or one-item save → explicit feedback + saved-row readback
+→ local state + authenticated ProjectAI summary
 ```
 
+The adapter keeps ProjectAI category internal, writes separate regular/overtime
+hours, and only reads the page-provided current submitter. Auto-save pages are
+rejected before any field mutation until they have a separately reviewed flow.
+
 Popup manual JSON is a test/recovery entry, not a cryptographic ProjectAI
-attestation. Use only exported, user-reviewed fictional test payloads during
-acceptance. `saved` items are skipped, `failed` items require an explicit
+attestation. Review and real-origin builds therefore force that entry to Dry
+Run; actual saves must start from the authenticated ProjectAI page. Only the
+isolated Mock build can exercise a manual non-Dry-Run payload. The Service
+Worker also validates the sending extension page or ProjectAI tab before it
+accepts mutations. Use only exported, user-reviewed fictional test payloads
+during acceptance. `saved` items are
+skipped, `failed` items require an explicit
 resume, and `unknown` items cannot resume until the user reconciles the board.
 After checking WeCom, the Popup requires an explicit confirmation to resolve an
 unknown item as saved or not saved; the latter still requires a separate resume.

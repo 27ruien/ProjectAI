@@ -6,9 +6,13 @@ export type SyncTask = {
   id: string;
   description: string;
   project: { id: string; name: string };
-  hours: number;
+  submitter: { id: null; name: null; source: "authenticated-user" };
+  regularHours: number;
+  overtimeHours: number | null;
   category: { id: string; name: string };
-  status: { id: string; name: string };
+  status: { id: string | null; name: string };
+  urgency: { id: string | null; name: string } | null;
+  progress: number | null;
 };
 
 export type SyncPayload = {
@@ -58,8 +62,31 @@ function catalog(value: unknown, maxName: number): value is { id: string; name: 
   );
 }
 
-function task(value: unknown): value is SyncTask {
-  if (!object(value) || !exactKeys(value, ["id", "description", "project", "hours", "category", "status"])) return false;
+function externalOption(
+  value: unknown,
+): value is { id: string | null; name: string } {
+  return (
+    object(value) &&
+    exactKeys(value, ["id", "name"]) &&
+    (value.id === null ||
+      (typeof value.id === "string" && value.id.length > 0 && value.id.length <= 200)) &&
+    typeof value.name === "string" &&
+    value.name.trim().length > 0 &&
+    value.name.length <= 120
+  );
+}
+
+function quarterHours(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 24 &&
+    Math.abs(value * 4 - Math.round(value * 4)) < Number.EPSILON
+  );
+}
+
+function baseTask(value: Record<string, unknown>): boolean {
   return (
     typeof value.id === "string" &&
     value.id.length > 0 &&
@@ -68,14 +95,61 @@ function task(value: unknown): value is SyncTask {
     value.description.trim().length >= 2 &&
     value.description.length <= 500 &&
     catalog(value.project, 200) &&
-    typeof value.hours === "number" &&
-    Number.isFinite(value.hours) &&
-    value.hours > 0 &&
-    value.hours <= 24 &&
-    Math.abs(value.hours * 4 - Math.round(value.hours * 4)) < Number.EPSILON &&
     catalog(value.category, 120) &&
-    catalog(value.status, 120)
+    externalOption(value.status)
   );
+}
+
+function normalizeTask(value: unknown): SyncTask | null {
+  if (!object(value)) return null;
+  const legacyKeys = ["id", "description", "project", "hours", "category", "status"];
+  if (exactKeys(value, legacyKeys)) {
+    if (!baseTask(value) || !quarterHours(value.hours) || !catalog(value.status, 120)) return null;
+    return {
+      id: value.id as string,
+      description: value.description as string,
+      project: value.project as SyncTask["project"],
+      submitter: { id: null, name: null, source: "authenticated-user" },
+      regularHours: value.hours,
+      overtimeHours: null,
+      category: value.category as SyncTask["category"],
+      status: value.status,
+      urgency: null,
+      progress: null,
+    };
+  }
+  if (
+    !exactKeys(value, [
+      "id",
+      "description",
+      "project",
+      "submitter",
+      "regularHours",
+      "overtimeHours",
+      "category",
+      "status",
+      "urgency",
+      "progress",
+    ]) ||
+    !baseTask(value) ||
+    !object(value.submitter) ||
+    !exactKeys(value.submitter, ["id", "name", "source"]) ||
+    value.submitter.id !== null ||
+    value.submitter.name !== null ||
+    value.submitter.source !== "authenticated-user" ||
+    !quarterHours(value.regularHours) ||
+    (value.overtimeHours !== null && !quarterHours(value.overtimeHours)) ||
+    (value.overtimeHours !== null && value.regularHours + value.overtimeHours > 24) ||
+    (value.urgency !== null && !externalOption(value.urgency)) ||
+    (value.progress !== null &&
+      (typeof value.progress !== "number" ||
+        !Number.isInteger(value.progress) ||
+        value.progress < 0 ||
+        value.progress > 100))
+  ) {
+    return null;
+  }
+  return value as SyncTask;
 }
 
 export function validateSyncPayload(value: unknown): ValidationResult<SyncPayload> {
@@ -113,15 +187,16 @@ export function validateSyncPayload(value: unknown): ValidationResult<SyncPayloa
     !Array.isArray(value.tasks) ||
     value.tasks.length < 1 ||
     value.tasks.length > 50 ||
-    !value.tasks.every(task)
+    !value.tasks.every((item) => normalizeTask(item) !== null)
   ) {
     return { ok: false, code: "PAYLOAD_SCHEMA_INVALID", message: "同步 Payload 内容无效" };
   }
-  const taskIds = new Set(value.tasks.map((item) => item.id));
+  const tasks = value.tasks.map((item) => normalizeTask(item)!);
+  const taskIds = new Set(tasks.map((item) => item.id));
   if (taskIds.size !== value.tasks.length) {
     return { ok: false, code: "DUPLICATE_TASK_ID", message: "同步任务 ID 重复" };
   }
-  return { ok: true, value: value as SyncPayload };
+  return { ok: true, value: { ...(value as Omit<SyncPayload, "tasks">), tasks } };
 }
 
 export function validateProjectAiWindowMessage(input: {

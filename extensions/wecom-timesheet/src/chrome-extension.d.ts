@@ -1,4 +1,4 @@
-type ChromeMessageSender = { tab?: { id?: number } };
+type ChromeMessageSender = { url?: string; tab?: { id?: number; url?: string } };
 type ChromeTab = { id?: number; url?: string; status?: string };
 
 declare const chrome: {
@@ -53,6 +53,7 @@ declare const __PROJECTAI_ALLOWED_ORIGINS__: readonly string[];
 declare const __WECOM_ALLOWED_ORIGIN__: string;
 declare const __EXTENSION_VERSION__: string;
 declare const __WECOM_ADAPTER_TIMEOUT_MS__: number;
+declare const __MANUAL_ACTUAL_SYNC_ALLOWED__: boolean;
 
 interface Window {
   __PROJECTAI_WECOM_TEST__?: {

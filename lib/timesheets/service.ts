@@ -67,6 +67,23 @@ const TERMINAL_BATCH_STATUSES = new Set([
   "cancelled",
 ]);
 
+const ALLOWED_BATCH_TRANSITIONS: Record<string, ReadonlySet<string>> = {
+  pending: new Set(["pending", "validating", "waiting_for_board", "waiting_for_login", "running", "paused", "partially_synced", "synced", "failed", "cancelled"]),
+  validating: new Set(["validating", "waiting_for_board", "waiting_for_login", "running", "paused", "partially_synced", "synced", "failed", "cancelled"]),
+  waiting_for_board: new Set(["waiting_for_board", "validating", "paused", "partially_synced", "synced", "failed", "cancelled"]),
+  waiting_for_login: new Set(["waiting_for_login", "validating", "paused", "partially_synced", "synced", "failed", "cancelled"]),
+  running: new Set(["running", "waiting_for_login", "paused", "partially_synced", "synced", "failed", "cancelled"]),
+  paused: new Set(["paused", "validating", "running", "partially_synced", "synced", "failed", "cancelled"]),
+};
+
+const ALLOWED_ITEM_TRANSITIONS: Record<string, ReadonlySet<string>> = {
+  pending: new Set(["pending", "validating", "waiting_for_login", "running", "saved", "unknown", "failed", "cancelled"]),
+  validating: new Set(["validating", "waiting_for_login", "running", "saved", "unknown", "failed", "cancelled"]),
+  waiting_for_login: new Set(["waiting_for_login", "pending", "running", "saved", "unknown", "failed", "cancelled"]),
+  running: new Set(["running", "waiting_for_login", "saved", "unknown", "failed", "cancelled"]),
+  failed: new Set(["failed", "running", "cancelled"]),
+};
+
 export function assertSyncBatchTransition(current: string, next: string): void {
   if (TERMINAL_BATCH_STATUSES.has(current) && current !== next) {
     throw new TimesheetError(
@@ -74,6 +91,12 @@ export function assertSyncBatchTransition(current: string, next: string): void {
       "SYNC_BATCH_TERMINAL",
       "同步批次已经结束，不能重新打开",
     );
+  }
+  if (
+    !TERMINAL_BATCH_STATUSES.has(current) &&
+    !ALLOWED_BATCH_TRANSITIONS[current]?.has(next)
+  ) {
+    throw new TimesheetError(409, "SYNC_BATCH_TRANSITION_INVALID", "同步批次状态转换无效");
   }
 }
 
@@ -99,6 +122,30 @@ export function assertSyncItemTransition(
   if (current === "cancelled" && next !== "cancelled") {
     throw new TimesheetError(409, "SYNC_ITEM_CANCELLED", "已取消任务不能重新执行");
   }
+  if (
+    current !== "saved" &&
+    current !== "unknown" &&
+    current !== "cancelled" &&
+    !ALLOWED_ITEM_TRANSITIONS[current]?.has(next)
+  ) {
+    throw new TimesheetError(409, "SYNC_ITEM_TRANSITION_INVALID", "同步任务状态转换无效");
+  }
+}
+
+export function expectedSyncTerminalStatus(statuses: string[]): string | null {
+  if (statuses.length === 0) return null;
+  if (statuses.every((status) => status === "saved")) return "synced";
+  if (statuses.every((status) => status === "failed")) return "failed";
+  if (statuses.every((status) => status === "saved" || status === "cancelled")) {
+    return "cancelled";
+  }
+  if (
+    statuses.some((status) => status === "saved") &&
+    statuses.every((status) => ["saved", "failed", "cancelled"].includes(status))
+  ) {
+    return "partially_synced";
+  }
+  return null;
 }
 
 type WorkLogInput = {
@@ -220,13 +267,68 @@ function statusById(id: string | null) {
   return id ? TIMESHEET_STATUSES.find((item) => item.id === id) ?? null : null;
 }
 
-function recordHasDurationEvidence(record: WorkLogRecord): boolean {
-  return (
-    record.hoursHint !== null ||
-    /(?:约|大约|差不多)?\s*\d+(?:\.\d+)?\s*(?:小时|h\b)|\d+\s*(?:分钟|min\b)|\d{1,2}[:：]\d{2}\s*[-—~至到]\s*\d{1,2}[:：]\d{2}/i.test(
-      record.rawText,
-    )
+function escapedNumber(value: number): string {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function boundedNumber(value: number): string {
+  return `(?:^|[^0-9.])${escapedNumber(value)}(?![0-9.])`;
+}
+
+function recordSupportsRegularHours(record: WorkLogRecord, hours: number): boolean {
+  if (record.hoursHint !== null && Number(record.hoursHint) === hours) return true;
+  if (new RegExp(`${boundedNumber(hours)}\\s*(?:小时|h\\b)`, "i").test(record.rawText)) {
+    return true;
+  }
+  const minutes = hours * 60;
+  if (
+    Number.isInteger(minutes) &&
+    new RegExp(`${boundedNumber(minutes)}\\s*(?:分钟|min\\b)`, "i").test(record.rawText)
+  ) {
+    return true;
+  }
+  const ranges = record.rawText.matchAll(
+    /(\d{1,2})[:：](\d{2})\s*[-—~至到]\s*(\d{1,2})[:：](\d{2})/g,
   );
+  for (const match of ranges) {
+    const startHour = Number(match[1]);
+    const startMinute = Number(match[2]);
+    const endHour = Number(match[3]);
+    const endMinute = Number(match[4]);
+    if (
+      startHour > 23 ||
+      endHour > 23 ||
+      startMinute > 59 ||
+      endMinute > 59
+    ) {
+      continue;
+    }
+    if (endHour * 60 + endMinute - (startHour * 60 + startMinute) === minutes) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function recordSupportsOvertime(record: WorkLogRecord, hours: number): boolean {
+  const boundedAmount = boundedNumber(hours);
+  const overtimeMarker = "(?:加班|晚间额外|夜间额外|周末额外|工作时间之外)";
+  return (
+    new RegExp(`${overtimeMarker}.{0,20}${boundedAmount}\\s*(?:小时|h\\b)`, "i").test(record.rawText) ||
+    new RegExp(`${boundedAmount}\\s*(?:小时|h\\b).{0,20}${overtimeMarker}`, "i").test(record.rawText)
+  );
+}
+
+function recordExplicitlyConfirmsNoOvertime(record: WorkLogRecord): boolean {
+  return /(?:无|没有|未发生)加班|加班\s*(?:为|是|:|：)?\s*0(?:\.0+)?\s*(?:小时|h\b)?/i.test(
+    record.rawText,
+  );
+}
+
+function recordSupportsProgress(record: WorkLogRecord, progress: number): boolean {
+  if (new RegExp(`(?:^|[^0-9.])${progress}(?![0-9.])\\s*%`).test(record.rawText)) return true;
+  if (progress === 100 && /已完成|完成了|全部完成/.test(record.rawText)) return true;
+  return progress === 0 && /未开始|尚未开始/.test(record.rawText);
 }
 
 function recordContradictsCompletion(record: WorkLogRecord): boolean {
@@ -320,11 +422,45 @@ export function normalizeGeneratedOutput(
         "AI 项目与原始记录不一致",
       );
     }
-    if (task.hours !== null && !sources.some(recordHasDurationEvidence)) {
+    if (
+      task.hours !== null &&
+      !sources.some((record) => recordSupportsRegularHours(record, task.hours!))
+    ) {
       throw new TimesheetError(
         422,
         "AI_HOURS_WITHOUT_EVIDENCE",
         "AI 返回了没有事实依据的工时",
+      );
+    }
+    const overtimeHours = task.overtime_hours ?? null;
+    if (
+      overtimeHours !== null &&
+      (overtimeHours > 0
+        ? !sources.some((record) => recordSupportsOvertime(record, overtimeHours))
+        : !sources.some(recordExplicitlyConfirmsNoOvertime))
+    ) {
+      throw new TimesheetError(
+        422,
+        "AI_OVERTIME_WITHOUT_EVIDENCE",
+        "AI 返回了没有事实依据的加班工时",
+      );
+    }
+    if (task.hours !== null && overtimeHours !== null && task.hours + overtimeHours > 24) {
+      throw new TimesheetError(422, "AI_TOTAL_HOURS_INVALID", "正常与加班工时合计超过 24 小时");
+    }
+    if (task.urgency !== null && task.urgency !== undefined) {
+      throw new TimesheetError(
+        422,
+        "AI_URGENCY_NOT_CONFIGURED",
+        "尚未配置受信任的紧急重要度候选项",
+      );
+    }
+    const progress = task.progress ?? null;
+    if (progress !== null && !sources.some((record) => recordSupportsProgress(record, progress))) {
+      throw new TimesheetError(
+        422,
+        "AI_PROGRESS_WITHOUT_EVIDENCE",
+        "AI 返回了没有事实依据的任务进度",
       );
     }
     if (
@@ -342,21 +478,36 @@ export function normalizeGeneratedOutput(
       description: task.description,
       project: task.project_id,
       hours: task.hours,
+      overtimeHours,
       category: task.category_id,
       status: task.status,
+      urgency: task.urgency ?? null,
+      progress,
     } as const;
     for (const field of Object.keys(values) as Array<keyof typeof values>) {
-      if (values[field] === null || task.confidence[field] < confidenceThreshold) {
+      const confidence = task.confidence[field] ?? 0;
+      if (values[field] === null || confidence < confidenceThreshold) {
         reviewFields.add(field);
       }
     }
     return {
       ...task,
+      overtime_hours: overtimeHours,
+      urgency: task.urgency ?? null,
+      progress,
       needs_review: true,
       review_fields: [...reviewFields],
     };
   });
-  const referenced = new Set(tasks.flatMap((task) => task.source_record_ids));
+  const references = tasks.flatMap((task) => task.source_record_ids);
+  const referenced = new Set(references);
+  if (referenced.size !== references.length) {
+    throw new TimesheetError(
+      422,
+      "AI_SOURCE_RECORD_DUPLICATED",
+      "AI 重复使用了同一条来源记录",
+    );
+  }
   if ([...unresolved].some((recordId) => referenced.has(recordId))) {
     throw new TimesheetError(
       422,
@@ -391,6 +542,9 @@ export function buildTimesheetPrompts(input: unknown): {
       "你是 ProjectAI 的项目经理工时整理器。只输出一个 JSON 对象，不得输出 Markdown。",
       "所有任务都必须引用本次输入中的 source_record_ids，且只能选择输入提供的项目、分类和状态。",
       "不得推测工时，不得为了凑满八小时补齐；没有依据时 hours 必须为 null。",
+      "overtime_hours 只有在来源明确提到加班、晚间/周末额外工作及其工时时才能建议；未提到不等于 0，必须为 null。",
+      "urgency 只能从输入提供的候选项选择；没有候选或无法判断时必须为 null。",
+      "progress 只能来自明确百分比、明确完成=100 或明确未开始=0；不得仅根据状态猜测。",
       "计划、准备、讨论中、对齐中、待确认不得改写为 completed。",
       "描述使用‘动作 + 对象 + 结果或进展’，不同项目、交付物或状态必须分开。",
       "任务描述建议为 18—50 个汉字；不得使用‘跟进一下’或‘处理问题’等空泛描述。",
@@ -404,7 +558,10 @@ export function buildTimesheetPrompts(input: unknown): {
 export function withTotalHoursWarning(
   output: GeneratedTimesheetOutput,
 ): GeneratedTimesheetOutput {
-  const total = output.tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0);
+  const total = output.tasks.reduce(
+    (sum, task) => sum + (task.hours ?? 0) + (task.overtime_hours ?? 0),
+    0,
+  );
   if (
     total <= 16 ||
     output.warnings.some((warning) => warning.startsWith("TOTAL_HOURS:"))
@@ -450,10 +607,14 @@ function serializeTask(task: TimesheetTaskRecord) {
     projectId: task.projectId,
     projectName: task.projectNameSnapshot,
     hours: finiteDecimal(task.hours),
+    regularHours: finiteDecimal(task.hours),
+    overtimeHours: finiteDecimal(task.overtimeHours),
     categoryId: task.categoryId,
     categoryName: task.categoryNameSnapshot,
     workStatus: task.workStatus,
     workStatusName: task.workStatusNameSnapshot,
+    urgency: task.urgencyNameSnapshot,
+    progress: task.progress,
     confidence: task.confidence,
     needsReview: task.needsReview,
     reviewFields: task.reviewFields,
@@ -550,6 +711,64 @@ async function invalidateEditableDraft(
     );
 }
 
+async function requireNoSyncHistoryForReport(
+  organizationId: string,
+  userId: string,
+  reportDate: string,
+  db: DatabaseExecutor,
+): Promise<void> {
+  const [draft] = await db
+    .select({ id: dailyTimesheetDraft.id })
+    .from(dailyTimesheetDraft)
+    .where(
+      and(
+        eq(dailyTimesheetDraft.organizationId, organizationId),
+        eq(dailyTimesheetDraft.userId, userId),
+        eq(dailyTimesheetDraft.reportDate, reportDate),
+      ),
+    )
+    .limit(1)
+    .for("update", { of: dailyTimesheetDraft });
+  if (!draft) return;
+  const [history] = await db
+    .select({ id: timesheetSyncBatch.id })
+    .from(timesheetSyncBatch)
+    .where(eq(timesheetSyncBatch.draftId, draft.id))
+    .limit(1);
+  if (history) {
+    throw new TimesheetError(
+      409,
+      "TIMESHEET_SYNC_HISTORY_EXISTS",
+      "已有同步历史的日报及其来源随记不能修改",
+    );
+  }
+}
+
+async function requireTaskProjectAccess(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  tasks: Array<{ projectId: string | null }>;
+  requestHeaders: Headers;
+  db: DatabaseExecutor;
+}): Promise<void> {
+  const projectIds = [
+    ...new Set(
+      input.tasks
+        .map((task) => task.projectId)
+        .filter((projectId): projectId is string => Boolean(projectId)),
+    ),
+  ];
+  for (const projectId of projectIds) {
+    await requireProjectInOrganization(
+      input.principal,
+      projectId,
+      input.organizationId,
+      input.requestHeaders,
+      input.db,
+    );
+  }
+}
+
 export async function listWorkLogs(input: {
   principal: AuthenticatedPrincipal;
   organizationId: string;
@@ -575,6 +794,13 @@ export async function listWorkLogs(input: {
       ),
     )
     .orderBy(asc(workLogRecord.recordedAt));
+  await requireTaskProjectAccess({
+    principal: input.principal,
+    organizationId: input.organizationId,
+    tasks: records,
+    requestHeaders: input.requestHeaders,
+    db,
+  });
   const [draft] = await db
     .select({ id: dailyTimesheetDraft.id })
     .from(dailyTimesheetDraft)
@@ -620,6 +846,27 @@ export async function createWorkLog(input: {
   assertRecordedDate(recordedAt, input.values.recordDate);
   const db = getDb();
   const record = await db.transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.values.organizationId,
+      input.requestHeaders,
+      tx,
+    );
+    if (input.values.projectId) {
+      await requireProjectInOrganization(
+        input.principal,
+        input.values.projectId,
+        input.values.organizationId,
+        input.requestHeaders,
+        tx,
+      );
+    }
+    await requireNoSyncHistoryForReport(
+      input.values.organizationId,
+      input.principal.user.id,
+      input.values.recordDate,
+      tx,
+    );
     const [created] = await tx
       .insert(workLogRecord)
       .values({
@@ -682,6 +929,12 @@ export async function updateWorkLog(input: {
     input.requestHeaders,
   );
   return getDb().transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.organizationId,
+      input.requestHeaders,
+      tx,
+    );
     const [current] = await tx
       .select()
       .from(workLogRecord)
@@ -696,15 +949,23 @@ export async function updateWorkLog(input: {
       .limit(1)
       .for("update", { of: workLogRecord });
     if (!current) throw new TimesheetError(404, "NOT_FOUND", "工作随记不存在");
-    if (input.values.projectId) {
+    const effectiveProjectId =
+      input.values.projectId === undefined ? current.projectId : input.values.projectId;
+    if (effectiveProjectId) {
       await requireProjectInOrganization(
         input.principal,
-        input.values.projectId,
+        effectiveProjectId,
         input.organizationId,
         input.requestHeaders,
         tx,
       );
     }
+    await requireNoSyncHistoryForReport(
+      input.organizationId,
+      input.principal.user.id,
+      current.recordDate,
+      tx,
+    );
     const recordedAt = input.values.recordedAt
       ? new Date(input.values.recordedAt)
       : current.recordedAt;
@@ -774,6 +1035,12 @@ export async function deleteWorkLog(input: {
     input.requestHeaders,
   );
   return getDb().transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.organizationId,
+      input.requestHeaders,
+      tx,
+    );
     const [current] = await tx
       .select()
       .from(workLogRecord)
@@ -788,6 +1055,21 @@ export async function deleteWorkLog(input: {
       .limit(1)
       .for("update", { of: workLogRecord });
     if (!current) throw new TimesheetError(404, "NOT_FOUND", "工作随记不存在");
+    if (current.projectId) {
+      await requireProjectInOrganization(
+        input.principal,
+        current.projectId,
+        input.organizationId,
+        input.requestHeaders,
+        tx,
+      );
+    }
+    await requireNoSyncHistoryForReport(
+      input.organizationId,
+      input.principal.user.id,
+      current.recordDate,
+      tx,
+    );
     await tx
       .update(workLogRecord)
       .set({ isArchived: true, updatedAt: new Date() })
@@ -954,6 +1236,21 @@ export async function generateDailyTimesheet(input: {
       "请先添加至少一条今日随记",
     );
   }
+  await db.transaction(async (tx) => {
+    await requireNoSyncHistoryForReport(
+      input.organizationId,
+      input.principal.user.id,
+      input.reportDate,
+      tx,
+    );
+    await requireTaskProjectAccess({
+      principal: input.principal,
+      organizationId: input.organizationId,
+      tasks: records,
+      requestHeaders: input.requestHeaders,
+      db: tx,
+    });
+  });
   const config = requireAiAssistantEnabled();
   const authorized = (
     await listAuthorizedProjects(
@@ -1067,6 +1364,12 @@ export async function generateDailyTimesheet(input: {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`${input.organizationId}:${input.principal.user.id}:${input.reportDate}:timesheet-save`}, 0))`,
       );
+      await requireTimesheetOrganization(
+        input.principal,
+        input.organizationId,
+        input.requestHeaders,
+        tx,
+      );
       const currentRecords = await tx
         .select()
         .from(workLogRecord)
@@ -1086,6 +1389,13 @@ export async function generateDailyTimesheet(input: {
           "随记在 AI 整理期间发生变化，请重新生成",
         );
       }
+      await requireTaskProjectAccess({
+        principal: input.principal,
+        organizationId: input.organizationId,
+        tasks: currentRecords,
+        requestHeaders: input.requestHeaders,
+        db: tx,
+      });
       const [activeBatch] = await tx
         .select({ id: timesheetSyncBatch.id })
         .from(timesheetSyncBatch)
@@ -1135,6 +1445,25 @@ export async function generateDailyTimesheet(input: {
             "已有同步历史的日报不能重新生成",
           );
         }
+      }
+      const verifiedProjects = new Map<string, { id: string; name: string }>();
+      for (const projectId of [
+        ...new Set(
+          output.tasks
+            .map((task) => task.project_id)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ]) {
+        const project = await requireProjectInOrganization(
+          input.principal,
+          projectId,
+          input.organizationId,
+          input.requestHeaders,
+          tx,
+        );
+        verifiedProjects.set(project.id, { id: project.id, name: project.name });
+      }
+      if (existing[0]) {
         await tx.delete(timesheetTask).where(eq(timesheetTask.draftId, draftId));
         await tx
           .update(dailyTimesheetDraft)
@@ -1142,7 +1471,11 @@ export async function generateDailyTimesheet(input: {
             status: "needs_review",
             version: existing[0].version + 1,
             totalHours: String(
-              output.tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0),
+              output.tasks.reduce(
+                (sum, task) =>
+                  sum + (task.hours ?? 0) + (task.overtime_hours ?? 0),
+                0,
+              ),
             ),
             warnings: output.warnings,
             unresolvedRecordIds: output.unresolved_record_ids,
@@ -1162,7 +1495,11 @@ export async function generateDailyTimesheet(input: {
           reportDate: input.reportDate,
           status: "needs_review",
           totalHours: String(
-            output.tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0),
+            output.tasks.reduce(
+              (sum, task) =>
+                sum + (task.hours ?? 0) + (task.overtime_hours ?? 0),
+              0,
+            ),
           ),
           warnings: output.warnings,
           unresolvedRecordIds: output.unresolved_record_ids,
@@ -1175,7 +1512,7 @@ export async function generateDailyTimesheet(input: {
       await tx.insert(timesheetTask).values(
         output.tasks.map((task, index) => {
           const project = task.project_id
-            ? projects.find((item) => item.id === task.project_id)
+            ? verifiedProjects.get(task.project_id)
             : null;
           const category = categoryById(task.category_id);
           const status = statusById(task.status);
@@ -1186,10 +1523,14 @@ export async function generateDailyTimesheet(input: {
             projectId: task.project_id,
             projectNameSnapshot: project?.name ?? "",
             hours: task.hours === null ? null : String(task.hours),
+            overtimeHours:
+              task.overtime_hours == null ? null : String(task.overtime_hours),
             categoryId: task.category_id,
             categoryNameSnapshot: category?.name ?? "",
             workStatus: task.status,
             workStatusNameSnapshot: status?.name ?? "",
+            urgencyNameSnapshot: task.urgency,
+            progress: task.progress,
             confidence: task.confidence,
             needsReview: task.needs_review,
             reviewFields: task.review_fields,
@@ -1269,7 +1610,19 @@ export async function getDailyDraft(input: {
       ),
     )
     .limit(1);
-  return { draft: draft ? await draftPayload(draft, db) : null };
+  if (!draft) return { draft: null };
+  const tasks = await db
+    .select({ projectId: timesheetTask.projectId })
+    .from(timesheetTask)
+    .where(eq(timesheetTask.draftId, draft.id));
+  await requireTaskProjectAccess({
+    principal: input.principal,
+    organizationId: input.organizationId,
+    tasks,
+    requestHeaders: input.requestHeaders,
+    db,
+  });
+  return { draft: await draftPayload(draft, db) };
 }
 
 async function validateEditableTasks(input: {
@@ -1314,10 +1667,30 @@ async function validateEditableTasks(input: {
   return input.tasks.map((task, index) => {
     const category = categoryById(task.categoryId);
     const status = statusById(task.workStatus);
+    const regularHours = task.regularHours ?? task.hours ?? null;
+    const overtimeHours = task.overtimeHours ?? null;
     if (task.categoryId && !category)
       throw new TimesheetError(422, "CATEGORY_INVALID", "工时分类无效");
     if (task.workStatus && !status)
       throw new TimesheetError(422, "STATUS_INVALID", "工作状态无效");
+    if (task.urgency) {
+      throw new TimesheetError(
+        422,
+        "URGENCY_NOT_CONFIGURED",
+        "紧急重要度候选项尚未完成受信任配置",
+      );
+    }
+    if (
+      regularHours !== null &&
+      overtimeHours !== null &&
+      regularHours + overtimeHours > 24
+    ) {
+      throw new TimesheetError(
+        422,
+        "TOTAL_DAILY_HOURS_INVALID",
+        "正常与加班工时合计不能超过 24 小时",
+      );
+    }
     if (!task.needsReview && task.reviewFields.length > 0) {
       throw new TimesheetError(422, "REVIEW_STATE_INVALID", "仍有字段需要审核");
     }
@@ -1342,6 +1715,10 @@ async function validateEditableTasks(input: {
     }
     return {
       ...task,
+      regularHours,
+      overtimeHours,
+      urgency: task.urgency ?? null,
+      progress: task.progress ?? null,
       sortOrder: index,
       projectName: task.projectId ? projects.get(task.projectId)?.name ?? "" : "",
       categoryName: category?.name ?? "",
@@ -1365,6 +1742,12 @@ export async function updateDailyDraft(input: {
     input.requestHeaders,
   );
   return getDb().transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.organizationId,
+      input.requestHeaders,
+      tx,
+    );
     const draft = await requireOwnedDraft(
       input.principal,
       input.draftId,
@@ -1412,11 +1795,15 @@ export async function updateDailyDraft(input: {
         description: task.description,
         projectId: task.projectId,
         projectNameSnapshot: task.projectName,
-        hours: task.hours === null ? null : String(task.hours),
+        hours: task.regularHours === null ? null : String(task.regularHours),
+        overtimeHours:
+          task.overtimeHours === null ? null : String(task.overtimeHours),
         categoryId: task.categoryId,
         categoryNameSnapshot: task.categoryName,
         workStatus: task.workStatus,
         workStatusNameSnapshot: task.statusName,
+        urgencyNameSnapshot: task.urgency,
+        progress: task.progress,
         confidence: task.confidence,
         needsReview: task.needsReview,
         reviewFields: task.reviewFields,
@@ -1424,9 +1811,27 @@ export async function updateDailyDraft(input: {
         sortOrder: task.sortOrder,
       })),
     );
-    const totalHours = normalized.reduce((sum, task) => sum + (task.hours ?? 0), 0);
-    const warnings = [...draft.warnings.filter((warning) => !warning.startsWith("TOTAL_HOURS:"))];
+    const totalHours = normalized.reduce(
+      (sum, task) => sum + (task.regularHours ?? 0) + (task.overtimeHours ?? 0),
+      0,
+    );
+    const warnings = [
+      ...draft.warnings.filter(
+        (warning) =>
+          !warning.startsWith("TOTAL_HOURS:") &&
+          !warning.startsWith("STATUS_PROGRESS:"),
+      ),
+    ];
     if (totalHours > 16) warnings.push(`TOTAL_HOURS:${totalHours}，请确认是否准确`);
+    normalized.forEach((task, index) => {
+      if (task.workStatus === "completed" && task.progress !== null && task.progress < 100) {
+        warnings.push(`STATUS_PROGRESS:任务 ${index + 1} 状态为已完成，但进度低于 100%`);
+      } else if (task.workStatus === "pending" && task.progress !== null && task.progress > 0) {
+        warnings.push(`STATUS_PROGRESS:任务 ${index + 1} 状态为待确认，但进度大于 0%`);
+      } else if (!task.workStatus && task.progress === 100) {
+        warnings.push(`STATUS_PROGRESS:任务 ${index + 1} 进度为 100%，但状态为空`);
+      }
+    });
     const [updated] = await tx
       .update(dailyTimesheetDraft)
       .set({
@@ -1474,6 +1879,12 @@ export async function confirmDailyDraft(input: {
     input.requestHeaders,
   );
   return getDb().transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.organizationId,
+      input.requestHeaders,
+      tx,
+    );
     const draft = await requireOwnedDraft(
       input.principal,
       input.draftId,
@@ -1481,9 +1892,6 @@ export async function confirmDailyDraft(input: {
       tx,
       true,
     );
-    if (draft.status === "confirmed" && draft.version === input.expectedVersion) {
-      return draftPayload(draft, tx);
-    }
     if (draft.version !== input.expectedVersion) {
       throw new TimesheetError(
         409,
@@ -1496,6 +1904,16 @@ export async function confirmDailyDraft(input: {
       .from(timesheetTask)
       .where(eq(timesheetTask.draftId, draft.id))
       .orderBy(asc(timesheetTask.sortOrder));
+    await requireTaskProjectAccess({
+      principal: input.principal,
+      organizationId: input.organizationId,
+      tasks,
+      requestHeaders: input.requestHeaders,
+      db: tx,
+    });
+    if (draft.status === "confirmed") {
+      return draftPayload(draft, tx);
+    }
     if (tasks.length === 0) {
       throw new TimesheetError(422, "TIMESHEET_TASKS_REQUIRED", "日报没有可确认任务");
     }
@@ -1503,6 +1921,7 @@ export async function confirmDailyDraft(input: {
       if (
         !task.projectId ||
         task.hours === null ||
+        task.overtimeHours === null ||
         !task.categoryId ||
         !task.workStatus ||
         task.needsReview ||
@@ -1532,7 +1951,12 @@ export async function confirmDailyDraft(input: {
       .where(eq(timesheetTask.draftId, draft.id));
     const [confirmed] = await tx
       .update(dailyTimesheetDraft)
-      .set({ status: "confirmed", confirmedAt, updatedAt: confirmedAt })
+      .set({
+        status: "confirmed",
+        version: draft.version + 1,
+        confirmedAt,
+        updatedAt: confirmedAt,
+      })
       .where(eq(dailyTimesheetDraft.id, draft.id))
       .returning();
     await writeAuditEvent(
@@ -1545,7 +1969,7 @@ export async function confirmDailyDraft(input: {
         metadata: {
           organizationId: input.organizationId,
           reportDate: draft.reportDate,
-          version: draft.version,
+          version: confirmed.version,
           taskCount: tasks.length,
         },
         ...getRequestAuditContext(input.requestHeaders),
@@ -1578,6 +2002,17 @@ export async function exportDailyDraft(input: {
   if (draft.status !== "confirmed" && draft.status !== "synced" && draft.status !== "partially_synced") {
     throw new TimesheetError(422, "TIMESHEET_NOT_CONFIRMED", "未确认日报不能导出");
   }
+  const tasks = await db
+    .select({ projectId: timesheetTask.projectId })
+    .from(timesheetTask)
+    .where(eq(timesheetTask.draftId, draft.id));
+  await requireTaskProjectAccess({
+    principal: input.principal,
+    organizationId: input.organizationId,
+    tasks,
+    requestHeaders: input.requestHeaders,
+    db,
+  });
   return draftPayload(draft, db);
 }
 
@@ -1603,6 +2038,7 @@ function syncPayload(
         !task.projectId ||
         !task.projectNameSnapshot ||
         task.hours === null ||
+        task.overtimeHours === null ||
         !task.categoryId ||
         !task.categoryNameSnapshot ||
         !task.workStatus ||
@@ -1614,9 +2050,15 @@ function syncPayload(
         id: task.id,
         description: task.description,
         project: { id: task.projectId, name: task.projectNameSnapshot },
-        hours: Number(task.hours),
+        submitter: { id: null, name: null, source: "authenticated-user" as const },
+        regularHours: Number(task.hours),
+        overtimeHours: Number(task.overtimeHours),
         category: { id: task.categoryId, name: task.categoryNameSnapshot },
-        status: { id: task.workStatus, name: task.workStatusNameSnapshot },
+        status: { id: null, name: task.workStatusNameSnapshot },
+        urgency: task.urgencyNameSnapshot
+          ? { id: null, name: task.urgencyNameSnapshot }
+          : null,
+        progress: task.progress,
       };
     }),
   };
@@ -1668,6 +2110,12 @@ export async function createSyncBatch(input: {
     input.requestHeaders,
   );
   return getDb().transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.organizationId,
+      input.requestHeaders,
+      tx,
+    );
     const draft = await requireOwnedDraft(
       input.principal,
       input.draftId,
@@ -1687,6 +2135,13 @@ export async function createSyncBatch(input: {
       .from(timesheetTask)
       .where(eq(timesheetTask.draftId, draft.id))
       .orderBy(asc(timesheetTask.sortOrder));
+    await requireTaskProjectAccess({
+      principal: input.principal,
+      organizationId: input.organizationId,
+      tasks,
+      requestHeaders: input.requestHeaders,
+      db: tx,
+    });
     const [sameRequest] = await tx
       .select()
       .from(timesheetSyncBatch)
@@ -1740,13 +2195,6 @@ export async function createSyncBatch(input: {
       if (!task.projectId) {
         throw new TimesheetError(422, "TIMESHEET_REVIEW_REQUIRED", "日报项目不能为空");
       }
-      await requireProjectInOrganization(
-        input.principal,
-        task.projectId,
-        input.organizationId,
-        input.requestHeaders,
-        tx,
-      );
     }
     if (!input.dryRun) {
       const [completed] = await tx
@@ -1823,7 +2271,7 @@ export async function listSyncBatches(input: {
   organizationId: string;
   requestHeaders: Headers;
 }) {
-  requireDailyReportEnabled();
+  requireWecomSyncEnabled();
   await requireTimesheetOrganization(
     input.principal,
     input.organizationId,
@@ -1841,6 +2289,24 @@ export async function listSyncBatches(input: {
     )
     .orderBy(desc(timesheetSyncBatch.createdAt))
     .limit(30);
+  if (batches.length > 0) {
+    const tasks = await db
+      .select({ projectId: timesheetTask.projectId })
+      .from(timesheetTask)
+      .where(
+        inArray(
+          timesheetTask.draftId,
+          [...new Set(batches.map((batch) => batch.draftId))],
+        ),
+      );
+    await requireTaskProjectAccess({
+      principal: input.principal,
+      organizationId: input.organizationId,
+      tasks,
+      requestHeaders: input.requestHeaders,
+      db,
+    });
+  }
   return { batches: await Promise.all(batches.map((batch) => batchPayload(batch, db))) };
 }
 
@@ -1866,6 +2332,12 @@ export async function updateSyncBatch(input: {
     input.requestHeaders,
   );
   return getDb().transaction(async (tx) => {
+    await requireTimesheetOrganization(
+      input.principal,
+      input.organizationId,
+      input.requestHeaders,
+      tx,
+    );
     const [batch] = await tx
       .select()
       .from(timesheetSyncBatch)
@@ -1879,6 +2351,18 @@ export async function updateSyncBatch(input: {
       .limit(1)
       .for("update", { of: timesheetSyncBatch });
     if (!batch) throw new TimesheetError(404, "NOT_FOUND", "同步批次不存在");
+    const batchTasks = await tx
+      .select({ projectId: timesheetTask.projectId })
+      .from(timesheetTask)
+      .innerJoin(timesheetSyncItem, eq(timesheetSyncItem.taskId, timesheetTask.id))
+      .where(eq(timesheetSyncItem.batchId, batch.id));
+    await requireTaskProjectAccess({
+      principal: input.principal,
+      organizationId: input.organizationId,
+      tasks: batchTasks,
+      requestHeaders: input.requestHeaders,
+      db: tx,
+    });
     const existingItems = await tx
       .select()
       .from(timesheetSyncItem)
@@ -1929,17 +2413,7 @@ export async function updateSyncBatch(input: {
     }
     const resultingItems = [...existingByTask.values()];
     const itemStatuses = resultingItems.map((item) => item.status);
-    const savedCount = itemStatuses.filter((status) => status === "saved").length;
-    const terminalExpected =
-      savedCount === resultingItems.length
-        ? "synced"
-        : savedCount > 0 && itemStatuses.every((status) => ["saved", "failed", "cancelled"].includes(status))
-          ? "partially_synced"
-          : itemStatuses.every((status) => status === "failed")
-            ? "failed"
-            : itemStatuses.every((status) => ["saved", "cancelled"].includes(status))
-              ? "cancelled"
-              : null;
+    const terminalExpected = expectedSyncTerminalStatus(itemStatuses);
     const terminal = ["synced", "partially_synced", "failed", "cancelled"].includes(
       input.status,
     );

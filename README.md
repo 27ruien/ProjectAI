@@ -166,7 +166,7 @@ npm run embeddings:probe
 
 ## 项目经理日报与企业微信连接器
 
-该 MVP 默认关闭。完成 Migration `0016_tricky_revanche.sql` 后，在 Local 或 Staging 显式设置：
+该 MVP 默认关闭。依次完成 Migration `0016_tricky_revanche.sql` 与 `0017_nosy_boomer.sql` 后，在 Local 或经授权的 Staging 显式设置：
 
 ```env
 PM_DAILY_REPORT_ENABLED=true
@@ -187,9 +187,9 @@ npm run extension:build
 npm run extension:package
 ```
 
-在 Chrome 的 `chrome://extensions` 开启开发者模式，选择“加载已解压的扩展程序”，目录为 `dist/wecom-timesheet-extension`。真实企业微信看板 Origin 未提供前，默认构建不会申请企业微信 Host Permission，也不能执行真实页面同步。获得并人工核验 URL 后，使用 `WECOM_TASK_BOARD_URL=https://exact.example/path npm run extension:build` 生成绑定精确 Origin 的构建，再按 [Selector 配置指南](./docs/wecom-selector-configuration.md) 由用户手动登录并先执行 Dry Run。不要提交本地 Selector Config。
+在 Chrome 的 `chrome://extensions` 开启开发者模式，选择“加载已解压的扩展程序”，目录为 `dist/wecom-timesheet-extension`。默认 Review 构建不申请真实企业微信 Host Permission。真实构建必须同时提供精确 `PROJECTAI_ALLOWED_ORIGIN`、`WECOM_ALLOWED_ORIGIN`、无用户名/密码的 `WECOM_TASK_BOARD_URL` 和本地 `WECOM_SELECTOR_CONFIG_PATH`；构建只用完整 URL 校验 Origin 后立即丢弃，产物只显示允许 Origin，不嵌入文档路径或访问参数。若授权页面必须使用访问参数，完整 URL 只能进入被忽略的本地环境和扩展本机存储。不要提交本地 Selector Config。
 
-Dry Run 会打开表单、填写并二次验证项目/分类/状态，但不会点击单条保存；正常模式只允许点击单条任务保存。Adapter 中不存在“最终提交”选择器，因此两种模式都不会点击日报或看板的最终提交。用户需要在企业微信页面完成最终人工检查和提交。
+Dry Run 会打开显式保存表单，分别填写并回读任务描述、项目、正常/加班工时、状态及有证据的进度，验证页面自动提交人，但不会写 ProjectAI 分类、点击单条保存或最终提交。正常模式只允许点击表单内的单条保存，并要求“保存反馈 + 任务列表行回读”双证据。自动保存页面在字段 mutation 前停止。
 
 扩展本地状态与脱敏故障日志可在 Popup 中导出，并通过“清除本地记录”二次确认后删除。升级扩展时重新构建、在扩展管理页点击“重新加载”，随后重新执行 Dry Run。完整范围、协议、安装、已知限制与测试命令见：
 

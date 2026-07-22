@@ -16,16 +16,27 @@
 | PMDR-QA-010 | P1 | 暂停/取消与正在执行的 Adapter 并发时可能继续下一条；重复 START 可恢复暂停批次 | 控制请求在当前单条落定后生效；暂停/失败/部分批次只允许显式 resume；unknown 永不自动恢复 |
 | PMDR-QA-011 | P1 | 日历日期可被 JS 规范化，人工任务可改成与来源项目冲突 | 日期进行 ISO round-trip；服务端重新核对来源记录项目；Migration 增加 AI execution owner/draft trigger |
 | PMDR-QA-012 | P1 | AI 可静默遗漏来源或合并同项目不同交付物，Repair usage 只记录第二次 | 所有来源必须 used/unresolved 二选一；AI 自动合并多来源一律拒绝，交给人工；两次 Gateway usage/latency 聚合 |
+| PMDR-QA-013 | P0 | 日报/随记/同步部分入口没有在最终事务中复验项目 ACL，exact replay 可能沿用已失效权限 | 所有读写、AI 落库、确认、导出、创建/replay/更新/列出同步批次均按当前项目 ACL 复验；新增失权回归 |
+| PMDR-QA-014 | P1 | 已有同步历史后来源随记仍可漂移；确认与导出存在旧版本/本地脏数据边界 | 同步历史后随记、草稿和重新生成全部锁定；确认递增版本；复制/下载重新走服务端权威导出 |
+| PMDR-QA-015 | P1 | 扩展字段仍使用单一 hours 并错误把 ProjectAI category 映射到真实页面 | 增加正常/加班工时、当前登录提交人、可空紧急度/进度；旧 hours 只转正常工时；Adapter 完全不写 category |
+| PMDR-QA-016 | P1 | 单靠保存反馈不能证明真实列表已经持久化，auto-save 页面 Dry Run 可能先产生副作用 | 显式保存要求反馈与列表行二次回读；不一致拒绝成功；auto-save 在字段写入前硬停止 |
+| PMDR-QA-017 | P1 | WeCom Flag 关闭时 UI 仍探测扩展和读取同步 API | UI 不注册消息/不发 ping/不加载同步历史；同步 UI 操作全部禁用；服务端同步读写统一硬拒绝 |
+| PMDR-QA-018 | P2 | Actions v4 使用弃用的 Node 20 runtime | checkout/setup-node/upload-artifact 升级到官方 v7（Node 24），保留全部现有门禁并增加防回退测试 |
+| PMDR-QA-019 | P1 | 安全构建错误拒绝真实 Smart Sheet 必需的访问参数，且只按 pathname 复用标签页可能误入其他 View | 完整 URL 仅保存在本地环境/扩展存储，构建只绑定 Origin 且不嵌入路径；运行时精确比较 origin/path/query/fragment；Mock E2E 覆盖本地参数保存 |
+| PMDR-QA-020 | P1 | AI 正常/加班工时和进度证据缺数字边界，正常工时只验证“存在某个时长”，同一来源还可能被重复生成 | 正常工时精确绑定 hint、小时、分钟或起止时间；加班/进度使用完整数字边界；同一来源只能用于一个 AI task；新增错误数值和重复来源回归 |
+| PMDR-QA-021 | P1 | 登录失效项显式继续后未重新入队；手工 Popup 在真实构建可切到实写，伪造消息来源还可能绕过 ProjectAI 确认链 | resume 仅在用户显式操作时把待登录项恢复 pending；Review/真实构建强制手工 JSON 为 Dry Run；Service Worker 复验 ProjectAI tab/Popup sender 与来源路径，只有隔离 Mock 允许手工实写 |
+| PMDR-QA-022 | P1 | saved+cancelled 的批次被错误派生为 partially_synced，且非终态允许迟到消息倒退 | 批次/逐项状态改为单调 allowlist；saved+cancelled 正确派生 cancelled；保留终态、unknown、saved、cancelled 不可逆 |
 
 ## 环境阻塞
 
 | ID | 类型 | 状态 | 需要 |
 | --- | --- | --- | --- |
 | PMDR-ENV-001 | 本地数据库 | 阻塞本地验证，不阻塞代码继续 | 运行中的 Docker 或隔离本地 PostgreSQL 17/pgvector |
-| PMDR-ENV-002 | 真实 WeCom URL/DOM | 阻塞真实连接器验收与可发布包 | 用户提供精确 URL、手动登录并演示一条任务流程 |
+| PMDR-ENV-002 | 真实 WeCom DOM | URL/字段可见性已只读核对；稳定 DOM/iframe/Selector 仍阻塞 | 恢复 Chrome DOM 控制扩展后，由用户手动演示一条任务流程；禁止坐标或模糊点击 |
 | PMDR-ENV-003 | Chrome Web Store | 非代码阻塞 | 法务审核隐私政策、发布者信息和商店账号 |
-| PMDR-ENV-004 | 依赖告警 | 合并前需处置 | `sharp` 2 high、旧 loader `esbuild` 4 moderate；上游兼容升级或书面风险接受，禁止 force downgrade |
+| PMDR-ENV-004 | 依赖告警 | 合并前需 Reviewer 批准 | `sharp` 2 high、旧 loader `esbuild` 4 moderate；详见 `docs/dependency-security.md`，禁止 force downgrade |
+| PMDR-ENV-005 | Chrome DOM 通道 | 阻塞真实 Dry Run/保存 | Chrome 控制扩展/native host 恢复后继续；当前创建/删除均为 0 |
 
 ## 未发现的范围
 
-当前没有已知 P0 代码缺陷。数据库 CI、当前 Head 的完整 ProjectAI E2E、依赖告警处置和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明真实 WeCom DOM 兼容；在真实 Selector 审核、Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。
+当前没有已知 P0/P1 代码缺陷。数据库 CI、当前 Head 的完整 ProjectAI E2E、依赖告警处置和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明真实 WeCom DOM 兼容；在真实 Selector 审核、Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。

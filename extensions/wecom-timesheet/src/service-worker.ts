@@ -15,9 +15,11 @@ import {
   type PersistedBatch,
 } from "./shared/state-machine";
 import { appendLog, loadBatches, loadConfig, saveBatch } from "./shared/storage";
+import { createSerialExecutor } from "./shared/serial";
 
 const processing = new Set<string>();
 const requestedControls = new Map<string, "pause" | "cancel">();
+const runRequestMutation = createSerialExecutor();
 const LOCALLY_ACTIVE = new Set([
   "validating",
   "waiting_for_board",
@@ -94,7 +96,7 @@ async function openConfiguredBoard(): Promise<{ ok: boolean; code?: string }> {
     return { ok: false, code: "BOARD_CONFIGURATION_REQUIRED" };
   }
   const tabs = await chrome.tabs.query({ url: [`${url.origin}/*`] });
-  const existing = tabs.find((tab) => typeof tab.id === "number");
+  const existing = tabs.find((tab) => typeof tab.id === "number" && sameBoardPage(tab, url));
   if (typeof existing?.id === "number") {
     await chrome.tabs.update(existing.id, { active: true });
   } else {
@@ -106,11 +108,51 @@ async function openConfiguredBoard(): Promise<{ ok: boolean; code?: string }> {
 function validBoardUrl(raw: string): URL | null {
   try {
     const url = new URL(raw);
-    if (url.username || url.password || url.hash) return null;
+    if (url.username || url.password) return null;
     if (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname))) return null;
     return url;
   } catch {
     return null;
+  }
+}
+
+function sameBoardPage(tab: ChromeTab, expected: URL): boolean {
+  if (!tab.url) return false;
+  try {
+    const actual = new URL(tab.url);
+    return (
+      actual.origin === expected.origin &&
+      actual.pathname === expected.pathname &&
+      actual.search === expected.search &&
+      actual.hash === expected.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+function projectAiSender(sender: ChromeMessageSender): boolean {
+  const raw = sender.url ?? sender.tab?.url;
+  if (typeof sender.tab?.id !== "number" || !raw) return false;
+  try {
+    const url = new URL(raw);
+    if (!__PROJECTAI_ALLOWED_ORIGINS__.includes(url.origin)) return false;
+    return __MANUAL_ACTUAL_SYNC_ALLOWED__
+      ? url.pathname === "/projectai.html"
+      : url.pathname.startsWith("/tool/projectai/") ||
+          url.pathname.startsWith("/tool/projectai-staging/");
+  } catch {
+    return false;
+  }
+}
+
+function popupSender(sender: ChromeMessageSender): boolean {
+  if (!sender.url) return false;
+  try {
+    const url = new URL(sender.url);
+    return url.protocol === "chrome-extension:" && url.pathname === "/popup.html";
+  } catch {
+    return false;
   }
 }
 
@@ -154,7 +196,9 @@ async function boardTab(batch: PersistedBatch): Promise<{ batch: PersistedBatch;
     return { batch: updated, tabId: null };
   }
   const tabs = await chrome.tabs.query({ url: [`${url.origin}/*`] });
-  let tab = tabs.find((candidate) => typeof candidate.id === "number");
+  let tab = tabs.find(
+    (candidate) => typeof candidate.id === "number" && sameBoardPage(candidate, url),
+  );
   if (!tab) tab = await chrome.tabs.create({ url: url.toString(), active: true });
   if (typeof tab.id !== "number") throw new Error("BOARD_TAB_UNAVAILABLE");
   await waitForTab(tab.id);
@@ -271,10 +315,16 @@ async function processBatch(initial: PersistedBatch): Promise<void> {
   }
 }
 
-async function startSync(payloadValue: unknown): Promise<{ ok: boolean; code?: string }> {
+async function startSync(
+  payloadValue: unknown,
+  allowActualSync: boolean,
+): Promise<{ ok: boolean; code?: string }> {
   const validated = validateSyncPayload(payloadValue);
   if (!validated.ok) return { ok: false, code: validated.code };
   const payload: SyncPayload = validated.value;
+  if (!allowActualSync && !payload.dry_run) {
+    return { ok: false, code: "MANUAL_ACTUAL_SYNC_FORBIDDEN" };
+  }
   const batches = await loadBatches();
   const existing = batches[payload.sync_batch_id];
   if (existing) {
@@ -347,31 +397,54 @@ async function recover(): Promise<void> {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== "object") return;
   const value = message as Record<string, unknown>;
   if (value.kind === "START_SYNC") {
-    void startSync(value.payload).then(sendResponse);
+    const fromProjectAi = value.source === "project-ai-content" && projectAiSender(sender);
+    const fromPopup = value.source === "popup" && popupSender(sender);
+    if (!fromProjectAi && !fromPopup) {
+      sendResponse({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
+      return;
+    }
+    void runRequestMutation(() =>
+      startSync(value.payload, fromProjectAi || __MANUAL_ACTUAL_SYNC_ALLOWED__),
+    ).then(sendResponse);
     return true;
   }
   if (value.kind === "OPEN_BOARD") {
+    if (value.source !== "project-ai-content" || !projectAiSender(sender)) {
+      sendResponse({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
+      return;
+    }
     void openConfiguredBoard().then(sendResponse);
     return true;
   }
   if (value.kind === "CONTROL_SYNC") {
-    void controlSync(value).then(sendResponse);
+    const allowed =
+      (value.source === "project-ai-content" && projectAiSender(sender)) ||
+      (value.source === "popup" && popupSender(sender));
+    if (!allowed) {
+      sendResponse({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
+      return;
+    }
+    void runRequestMutation(() => controlSync(value)).then(sendResponse);
     return true;
   }
   if (value.kind === "RESOLVE_UNKNOWN") {
-    void resolveUnknown(value).then(sendResponse);
+    if (value.source !== "popup" || !popupSender(sender)) {
+      sendResponse({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
+      return;
+    }
+    void runRequestMutation(() => resolveUnknown(value)).then(sendResponse);
     return true;
   }
   if (value.kind === "GET_STATE") {
-    void loadBatches().then((batches) => sendResponse({ batches }));
+    void runRequestMutation(loadBatches).then((batches) => sendResponse({ batches }));
     return true;
   }
 });
 
-chrome.runtime.onStartup.addListener(() => void recover());
-chrome.runtime.onInstalled.addListener(() => void recover());
-void recover();
+chrome.runtime.onStartup.addListener(() => void runRequestMutation(recover));
+chrome.runtime.onInstalled.addListener(() => void runRequestMutation(recover));
+void runRequestMutation(recover);

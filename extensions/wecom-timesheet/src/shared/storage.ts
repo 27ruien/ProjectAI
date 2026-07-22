@@ -1,12 +1,14 @@
 import type { SafeLogEntry } from "./logging";
 import type { SelectorConfig } from "./selector-config";
 import type { PersistedBatch } from "./state-machine";
+import { createSerialExecutor } from "./serial";
 
 const STATE_KEY = "projectai.timesheet.batches.v1";
 const CONFIG_KEY = "projectai.timesheet.config.v1";
 const LOG_KEY = "projectai.timesheet.logs.v1";
 
 type StoredConfig = { boardUrl: string; selectors: SelectorConfig | null };
+const mutateBatchStorage = createSerialExecutor();
 
 export async function loadBatches(): Promise<Record<string, PersistedBatch>> {
   const value = await chrome.storage.local.get(STATE_KEY);
@@ -17,9 +19,11 @@ export async function loadBatches(): Promise<Record<string, PersistedBatch>> {
 }
 
 export async function saveBatch(batch: PersistedBatch): Promise<void> {
-  const batches = await loadBatches();
-  batches[batch.syncBatchId] = batch;
-  await chrome.storage.local.set({ [STATE_KEY]: batches });
+  await mutateBatchStorage(async () => {
+    const batches = await loadBatches();
+    batches[batch.syncBatchId] = batch;
+    await chrome.storage.local.set({ [STATE_KEY]: batches });
+  });
 }
 
 export async function loadConfig(): Promise<StoredConfig> {

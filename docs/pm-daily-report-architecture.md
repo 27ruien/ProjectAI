@@ -11,7 +11,7 @@ flowchart LR
   U["项目经理"] --> W["ProjectAI /daily-report"]
   W --> API["鉴权 API"]
   API --> ACL["组织成员 + 项目 ACL"]
-  API --> DB[("PostgreSQL / Migration 0016")]
+  API --> DB[("PostgreSQL / Migration 0016 + 0017")]
   API --> GW["现有 AI Gateway"]
   GW --> Q["既有 Qwen Provider 或 CI Fake Provider"]
   W <-->|"protocol v1 / same-origin postMessage"| C["ProjectAI content script"]
@@ -55,7 +55,7 @@ flowchart LR
 
 ## 已知限制
 
-- 尚未获得真实 `WECOM_TASK_BOARD_URL`、真实 DOM、iframe 与控件演示，因此没有提交正式 Selector Config，也未做真实企业微信验收。
+- 真实目标页面已只读确认八个字段可见，但 Chrome DOM 控制通道缺失，尚不能确认稳定 DOM/iframe/控件语义；因此没有提交正式 Selector Config，也未做真实 Dry Run 或写入验收。
 - 会议输入当前为空数组；不伪造会议。
 - 扩展发布包是评审构建，未绑定真实企业微信 Origin，不可用于真实页面同步。
 - MVP 不自动填写或点击最外层最终提交，不做主管汇总、跨用户日报查看、语音识别或后台定时生成。

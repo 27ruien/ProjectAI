@@ -7,6 +7,8 @@ const input = document.querySelector<HTMLTextAreaElement>("#payload")!;
 const preview = document.querySelector<HTMLElement>("#preview")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const dryRun = document.querySelector<HTMLInputElement>("#dry-run")!;
+dryRun.disabled = !__MANUAL_ACTUAL_SYNC_ALLOWED__;
+if (!__MANUAL_ACTUAL_SYNC_ALLOWED__) dryRun.checked = true;
 
 function text(id: string, value: string): void {
   const element = document.querySelector<HTMLElement>(id);
@@ -41,10 +43,13 @@ document.querySelector("#validate")?.addEventListener("click", () => {
       preview.dataset.state = "error";
       return;
     }
-    const total = parsed.value.tasks.reduce((sum, task) => sum + task.hours, 0);
+    const total = parsed.value.tasks.reduce(
+      (sum, task) => sum + task.regularHours + (task.overtimeHours ?? 0),
+      0,
+    );
     preview.textContent = `${parsed.value.date} · ${parsed.value.tasks.length} 条任务 · ${total.toFixed(2)} 小时`;
     preview.dataset.state = "success";
-    dryRun.checked = parsed.value.dry_run;
+    dryRun.checked = __MANUAL_ACTUAL_SYNC_ALLOWED__ ? parsed.value.dry_run : true;
   } catch {
     preview.textContent = "JSON 格式无效";
     preview.dataset.state = "error";
@@ -55,7 +60,7 @@ document.querySelector("#start")?.addEventListener("click", () => {
   void (async () => {
     try {
       const raw = JSON.parse(input.value) as Record<string, unknown>;
-      raw.dry_run = dryRun.checked;
+      raw.dry_run = __MANUAL_ACTUAL_SYNC_ALLOWED__ ? dryRun.checked : true;
       const parsed = validateSyncPayload(raw);
       if (!parsed.ok) throw new Error(parsed.code);
       const result = await chrome.runtime.sendMessage<{ ok?: boolean; code?: string }>({

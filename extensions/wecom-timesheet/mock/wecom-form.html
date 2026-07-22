@@ -5,9 +5,13 @@
     <form data-testid="mock-task-form" onsubmit="return false">
       <label>任务详情<textarea name="description"></textarea></label>
       <label>项目<select name="project"><option value="">请选择</option><option value="project-001">CHAGEE Valley Fair Campaign</option><option value="project-002">Fictional Delivery Project</option></select></label>
-      <label>工时<input name="hours" type="number" step="0.25" /></label>
-      <label>分类<select name="category"><option value="">请选择</option><option value="communication">项目沟通</option><option value="execution">项目执行</option><option value="review">评审验收</option></select></label>
+      <label>提交人<input name="submitter" value="当前登录用户" readonly /></label>
+      <label>PM-当日工时<input name="regular-hours" type="number" step="0.25" /></label>
+      <label>PM-当日加班工时<input name="overtime-hours" type="number" step="0.25" /></label>
+      <label>ProjectAI 内部分类<input data-testid="mock-unmapped-category" value="企业微信未映射" readonly /></label>
       <label>状态<select name="status"><option value="">请选择</option><option value="completed">已完成</option><option value="in_progress">进行中</option><option value="blocked">阻塞</option></select></label>
+      <label>紧急重要度<select name="urgency"><option value="">不设置</option><option value="urgent">紧急</option><option value="important">重要</option></select></label>
+      <label>任务进度<input name="progress" type="number" min="0" max="100" step="1" /></label>
       <button data-testid="mock-save-item" type="button">保存单条任务</button>
     </form>
     <section id="results"></section>
@@ -28,6 +32,28 @@
         } else {
           result.dataset.testid = "mock-save-success";
           result.textContent = `saved-${document.querySelectorAll("[data-testid='mock-save-success']").length + 1}`;
+          const form = document.querySelector("form");
+          const row = parent.document.createElement("article");
+          row.dataset.testid = "mock-record-row";
+          row.dataset.recordId = `record-${parent.document.querySelectorAll("[data-testid='mock-record-row']").length + 1}`;
+          const values = {
+            description: form.querySelector("[name='description']").value,
+            project: form.querySelector("[name='project']").selectedOptions[0]?.textContent?.trim() ?? "",
+            submitter: form.querySelector("[name='submitter']").value,
+            "regular-hours": form.querySelector("[name='regular-hours']").value,
+            "overtime-hours": form.querySelector("[name='overtime-hours']").value,
+            status: form.querySelector("[name='status']").selectedOptions[0]?.textContent?.trim() ?? "",
+            urgency: form.querySelector("[name='urgency']").selectedOptions[0]?.textContent?.trim() ?? "",
+            progress: form.querySelector("[name='progress']").value,
+          };
+          if (query.get("mismatch") === "1") values.project = "错误项目";
+          for (const [field, value] of Object.entries(values)) {
+            const cell = parent.document.createElement("span");
+            cell.dataset.field = field;
+            cell.textContent = value;
+            row.append(cell);
+          }
+          parent.document.querySelector("[data-testid='mock-records']").append(row);
         }
         document.querySelector("#results").append(result);
       });

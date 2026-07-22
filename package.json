@@ -102,7 +102,7 @@
     "test:embedding-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_EMBEDDING_PROVIDER=fake AI_EMBEDDING_ENABLED=true AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1 AI_EMBEDDING_DIMENSIONS=1024 node --import tsx --test --test-concurrency=1 tests/integration/embeddings.test.ts",
     "test:cleanup": "tsx scripts/cleanup-ci-test-data.ts",
     "extension:build": "node scripts/build-wecom-timesheet-extension.mjs",
-    "extension:build:mock": "WECOM_EXTENSION_BUILD_MODE=mock WECOM_TASK_BOARD_URL=http://127.0.0.1:4173/wecom-board.html node scripts/build-wecom-timesheet-extension.mjs",
+    "extension:build:mock": "WECOM_EXTENSION_BUILD_MODE=mock PROJECTAI_ALLOWED_ORIGIN=http://127.0.0.1:4173 WECOM_ALLOWED_ORIGIN=http://127.0.0.1:4173 WECOM_TASK_BOARD_URL=http://127.0.0.1:4173/wecom-board.html WECOM_SELECTOR_CONFIG_PATH=extensions/wecom-timesheet/static/selector-config.example.json node scripts/build-wecom-timesheet-extension.mjs",
     "extension:package": "node scripts/build-wecom-timesheet-extension.mjs --package",
     "test:extension-package": "node --test tests/extension-package.test.mjs",
     "test:extension-e2e": "npm run extension:build:mock && playwright test --config=playwright.extension.config.ts",

@@ -61,24 +61,43 @@ const confidenceSchema = z
     description: z.number().min(0).max(1),
     project: z.number().min(0).max(1),
     hours: z.number().min(0).max(1),
+    overtimeHours: z.number().min(0).max(1).optional(),
     category: z.number().min(0).max(1),
     status: z.number().min(0).max(1),
+    urgency: z.number().min(0).max(1).optional(),
+    progress: z.number().min(0).max(1).optional(),
   })
   .strict();
+
+const reviewFieldSchema = z.enum([
+  "description",
+  "project",
+  "hours",
+  "overtimeHours",
+  "category",
+  "status",
+  "urgency",
+  "progress",
+]);
+
+const nonNegativeHoursSchema = z.number().min(0).max(24).multipleOf(0.25);
 
 export const generatedTimesheetTaskSchema = z
   .object({
     description: z.string().trim().min(2).max(500),
     project_id: z.string().min(1).max(200).nullable(),
-    hours: z.number().positive().max(24).nullable(),
+    hours: nonNegativeHoursSchema.nullable(),
+    overtime_hours: nonNegativeHoursSchema.nullable().optional(),
     category_id: z.string().min(1).max(80).nullable(),
     status: z.string().min(1).max(80).nullable(),
+    urgency: z.string().trim().min(1).max(120).nullable().optional(),
+    progress: z.number().int().min(0).max(100).nullable().optional(),
     source_record_ids: z.array(z.string().min(1).max(200)).min(1).max(100),
     confidence: confidenceSchema,
     needs_review: z.boolean(),
     review_fields: z
-      .array(z.enum(["description", "project", "hours", "category", "status"]))
-      .max(5),
+      .array(reviewFieldSchema)
+      .max(8),
   })
   .strict();
 
@@ -95,17 +114,43 @@ export const editableTimesheetTaskSchema = z
     id: z.string().min(1).max(200).optional(),
     description: z.string().trim().min(2).max(500),
     projectId: z.string().min(1).max(200).nullable(),
-    hours: z.number().positive().max(24).multipleOf(0.25).nullable(),
+    hours: nonNegativeHoursSchema.nullable().optional(),
+    regularHours: nonNegativeHoursSchema.nullable().optional(),
+    overtimeHours: nonNegativeHoursSchema.nullable().optional(),
     categoryId: z.string().min(1).max(80).nullable(),
     workStatus: z.string().min(1).max(80).nullable(),
+    urgency: z.string().trim().min(1).max(120).nullable().optional(),
+    progress: z.number().int().min(0).max(100).nullable().optional(),
     confidence: confidenceSchema,
     needsReview: z.boolean(),
     reviewFields: z
-      .array(z.enum(["description", "project", "hours", "category", "status"]))
-      .max(5),
+      .array(reviewFieldSchema)
+      .max(8),
     sourceRecordIds: z.array(z.string().min(1).max(200)).min(1).max(100),
   })
-  .strict();
+  .strict()
+  .superRefine((value, context) => {
+    if (value.hours === undefined && value.regularHours === undefined) {
+      context.addIssue({ code: "custom", message: "正常工时字段缺失" });
+    }
+    if (
+      value.hours !== undefined &&
+      value.regularHours !== undefined &&
+      value.hours !== value.regularHours
+    ) {
+      context.addIssue({ code: "custom", message: "hours 与 regularHours 不一致" });
+    }
+    const regular = value.regularHours ?? value.hours;
+    if (
+      regular !== null &&
+      regular !== undefined &&
+      value.overtimeHours !== null &&
+      value.overtimeHours !== undefined &&
+      regular + value.overtimeHours > 24
+    ) {
+      context.addIssue({ code: "custom", message: "正常与加班工时合计不能超过 24" });
+    }
+  });
 
 export const updateTimesheetDraftSchema = z
   .object({
@@ -124,8 +169,18 @@ const syncProjectSchema = z
 const syncCatalogSchema = z
   .object({ id: z.string().min(1).max(80), name: z.string().min(1).max(120) })
   .strict();
+const syncExternalOptionSchema = z
+  .object({ id: z.string().min(1).max(80).nullable(), name: z.string().min(1).max(120) })
+  .strict();
+const syncSubmitterSchema = z
+  .object({
+    id: z.null(),
+    name: z.null(),
+    source: z.literal("authenticated-user"),
+  })
+  .strict();
 
-export const timesheetSyncTaskSchema = z
+const legacyTimesheetSyncTaskSchema = z
   .object({
     id: z.string().min(1).max(200),
     description: z.string().trim().min(2).max(500),
@@ -135,6 +190,29 @@ export const timesheetSyncTaskSchema = z
     status: syncCatalogSchema,
   })
   .strict();
+
+const currentTimesheetSyncTaskSchema = z
+  .object({
+    id: z.string().min(1).max(200),
+    description: z.string().trim().min(2).max(500),
+    project: syncProjectSchema,
+    submitter: syncSubmitterSchema,
+    regularHours: nonNegativeHoursSchema,
+    overtimeHours: nonNegativeHoursSchema,
+    category: syncCatalogSchema,
+    status: syncExternalOptionSchema,
+    urgency: syncExternalOptionSchema.nullable(),
+    progress: z.number().int().min(0).max(100).nullable(),
+  })
+  .strict()
+  .refine((value) => value.regularHours + value.overtimeHours <= 24, {
+    message: "正常与加班工时合计不能超过 24",
+  });
+
+export const timesheetSyncTaskSchema = z.union([
+  legacyTimesheetSyncTaskSchema,
+  currentTimesheetSyncTaskSchema,
+]);
 
 export const timesheetSyncPayloadSchema = z
   .object({

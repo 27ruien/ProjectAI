@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -113,7 +113,7 @@ jobs:
           fi
 
       - name: Use Node.js 22
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -287,7 +287,7 @@ jobs:
           mkdir -p test-logs
           npm run phase1:migration-upgrade 2>&1 | tee test-logs/phase1-migration-upgrade.log
 
-      - name: Verify non-empty 0015 to 0016 daily-report upgrade
+      - name: Verify non-empty 0015 to 0016 to 0017 daily-report upgrade
         shell: bash
         run: |
           set -o pipefail
@@ -438,7 +438,7 @@ jobs:
           npm run test:extension-e2e 2>&1 | tee test-logs/wecom-extension-e2e.log
 
       - name: Upload review-only MV3 package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wecom-timesheet-extension-review-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
@@ -620,7 +620,7 @@ jobs:
       - name: Upload product review evidence
         id: upload_evidence
         if: always() && steps.sanitize_evidence.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: product-review-evidence-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
@@ -639,7 +639,7 @@ jobs:
 
       - name: Upload product review provenance manifest
         if: always() && steps.finalize_review_manifest.outcome == 'success'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: product-review-manifest-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error

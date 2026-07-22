@@ -6,6 +6,7 @@ import {
   assertSyncItemTransition,
   buildTimesheetPrompts,
   combineTimesheetGatewayResults,
+  expectedSyncTerminalStatus,
   normalizeGeneratedOutput,
   validateGeneratedTimesheetText,
   withTotalHoursWarning,
@@ -90,6 +91,22 @@ describe("daily timesheet AI trust boundary", () => {
         externalReference: "manual-reconciliation",
       }),
     );
+    expectCode(
+      () => assertSyncBatchTransition("running", "validating"),
+      "SYNC_BATCH_TRANSITION_INVALID",
+    );
+    expectCode(
+      () => assertSyncItemTransition("failed", "pending"),
+      "SYNC_ITEM_TRANSITION_INVALID",
+    );
+  });
+
+  it("treats saved plus cancelled items as a cancelled batch", () => {
+    assert.equal(expectedSyncTerminalStatus(["saved", "cancelled"]), "cancelled");
+    assert.equal(expectedSyncTerminalStatus(["saved", "failed"]), "partially_synced");
+    assert.equal(expectedSyncTerminalStatus(["saved", "saved"]), "synced");
+    assert.equal(expectedSyncTerminalStatus(["failed", "failed"]), "failed");
+    assert.equal(expectedSyncTerminalStatus(["saved", "unknown"]), null);
   });
 
   it("accounts for both model calls when one controlled repair is required", () => {
@@ -249,14 +266,108 @@ describe("daily timesheet AI trust boundary", () => {
     assert.equal(normalizeGeneratedOutput(output(), context(records), 0.85).tasks[0].needs_review, true);
   });
 
-  it("adds low-confidence project, category, and status fields", () => {
+  it("adds low-confidence and evidence-absent fields to mandatory review", () => {
     const records = [record({ id: "record-001", rawText: "CHAGEE 确认跳转，1 小时", hoursHint: "1" })];
     const result = normalizeGeneratedOutput(
       output({ confidence: { description: 0.95, project: 0.6, hours: 0.9, category: 0.7, status: 0.8 } }),
       context(records),
       0.85,
     );
-    assert.deepEqual([...result.tasks[0].review_fields].sort(), ["category", "project", "status"]);
+    assert.deepEqual([...result.tasks[0].review_fields].sort(), [
+      "category",
+      "overtimeHours",
+      "progress",
+      "project",
+      "status",
+      "urgency",
+    ]);
+  });
+
+  it("never invents zero overtime when the source is silent", () => {
+    const records = [record({ id: "record-001", rawText: "CHAGEE 确认跳转，1 小时", hoursHint: "1" })];
+    const result = normalizeGeneratedOutput(output(), context(records), 0.85);
+    assert.equal(result.tasks[0].overtime_hours, null);
+    assert.ok(result.tasks[0].review_fields.includes("overtimeHours"));
+    expectCode(
+      () => normalizeGeneratedOutput(output({ overtime_hours: 0 }), context(records), 0.85),
+      "AI_OVERTIME_WITHOUT_EVIDENCE",
+    );
+  });
+
+  it("accepts only explicitly evidenced overtime and enforces the daily total", () => {
+    const records = [record({
+      id: "record-001",
+      rawText: "CHAGEE 正常工作 1 小时，加班 2 小时，已完成",
+      hoursHint: "1",
+    })];
+    const accepted = normalizeGeneratedOutput(
+      output({ overtime_hours: 2, progress: 100 }),
+      context(records),
+      0.85,
+    );
+    assert.equal(accepted.tasks[0].overtime_hours, 2);
+    expectCode(
+      () => normalizeGeneratedOutput(output({ overtime_hours: 3 }), context(records), 0.85),
+      "AI_OVERTIME_WITHOUT_EVIDENCE",
+    );
+
+    const excessive = [record({
+      id: "record-001",
+      rawText: "CHAGEE 正常工作 20 小时，加班 5 小时，进行中",
+      hoursHint: "20",
+    })];
+    expectCode(
+      () => normalizeGeneratedOutput(
+        output({ hours: 20, overtime_hours: 5, status: "in_progress" }),
+        context(excessive),
+        0.85,
+      ),
+      "AI_TOTAL_HOURS_INVALID",
+    );
+  });
+
+  it("does not accept a numeric substring as overtime evidence", () => {
+    const records = [record({
+      id: "record-001",
+      rawText: "CHAGEE 正常工作 1 小时，加班 12 小时，进行中",
+      hoursHint: "1",
+    })];
+    expectCode(
+      () => normalizeGeneratedOutput(
+        output({ overtime_hours: 2, status: "in_progress" }),
+        context(records),
+        0.85,
+      ),
+      "AI_OVERTIME_WITHOUT_EVIDENCE",
+    );
+  });
+
+  it("rejects guessed progress and all urgency before trusted options exist", () => {
+    const records = [record({ id: "record-001", rawText: "CHAGEE 确认跳转，1 小时，进行中", hoursHint: "1" })];
+    expectCode(
+      () => normalizeGeneratedOutput(output({ status: "in_progress", progress: 50 }), context(records), 0.85),
+      "AI_PROGRESS_WITHOUT_EVIDENCE",
+    );
+    expectCode(
+      () => normalizeGeneratedOutput(output({ status: "in_progress", urgency: "紧急" }), context(records), 0.85),
+      "AI_URGENCY_NOT_CONFIGURED",
+    );
+  });
+
+  it("does not accept a numeric substring as progress evidence", () => {
+    const records = [record({
+      id: "record-001",
+      rawText: "CHAGEE 确认跳转，1 小时，记录中的完成度为 150%",
+      hoursHint: "1",
+    })];
+    expectCode(
+      () => normalizeGeneratedOutput(
+        output({ status: "in_progress", progress: 50 }),
+        context(records),
+        0.85,
+      ),
+      "AI_PROGRESS_WITHOUT_EVIDENCE",
+    );
   });
 
   it("rejects source records outside the current user and date selection", () => {
@@ -272,6 +383,26 @@ describe("daily timesheet AI trust boundary", () => {
     expectCode(() => normalizeGeneratedOutput(output(), context(records), 0.85), "AI_SOURCE_RECORD_OMITTED");
   });
 
+  it("rejects using one source record for multiple AI tasks", () => {
+    const records = [record({
+      id: "record-001",
+      rawText: "CHAGEE 确认跳转，1 小时，进行中",
+      hoursHint: "1",
+    })];
+    const first = output({ status: "in_progress" }).tasks[0];
+    expectCode(
+      () => normalizeGeneratedOutput(
+        {
+          ...output(),
+          tasks: [first, { ...first, description: "重复的第二项" }],
+        },
+        context(records),
+        0.85,
+      ),
+      "AI_SOURCE_RECORD_DUPLICATED",
+    );
+  });
+
   it("rejects a source record listed as both used and unresolved", () => {
     const records = [record({ id: "record-001", rawText: "CHAGEE 确认跳转，1 小时", hoursHint: "1" })];
     expectCode(
@@ -283,5 +414,31 @@ describe("daily timesheet AI trust boundary", () => {
   it("rejects model-supplied hours without source evidence", () => {
     const records = [record({ id: "record-001", rawText: "CHAGEE 确认跳转" })];
     expectCode(() => normalizeGeneratedOutput(output({ status: "in_progress" }), context(records), 0.85), "AI_HOURS_WITHOUT_EVIDENCE");
+  });
+
+  it("binds normal hours to the exact source duration", () => {
+    const records = [record({
+      id: "record-001",
+      rawText: "CHAGEE 确认跳转，12 小时，进行中",
+    })];
+    expectCode(
+      () => normalizeGeneratedOutput(
+        output({ hours: 2, status: "in_progress" }),
+        context(records),
+        0.85,
+      ),
+      "AI_HOURS_WITHOUT_EVIDENCE",
+    );
+    assert.equal(
+      normalizeGeneratedOutput(
+        output({ hours: 1.5, status: "in_progress" }),
+        context([record({
+          id: "record-001",
+          rawText: "CHAGEE 联调 09:00-10:30，进行中",
+        })]),
+        0.85,
+      ).tasks[0].hours,
+      1.5,
+    );
   });
 });

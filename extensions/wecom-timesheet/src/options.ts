@@ -8,7 +8,7 @@ const status = document.querySelector<HTMLElement>("#status")!;
 function validUrl(value: string): URL | null {
   try {
     const url = new URL(value);
-    if (url.username || url.password || url.hash) return null;
+    if (url.username || url.password) return null;
     if (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname))) return null;
     return url;
   } catch {
@@ -21,7 +21,7 @@ async function load(): Promise<void> {
   boardUrl.value = config.boardUrl;
   if (config.selectors) selectors.value = JSON.stringify(config.selectors, null, 2);
   else {
-    const response = await fetch(chrome.runtime.getURL("selector-config.example.json"));
+    const response = await fetch(chrome.runtime.getURL("selector-config.default.json"));
     selectors.value = await response.text();
   }
   status.textContent = __WECOM_ALLOWED_ORIGIN__
@@ -60,7 +60,7 @@ document.querySelector("#save")?.addEventListener("click", () => {
       return;
     }
     await saveConfig({ boardUrl: url.toString(), selectors: parsed.value });
-    status.textContent = "配置已保存。配置不包含账号、Cookie 或 Token。";
+    status.textContent = "配置已保存。完整路径仅保存在本机扩展存储中，不会进入构建产物或日志。";
   })();
 });
 

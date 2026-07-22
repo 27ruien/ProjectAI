@@ -6,7 +6,7 @@ export type AdapterResult = {
   code: string;
   message: string;
   externalReference: string | null;
-  fieldResults: Record<string, "matched" | "filled">;
+  fieldResults: Record<string, "matched" | "filled" | "verified">;
 };
 
 const TIMEOUT_MS = __WECOM_ADAPTER_TIMEOUT_MS__;
@@ -44,11 +44,24 @@ function waitForElement<T extends Element>(
   selector: string,
   timeoutMs = TIMEOUT_MS,
 ): Promise<T> {
-  const current = root.querySelector<T>(selector);
+  const unique = (): T | null => {
+    const matches = root.querySelectorAll<T>(selector);
+    if (matches.length > 1) throw new Error("SELECTOR_AMBIGUOUS");
+    return matches[0] ?? null;
+  };
+  const current = unique();
   if (current) return Promise.resolve(current);
   return new Promise((resolve, reject) => {
     const observer = new MutationObserver(() => {
-      const match = root.querySelector<T>(selector);
+      let match: T | null;
+      try {
+        match = unique();
+      } catch (error) {
+        observer.disconnect();
+        clearTimeout(timeout);
+        reject(error);
+        return;
+      }
       if (!match) return;
       observer.disconnect();
       clearTimeout(timeout);
@@ -84,6 +97,94 @@ function setInput(element: Element, value: string): void {
   element.dispatchEvent(new Event("input", { bubbles: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
   if (element.value !== value) throw new Error("FIELD_VALUE_MISMATCH");
+}
+
+function controlValue(element: Element): string {
+  if (isTextControl(element)) return element.value.trim();
+  if (isSelectControl(element)) {
+    return (element as unknown as HTMLSelectElement).selectedOptions[0]?.textContent?.trim() ?? "";
+  }
+  return element.textContent?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+function recordValue(row: Element, selector: string): string {
+  const matches = row.querySelectorAll(selector);
+  if (matches.length !== 1) {
+    throw new Error(matches.length === 0 ? "RECORD_FIELD_MISSING" : "RECORD_FIELD_AMBIGUOUS");
+  }
+  return controlValue(matches[0]);
+}
+
+function waitForSavedRow(
+  root: Document,
+  config: SelectorConfig,
+  description: string,
+): Promise<Element> {
+  const find = (): Element | null => {
+    const matches = [...root.querySelectorAll(config.recordRows)]
+      .filter(visible)
+      .filter((row) => recordValue(row, config.recordDescription) === description);
+    if (matches.length > 1) throw new Error("RECORD_ROW_AMBIGUOUS");
+    return matches[0] ?? null;
+  };
+  const current = find();
+  if (current) return Promise.resolve(current);
+  return new Promise((resolve, reject) => {
+    const observer = new MutationObserver(() => {
+      let match: Element | null;
+      try {
+        match = find();
+      } catch (error) {
+        observer.disconnect();
+        clearTimeout(timeout);
+        reject(error);
+        return;
+      }
+      if (!match) return;
+      observer.disconnect();
+      clearTimeout(timeout);
+      resolve(match);
+    });
+    observer.observe(root.documentElement, { childList: true, subtree: true, attributes: true });
+    const timeout = setTimeout(() => {
+      observer.disconnect();
+      reject(new Error("RECORD_READBACK_UNKNOWN"));
+    }, TIMEOUT_MS);
+  });
+}
+
+function assertEqualRecord(actual: string, expected: string, code: string): void {
+  if (actual !== expected) throw new Error(code);
+}
+
+function assertHoursRecord(actual: string, expected: number, code: string): void {
+  const parsed = Number(actual);
+  if (!Number.isFinite(parsed) || parsed !== expected) throw new Error(code);
+}
+
+async function verifySavedRecord(input: {
+  root: Document;
+  config: SelectorConfig;
+  task: SyncTask;
+  submitter: string;
+}): Promise<string> {
+  const row = await waitForSavedRow(input.root, input.config, input.task.description);
+  assertEqualRecord(recordValue(row, input.config.recordDescription), input.task.description, "RECORD_DESCRIPTION_MISMATCH");
+  assertEqualRecord(recordValue(row, input.config.recordProject), input.task.project.name, "RECORD_PROJECT_MISMATCH");
+  assertEqualRecord(recordValue(row, input.config.recordSubmitter), input.submitter, "RECORD_SUBMITTER_MISMATCH");
+  assertHoursRecord(recordValue(row, input.config.recordRegularHours), input.task.regularHours, "RECORD_REGULAR_HOURS_MISMATCH");
+  if (input.task.overtimeHours !== null) {
+    assertHoursRecord(recordValue(row, input.config.recordOvertimeHours), input.task.overtimeHours, "RECORD_OVERTIME_HOURS_MISMATCH");
+  }
+  assertEqualRecord(recordValue(row, input.config.recordStatus), input.task.status.name, "RECORD_STATUS_MISMATCH");
+  if (input.task.urgency !== null) {
+    assertEqualRecord(recordValue(row, input.config.recordUrgency), input.task.urgency.name, "RECORD_URGENCY_MISMATCH");
+  }
+  if (input.task.progress !== null) {
+    assertEqualRecord(recordValue(row, input.config.recordProgress), String(input.task.progress), "RECORD_PROGRESS_MISMATCH");
+  }
+  const reference = (row as HTMLElement).dataset.recordId?.trim() ?? "";
+  return /^[A-Za-z0-9_-]{1,120}$/.test(reference) ? reference : "verified-record";
 }
 
 async function selectExact(input: {
@@ -178,7 +279,7 @@ export async function executeTaskWithAdapter(input: {
   dryRun: boolean;
   selectors: SelectorConfig;
 }): Promise<AdapterResult> {
-  const fieldResults: Record<string, "matched" | "filled"> = {};
+  const fieldResults: Record<string, "matched" | "filled" | "verified"> = {};
   try {
     const loggedOut = input.documentRoot.querySelector(input.selectors.loggedOutIndicator);
     if (loggedOut && visible(loggedOut)) {
@@ -191,6 +292,9 @@ export async function executeTaskWithAdapter(input: {
       };
     }
     await waitForElement(input.documentRoot, input.selectors.boardReady);
+    if (input.selectors.persistenceMode !== "explicit-save") {
+      throw new Error("AUTO_SAVE_UNSUPPORTED");
+    }
     const overlay = input.documentRoot.querySelector(input.selectors.overlay);
     if (overlay && visible(overlay)) throw new Error("PAGE_OVERLAY_BLOCKING");
     const create = await waitForElement<HTMLElement>(
@@ -209,16 +313,21 @@ export async function executeTaskWithAdapter(input: {
       expected: input.task.project.name,
     });
     fieldResults.project = "matched";
-    setInput(await waitForElement(root, input.selectors.hoursInput), String(input.task.hours));
-    fieldResults.hours = "filled";
-    await selectExact({
-      root,
-      controlSelector: input.selectors.categoryControl,
-      optionsSelector: input.selectors.categoryOptions,
-      selectedSelector: input.selectors.categorySelectedValue,
-      expected: input.task.category.name,
-    });
-    fieldResults.category = "matched";
+    const submitter = controlValue(await waitForElement(root, input.selectors.submitterValue));
+    if (!submitter) throw new Error("SUBMITTER_UNRESOLVED");
+    fieldResults.submitter = "verified";
+    setInput(
+      await waitForElement(root, input.selectors.regularHoursInput),
+      String(input.task.regularHours),
+    );
+    fieldResults.regularHours = "filled";
+    if (input.task.overtimeHours !== null) {
+      setInput(
+        await waitForElement(root, input.selectors.overtimeHoursInput),
+        String(input.task.overtimeHours),
+      );
+      fieldResults.overtimeHours = "filled";
+    }
     await selectExact({
       root,
       controlSelector: input.selectors.statusControl,
@@ -227,6 +336,20 @@ export async function executeTaskWithAdapter(input: {
       expected: input.task.status.name,
     });
     fieldResults.status = "matched";
+    if (input.task.urgency !== null) {
+      await selectExact({
+        root,
+        controlSelector: input.selectors.urgencyControl,
+        optionsSelector: input.selectors.urgencyOptions,
+        selectedSelector: input.selectors.urgencySelectedValue,
+        expected: input.task.urgency.name,
+      });
+      fieldResults.urgency = "matched";
+    }
+    if (input.task.progress !== null) {
+      setInput(await waitForElement(root, input.selectors.progressInput), String(input.task.progress));
+      fieldResults.progress = "filled";
+    }
     if (input.dryRun) {
       return {
         status: "validated",
@@ -242,11 +365,17 @@ export async function executeTaskWithAdapter(input: {
     save.click();
     const result = await waitForSaveResult(root, input.selectors, previousSuccessCount);
     if (result.kind === "failure") throw new Error("ITEM_SAVE_FAILED");
+    const externalReference = await verifySavedRecord({
+      root: input.documentRoot,
+      config: input.selectors,
+      task: input.task,
+      submitter,
+    });
     return {
       status: "saved",
       code: "ITEM_SAVED",
-      message: "单条任务已保存并通过页面反馈确认",
-      externalReference: result.text.slice(0, 200) || null,
+      message: "单条任务已保存，并通过页面反馈与任务列表回读确认",
+      externalReference,
       fieldResults,
     };
   } catch (error) {

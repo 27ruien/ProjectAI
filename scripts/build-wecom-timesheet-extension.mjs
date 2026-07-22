@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build } from "esbuild";
@@ -10,25 +11,104 @@ const ZIP_PATH = path.join(ROOT, "release", `wecom-timesheet-extension-v${VERSIO
 const SOURCE = path.join(ROOT, "extensions", "wecom-timesheet");
 const packageMode = process.argv.includes("--package");
 const mockMode = process.env.WECOM_EXTENSION_BUILD_MODE === "mock";
-const projectAiMatches = [
-  "https://gridworks.cn/tool/projectai/*",
-  "https://gridworks.cn/tool/projectai-staging/*",
-  ...(mockMode ? ["http://127.0.0.1/*", "http://localhost/*"] : []),
-];
-const projectAiOrigins = ["https://gridworks.cn", ...(mockMode ? ["http://127.0.0.1:4173", "http://localhost:4173"] : [])];
 
-function wecomBuildOrigin() {
-  const raw = process.env.WECOM_TASK_BOARD_URL?.trim();
+function exactOrigin(name, fallback = "") {
+  const raw = process.env[name]?.trim() || fallback;
   if (!raw) return "";
   const url = new URL(raw);
-  if (url.username || url.password || url.hash) throw new Error("WECOM_TASK_BOARD_URL must not contain credentials or fragments.");
-  if (url.protocol !== "https:" && !(mockMode && url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname))) {
-    throw new Error("WECOM_TASK_BOARD_URL must use HTTPS outside mock builds.");
+  const localMock =
+    mockMode &&
+    url.protocol === "http:" &&
+    ["127.0.0.1", "localhost"].includes(url.hostname);
+  if (
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    (url.protocol !== "https:" && !localMock) ||
+    raw.replace(/\/$/, "") !== url.origin
+  ) {
+    throw new Error(`${name} must be one exact HTTPS origin without credentials, path, query, or fragment.`);
   }
   return url.origin;
 }
 
-const wecomOrigin = wecomBuildOrigin();
+function boardUrl() {
+  const raw = process.env.WECOM_TASK_BOARD_URL?.trim() || "";
+  if (!raw) return "";
+  const url = new URL(raw);
+  const localMock =
+    mockMode &&
+    url.protocol === "http:" &&
+    ["127.0.0.1", "localhost"].includes(url.hostname);
+  if (url.username || url.password || (url.protocol !== "https:" && !localMock)) {
+    throw new Error("WECOM_TASK_BOARD_URL must be HTTPS and contain no credentials.");
+  }
+  return url.toString();
+}
+
+const selectorKeys = [
+  "boardReady", "loggedOutIndicator", "overlay", "formIframe", "createTaskButton", "taskForm",
+  "descriptionInput", "projectControl", "projectOptions", "projectSelectedValue", "submitterValue",
+  "regularHoursInput", "overtimeHoursInput", "statusControl", "statusOptions", "statusSelectedValue",
+  "urgencyControl", "urgencyOptions", "urgencySelectedValue", "progressInput", "itemSaveButton",
+  "saveSuccess", "saveFailure", "recordRows", "recordDescription", "recordProject", "recordSubmitter",
+  "recordRegularHours", "recordOvertimeHours", "recordStatus", "recordUrgency", "recordProgress",
+];
+const unsafeSelector = /(?:javascript|vbscript)\s*:|data\s*:\s*text\/html|<\s*script\b|\bon[a-z]+\s*=|\[\s*on[a-z]+(?:\s|\]|[~|^$*]?=)|\beval\s*\(|\bfunction\s*\(|=>|\b(?:window|document|globalThis)\s*\.|[`;{}]|[\u0000-\u001f\u007f]/iu;
+const broadActionSelector = /^(?:\*|html|body|:root|form|button|input|textarea|select)$/i;
+const actionSelectorKeys = new Set(["createTaskButton", "taskForm", "descriptionInput", "projectControl", "regularHoursInput", "overtimeHoursInput", "statusControl", "urgencyControl", "progressInput", "itemSaveButton"]);
+
+function validateBuildSelectors(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Selector Config must be an object.");
+  const keys = Object.keys(value);
+  if (keys.some((key) => /final|submit.?all|daily.?submit/i.test(key))) throw new Error("Final-submit selectors are forbidden.");
+  if (value.persistenceMode !== "explicit-save" && value.persistenceMode !== "auto-save") throw new Error("Selector Config persistence mode is invalid.");
+  if (keys.length !== selectorKeys.length + 1 || selectorKeys.some((key) => !keys.includes(key))) throw new Error("Selector Config keys do not match the strict schema.");
+  for (const key of selectorKeys) {
+    const selector = value[key];
+    if (
+      typeof selector !== "string" ||
+      !selector ||
+      selector.length > 500 ||
+      selector !== selector.trim() ||
+      unsafeSelector.test(selector) ||
+      (actionSelectorKeys.has(key) && (selector.includes(",") || broadActionSelector.test(selector)))
+    ) {
+      throw new Error(`Selector Config field ${key} is unsafe or invalid.`);
+    }
+  }
+  return value;
+}
+
+const projectAiOrigin = exactOrigin("PROJECTAI_ALLOWED_ORIGIN", "https://gridworks.cn");
+const projectAiMatches = mockMode
+  ? [`${projectAiOrigin}/*`]
+  : [
+      `${projectAiOrigin}/tool/projectai/*`,
+      `${projectAiOrigin}/tool/projectai-staging/*`,
+    ];
+const projectAiOrigins = [projectAiOrigin];
+const configuredBoardUrl = boardUrl();
+const wecomOrigin = exactOrigin("WECOM_ALLOWED_ORIGIN");
+if (Boolean(configuredBoardUrl) !== Boolean(wecomOrigin)) {
+  throw new Error("WECOM_TASK_BOARD_URL and WECOM_ALLOWED_ORIGIN must be supplied together.");
+}
+if (configuredBoardUrl && new URL(configuredBoardUrl).origin !== wecomOrigin) {
+  throw new Error("WECOM_TASK_BOARD_URL must belong to WECOM_ALLOWED_ORIGIN.");
+}
+
+const selectorConfigPath = process.env.WECOM_SELECTOR_CONFIG_PATH?.trim();
+if (configuredBoardUrl && !selectorConfigPath) {
+  throw new Error("A real-origin build requires WECOM_SELECTOR_CONFIG_PATH.");
+}
+const defaultSelectorPath = selectorConfigPath
+  ? path.resolve(ROOT, selectorConfigPath)
+  : path.join(SOURCE, "static", "selector-config.example.json");
+const defaultSelectorText = await readFile(defaultSelectorPath, "utf8");
+const defaultSelectors = validateBuildSelectors(JSON.parse(defaultSelectorText));
+const normalizedSelectorText = `${JSON.stringify(defaultSelectors, null, 2)}\n`;
 await rm(OUT_DIR, { recursive: true, force: true });
 await mkdir(OUT_DIR, { recursive: true });
 
@@ -43,6 +123,7 @@ const common = {
     __WECOM_ALLOWED_ORIGIN__: JSON.stringify(wecomOrigin),
     __EXTENSION_VERSION__: JSON.stringify(VERSION),
     __WECOM_ADAPTER_TIMEOUT_MS__: JSON.stringify(mockMode ? 500 : 8_000),
+    __MANUAL_ACTUAL_SYNC_ALLOWED__: JSON.stringify(mockMode),
   },
 };
 
@@ -64,7 +145,26 @@ for (const [entry, outfile, format] of [
 for (const filename of ["popup.html", "options.html", "extension.css", "selector-config.example.json"]) {
   await cp(path.join(SOURCE, "static", filename), path.join(OUT_DIR, filename));
 }
+await writeFile(path.join(OUT_DIR, "selector-config.default.json"), normalizedSelectorText, { mode: 0o644 });
 await cp(path.join(SOURCE, "README.md"), path.join(OUT_DIR, "README.md"));
+
+await writeFile(
+  path.join(OUT_DIR, "build-bindings.json"),
+  `${JSON.stringify(
+    {
+      extensionVersion: VERSION,
+      projectAiOrigin,
+      wecomOrigin: wecomOrigin || null,
+      wecomBoardConfigured: Boolean(configuredBoardUrl),
+      manualActualSyncAllowed: mockMode,
+      selectorConfigSource: selectorConfigPath ? "provided" : "review-default",
+      selectorConfigSha256: createHash("sha256").update(normalizedSelectorText).digest("hex"),
+    },
+    null,
+    2,
+  )}\n`,
+  { mode: 0o644 },
+);
 
 const manifest = {
   manifest_version: 3,
@@ -102,4 +202,6 @@ if (packageMode) {
   execFileSync("zip", ["-q", "-r", ZIP_PATH, "."], { cwd: OUT_DIR, stdio: "inherit" });
   process.stdout.write(`Packaged ${path.relative(ROOT, ZIP_PATH)}\n`);
 }
-process.stdout.write(`Built ${path.relative(ROOT, OUT_DIR)}${wecomOrigin ? ` for ${wecomOrigin}` : " without a real WeCom origin"}.\n`);
+process.stdout.write(
+  `Built ${path.relative(ROOT, OUT_DIR)}; ProjectAI=${projectAiOrigin}; WeCom=${wecomOrigin || "none"}; selectors=${selectorConfigPath ? "provided" : "review-default"}.\n`,
+);

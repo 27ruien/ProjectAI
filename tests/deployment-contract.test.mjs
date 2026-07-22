@@ -389,7 +389,10 @@ test("Staging deployment retains Production and named-volume safety boundaries",
 
 test("CI MinIO uses random masked credentials, a private tmpfs, and always cleans up", async () => {
   const workflow = await readFile(ciWorkflow, "utf8");
-  assert.match(workflow, /uses: actions\/checkout@v4\n\s+with:\n\s+fetch-depth: 0/);
+  assert.match(workflow, /uses: actions\/checkout@v7\n\s+with:\n\s+fetch-depth: 0/);
+  assert.match(workflow, /uses: actions\/setup-node@v7/);
+  assert.match(workflow, /uses: actions\/upload-artifact@v7/);
+  assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node|upload-artifact)@v4/);
   assert.match(workflow, /Start isolated MinIO with ephemeral credentials/);
   assert.match(workflow, /openssl rand -hex 32/);
   assert.match(workflow, /::add-mask::\$secret/);

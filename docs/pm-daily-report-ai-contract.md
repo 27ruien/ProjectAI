@@ -21,7 +21,7 @@ Execution 记录 `executionId`、`skillId=pm-daily-timesheet-generation`、`mode
 
 ## 输出
 
-顶层只允许 `tasks`、`warnings`、`unresolved_record_ids`。任务只允许：描述、授权项目 ID、工时或 null、目录分类、目录状态、来源记录 ID、五字段置信度、审核标记与审核字段。未知字段、非法 JSON、越界工时、无效目录、非本用户/日期来源、来源遗漏/冲突、跨项目合并和无来源工时都被拒绝。MVP 对 AI 自动合并采取保守策略：一个生成任务只能绑定一条原始随记；需要合并时由用户审核后显式执行。
+顶层只允许 `tasks`、`warnings`、`unresolved_record_ids`。任务只允许：描述、授权项目 ID、正常工时或 null、有明确证据的加班工时或 null、目录分类、目录状态、可空紧急度/进度、来源记录 ID、逐字段置信度、审核标记与审核字段。来源未提加班时不能把 0 当成事实；进度只接受明确百分比、完成=100 或未开始=0；受信紧急度候选项未配置前任何非空值都拒绝。未知字段、非法 JSON、越界/合计超过 24 小时、无效目录、非本用户/日期来源、来源遗漏/冲突、跨项目合并和无来源工时都被拒绝。MVP 对 AI 自动合并采取保守策略：一个生成任务只能绑定一条原始随记；需要合并时由用户审核后显式执行。
 
 服务端强制每个 AI 任务 `needs_review=true`。字段为空或置信度低于 `PM_DAILY_REPORT_CONFIDENCE_THRESHOLD`（默认 0.85）时自动加入 `review_fields`。总工时超过 16 小时时增加 `TOTAL_HOURS` 警告，但不修改模型数值，也不补足八小时。
 

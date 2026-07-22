@@ -45,8 +45,11 @@ type Confidence = {
   description: number;
   project: number;
   hours: number;
+  overtimeHours?: number;
   category: number;
   status: number;
+  urgency?: number;
+  progress?: number;
 };
 
 type DraftTask = {
@@ -55,13 +58,26 @@ type DraftTask = {
   projectId: string | null;
   projectName?: string;
   hours: number | null;
+  regularHours: number | null;
+  overtimeHours: number | null;
   categoryId: string | null;
   categoryName?: string;
   workStatus: string | null;
   workStatusName?: string;
+  urgency: string | null;
+  progress: number | null;
   confidence: Confidence;
   needsReview: boolean;
-  reviewFields: Array<"description" | "project" | "hours" | "category" | "status">;
+  reviewFields: Array<
+    | "description"
+    | "project"
+    | "hours"
+    | "overtimeHours"
+    | "category"
+    | "status"
+    | "urgency"
+    | "progress"
+  >;
   sourceRecordIds: string[];
   sortOrder?: number;
 };
@@ -143,36 +159,6 @@ function confidenceLabel(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function exportPayload(draft: Draft) {
-  return {
-    version: TIMESHEET_SYNC_PROTOCOL_VERSION,
-    request_id: crypto.randomUUID(),
-    sync_batch_id: crypto.randomUUID(),
-    date: draft.reportDate,
-    source: "project-ai" as const,
-    confirmed_at: draft.confirmedAt,
-    draft_version: draft.version,
-    dry_run: true,
-    tasks: draft.tasks.map((task) => ({
-      id: task.id,
-      description: task.description,
-      project: {
-        id: task.projectId,
-        name: task.projectName,
-      },
-      hours: task.hours,
-      category: {
-        id: task.categoryId,
-        name: TIMESHEET_CATEGORIES.find((item) => item.id === task.categoryId)?.name,
-      },
-      status: {
-        id: task.workStatus,
-        name: TIMESHEET_STATUSES.find((item) => item.id === task.workStatus)?.name,
-      },
-    })),
-  };
-}
-
 export function DailyReportPage({
   viewer,
   wecomSyncEnabled,
@@ -223,9 +209,11 @@ export function DailyReportPage({
       const [recordPayload, draftPayload, syncPayload] = await Promise.all([
         timesheetRequest<{ records: WorkLog[] }>(`/api/timesheets/work-logs?${query}`),
         timesheetRequest<{ draft: Draft | null }>(`/api/timesheets/drafts?${query}`),
-        timesheetRequest<{ batches: SyncBatch[] }>(
-          `/api/timesheets/sync-batches?${requestQuery(organizationId)}`,
-        ),
+        wecomSyncEnabled
+          ? timesheetRequest<{ batches: SyncBatch[] }>(
+              `/api/timesheets/sync-batches?${requestQuery(organizationId)}`,
+            )
+          : Promise.resolve({ batches: [] as SyncBatch[] }),
       ]);
       setRecords(recordPayload.records);
       setDraft(draftPayload.draft);
@@ -249,7 +237,7 @@ export function DailyReportPage({
       setNotice(error instanceof Error ? error.message : "工作日报加载失败");
       setPhase("error");
     }
-  }, [organizationId, reportDate]);
+  }, [organizationId, reportDate, wecomSyncEnabled]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -257,6 +245,7 @@ export function DailyReportPage({
   }, [load]);
 
   useEffect(() => {
+    if (!wecomSyncEnabled) return;
     const receive = (event: MessageEvent) => {
       if (event.source !== window || event.origin !== window.location.origin) return;
       if (!event.data || typeof event.data !== "object") return;
@@ -324,7 +313,7 @@ export function DailyReportPage({
       window.location.origin,
     );
     return () => window.removeEventListener("message", receive);
-  }, [load, organizationId]);
+  }, [load, organizationId, wecomSyncEnabled]);
 
   const run = async (operation: () => Promise<void>, success?: string) => {
     setPhase("working");
@@ -419,12 +408,17 @@ export function DailyReportPage({
     const complete = Boolean(
       task.description.trim() &&
         task.projectId &&
-        task.hours &&
+        task.regularHours !== null &&
+        task.overtimeHours !== null &&
         task.categoryId &&
         task.workStatus,
     );
     if (!complete) {
       setNotice("项目、工时、分类和状态均填写后才能标记已审核");
+      return;
+    }
+    if ((task.regularHours ?? 0) + (task.overtimeHours ?? 0) > 24) {
+      setNotice("正常与加班工时合计不能超过 24 小时");
       return;
     }
     changeTask(index, { needsReview: false, reviewFields: [] });
@@ -442,9 +436,12 @@ export function DailyReportPage({
           id: task.id,
           description: task.description,
           projectId: task.projectId,
-          hours: task.hours,
+          regularHours: task.regularHours,
+          overtimeHours: task.overtimeHours,
           categoryId: task.categoryId,
           workStatus: task.workStatus,
+          urgency: task.urgency,
+          progress: task.progress,
           confidence: task.confidence,
           needsReview: task.needsReview,
           reviewFields: task.reviewFields,
@@ -475,13 +472,22 @@ export function DailyReportPage({
 
   const splitTask = (index: number) => {
     const task = tasks[index];
-    const firstHours = task.hours ? Math.max(0.25, Math.floor(task.hours * 2) / 4) : null;
-    const secondHours = task.hours && firstHours ? task.hours - firstHours : null;
+    const firstHours = task.regularHours
+      ? Math.max(0.25, Math.floor(task.regularHours * 2) / 4)
+      : null;
+    const secondHours = task.regularHours && firstHours ? task.regularHours - firstHours : null;
+    const firstOvertime = task.overtimeHours
+      ? Math.max(0.25, Math.floor(task.overtimeHours * 2) / 4)
+      : task.overtimeHours;
+    const secondOvertime =
+      task.overtimeHours && firstOvertime ? task.overtimeHours - firstOvertime : task.overtimeHours;
     const first = {
       ...task,
       id: undefined,
       description: `${task.description}（拆分 1）`,
       hours: firstHours,
+      regularHours: firstHours,
+      overtimeHours: firstOvertime,
       needsReview: true,
       reviewFields: ["description", "hours"] as DraftTask["reviewFields"],
     };
@@ -490,6 +496,9 @@ export function DailyReportPage({
       id: undefined,
       description: `${task.description}（拆分 2）`,
       hours: secondHours && secondHours > 0 ? secondHours : null,
+      regularHours: secondHours && secondHours > 0 ? secondHours : null,
+      overtimeHours:
+        secondOvertime !== null && secondOvertime >= 0 ? secondOvertime : null,
       needsReview: true,
       reviewFields: ["description", "hours"] as DraftTask["reviewFields"],
     };
@@ -524,8 +533,14 @@ export function DailyReportPage({
       ...first,
       id: undefined,
       description: selected.map((task) => task.description).join("；"),
-      hours: selected.every((task) => task.hours !== null)
-        ? selected.reduce((sum, task) => sum + (task.hours ?? 0), 0)
+      hours: selected.every((task) => task.regularHours !== null)
+        ? selected.reduce((sum, task) => sum + (task.regularHours ?? 0), 0)
+        : null,
+      regularHours: selected.every((task) => task.regularHours !== null)
+        ? selected.reduce((sum, task) => sum + (task.regularHours ?? 0), 0)
+        : null,
+      overtimeHours: selected.every((task) => task.overtimeHours !== null)
+        ? selected.reduce((sum, task) => sum + (task.overtimeHours ?? 0), 0)
         : null,
       sourceRecordIds: [...new Set(selected.flatMap((task) => task.sourceRecordIds))],
       needsReview: true,
@@ -540,23 +555,32 @@ export function DailyReportPage({
   };
 
   const copyJson = async () => {
-    if (!draft?.confirmedAt) return;
-    await navigator.clipboard.writeText(JSON.stringify(exportPayload(draft), null, 2));
-    setNotice("已复制标准 JSON；请只粘贴到受信任的扩展测试入口");
+    if (!draft?.confirmedAt || dirty) return;
+    await run(async () => {
+      const payload = await timesheetRequest<Draft>(
+        `/api/timesheets/drafts/${encodeURIComponent(draft.id)}/export?${requestQuery(organizationId)}`,
+      );
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+    }, "已从服务端重新校验并复制确认版 JSON");
   };
 
-  const downloadJson = () => {
-    if (!draft?.confirmedAt) return;
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify(exportPayload(draft), null, 2)], {
-        type: "application/json",
-      }),
-    );
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `projectai-timesheet-${draft.reportDate}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const downloadJson = async () => {
+    if (!draft?.confirmedAt || dirty) return;
+    await run(async () => {
+      const payload = await timesheetRequest<Draft>(
+        `/api/timesheets/drafts/${encodeURIComponent(draft.id)}/export?${requestQuery(organizationId)}`,
+      );
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(payload, null, 2)], {
+          type: "application/json",
+        }),
+      );
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `projectai-timesheet-${draft.reportDate}.json`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    }, "已从服务端重新校验并下载确认版 JSON");
   };
 
   const downloadSyncResult = () => {
@@ -589,7 +613,7 @@ export function DailyReportPage({
   };
 
   const openWecomBoard = () => {
-    if (!extension.connected) return;
+    if (!wecomSyncEnabled || !extension.connected) return;
     window.postMessage(
       {
         source: "project-ai",
@@ -602,7 +626,7 @@ export function DailyReportPage({
   };
 
   const startSync = async () => {
-    if (!draft?.confirmedAt || !extension.connected) return;
+    if (!wecomSyncEnabled || !draft?.confirmedAt || dirty || !extension.connected) return;
     await run(async () => {
       const response = await timesheetMutation<{
         batch: SyncBatch;
@@ -629,7 +653,7 @@ export function DailyReportPage({
   };
 
   const controlSync = (action: "pause" | "resume" | "cancel") => {
-    if (!activeBatch) return;
+    if (!wecomSyncEnabled || !activeBatch) return;
     window.postMessage(
       {
         source: "project-ai",
@@ -643,7 +667,10 @@ export function DailyReportPage({
     );
   };
 
-  const totalHours = tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0);
+  const totalHours = tasks.reduce(
+    (sum, task) => sum + (task.regularHours ?? 0) + (task.overtimeHours ?? 0),
+    0,
+  );
   const pendingReview = tasks.filter(
     (task) => task.needsReview || task.reviewFields.length > 0,
   ).length;
@@ -826,13 +853,16 @@ export function DailyReportPage({
                   <button onClick={() => { setTasks((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }} className="rounded-lg border border-danger/20 p-1.5 text-danger" aria-label="删除任务"><Trash2 className="size-3.5" /></button>
                 </div>
               </div>
-              <div className="grid gap-3 lg:grid-cols-5">
+              <div className="grid gap-3 lg:grid-cols-6">
                 <label className="lg:col-span-2"><span className="mb-1 block text-[10px] text-muted-foreground">任务详情 · {confidenceLabel(task.confidence.description)}</span><textarea value={task.description} onChange={(event) => changeTask(index, { description: event.target.value, needsReview: true })} rows={2} className="w-full rounded-lg border border-input px-3 py-2 text-xs" /></label>
                 <label><span className="mb-1 block text-[10px] text-muted-foreground">项目 · {confidenceLabel(task.confidence.project)}</span><select value={task.projectId ?? ""} onChange={(event) => changeTask(index, { projectId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">工时 · {confidenceLabel(task.confidence.hours)}</span><input type="number" min="0.25" max="24" step="0.25" value={task.hours ?? ""} onChange={(event) => changeTask(index, { hours: event.target.value ? Number(event.target.value) : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
+                <label><span className="mb-1 block text-[10px] text-muted-foreground">正常工时 · {confidenceLabel(task.confidence.hours)}</span><input type="number" min="0" max="24" step="0.25" value={task.regularHours ?? ""} onChange={(event) => { const value = event.target.value ? Number(event.target.value) : null; changeTask(index, { hours: value, regularHours: value, needsReview: true }); }} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
+                <label><span className="mb-1 block text-[10px] text-muted-foreground">加班工时 · {confidenceLabel(task.confidence.overtimeHours ?? 0)}</span><input type="number" min="0" max="24" step="0.25" value={task.overtimeHours ?? ""} onChange={(event) => changeTask(index, { overtimeHours: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
                 <label><span className="mb-1 block text-[10px] text-muted-foreground">分类 · {confidenceLabel(task.confidence.category)}</span><select value={task.categoryId ?? ""} onChange={(event) => changeTask(index, { categoryId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
                 <label><span className="mb-1 block text-[10px] text-muted-foreground">状态 · {confidenceLabel(task.confidence.status)}</span><select value={task.workStatus ?? ""} onChange={(event) => changeTask(index, { workStatus: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_STATUSES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                <div className="lg:col-span-4"><p className="text-[10px] text-muted-foreground">来源记录：{task.sourceRecordIds.map((id) => records.find((record) => record.id === id)?.rawText ?? id).join("；")}</p>{task.reviewFields.length ? <p className="mt-1 text-[10px] text-warning">需确认：{task.reviewFields.join("、")}</p> : null}</div>
+                <label><span className="mb-1 block text-[10px] text-muted-foreground">紧急重要度</span><input value={task.urgency ?? ""} disabled placeholder="待真实候选项配置" className="h-10 w-full rounded-lg border border-input bg-muted px-3 text-xs" /></label>
+                <label><span className="mb-1 block text-[10px] text-muted-foreground">任务进度 · {confidenceLabel(task.confidence.progress ?? 0)}</span><input type="number" min="0" max="100" step="1" value={task.progress ?? ""} onChange={(event) => changeTask(index, { progress: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
+                <div className="lg:col-span-5"><p className="text-[10px] text-muted-foreground">来源记录：{task.sourceRecordIds.map((id) => records.find((record) => record.id === id)?.rawText ?? id).join("；")}</p>{task.reviewFields.length ? <p className="mt-1 text-[10px] text-warning">需确认：{task.reviewFields.join("、")}</p> : null}</div>
                 <button onClick={() => markReviewed(index)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-success/30 text-xs text-success"><Check className="size-3.5" />{task.needsReview ? "标记已审核" : "已人工审核"}</button>
               </div>
             </article>
@@ -851,8 +881,8 @@ export function DailyReportPage({
             <div className="flex flex-wrap gap-2">
               <button disabled={!dirty || phase === "working"} onClick={() => void run(async () => { await saveDraft(); }, "草稿已保存，仍需人工确认")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Save className="size-3.5" />保存草稿</button>
               <button disabled={pendingReview > 0 || tasks.length === 0 || phase === "working"} onClick={() => void confirmDraft()} className="inline-flex items-center gap-1.5 rounded-lg bg-success px-3 py-2 text-xs font-medium text-white disabled:opacity-40"><Check className="size-3.5" />确认工时</button>
-              <button disabled={!draft.confirmedAt} onClick={() => void copyJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Clipboard className="size-3.5" />复制 JSON</button>
-              <button disabled={!draft.confirmedAt} onClick={downloadJson} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载 JSON</button>
+              <button disabled={!draft.confirmedAt || dirty || phase === "working"} onClick={() => void copyJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Clipboard className="size-3.5" />复制 JSON</button>
+              <button disabled={!draft.confirmedAt || dirty || phase === "working"} onClick={() => void downloadJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载 JSON</button>
             </div>
           </div>
         </section>
@@ -871,12 +901,12 @@ export function DailyReportPage({
         <div className="space-y-4 p-5">
           {!wecomSyncEnabled ? <div className="flex items-center gap-2 rounded-lg border border-warning/25 bg-warning-soft p-3 text-xs text-warning"><CloudOff className="size-4" />企业微信同步 Feature Flag 当前关闭。</div> : null}
           <div className="flex flex-wrap gap-2">
-            <button disabled={!wecomSyncEnabled || !extension.connected || !draft?.confirmedAt || Boolean(activeBatch)} onClick={() => void startSync()} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs text-white disabled:opacity-40"><Send className="size-3.5" />同步到企业微信</button>
-            <button disabled={!extension.connected} onClick={openWecomBoard} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40">打开企业微信任务看板</button>
-            <button disabled={!activeBatch} onClick={() => controlSync("pause")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Pause className="size-3.5" />暂停</button>
-            <button disabled={!activeBatch} onClick={() => controlSync("resume")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Play className="size-3.5" />继续</button>
-            <button disabled={!activeBatch} onClick={() => controlSync("cancel")} className="inline-flex items-center gap-1.5 rounded-lg border border-danger/20 px-3 py-2 text-xs text-danger disabled:opacity-40"><Square className="size-3.5" />取消</button>
-            <button disabled={!activeBatch && batches.length === 0} onClick={downloadSyncResult} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载同步结果</button>
+            <button disabled={!wecomSyncEnabled || !extension.connected || !draft?.confirmedAt || dirty || Boolean(activeBatch)} onClick={() => void startSync()} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs text-white disabled:opacity-40"><Send className="size-3.5" />同步到企业微信</button>
+            <button disabled={!wecomSyncEnabled || !extension.connected} onClick={openWecomBoard} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40">打开企业微信任务看板</button>
+            <button disabled={!wecomSyncEnabled || !activeBatch} onClick={() => controlSync("pause")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Pause className="size-3.5" />暂停</button>
+            <button disabled={!wecomSyncEnabled || !activeBatch} onClick={() => controlSync("resume")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Play className="size-3.5" />继续</button>
+            <button disabled={!wecomSyncEnabled || !activeBatch} onClick={() => controlSync("cancel")} className="inline-flex items-center gap-1.5 rounded-lg border border-danger/20 px-3 py-2 text-xs text-danger disabled:opacity-40"><Square className="size-3.5" />取消</button>
+            <button disabled={!wecomSyncEnabled || (!activeBatch && batches.length === 0)} onClick={downloadSyncResult} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载同步结果</button>
           </div>
           {activeBatch ? <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs"><p>批次 {activeBatch.syncBatchId} · {activeBatch.status} · {activeBatch.dryRun ? "Dry Run" : "实际逐条保存"}</p><p className="mt-1 text-muted-foreground">当前任务：{currentSyncTask?.description ?? currentSyncItem?.taskId ?? "等待调度"}</p><p className="mt-1 text-muted-foreground">总数 {activeBatch.items.length} / 成功 {activeBatch.items.filter((item) => item.status === "saved").length} / 失败 {activeBatch.items.filter((item) => item.status === "failed").length} / 未知 {activeBatch.items.filter((item) => item.status === "unknown").length}</p></div> : null}
           <div>

@@ -21,6 +21,7 @@ import {
 } from "../extensions/wecom-timesheet/src/shared/state-machine";
 import { createLogEntry } from "../extensions/wecom-timesheet/src/shared/logging";
 import { validateSelectorConfig } from "../extensions/wecom-timesheet/src/shared/selector-config";
+import { createSerialExecutor } from "../extensions/wecom-timesheet/src/shared/serial";
 
 const payload: SyncPayload = {
   version: 1,
@@ -36,9 +37,13 @@ const payload: SyncPayload = {
       id: "task-001",
       description: "完成 EARN 页面登录及 H5 回流逻辑确认",
       project: { id: "project-001", name: "CHAGEE Valley Fair Campaign" },
-      hours: 1,
+      submitter: { id: null, name: null, source: "authenticated-user" },
+      regularHours: 1,
+      overtimeHours: 0,
       category: { id: "communication", name: "项目沟通" },
-      status: { id: "completed", name: "已完成" },
+      status: { id: null, name: "已完成" },
+      urgency: null,
+      progress: 100,
     },
   ],
 };
@@ -49,6 +54,42 @@ describe("WeCom extension trust and recovery contracts", () => {
     assert.equal(validateSyncPayload({ ...payload, unexpected: true }).ok, false);
     assert.equal(validateSyncPayload({ ...payload, confirmed_at: null }).ok, false);
     assert.equal(validateSyncPayload({ ...payload, date: "2026-02-31" }).ok, false);
+  });
+
+  it("normalizes legacy hours without inventing overtime or overwriting category", () => {
+    const legacy = {
+      ...payload,
+      tasks: [{
+        id: "task-legacy",
+        description: "旧版虚构任务",
+        project: { id: "project-001", name: "CHAGEE Valley Fair Campaign" },
+        hours: 1.25,
+        category: { id: "review", name: "评审验收" },
+        status: { id: "completed", name: "已完成" },
+      }],
+    };
+    const result = validateSyncPayload(legacy);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.value.tasks[0].regularHours, 1.25);
+    assert.equal(result.value.tasks[0].overtimeHours, null);
+    assert.equal(result.value.tasks[0].category.name, "评审验收");
+    assert.deepEqual(result.value.tasks[0].submitter, {
+      id: null,
+      name: null,
+      source: "authenticated-user",
+    });
+  });
+
+  it("rejects invalid regular/overtime totals and forged submitters", () => {
+    assert.equal(validateSyncPayload({
+      ...payload,
+      tasks: [{ ...payload.tasks[0], regularHours: 20, overtimeHours: 5 }],
+    }).ok, false);
+    assert.equal(validateSyncPayload({
+      ...payload,
+      tasks: [{ ...payload.tasks[0], submitter: { id: "other", name: "其他人", source: "authenticated-user" } }],
+    }).ok, false);
   });
 
   it("rejects a forged origin and iframe message", () => {
@@ -119,6 +160,21 @@ describe("WeCom extension trust and recovery contracts", () => {
     assert.throws(() => resumeBatch(recovered), /UNKNOWN_ITEM_REQUIRES_REVIEW/);
   });
 
+  it("requeues a login-blocked item only after explicit resume", () => {
+    const waiting = updateItem(createBatch(payload), "task-001", {
+      status: "waiting_for_login",
+      errorCode: "LOGIN_REQUIRED",
+      errorMessage: "等待用户手动登录",
+    });
+    const waitingBatch = { ...waiting, status: "waiting_for_login" as const };
+    assert.equal(nextPendingItem(waitingBatch), null);
+    const resumed = resumeBatch(waitingBatch);
+    assert.equal(resumed.status, "ready");
+    assert.equal(resumed.items[0].status, "pending");
+    assert.equal(resumed.items[0].errorCode, null);
+    assert.equal(nextPendingItem(resumed)?.taskId, "task-001");
+  });
+
   it("requires explicit manual reconciliation before an unknown item can progress", () => {
     const running = updateItem(createBatch(payload), "task-001", { status: "running" });
     const recovered = recoverInterruptedBatch(running);
@@ -170,5 +226,50 @@ describe("WeCom extension trust and recovery contracts", () => {
   it("rejects selector configs that attempt to include final submit", () => {
     const result = validateSelectorConfig({ finalSubmit: "button" });
     assert.deepEqual(result, { ok: false, code: "FINAL_SUBMIT_SELECTOR_FORBIDDEN" });
+  });
+
+  it("rejects executable, event-handler, broad, and malformed selector config", async () => {
+    const raw = JSON.parse(
+      await import("node:fs/promises").then((fs) =>
+        fs.readFile("extensions/wecom-timesheet/static/selector-config.example.json", "utf8"),
+      ),
+    ) as Record<string, string>;
+    assert.equal(validateSelectorConfig(raw).ok, true);
+    assert.deepEqual(
+      validateSelectorConfig({ ...raw, boardReady: "a[href='javascript:alert(1)']" }),
+      { ok: false, code: "SELECTOR_CONFIG_UNSAFE" },
+    );
+    assert.deepEqual(
+      validateSelectorConfig({ ...raw, itemSaveButton: "button[onclick]" }),
+      { ok: false, code: "SELECTOR_CONFIG_UNSAFE" },
+    );
+    assert.deepEqual(validateSelectorConfig({ ...raw, taskForm: "body" }), {
+      ok: false,
+      code: "SELECTOR_CONFIG_UNSAFE",
+    });
+    assert.deepEqual(validateSelectorConfig({ ...raw, taskForm: "form[data-id='x'" }), {
+      ok: false,
+      code: "SELECTOR_CONFIG_UNSAFE",
+    });
+  });
+
+  it("serializes concurrent service-worker state mutations", async () => {
+    const run = createSerialExecutor();
+    let active = 0;
+    let maximumActive = 0;
+    const order: number[] = [];
+    await Promise.all(
+      [1, 2, 3].map((value) =>
+        run(async () => {
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 2));
+          order.push(value);
+          active -= 1;
+        }),
+      ),
+    );
+    assert.equal(maximumActive, 1);
+    assert.deepEqual(order, [1, 2, 3]);
   });
 });

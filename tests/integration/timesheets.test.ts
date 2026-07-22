@@ -24,6 +24,7 @@ import {
   generateDailyTimesheet,
   getDailyDraft,
   listWorkLogs,
+  listSyncBatches,
   updateDailyDraft,
   updateSyncBatch,
   updateWorkLog,
@@ -108,9 +109,12 @@ function reviewedTask(task: {
     id: task.id,
     description: "完成虚构 EARN 页面跳转逻辑确认",
     projectId,
-    hours: 1,
+    regularHours: 1,
+    overtimeHours: 0,
     categoryId: "communication",
     workStatus: "completed",
+    urgency: null,
+    progress: 100,
     confidence: { description: 1, project: 1, hours: 1, category: 1, status: 1 },
     needsReview: false,
     reviewFields: [] as [],
@@ -289,6 +293,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     );
     const confirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: generated.id, expectedVersion: updated.version, requestHeaders: headers });
     assert.equal(confirmed.status, "confirmed");
+    assert.equal(confirmed.version, updated.version + 1);
     assert.equal((await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: generated.id, expectedVersion: confirmed.version, requestHeaders: headers })).status, "confirmed");
     await expectCode(
       () => exportDailyDraft({ principal: principal(otherManager), organizationId, draftId: generated.id, requestHeaders: headers }),
@@ -325,6 +330,20 @@ describe("daily timesheet ownership, review, and sync integration", () => {
         postgresDiagnostic(error).includes(
           "AI execution owner does not match its draft",
         ),
+    );
+  });
+
+  it("moves a modified confirmed draft back to review and rejects stale versions", async () => {
+    await makeRecord("2026-07-18", "已完成虚构状态回退验证，1 小时，无加班");
+    const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-18", timezone: "Asia/Shanghai", requestHeaders: headers });
+    const reviewed = await updateDailyDraft({ principal: principal(manager), organizationId, draftId: generated.id, expectedVersion: generated.version, tasks: [reviewedTask(generated.tasks[0])], requestHeaders: headers });
+    const confirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: reviewed.id, expectedVersion: reviewed.version, requestHeaders: headers });
+    const changed = await updateDailyDraft({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, tasks: [{ ...reviewedTask(confirmed.tasks[0]), description: "完成虚构状态回退验证并复核" }], requestHeaders: headers });
+    assert.equal(changed.status, "needs_review");
+    assert.equal(changed.confirmedAt, null);
+    await expectCode(
+      () => updateDailyDraft({ principal: principal(manager), organizationId, draftId: changed.id, expectedVersion: confirmed.version, tasks: [reviewedTask(changed.tasks[0])], requestHeaders: headers }),
+      "TIMESHEET_VERSION_CONFLICT",
     );
   });
 
@@ -387,14 +406,48 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     );
   });
 
+  it("prevents changing sources or regenerating after any sync history exists", async () => {
+    const [record] = await getDb()
+      .select()
+      .from(workLogRecord)
+      .where(and(
+        eq(workLogRecord.organizationId, organizationId),
+        eq(workLogRecord.userId, manager.id),
+        eq(workLogRecord.recordDate, "2026-07-22"),
+      ))
+      .limit(1);
+    assert.ok(record);
+    await expectCode(
+      () => updateWorkLog({ principal: principal(manager), organizationId, recordId: record.id, values: { rawText: "不允许修改的已同步来源" }, requestHeaders: headers }),
+      "TIMESHEET_SYNC_HISTORY_EXISTS",
+    );
+    const before = await getDb().select({ count: sql<number>`count(*)::int` }).from(timesheetAiExecution).where(eq(timesheetAiExecution.reportDate, "2026-07-22"));
+    await expectCode(
+      () => generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-22", timezone: "Asia/Shanghai", requestHeaders: headers }),
+      "TIMESHEET_SYNC_HISTORY_EXISTS",
+    );
+    const after = await getDb().select({ count: sql<number>`count(*)::int` }).from(timesheetAiExecution).where(eq(timesheetAiExecution.reportDate, "2026-07-22"));
+    assert.equal(after[0].count, before[0].count);
+  });
+
   it("rejects sync after project access is lost", async () => {
     await makeRecord("2026-07-23", "已完成虚构项目复盘，1 小时");
     const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-23", timezone: "Asia/Shanghai", requestHeaders: headers });
     const updated = await updateDailyDraft({ principal: principal(manager), organizationId, draftId: generated.id, expectedVersion: generated.version, tasks: [reviewedTask(generated.tasks[0])], requestHeaders: headers });
     const confirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: generated.id, expectedVersion: updated.version, requestHeaders: headers });
+    const requestId = "77777777-7777-4777-8777-777777777777";
+    const created = await createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId, dryRun: true, requestHeaders: headers });
     await getDb().delete(projectMember).where(and(eq(projectMember.projectId, projectId), eq(projectMember.userId, manager.id)));
     await expectCode(
-      () => createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId: "77777777-7777-4777-8777-777777777777", dryRun: true, requestHeaders: headers }),
+      () => createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId, dryRun: true, requestHeaders: headers }),
+      "NOT_FOUND",
+    );
+    await expectCode(
+      () => updateSyncBatch({ principal: principal(manager), organizationId, syncBatchId: created.batch.syncBatchId, status: "cancelled", items: created.batch.items.map((item) => ({ taskId: item.taskId, status: "cancelled", attemptCount: 0 })), requestHeaders: headers }),
+      "NOT_FOUND",
+    );
+    await expectCode(
+      () => listSyncBatches({ principal: principal(manager), organizationId, requestHeaders: headers }),
       "NOT_FOUND",
     );
     await getDb().insert(projectMember).values({ id: `${prefix}membership-restored`, projectId, userId: manager.id, role: "project_manager", createdBy: manager.id });
@@ -407,5 +460,11 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       "TIMESHEET_FEATURE_DISABLED",
     );
     process.env.PM_DAILY_REPORT_ENABLED = "true";
+    process.env.WECOM_TIMESHEET_SYNC_ENABLED = "false";
+    await expectCode(
+      () => listSyncBatches({ principal: principal(manager), organizationId, requestHeaders: headers }),
+      "WECOM_SYNC_FEATURE_DISABLED",
+    );
+    process.env.WECOM_TIMESHEET_SYNC_ENABLED = "true";
   });
 });

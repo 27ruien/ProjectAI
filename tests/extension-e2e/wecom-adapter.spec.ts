@@ -16,9 +16,13 @@ const task = {
   id: "task-001",
   description: "完成虚构 EARN 页面跳转逻辑确认",
   project: { id: "project-001", name: "CHAGEE Valley Fair Campaign" },
-  hours: 1,
+  submitter: { id: null, name: null, source: "authenticated-user" },
+  regularHours: 1,
+  overtimeHours: 0,
   category: { id: "communication", name: "项目沟通" },
-  status: { id: "completed", name: "已完成" },
+  status: { id: null, name: "已完成" },
+  urgency: null,
+  progress: 100,
 };
 
 test.beforeAll(async () => {
@@ -33,6 +37,9 @@ test.beforeAll(async () => {
       "/projectai.html": { root: mockRoot, filename: "projectai.html" },
       "/popup.html": { root: extensionRoot, filename: "popup.html" },
       "/popup.js": { root: extensionRoot, filename: "popup.js" },
+      "/options.html": { root: extensionRoot, filename: "options.html" },
+      "/options.js": { root: extensionRoot, filename: "options.js" },
+      "/selector-config.default.json": { root: extensionRoot, filename: "selector-config.default.json" },
       "/extension.css": { root: extensionRoot, filename: "extension.css" },
     };
     const file = files[pathname];
@@ -103,12 +110,17 @@ test("Dry Run 精确填写 iframe 字段且不点击任何保存/最终提交", 
   expect(result.fieldResults).toEqual({
     description: "filled",
     project: "matched",
-    hours: "filled",
-    category: "matched",
+    submitter: "verified",
+    regularHours: "filled",
+    overtimeHours: "filled",
     status: "matched",
+    progress: "filled",
   });
   const frame = page.frameLocator("iframe[data-testid='mock-task-frame']");
   await expect(frame.locator("textarea[name='description']")).toHaveValue(task.description);
+  await expect(frame.locator("input[name='regular-hours']")).toHaveValue("1");
+  await expect(frame.locator("input[name='overtime-hours']")).toHaveValue("0");
+  await expect(frame.locator("[data-testid='mock-unmapped-category']")).toHaveValue("企业微信未映射");
   await expect(frame.locator("[data-testid='mock-save-success']")).toHaveCount(0);
   await expect(page.locator("#final-submit-count")).toHaveText("0");
 });
@@ -190,6 +202,38 @@ test("Popup 手动 JSON 入口执行严格预览且默认 Dry Run", async ({ pag
   await expect(page.locator("#dry-run")).toBeChecked();
 });
 
+test("真实看板访问参数只保存在本机配置且不会被拒绝", async ({ page }) => {
+  await page.addInitScript(() => {
+    const store: Record<string, unknown> = {};
+    Object.assign(window, { __extensionStore: store });
+    Object.defineProperty(window, "chrome", {
+      value: {
+        storage: {
+          local: {
+            get: async (name: string) => ({ [name]: store[name] }),
+            set: async (values: Record<string, unknown>) => Object.assign(store, values),
+          },
+        },
+        runtime: { getURL: (value: string) => value },
+        permissions: {
+          contains: async () => true,
+          request: async () => true,
+        },
+      },
+    });
+  });
+  await page.goto(`${origin}/options.html`);
+  const localUrl = `${origin}/wecom-board.html?access=redacted&tab=daily#view`;
+  await page.locator("#board-url").fill(localUrl);
+  await page.locator("#save").click();
+  await expect(page.locator("#status")).toContainText("配置已保存");
+  const storedUrl = await page.evaluate(() => {
+    const store = (window as unknown as { __extensionStore: Record<string, { boardUrl?: string }> }).__extensionStore;
+    return store["projectai.timesheet.config.v1"]?.boardUrl;
+  });
+  expect(storedUrl).toBe(localUrl);
+});
+
 test("Service Worker 重启把中断中的保存标记为 unknown 并暂停", async ({ page }) => {
   const interrupted = {
     version: 1,
@@ -268,17 +312,25 @@ test("Service Worker 重启把中断中的保存标记为 unknown 并暂停", as
       items: [{ status: "unknown", errorCode: "SERVICE_WORKER_INTERRUPTED" }],
     },
   });
+  const rejectedSender = await page.evaluate(() => new Promise((resolve) => {
+    const listener = (window as unknown as {
+      __extensionRuntimeListeners: Array<(message: unknown, sender: unknown, respond: (value: unknown) => void) => unknown>;
+    }).__extensionRuntimeListeners[0];
+    listener({ kind: "START_SYNC", source: "popup" }, { url: "https://invalid.example/popup.html" }, resolve);
+  }));
+  expect(rejectedSender).toEqual({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
   const resolution = await page.evaluate(() => new Promise((resolve) => {
     const listener = (window as unknown as {
       __extensionRuntimeListeners: Array<(message: unknown, sender: unknown, respond: (value: unknown) => void) => unknown>;
     }).__extensionRuntimeListeners[0];
     listener({
       kind: "RESOLVE_UNKNOWN",
+      source: "popup",
       requestId: "11111111-1111-4111-8111-111111111111",
       syncBatchId: "22222222-2222-4222-8222-222222222222",
       taskId: "task-001",
       resolution: "saved",
-    }, {}, resolve);
+    }, { url: "chrome-extension://projectai-test/popup.html" }, resolve);
   }));
   expect(resolution).toEqual({ ok: true });
   await expect.poll(() =>
@@ -299,6 +351,30 @@ test("正式模式只保存单条任务，不触碰最终提交", async ({ page 
   const result = await execute(page, false);
   expect(result.status).toBe("saved");
   await expect(page.frameLocator("iframe").locator("[data-testid='mock-save-success']")).toHaveCount(1);
+  await expect(page.locator("[data-testid='mock-record-row']")).toHaveCount(1);
+  await expect(page.locator("[data-field='description']")).toHaveText(task.description);
+  await expect(page.locator("[data-field='submitter']")).toHaveText("当前登录用户");
+  await expect(page.locator("[data-field='regular-hours']")).toHaveText("1");
+  await expect(page.locator("[data-field='overtime-hours']")).toHaveText("0");
+  await expect(page.locator("[data-field='progress']")).toHaveText("100");
+  await expect(page.frameLocator("iframe").locator("[data-testid='mock-unmapped-category']")).toHaveValue("企业微信未映射");
+  await expect(page.locator("#final-submit-count")).toHaveText("0");
+});
+
+test("保存反馈与列表回读不一致时拒绝宣布成功", async ({ page }) => {
+  await loadAdapter(page, "?mismatch=1");
+  const result = await execute(page, false);
+  expect(result.status).toBe("failed");
+  expect(result.code).toBe("RECORD_PROJECT_MISMATCH");
+  await expect(page.locator("#final-submit-count")).toHaveText("0");
+});
+
+test("自动保存页面在任何字段写入前安全停止", async ({ page }) => {
+  await loadAdapter(page, "", { ...selectors, persistenceMode: "auto-save" });
+  const result = await execute(page, true);
+  expect(result.status).toBe("failed");
+  expect(result.code).toBe("AUTO_SAVE_UNSUPPORTED");
+  await expect(page.locator("iframe[data-testid='mock-task-frame']")).toBeHidden();
   await expect(page.locator("#final-submit-count")).toHaveText("0");
 });
 

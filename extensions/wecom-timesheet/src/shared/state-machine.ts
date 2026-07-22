@@ -145,7 +145,23 @@ export function resumeBatch(batch: PersistedBatch, now = new Date()): PersistedB
   if (batch.items.some((item) => item.status === "unknown")) {
     throw new Error("UNKNOWN_ITEM_REQUIRES_REVIEW");
   }
-  return { ...batch, status: "ready", updatedAt: now.toISOString() };
+  const updatedAt = now.toISOString();
+  return {
+    ...batch,
+    status: "ready",
+    items: batch.items.map((item) =>
+      item.status === "waiting_for_login"
+        ? {
+            ...item,
+            status: "pending" as const,
+            errorCode: null,
+            errorMessage: null,
+            updatedAt,
+          }
+        : item,
+    ),
+    updatedAt,
+  };
 }
 
 export function cancelBatch(batch: PersistedBatch, now = new Date()): PersistedBatch {

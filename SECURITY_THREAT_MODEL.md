@@ -10,7 +10,7 @@ Protected assets are user-owned work logs/drafts, organization/project boundarie
 | --- | --- | --- |
 | 恶意网页伪造 ProjectAI 消息 | Content script is injected only on two narrow paths; requires top frame, `event.source===window`, exact current/allowed Origin, protocol/source/type/version and exact fields | XSS in ProjectAI same Origin can act as the user; existing CSP/input defenses remain required |
 | 跨租户/跨用户日报读取或同步 | Server Session, active organization membership, `organizationId+userId` ownership predicates, project ACL recheck, 404 anti-enumeration, DB scope triggers | Existing system admin project semantics remain unchanged; no subordinate-report permission added |
-| 重放旧批次 | Server request unique index and one active batch per draft; extension exact canonical payload identity; per-item `batch:task` unique key | User may intentionally paste a separate valid-looking manual test payload; manual entry is not a server attestation path |
+| 重放旧批次 | Server request unique index and one active batch per draft; extension exact canonical payload identity; per-item `batch:task` unique key; server batch/item transitions are monotonic | Manual JSON is not a server attestation, so Review/real builds force it to Dry Run; actual saves start only from authenticated ProjectAI |
 | 重复创建 | saved is immutable/skipped; running interruption becomes unknown; unknown never auto-retries; restart does not resume work | A page may save but fail before feedback; this is intentionally unknown and requires human reconciliation |
 | 选择器失效导致错误点击 | Typed exact config, unique text match, read-back verification, MutationObserver waits, overlay/login checks, no approximate fallback | Real DOM is unverified until user supplies URL and demonstrates flow; real use is blocked pending Dry Run |
 | 误点最终提交 | No final-submit command/key; save control must be inside `taskForm`; dangerous text/aria semantics are rejected; tests assert Mock final-submit count remains zero | Real DOM and localization still require review; every selector/code change requires package/source review and acceptance tests |
@@ -30,3 +30,5 @@ Provider credentials stay in the existing server Secret File/environment injecti
 ## Security release gates
 
 Before real WeCom use: review exact URL and selectors, inspect the manifest and ZIP, run unit/package/Mock E2E, perform one Dry Run, then one fictional task save with the user present. Any DOM ambiguity, unknown save, permission expansion, XSS finding, cross-user access or final-submit path is release-blocking.
+
+Current transitive dependency findings, runtime reachability, mitigations, expiry dates and upstream closure conditions are recorded in [docs/dependency-security.md](./docs/dependency-security.md). A proposed expiry is not approval; a Security/依赖维护 Reviewer must explicitly accept any unresolved high finding before Ready.

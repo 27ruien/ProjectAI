@@ -21,8 +21,11 @@ export type TimesheetConfidence = {
   description: number;
   project: number;
   hours: number;
+  overtimeHours?: number;
   category: number;
   status: number;
+  urgency?: number;
+  progress?: number;
 };
 
 export const workLogRecord = pgTable(
@@ -157,6 +160,7 @@ export const timesheetTask = pgTable(
       .notNull()
       .default(""),
     hours: numeric("hours", { precision: 5, scale: 2 }),
+    overtimeHours: numeric("overtime_hours", { precision: 5, scale: 2 }),
     categoryId: varchar("category_id", { length: 80 }),
     categoryNameSnapshot: varchar("category_name_snapshot", { length: 120 })
       .notNull()
@@ -167,6 +171,8 @@ export const timesheetTask = pgTable(
     })
       .notNull()
       .default(""),
+    urgencyNameSnapshot: varchar("urgency_name_snapshot", { length: 120 }),
+    progress: integer("progress"),
     confidence: jsonb("confidence").$type<TimesheetConfidence>().notNull(),
     needsReview: boolean("needs_review").notNull().default(true),
     reviewFields: jsonb("review_fields").$type<string[]>().notNull().default([]),
@@ -194,7 +200,19 @@ export const timesheetTask = pgTable(
     ),
     check(
       "timesheet_tasks_hours_check",
-      sql`${table.hours} is null or (${table.hours} > 0 and ${table.hours} <= 24)`,
+      sql`${table.hours} is null or (${table.hours} >= 0 and ${table.hours} <= 24 and mod(${table.hours} * 100, 25) = 0)`,
+    ),
+    check(
+      "timesheet_tasks_overtime_hours_check",
+      sql`${table.overtimeHours} is null or (${table.overtimeHours} >= 0 and ${table.overtimeHours} <= 24 and mod(${table.overtimeHours} * 100, 25) = 0)`,
+    ),
+    check(
+      "timesheet_tasks_total_daily_hours_check",
+      sql`${table.hours} is null or ${table.overtimeHours} is null or ${table.hours} + ${table.overtimeHours} <= 24`,
+    ),
+    check(
+      "timesheet_tasks_progress_check",
+      sql`${table.progress} is null or (${table.progress} >= 0 and ${table.progress} <= 100)`,
     ),
     check("timesheet_tasks_sort_order_check", sql`${table.sortOrder} >= 0`),
   ],
