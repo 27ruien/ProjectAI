@@ -144,5 +144,12 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
       /where name like '\[TEST\] phase1-staging-%'/,
     );
     assert.match(deployment, /phase1:staging-smoke -- --cleanup-stale/);
+    assert.ok(
+      deployment.indexOf("phase1:staging-smoke -- --cleanup-stale") <
+        deployment.indexOf(
+          "Verifying PostgreSQL and MinIO consistency before application startup",
+        ),
+      "stale synthetic state must be removed before the cross-store gate",
+    );
   });
 });

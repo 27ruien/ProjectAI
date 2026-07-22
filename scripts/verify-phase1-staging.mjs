@@ -294,6 +294,7 @@ async function deleteOrganizationState(client, input) {
 async function cleanupStaleVerificationState() {
   assertStagingBoundary();
   const client = new pg.Client({ connectionString: required("DATABASE_URL") });
+  let projectIds = [];
   await client.connect();
   try {
     const [projects, spaces, departments, organizations] = await Promise.all([
@@ -302,8 +303,7 @@ async function cleanupStaleVerificationState() {
       client.query("select id from departments where name like '[TEST] phase1-staging-%'"),
       client.query("select id from organizations where name like '[TEST] phase1-staging-%'"),
     ]);
-    const projectIds = projects.rows.map((row) => row.id);
-    for (const targetProjectId of projectIds) await deleteProjectObjects(targetProjectId);
+    projectIds = projects.rows.map((row) => row.id);
     await client.query("begin");
     for (const targetProjectId of projectIds) {
       await deleteProjectDatabaseState(client, targetProjectId);
@@ -314,13 +314,14 @@ async function cleanupStaleVerificationState() {
       organizationIds: organizations.rows.map((row) => row.id),
     });
     await client.query("commit");
-    process.stdout.write(`${JSON.stringify({ status: "success", cleanup: "phase1-staging-stale", projects: projectIds.length })}\n`);
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
     throw error;
   } finally {
     await client.end();
   }
+  for (const targetProjectId of projectIds) await deleteProjectObjects(targetProjectId);
+  process.stdout.write(`${JSON.stringify({ status: "success", cleanup: "phase1-staging-stale", projects: projectIds.length })}\n`);
 }
 
 async function cleanup() {
@@ -336,7 +337,6 @@ async function cleanup() {
     }
     sessions.delete(name);
   }
-  await deleteProjectObjects(projectId);
   const client = new pg.Client({ connectionString: required("DATABASE_URL") });
   await client.connect();
   try {
@@ -358,6 +358,7 @@ async function cleanup() {
   } finally {
     await client.end();
   }
+  await deleteProjectObjects(projectId);
 }
 
 async function main() {

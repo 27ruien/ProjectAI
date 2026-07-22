@@ -1812,6 +1812,11 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
   '
 printf 'Applying idempotent Staging seed data.\n'
 "${compose_run[@]}" projectai-migrate npm run db:seed
+printf 'Removing only stale synthetic Phase 1 verification state before consistency checks.\n'
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=https://gridworks.cn/tool/projectai-staging" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-phase1-smoke npm run phase1:staging-smoke -- --cleanup-stale
 printf 'Enqueuing any stored current document versions missing a processing Job.\n'
 "${compose_run[@]}" projectai-migrate npm run documents:enqueue
 printf 'Verifying every Staging project retains a project manager.\n'
