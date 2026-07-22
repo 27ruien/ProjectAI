@@ -53,6 +53,21 @@ function principal(user: UserRecord): AuthenticatedPrincipal {
   return { sessionId: `${prefix}${user.id}`, user };
 }
 
+function postgresDiagnostic(error: unknown): string {
+  if (!error || typeof error !== "object") return "unknown database error";
+  if ("cause" in error && error.cause) return postgresDiagnostic(error.cause);
+  const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
+  const constraint =
+    "constraint" in error && typeof error.constraint === "string"
+      ? error.constraint
+      : "unknown";
+  const message =
+    "message" in error && typeof error.message === "string"
+      ? error.message
+      : "database operation failed";
+  return `PostgreSQL ${code} (${constraint}): ${message}`;
+}
+
 async function expectCode(operation: () => Promise<unknown>, code: string): Promise<void> {
   await assert.rejects(operation, (error: unknown) => error instanceof TimesheetError && error.code === code);
 }
@@ -188,20 +203,24 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     const reportDate = "2026-07-19";
     await makeRecord(reportDate, "已完成虚构日报恢复验证，1 小时");
     const staleId = `${prefix}stale-ai`;
-    await getDb().insert(timesheetAiExecution).values({
-      id: staleId,
-      executionId: staleId,
-      organizationId,
-      userId: manager.id,
-      reportDate,
-      skillId: "pm-daily-timesheet-generation",
-      modelProfileId: "qwen-project-assistant-cn-v1",
-      promptVersion: "pm-daily-report-v1",
-      sourceSelectionDigest: "0".repeat(64),
-      sourceCount: 1,
-      status: "running",
-      createdAt: new Date(Date.now() - 1_000_000),
-    });
+    try {
+      await getDb().insert(timesheetAiExecution).values({
+        id: staleId,
+        executionId: staleId,
+        organizationId,
+        userId: manager.id,
+        reportDate,
+        skillId: "pm-daily-timesheet-generation",
+        modelProfileId: "qwen-project-assistant-cn-v1",
+        promptVersion: "pm-daily-report-v1",
+        sourceSelectionDigest: "0".repeat(64),
+        sourceCount: 1,
+        status: "running",
+        createdAt: new Date(Date.now() - 1_000_000),
+      });
+    } catch (error) {
+      throw new Error(`Unable to seed stale timesheet execution: ${postgresDiagnostic(error)}`);
+    }
     const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate, timezone: "Asia/Shanghai", requestHeaders: headers });
     assert.equal(generated.status, "needs_review");
     const [stale] = await getDb()
