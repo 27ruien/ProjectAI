@@ -56,4 +56,6 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/
+/extensions/wecom-timesheet/selector-config.local*
+/release/wecom-timesheet-extension-*.zip
 /work/

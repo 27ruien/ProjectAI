@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><title>Mock WeCom Form</title></head>
+  <body>
+    <form data-testid="mock-task-form" onsubmit="return false">
+      <label>任务详情<textarea name="description"></textarea></label>
+      <label>项目<select name="project"><option value="">请选择</option><option value="project-001">CHAGEE Valley Fair Campaign</option><option value="project-002">Fictional Delivery Project</option></select></label>
+      <label>工时<input name="hours" type="number" step="0.25" /></label>
+      <label>分类<select name="category"><option value="">请选择</option><option value="communication">项目沟通</option><option value="execution">项目执行</option><option value="review">评审验收</option></select></label>
+      <label>状态<select name="status"><option value="">请选择</option><option value="completed">已完成</option><option value="in_progress">进行中</option><option value="blocked">阻塞</option></select></label>
+      <button data-testid="mock-save-item" type="button">保存单条任务</button>
+    </form>
+    <section id="results"></section>
+    <script>
+      const query = new URLSearchParams(location.search);
+      if (query.get("duplicate") === "1") {
+        const duplicate = document.createElement("option");
+        duplicate.value = "project-duplicate";
+        duplicate.textContent = "CHAGEE Valley Fair Campaign";
+        document.querySelector("select[name='project']").append(duplicate);
+      }
+      document.querySelector("[data-testid='mock-save-item']").addEventListener("click", () => {
+        if (query.get("unknown") === "1") return;
+        const result = document.createElement("p");
+        if (query.get("failure") === "1") {
+          result.dataset.testid = "mock-save-failure";
+          result.textContent = "保存失败";
+        } else {
+          result.dataset.testid = "mock-save-success";
+          result.textContent = `saved-${document.querySelectorAll("[data-testid='mock-save-success']").length + 1}`;
+        }
+        document.querySelector("#results").append(result);
+      });
+    </script>
+  </body>
+</html>

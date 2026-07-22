@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8" /><title>Mock ProjectAI</title></head>
+  <body>
+    <h1>Mock ProjectAI 已确认工时</h1>
+    <button id="send">发送已确认日报</button>
+    <pre id="events"></pre>
+    <script>
+      const payload = {
+        version: 1,
+        request_id: "11111111-1111-4111-8111-111111111111",
+        sync_batch_id: "22222222-2222-4222-8222-222222222222",
+        date: "2026-07-22",
+        source: "project-ai",
+        confirmed_at: "2026-07-22T10:00:00+08:00",
+        draft_version: 1,
+        dry_run: true,
+        tasks: [{ id: "task-001", description: "完成 EARN 页面登录及 H5 回流逻辑确认", project: { id: "project-001", name: "CHAGEE Valley Fair Campaign" }, hours: 1, category: { id: "communication", name: "项目沟通" }, status: { id: "completed", name: "已完成" } }]
+      };
+      document.querySelector("#send").addEventListener("click", () => window.postMessage({ source: "project-ai", type: "PROJECT_AI_SYNC_TIMESHEET", version: 1, requestId: payload.request_id, payload }, location.origin));
+      window.addEventListener("message", (event) => { if (event.source === window && event.data?.source === "project-ai-extension") document.querySelector("#events").textContent += `${JSON.stringify(event.data)}\n`; });
+    </script>
+  </body>
+</html>

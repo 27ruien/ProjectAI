@@ -1,0 +1,22 @@
+{
+  "boardReady": "[data-testid='mock-board-ready']",
+  "loggedOutIndicator": "[data-testid='mock-login-required']",
+  "overlay": "[data-testid='mock-overlay']",
+  "formIframe": "iframe[data-testid='mock-task-frame']",
+  "createTaskButton": "button[data-testid='mock-create-task']",
+  "taskForm": "form[data-testid='mock-task-form']",
+  "descriptionInput": "textarea[name='description']",
+  "projectControl": "select[name='project']",
+  "projectOptions": "select[name='project'] option",
+  "projectSelectedValue": "select[name='project'] option:checked",
+  "hoursInput": "input[name='hours']",
+  "categoryControl": "select[name='category']",
+  "categoryOptions": "select[name='category'] option",
+  "categorySelectedValue": "select[name='category'] option:checked",
+  "statusControl": "select[name='status']",
+  "statusOptions": "select[name='status'] option",
+  "statusSelectedValue": "select[name='status'] option:checked",
+  "itemSaveButton": "button[data-testid='mock-save-item']",
+  "saveSuccess": "[data-testid='mock-save-success']",
+  "saveFailure": "[data-testid='mock-save-failure']"
+}
