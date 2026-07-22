@@ -30,6 +30,18 @@ function taggedJsonString(prompt: string, tag: string): string {
   }
 }
 
+function taggedJsonValue(prompt: string, tag: string): unknown {
+  const match = prompt.match(
+    new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`),
+  );
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 export class FakeProjectAssistantProvider
   implements ProjectAssistantProvider
 {
@@ -106,6 +118,48 @@ export class FakeProjectAssistantProvider
       text = JSON.stringify({ risks: [{ title: "虚构交付延期风险", description: "若验收准备未按期完成，交付可能延期。", probability: 3, impact: 4, mitigation: "每周核对进度并升级阻塞。", trigger: "关键行动逾期", sourceIndex: 0 }] });
     } else if (request.purpose === "weekly_report") {
       text = JSON.stringify({ completed: ["完成虚构需求审核"], inProgress: ["推进虚构行动项"], nextWeek: ["完成虚构验收"], milestones: [], blockers: [], risks: ["持续监控已登记风险"], scopeChanges: [], requirementChanges: [], overdueActions: [], decisionsNeeded: [] });
+    } else if (
+      request.purpose === "timesheet_generation" ||
+      request.purpose === "timesheet_repair"
+    ) {
+      const input = taggedJsonValue(request.userPrompt, "timesheet_input_json") as {
+        today_records?: Array<{ id?: unknown; raw_text?: unknown; project_id?: unknown }>;
+        available_projects?: Array<{ id?: unknown }>;
+      } | null;
+      const records = input?.today_records ?? [];
+      const fallbackProjectId =
+        typeof input?.available_projects?.[0]?.id === "string"
+          ? input.available_projects[0].id
+          : null;
+      text = JSON.stringify({
+        tasks: records.map((record, index) => {
+          const projectId =
+            typeof record.project_id === "string"
+              ? record.project_id
+              : fallbackProjectId;
+          return {
+            description: `完成虚构项目工作记录整理并确认当前进展 ${index + 1}`,
+            project_id: projectId,
+            hours: null,
+            category_id: "execution",
+            status: "in_progress",
+            source_record_ids: [
+              typeof record.id === "string" ? record.id : `record-missing-${index}`,
+            ],
+            confidence: {
+              description: 0.94,
+              project: projectId ? 0.95 : 0.4,
+              hours: 0.2,
+              category: 0.9,
+              status: 0.86,
+            },
+            needs_review: true,
+            review_fields: ["hours"],
+          };
+        }),
+        warnings: ["虚构 Provider 未推断无依据工时"],
+        unresolved_record_ids: [],
+      });
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

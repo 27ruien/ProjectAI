@@ -1,0 +1,2011 @@
+import { createHash } from "node:crypto";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  inArray,
+  sql,
+} from "drizzle-orm";
+import { requireProjectAccess } from "@/lib/auth/authorization";
+import type { AuthenticatedPrincipal } from "@/lib/auth/session";
+import { getRequestAuditContext } from "@/lib/auth/request-context";
+import { createProjectAssistantGateway } from "@/lib/ai/project-assistant/gateway";
+import {
+  requireAiAssistantEnabled,
+  type AiRuntimeConfig,
+} from "@/lib/ai/project-assistant/config";
+import type { AiGatewayResult } from "@/lib/ai/project-assistant/gateway";
+import { getDb, type DatabaseExecutor } from "@/lib/db/client";
+import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
+import { listAuthorizedProjects } from "@/lib/db/repositories/project-repository";
+import {
+  dailyTimesheetDraft,
+  actionItem,
+  timesheetAiExecution,
+  timesheetSyncBatch,
+  timesheetSyncItem,
+  timesheetTask,
+  workLogRecord,
+  type DailyTimesheetDraft,
+  type TimesheetSyncBatchRecord,
+  type TimesheetTaskRecord,
+  type WorkLogRecord,
+} from "@/lib/db/schema";
+import { requireTimesheetOrganization } from "./authorization";
+import {
+  generatedTimesheetOutputSchema,
+  redactConnectorError,
+  TIMESHEET_CATEGORIES,
+  TIMESHEET_PROMPT_VERSION,
+  TIMESHEET_SKILL_ID,
+  TIMESHEET_STATUSES,
+  TIMESHEET_SYNC_PROTOCOL_VERSION,
+  type EditableTimesheetTask,
+  type GeneratedTimesheetOutput,
+  type TimesheetSyncPayload,
+} from "./contracts";
+import {
+  requireDailyReportEnabled,
+  requireWecomSyncEnabled,
+} from "./config";
+import { TimesheetError } from "./errors";
+
+const ACTIVE_BATCH_STATUSES = [
+  "pending",
+  "validating",
+  "waiting_for_board",
+  "waiting_for_login",
+  "running",
+  "paused",
+] as const;
+
+const TERMINAL_BATCH_STATUSES = new Set([
+  "partially_synced",
+  "synced",
+  "failed",
+  "cancelled",
+]);
+
+export function assertSyncBatchTransition(current: string, next: string): void {
+  if (TERMINAL_BATCH_STATUSES.has(current) && current !== next) {
+    throw new TimesheetError(
+      409,
+      "SYNC_BATCH_TERMINAL",
+      "同步批次已经结束，不能重新打开",
+    );
+  }
+}
+
+export function assertSyncItemTransition(
+  current: string,
+  next: string,
+  reconciliation?: { externalReference?: string | null; errorCode?: string | null },
+): void {
+  if (current === "saved" && next !== "saved") {
+    throw new TimesheetError(409, "SYNC_ITEM_ALREADY_SAVED", "已保存任务不能回退状态");
+  }
+  const manualUnknownResolution =
+    current === "unknown" &&
+    ((next === "saved" && reconciliation?.externalReference === "manual-reconciliation") ||
+      (next === "failed" && reconciliation?.errorCode === "MANUAL_RECONCILIATION_NOT_SAVED"));
+  if (current === "unknown" && next !== "unknown" && !manualUnknownResolution) {
+    throw new TimesheetError(
+      409,
+      "SYNC_ITEM_UNKNOWN_REVIEW_REQUIRED",
+      "保存结果未知，必须人工核对后处理",
+    );
+  }
+  if (current === "cancelled" && next !== "cancelled") {
+    throw new TimesheetError(409, "SYNC_ITEM_CANCELLED", "已取消任务不能重新执行");
+  }
+}
+
+type WorkLogInput = {
+  organizationId: string;
+  recordDate: string;
+  recordedAt: string;
+  rawText: string;
+  source: "manual" | "voice" | "import";
+  projectId?: string | null;
+  projectHint?: string | null;
+  hoursHint?: number | null;
+  statusHint?: string | null;
+};
+
+export type GeneratedContext = {
+  organizationId: string;
+  reportDate: string;
+  records: WorkLogRecord[];
+  projects: Array<{
+    id: string;
+    name: string;
+    stage: string;
+    aliases: string[];
+  }>;
+};
+
+function finiteDecimal(value: string | null): number | null {
+  if (value === null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function shanghaiDate(value: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(value);
+}
+
+function assertRecordedDate(recordedAt: Date, recordDate: string): void {
+  if (shanghaiDate(recordedAt) !== recordDate) {
+    throw new TimesheetError(
+      422,
+      "RECORDED_DATE_MISMATCH",
+      "记录时间与日报日期不一致",
+    );
+  }
+}
+
+function digest(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function sourceDigest(records: WorkLogRecord[]): string {
+  return digest(
+    records.map((record) => ({
+      id: record.id,
+      rawText: record.rawText,
+      projectId: record.projectId,
+      projectHint: record.projectHint,
+      hoursHint: record.hoursHint,
+      statusHint: record.statusHint,
+      recordedAt: record.recordedAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+    })),
+  );
+}
+
+function errorCode(error: unknown): string {
+  const value =
+    error && typeof error === "object" && "code" in error
+      ? (error as { code?: unknown }).code
+      : null;
+  return typeof value === "string" && /^[A-Z0-9_]{2,80}$/.test(value)
+    ? value
+    : "TIMESHEET_GENERATION_FAILED";
+}
+
+export function combineTimesheetGatewayResults(
+  first: AiGatewayResult,
+  second: AiGatewayResult,
+): AiGatewayResult {
+  const add = (left: number | null, right: number | null) =>
+    left === null || right === null ? null : left + right;
+  return {
+    provider: second.provider,
+    requestedModel: first.requestedModel,
+    actualModel: second.actualModel,
+    fallbackUsed: first.fallbackUsed || second.fallbackUsed,
+    text: second.text,
+    inputTokens: add(first.inputTokens, second.inputTokens),
+    outputTokens: add(first.outputTokens, second.outputTokens),
+    totalTokens: add(first.totalTokens, second.totalTokens),
+    providerRequestId: second.providerRequestId,
+    latencyMs: first.latencyMs + second.latencyMs,
+  };
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(
+      text
+        .trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, ""),
+    );
+  } catch {
+    throw new TimesheetError(422, "AI_OUTPUT_INVALID", "AI 工时草稿格式无效");
+  }
+}
+
+function categoryById(id: string | null) {
+  return id ? TIMESHEET_CATEGORIES.find((item) => item.id === id) ?? null : null;
+}
+
+function statusById(id: string | null) {
+  return id ? TIMESHEET_STATUSES.find((item) => item.id === id) ?? null : null;
+}
+
+function recordHasDurationEvidence(record: WorkLogRecord): boolean {
+  return (
+    record.hoursHint !== null ||
+    /(?:约|大约|差不多)?\s*\d+(?:\.\d+)?\s*(?:小时|h\b)|\d+\s*(?:分钟|min\b)|\d{1,2}[:：]\d{2}\s*[-—~至到]\s*\d{1,2}[:：]\d{2}/i.test(
+      record.rawText,
+    )
+  );
+}
+
+function recordContradictsCompletion(record: WorkLogRecord): boolean {
+  return /计划|准备|讨论中|对齐中|待确认|尚未|未完成|进行中|阻塞/.test(
+    `${record.rawText} ${record.statusHint ?? ""}`,
+  );
+}
+
+export function normalizeGeneratedOutput(
+  raw: unknown,
+  context: GeneratedContext,
+  confidenceThreshold: number,
+): GeneratedTimesheetOutput {
+  const parsed = generatedTimesheetOutputSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new TimesheetError(422, "AI_OUTPUT_INVALID", "AI 工时草稿格式无效");
+  }
+  const projectIds = new Set(context.projects.map((project) => project.id));
+  const recordsById = new Map(context.records.map((record) => [record.id, record]));
+  const unresolved = new Set(parsed.data.unresolved_record_ids);
+  for (const recordId of unresolved) {
+    if (!recordsById.has(recordId)) {
+      throw new TimesheetError(
+        422,
+        "AI_SOURCE_RECORD_INVALID",
+        "AI 返回了不属于当前日报的来源记录",
+      );
+    }
+  }
+
+  const tasks = parsed.data.tasks.map((task) => {
+    if (task.project_id && !projectIds.has(task.project_id)) {
+      throw new TimesheetError(
+        422,
+        "AI_PROJECT_NOT_AUTHORIZED",
+        "AI 返回了未授权项目",
+      );
+    }
+    if (task.category_id && !categoryById(task.category_id)) {
+      throw new TimesheetError(
+        422,
+        "AI_CATEGORY_INVALID",
+        "AI 返回了不存在的工时分类",
+      );
+    }
+    if (task.status && !statusById(task.status)) {
+      throw new TimesheetError(
+        422,
+        "AI_STATUS_INVALID",
+        "AI 返回了不存在的工作状态",
+      );
+    }
+    const sources = task.source_record_ids.map((recordId) => {
+      const record = recordsById.get(recordId);
+      if (!record) {
+        throw new TimesheetError(
+          422,
+          "AI_SOURCE_RECORD_INVALID",
+          "AI 返回了不属于当前日报的来源记录",
+        );
+      }
+      return record;
+    });
+    const explicitProjects = new Set(
+      sources
+        .map((record) => record.projectId)
+        .filter((value): value is string => Boolean(value)),
+    );
+    if (explicitProjects.size > 1) {
+      throw new TimesheetError(
+        422,
+        "AI_CROSS_PROJECT_MERGE",
+        "AI 不能合并不同项目的记录",
+      );
+    }
+    if (sources.length > 1) {
+      throw new TimesheetError(
+        422,
+        "AI_MULTI_SOURCE_MERGE_REJECTED",
+        "AI 草稿必须逐条保留来源；合并只能由用户审核后执行",
+      );
+    }
+    if (
+      task.project_id &&
+      explicitProjects.size > 0 &&
+      !explicitProjects.has(task.project_id)
+    ) {
+      throw new TimesheetError(
+        422,
+        "AI_PROJECT_CONTRADICTS_SOURCE",
+        "AI 项目与原始记录不一致",
+      );
+    }
+    if (task.hours !== null && !sources.some(recordHasDurationEvidence)) {
+      throw new TimesheetError(
+        422,
+        "AI_HOURS_WITHOUT_EVIDENCE",
+        "AI 返回了没有事实依据的工时",
+      );
+    }
+    if (
+      task.status === "completed" &&
+      sources.some(recordContradictsCompletion)
+    ) {
+      throw new TimesheetError(
+        422,
+        "AI_COMPLETION_CONTRADICTS_SOURCE",
+        "AI 将未完成事项错误标记为已完成",
+      );
+    }
+    const reviewFields = new Set(task.review_fields);
+    const values = {
+      description: task.description,
+      project: task.project_id,
+      hours: task.hours,
+      category: task.category_id,
+      status: task.status,
+    } as const;
+    for (const field of Object.keys(values) as Array<keyof typeof values>) {
+      if (values[field] === null || task.confidence[field] < confidenceThreshold) {
+        reviewFields.add(field);
+      }
+    }
+    return {
+      ...task,
+      needs_review: true,
+      review_fields: [...reviewFields],
+    };
+  });
+  const referenced = new Set(tasks.flatMap((task) => task.source_record_ids));
+  if ([...unresolved].some((recordId) => referenced.has(recordId))) {
+    throw new TimesheetError(
+      422,
+      "AI_SOURCE_RECORD_CONFLICT",
+      "AI 同时使用并标记了未解析来源记录",
+    );
+  }
+  if (context.records.some((record) => !referenced.has(record.id) && !unresolved.has(record.id))) {
+    throw new TimesheetError(
+      422,
+      "AI_SOURCE_RECORD_OMITTED",
+      "AI 遗漏了本次日报来源记录",
+    );
+  }
+  return { ...parsed.data, tasks };
+}
+
+export function validateGeneratedTimesheetText(
+  text: string,
+  context: GeneratedContext,
+  confidenceThreshold = 0.85,
+): GeneratedTimesheetOutput {
+  return normalizeGeneratedOutput(parseJson(text), context, confidenceThreshold);
+}
+
+export function buildTimesheetPrompts(input: unknown): {
+  systemPrompt: string;
+  userPrompt: string;
+} {
+  return {
+    systemPrompt: [
+      "你是 ProjectAI 的项目经理工时整理器。只输出一个 JSON 对象，不得输出 Markdown。",
+      "所有任务都必须引用本次输入中的 source_record_ids，且只能选择输入提供的项目、分类和状态。",
+      "不得推测工时，不得为了凑满八小时补齐；没有依据时 hours 必须为 null。",
+      "计划、准备、讨论中、对齐中、待确认不得改写为 completed。",
+      "描述使用‘动作 + 对象 + 结果或进展’，不同项目、交付物或状态必须分开。",
+      "任务描述建议为 18—50 个汉字；不得使用‘跟进一下’或‘处理问题’等空泛描述。",
+      "置信度低或字段为空时必须列入 review_fields。AI 输出永远只是待人工审核草稿。",
+      `Prompt version: ${TIMESHEET_PROMPT_VERSION}`,
+    ].join("\n"),
+    userPrompt: `<timesheet_input_json>\n${JSON.stringify(input)}\n</timesheet_input_json>`,
+  };
+}
+
+export function withTotalHoursWarning(
+  output: GeneratedTimesheetOutput,
+): GeneratedTimesheetOutput {
+  const total = output.tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0);
+  if (
+    total <= 16 ||
+    output.warnings.some((warning) => warning.startsWith("TOTAL_HOURS:"))
+  ) {
+    return output;
+  }
+  return {
+    ...output,
+    warnings: [...output.warnings, `TOTAL_HOURS:${total}，请确认是否准确`],
+  };
+}
+
+function buildRepairPrompts(input: unknown, invalidOutput: string) {
+  const base = buildTimesheetPrompts(input);
+  return {
+    systemPrompt: `${base.systemPrompt}\n上一次输出未通过严格 Schema 或事实校验。只修复格式和受控字段，不得添加新事实。`,
+    userPrompt: `${base.userPrompt}\n<invalid_output_json>\n${JSON.stringify(invalidOutput.slice(0, 12_000))}\n</invalid_output_json>`,
+  };
+}
+
+function serializeRecord(record: WorkLogRecord, included: boolean) {
+  return {
+    id: record.id,
+    organizationId: record.organizationId,
+    recordDate: record.recordDate,
+    recordedAt: record.recordedAt.toISOString(),
+    rawText: record.rawText,
+    source: record.source,
+    projectId: record.projectId,
+    projectHint: record.projectHint,
+    hoursHint: finiteDecimal(record.hoursHint),
+    statusHint: record.statusHint,
+    includedInDraft: included,
+    createdAt: record.createdAt.toISOString(),
+    updatedAt: record.updatedAt.toISOString(),
+  };
+}
+
+function serializeTask(task: TimesheetTaskRecord) {
+  return {
+    id: task.id,
+    description: task.description,
+    projectId: task.projectId,
+    projectName: task.projectNameSnapshot,
+    hours: finiteDecimal(task.hours),
+    categoryId: task.categoryId,
+    categoryName: task.categoryNameSnapshot,
+    workStatus: task.workStatus,
+    workStatusName: task.workStatusNameSnapshot,
+    confidence: task.confidence,
+    needsReview: task.needsReview,
+    reviewFields: task.reviewFields,
+    sourceRecordIds: task.sourceRecordIds,
+    sortOrder: task.sortOrder,
+    confirmedAt: task.confirmedAt?.toISOString() ?? null,
+  };
+}
+
+async function draftPayload(draft: DailyTimesheetDraft, db: DatabaseExecutor) {
+  const tasks = await db
+    .select()
+    .from(timesheetTask)
+    .where(eq(timesheetTask.draftId, draft.id))
+    .orderBy(asc(timesheetTask.sortOrder));
+  return {
+    id: draft.id,
+    organizationId: draft.organizationId,
+    reportDate: draft.reportDate,
+    status: draft.status,
+    version: draft.version,
+    totalHours: finiteDecimal(draft.totalHours) ?? 0,
+    warnings: draft.warnings,
+    unresolvedRecordIds: draft.unresolvedRecordIds,
+    generatedAt: draft.generatedAt?.toISOString() ?? null,
+    confirmedAt: draft.confirmedAt?.toISOString() ?? null,
+    updatedAt: draft.updatedAt.toISOString(),
+    tasks: tasks.map(serializeTask),
+  };
+}
+
+async function requireOwnedDraft(
+  principal: AuthenticatedPrincipal,
+  draftId: string,
+  organizationId: string,
+  db: DatabaseExecutor,
+  lockForUpdate = false,
+) {
+  const query = db
+    .select()
+    .from(dailyTimesheetDraft)
+    .where(
+      and(
+        eq(dailyTimesheetDraft.id, draftId),
+        eq(dailyTimesheetDraft.organizationId, organizationId),
+        eq(dailyTimesheetDraft.userId, principal.user.id),
+      ),
+    )
+    .limit(1);
+  const [draft] = lockForUpdate
+    ? await query.for("update", { of: dailyTimesheetDraft })
+    : await query;
+  if (!draft) throw new TimesheetError(404, "NOT_FOUND", "工作日报不存在");
+  return draft;
+}
+
+async function requireProjectInOrganization(
+  principal: AuthenticatedPrincipal,
+  projectId: string,
+  organizationId: string,
+  requestHeaders: Headers,
+  db?: DatabaseExecutor,
+) {
+  const project = await requireProjectAccess(principal, projectId, requestHeaders, {
+    db,
+  });
+  if (project.organizationId !== organizationId) {
+    throw new TimesheetError(404, "NOT_FOUND", "项目不存在");
+  }
+  return project;
+}
+
+async function invalidateEditableDraft(
+  organizationId: string,
+  userId: string,
+  reportDate: string,
+  db: DatabaseExecutor,
+) {
+  await db
+    .update(dailyTimesheetDraft)
+    .set({
+      status: "needs_review",
+      confirmedAt: null,
+      version: sql`${dailyTimesheetDraft.version} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(dailyTimesheetDraft.organizationId, organizationId),
+        eq(dailyTimesheetDraft.userId, userId),
+        eq(dailyTimesheetDraft.reportDate, reportDate),
+        inArray(dailyTimesheetDraft.status, ["draft", "needs_review", "confirmed", "failed"]),
+      ),
+    );
+}
+
+export async function listWorkLogs(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  reportDate: string;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  const db = getDb();
+  const records = await db
+    .select()
+    .from(workLogRecord)
+    .where(
+      and(
+        eq(workLogRecord.organizationId, input.organizationId),
+        eq(workLogRecord.userId, input.principal.user.id),
+        eq(workLogRecord.recordDate, input.reportDate),
+        eq(workLogRecord.isArchived, false),
+      ),
+    )
+    .orderBy(asc(workLogRecord.recordedAt));
+  const [draft] = await db
+    .select({ id: dailyTimesheetDraft.id })
+    .from(dailyTimesheetDraft)
+    .where(
+      and(
+        eq(dailyTimesheetDraft.organizationId, input.organizationId),
+        eq(dailyTimesheetDraft.userId, input.principal.user.id),
+        eq(dailyTimesheetDraft.reportDate, input.reportDate),
+      ),
+    )
+    .limit(1);
+  const included = new Set<string>();
+  if (draft) {
+    const rows = await db
+      .select({ sourceRecordIds: timesheetTask.sourceRecordIds })
+      .from(timesheetTask)
+      .where(eq(timesheetTask.draftId, draft.id));
+    for (const row of rows) for (const id of row.sourceRecordIds) included.add(id);
+  }
+  return { records: records.map((record) => serializeRecord(record, included.has(record.id))) };
+}
+
+export async function createWorkLog(input: {
+  principal: AuthenticatedPrincipal;
+  values: WorkLogInput;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.values.organizationId,
+    input.requestHeaders,
+  );
+  if (input.values.projectId) {
+    await requireProjectInOrganization(
+      input.principal,
+      input.values.projectId,
+      input.values.organizationId,
+      input.requestHeaders,
+    );
+  }
+  const recordedAt = new Date(input.values.recordedAt);
+  assertRecordedDate(recordedAt, input.values.recordDate);
+  const db = getDb();
+  const record = await db.transaction(async (tx) => {
+    const [created] = await tx
+      .insert(workLogRecord)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.values.organizationId,
+        userId: input.principal.user.id,
+        recordDate: input.values.recordDate,
+        recordedAt,
+        rawText: input.values.rawText,
+        source: input.values.source,
+        projectId: input.values.projectId ?? null,
+        projectHint: input.values.projectHint ?? null,
+        hoursHint:
+          input.values.hoursHint === null || input.values.hoursHint === undefined
+            ? null
+            : String(input.values.hoursHint),
+        statusHint: input.values.statusHint ?? null,
+      })
+      .returning();
+    await invalidateEditableDraft(
+      input.values.organizationId,
+      input.principal.user.id,
+      input.values.recordDate,
+      tx,
+    );
+    await writeAuditEvent(
+      {
+        actorUserId: input.principal.user.id,
+        projectId: input.values.projectId ?? null,
+        eventType: "work_log.created",
+        entityType: "work_log_record",
+        entityId: created.id,
+        result: "succeeded",
+        metadata: {
+          organizationId: input.values.organizationId,
+          reportDate: input.values.recordDate,
+          source: input.values.source,
+          rawTextLength: input.values.rawText.length,
+        },
+        ...getRequestAuditContext(input.requestHeaders),
+      },
+      tx,
+    );
+    return created;
+  });
+  return serializeRecord(record, false);
+}
+
+export async function updateWorkLog(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  recordId: string;
+  values: Partial<Omit<WorkLogInput, "organizationId" | "recordDate">>;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  return getDb().transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(workLogRecord)
+      .where(
+        and(
+          eq(workLogRecord.id, input.recordId),
+          eq(workLogRecord.organizationId, input.organizationId),
+          eq(workLogRecord.userId, input.principal.user.id),
+          eq(workLogRecord.isArchived, false),
+        ),
+      )
+      .limit(1)
+      .for("update", { of: workLogRecord });
+    if (!current) throw new TimesheetError(404, "NOT_FOUND", "工作随记不存在");
+    if (input.values.projectId) {
+      await requireProjectInOrganization(
+        input.principal,
+        input.values.projectId,
+        input.organizationId,
+        input.requestHeaders,
+        tx,
+      );
+    }
+    const recordedAt = input.values.recordedAt
+      ? new Date(input.values.recordedAt)
+      : current.recordedAt;
+    assertRecordedDate(recordedAt, current.recordDate);
+    const [updated] = await tx
+      .update(workLogRecord)
+      .set({
+        ...(input.values.recordedAt ? { recordedAt } : {}),
+        ...(input.values.rawText !== undefined
+          ? { rawText: input.values.rawText }
+          : {}),
+        ...(input.values.source !== undefined ? { source: input.values.source } : {}),
+        ...(input.values.projectId !== undefined
+          ? { projectId: input.values.projectId }
+          : {}),
+        ...(input.values.projectHint !== undefined
+          ? { projectHint: input.values.projectHint }
+          : {}),
+        ...(input.values.hoursHint !== undefined
+          ? {
+              hoursHint:
+                input.values.hoursHint === null
+                  ? null
+                  : String(input.values.hoursHint),
+            }
+          : {}),
+        ...(input.values.statusHint !== undefined
+          ? { statusHint: input.values.statusHint }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(workLogRecord.id, current.id))
+      .returning();
+    await invalidateEditableDraft(
+      input.organizationId,
+      input.principal.user.id,
+      current.recordDate,
+      tx,
+    );
+    await writeAuditEvent(
+      {
+        actorUserId: input.principal.user.id,
+        projectId: updated.projectId,
+        eventType: "work_log.updated",
+        entityType: "work_log_record",
+        entityId: current.id,
+        result: "succeeded",
+        metadata: { organizationId: input.organizationId, reportDate: current.recordDate },
+        ...getRequestAuditContext(input.requestHeaders),
+      },
+      tx,
+    );
+    return serializeRecord(updated, false);
+  });
+}
+
+export async function deleteWorkLog(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  recordId: string;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  return getDb().transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(workLogRecord)
+      .where(
+        and(
+          eq(workLogRecord.id, input.recordId),
+          eq(workLogRecord.organizationId, input.organizationId),
+          eq(workLogRecord.userId, input.principal.user.id),
+          eq(workLogRecord.isArchived, false),
+        ),
+      )
+      .limit(1)
+      .for("update", { of: workLogRecord });
+    if (!current) throw new TimesheetError(404, "NOT_FOUND", "工作随记不存在");
+    await tx
+      .update(workLogRecord)
+      .set({ isArchived: true, updatedAt: new Date() })
+      .where(eq(workLogRecord.id, current.id));
+    await invalidateEditableDraft(
+      input.organizationId,
+      input.principal.user.id,
+      current.recordDate,
+      tx,
+    );
+    await writeAuditEvent(
+      {
+        actorUserId: input.principal.user.id,
+        projectId: current.projectId,
+        eventType: "work_log.deleted",
+        entityType: "work_log_record",
+        entityId: current.id,
+        result: "succeeded",
+        metadata: { organizationId: input.organizationId, reportDate: current.recordDate },
+        ...getRequestAuditContext(input.requestHeaders),
+      },
+      tx,
+    );
+    return { deleted: true };
+  });
+}
+
+async function beginExecution(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  reportDate: string;
+  sourceSelectionDigest: string;
+  sourceCount: number;
+  config: AiRuntimeConfig;
+  requestHeaders: Headers;
+}) {
+  const id = crypto.randomUUID();
+  await getDb().transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtextextended(${`${input.organizationId}:${input.principal.user.id}:${input.reportDate}:timesheet-ai`}, 0))`,
+    );
+    const staleBefore = new Date(Date.now() - input.config.executionStaleAfterMs);
+    const recovered = await tx
+      .update(timesheetAiExecution)
+      .set({
+        status: "failed",
+        failureCode: "AI_EXECUTION_STALE",
+        completedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(timesheetAiExecution.organizationId, input.organizationId),
+          eq(timesheetAiExecution.userId, input.principal.user.id),
+          eq(timesheetAiExecution.reportDate, input.reportDate),
+          eq(timesheetAiExecution.status, "running"),
+          sql`${timesheetAiExecution.createdAt} <= ${staleBefore}`,
+        ),
+      )
+      .returning({ id: timesheetAiExecution.id });
+    for (const stale of recovered) {
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          eventType: "timesheet.ai_stale_recovered",
+          entityType: "timesheet_ai_execution",
+          entityId: stale.id,
+          result: "failed",
+          metadata: {
+            organizationId: input.organizationId,
+            reportDate: input.reportDate,
+            failureCode: "AI_EXECUTION_STALE",
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+    }
+    const [running] = await tx
+      .select({ id: timesheetAiExecution.id })
+      .from(timesheetAiExecution)
+      .where(
+        and(
+          eq(timesheetAiExecution.organizationId, input.organizationId),
+          eq(timesheetAiExecution.userId, input.principal.user.id),
+          eq(timesheetAiExecution.reportDate, input.reportDate),
+          eq(timesheetAiExecution.status, "running"),
+        ),
+      )
+      .limit(1);
+    if (running) {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_GENERATION_IN_PROGRESS",
+        "今日工时正在整理，请稍后再试",
+      );
+    }
+    await tx.insert(timesheetAiExecution).values({
+      id,
+      executionId: id,
+      organizationId: input.organizationId,
+      userId: input.principal.user.id,
+      reportDate: input.reportDate,
+      skillId: TIMESHEET_SKILL_ID,
+      modelProfileId: input.config.profileId,
+      promptVersion: TIMESHEET_PROMPT_VERSION,
+      sourceSelectionDigest: input.sourceSelectionDigest,
+      sourceCount: input.sourceCount,
+    });
+  });
+  return id;
+}
+
+async function failExecution(
+  executionId: string,
+  error: unknown,
+  result?: AiGatewayResult,
+) {
+  await getDb()
+    .update(timesheetAiExecution)
+    .set({
+      status: "failed",
+      provider: result?.provider,
+      actualModel: result?.actualModel,
+      inputTokens: result?.inputTokens,
+      outputTokens: result?.outputTokens,
+      totalTokens: result?.totalTokens,
+      latencyMs: result?.latencyMs,
+      failureCode: errorCode(error),
+      completedAt: new Date(),
+    })
+    .where(eq(timesheetAiExecution.id, executionId));
+}
+
+export async function generateDailyTimesheet(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  reportDate: string;
+  timezone: "Asia/Shanghai";
+  requestHeaders: Headers;
+}) {
+  const feature = requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  const db = getDb();
+  const records = await db
+    .select()
+    .from(workLogRecord)
+    .where(
+      and(
+        eq(workLogRecord.organizationId, input.organizationId),
+        eq(workLogRecord.userId, input.principal.user.id),
+        eq(workLogRecord.recordDate, input.reportDate),
+        eq(workLogRecord.isArchived, false),
+      ),
+    )
+    .orderBy(asc(workLogRecord.recordedAt));
+  if (records.length === 0) {
+    throw new TimesheetError(
+      422,
+      "TIMESHEET_RECORDS_REQUIRED",
+      "请先添加至少一条今日随记",
+    );
+  }
+  const config = requireAiAssistantEnabled();
+  const authorized = (
+    await listAuthorizedProjects(
+      input.principal.user.id,
+      input.principal.user.systemRole,
+    )
+  ).filter((project) => project.organizationId === input.organizationId);
+  const projects = authorized.map((project) => ({
+    id: project.id,
+    name: project.name,
+    stage: project.stage,
+    aliases: [...new Set([project.name, project.clientName])],
+  }));
+  const context: GeneratedContext = {
+    organizationId: input.organizationId,
+    reportDate: input.reportDate,
+    records,
+    projects,
+  };
+  const currentActionPlans = projects.length === 0
+    ? []
+    : await db
+        .select({
+          id: actionItem.id,
+          projectId: actionItem.projectId,
+          title: actionItem.title,
+          description: actionItem.description,
+          status: actionItem.status,
+          dueDate: actionItem.dueDate,
+        })
+        .from(actionItem)
+        .where(
+          and(
+            inArray(actionItem.projectId, projects.map((item) => item.id)),
+            inArray(actionItem.status, ["todo", "in_progress", "blocked"]),
+          ),
+        )
+        .orderBy(asc(actionItem.dueDate), asc(actionItem.code))
+        .limit(100);
+  const aiInput = {
+    date: input.reportDate,
+    user_timezone: input.timezone,
+    current_project: null,
+    today_records: records.map((record) => ({
+      id: record.id,
+      recorded_at: record.recordedAt.toISOString(),
+      raw_text: record.rawText,
+      project_id: record.projectId,
+      project_hint: record.projectHint,
+      hours_hint: finiteDecimal(record.hoursHint),
+      status_hint: record.statusHint,
+    })),
+    today_meetings: [],
+    current_action_plans: currentActionPlans.map((item) => ({
+      id: item.id,
+      project_id: item.projectId,
+      title: item.title,
+      description: item.description,
+      status: item.status,
+      due_date: item.dueDate,
+    })),
+    available_projects: projects,
+    available_categories: TIMESHEET_CATEGORIES,
+    available_statuses: TIMESHEET_STATUSES,
+  };
+  const selectionDigest = sourceDigest(records);
+  const executionId = await beginExecution({
+    principal: input.principal,
+    organizationId: input.organizationId,
+    reportDate: input.reportDate,
+    sourceSelectionDigest: selectionDigest,
+    sourceCount: records.length,
+    config,
+    requestHeaders: input.requestHeaders,
+  });
+  const gateway = createProjectAssistantGateway(config);
+  let gatewayResult: AiGatewayResult | undefined;
+  try {
+    const prompts = buildTimesheetPrompts(aiInput);
+    gatewayResult = await gateway.generate({
+      ...prompts,
+      purpose: "timesheet_generation",
+    });
+    let output: GeneratedTimesheetOutput;
+    try {
+      output = withTotalHoursWarning(
+        normalizeGeneratedOutput(
+          parseJson(gatewayResult.text),
+          context,
+          feature.confidenceThreshold,
+        ),
+      );
+    } catch (firstError) {
+      if (!(firstError instanceof TimesheetError)) throw firstError;
+      const repair = buildRepairPrompts(aiInput, gatewayResult.text);
+      const repaired = await gateway.generate({
+        ...repair,
+        purpose: "timesheet_repair",
+      });
+      gatewayResult = combineTimesheetGatewayResults(gatewayResult, repaired);
+      output = withTotalHoursWarning(
+        normalizeGeneratedOutput(
+          parseJson(gatewayResult.text),
+          context,
+          feature.confidenceThreshold,
+        ),
+      );
+    }
+
+    const saved = await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtextextended(${`${input.organizationId}:${input.principal.user.id}:${input.reportDate}:timesheet-save`}, 0))`,
+      );
+      const currentRecords = await tx
+        .select()
+        .from(workLogRecord)
+        .where(
+          and(
+            eq(workLogRecord.organizationId, input.organizationId),
+            eq(workLogRecord.userId, input.principal.user.id),
+            eq(workLogRecord.recordDate, input.reportDate),
+            eq(workLogRecord.isArchived, false),
+          ),
+        )
+        .orderBy(asc(workLogRecord.recordedAt));
+      if (sourceDigest(currentRecords) !== selectionDigest) {
+        throw new TimesheetError(
+          409,
+          "TIMESHEET_SOURCE_CHANGED",
+          "随记在 AI 整理期间发生变化，请重新生成",
+        );
+      }
+      const [activeBatch] = await tx
+        .select({ id: timesheetSyncBatch.id })
+        .from(timesheetSyncBatch)
+        .innerJoin(
+          dailyTimesheetDraft,
+          eq(dailyTimesheetDraft.id, timesheetSyncBatch.draftId),
+        )
+        .where(
+          and(
+            eq(dailyTimesheetDraft.organizationId, input.organizationId),
+            eq(dailyTimesheetDraft.userId, input.principal.user.id),
+            eq(dailyTimesheetDraft.reportDate, input.reportDate),
+            inArray(timesheetSyncBatch.status, [...ACTIVE_BATCH_STATUSES]),
+          ),
+        )
+        .limit(1);
+      if (activeBatch) {
+        throw new TimesheetError(
+          409,
+          "TIMESHEET_SYNC_ACTIVE",
+          "当前日报存在活动同步批次",
+        );
+      }
+      const existing = await tx
+        .select()
+        .from(dailyTimesheetDraft)
+        .where(
+          and(
+            eq(dailyTimesheetDraft.organizationId, input.organizationId),
+            eq(dailyTimesheetDraft.userId, input.principal.user.id),
+            eq(dailyTimesheetDraft.reportDate, input.reportDate),
+          ),
+        )
+        .limit(1)
+        .for("update", { of: dailyTimesheetDraft });
+      const draftId = existing[0]?.id ?? crypto.randomUUID();
+      if (existing[0]) {
+        const history = await tx
+          .select({ id: timesheetSyncBatch.id })
+          .from(timesheetSyncBatch)
+          .where(eq(timesheetSyncBatch.draftId, draftId))
+          .limit(1);
+        if (history.length > 0) {
+          throw new TimesheetError(
+            409,
+            "TIMESHEET_ALREADY_SYNCED",
+            "已有同步历史的日报不能重新生成",
+          );
+        }
+        await tx.delete(timesheetTask).where(eq(timesheetTask.draftId, draftId));
+        await tx
+          .update(dailyTimesheetDraft)
+          .set({
+            status: "needs_review",
+            version: existing[0].version + 1,
+            totalHours: String(
+              output.tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0),
+            ),
+            warnings: output.warnings,
+            unresolvedRecordIds: output.unresolved_record_ids,
+            aiProvider: gatewayResult!.provider,
+            aiModel: gatewayResult!.actualModel,
+            promptVersion: TIMESHEET_PROMPT_VERSION,
+            generatedAt: new Date(),
+            confirmedAt: null,
+            updatedAt: new Date(),
+          })
+          .where(eq(dailyTimesheetDraft.id, draftId));
+      } else {
+        await tx.insert(dailyTimesheetDraft).values({
+          id: draftId,
+          organizationId: input.organizationId,
+          userId: input.principal.user.id,
+          reportDate: input.reportDate,
+          status: "needs_review",
+          totalHours: String(
+            output.tasks.reduce((sum, task) => sum + (task.hours ?? 0), 0),
+          ),
+          warnings: output.warnings,
+          unresolvedRecordIds: output.unresolved_record_ids,
+          aiProvider: gatewayResult!.provider,
+          aiModel: gatewayResult!.actualModel,
+          promptVersion: TIMESHEET_PROMPT_VERSION,
+          generatedAt: new Date(),
+        });
+      }
+      await tx.insert(timesheetTask).values(
+        output.tasks.map((task, index) => {
+          const project = task.project_id
+            ? projects.find((item) => item.id === task.project_id)
+            : null;
+          const category = categoryById(task.category_id);
+          const status = statusById(task.status);
+          return {
+            id: crypto.randomUUID(),
+            draftId,
+            description: task.description,
+            projectId: task.project_id,
+            projectNameSnapshot: project?.name ?? "",
+            hours: task.hours === null ? null : String(task.hours),
+            categoryId: task.category_id,
+            categoryNameSnapshot: category?.name ?? "",
+            workStatus: task.status,
+            workStatusNameSnapshot: status?.name ?? "",
+            confidence: task.confidence,
+            needsReview: task.needs_review,
+            reviewFields: task.review_fields,
+            sourceRecordIds: task.source_record_ids,
+            sortOrder: index,
+          };
+        }),
+      );
+      await tx
+        .update(timesheetAiExecution)
+        .set({
+          draftId,
+          status: "succeeded",
+          provider: gatewayResult!.provider,
+          actualModel: gatewayResult!.actualModel,
+          outputCount: output.tasks.length,
+          inputTokens: gatewayResult!.inputTokens,
+          outputTokens: gatewayResult!.outputTokens,
+          totalTokens: gatewayResult!.totalTokens,
+          latencyMs: gatewayResult!.latencyMs,
+          completedAt: new Date(),
+        })
+        .where(eq(timesheetAiExecution.id, executionId));
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          eventType: "timesheet.generated",
+          entityType: "daily_timesheet_draft",
+          entityId: draftId,
+          result: "succeeded",
+          metadata: {
+            organizationId: input.organizationId,
+            reportDate: input.reportDate,
+            sourceCount: records.length,
+            taskCount: output.tasks.length,
+            executionId,
+            promptVersion: TIMESHEET_PROMPT_VERSION,
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+      const [draft] = await tx
+        .select()
+        .from(dailyTimesheetDraft)
+        .where(eq(dailyTimesheetDraft.id, draftId));
+      return draftPayload(draft, tx);
+    });
+    return saved;
+  } catch (error) {
+    await failExecution(executionId, error, gatewayResult);
+    throw error;
+  }
+}
+
+export async function getDailyDraft(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  reportDate: string;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  const db = getDb();
+  const [draft] = await db
+    .select()
+    .from(dailyTimesheetDraft)
+    .where(
+      and(
+        eq(dailyTimesheetDraft.organizationId, input.organizationId),
+        eq(dailyTimesheetDraft.userId, input.principal.user.id),
+        eq(dailyTimesheetDraft.reportDate, input.reportDate),
+      ),
+    )
+    .limit(1);
+  return { draft: draft ? await draftPayload(draft, db) : null };
+}
+
+async function validateEditableTasks(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  reportDate: string;
+  tasks: EditableTimesheetTask[];
+  requestHeaders: Headers;
+  db: DatabaseExecutor;
+}) {
+  const sourceIds = [...new Set(input.tasks.flatMap((task) => task.sourceRecordIds))];
+  const records = sourceIds.length
+    ? await input.db
+        .select({ id: workLogRecord.id, projectId: workLogRecord.projectId })
+        .from(workLogRecord)
+        .where(
+          and(
+            inArray(workLogRecord.id, sourceIds),
+            eq(workLogRecord.organizationId, input.organizationId),
+            eq(workLogRecord.userId, input.principal.user.id),
+            eq(workLogRecord.recordDate, input.reportDate),
+            eq(workLogRecord.isArchived, false),
+          ),
+        )
+    : [];
+  if (records.length !== sourceIds.length) {
+    throw new TimesheetError(422, "SOURCE_RECORD_INVALID", "日报来源记录无效");
+  }
+  const projectIds = [...new Set(input.tasks.map((task) => task.projectId).filter((id): id is string => Boolean(id)))];
+  const projects = new Map<string, { id: string; name: string }>();
+  for (const projectId of projectIds) {
+    const project = await requireProjectInOrganization(
+      input.principal,
+      projectId,
+      input.organizationId,
+      input.requestHeaders,
+      input.db,
+    );
+    projects.set(project.id, { id: project.id, name: project.name });
+  }
+  const recordsById = new Map(records.map((record) => [record.id, record]));
+  return input.tasks.map((task, index) => {
+    const category = categoryById(task.categoryId);
+    const status = statusById(task.workStatus);
+    if (task.categoryId && !category)
+      throw new TimesheetError(422, "CATEGORY_INVALID", "工时分类无效");
+    if (task.workStatus && !status)
+      throw new TimesheetError(422, "STATUS_INVALID", "工作状态无效");
+    if (!task.needsReview && task.reviewFields.length > 0) {
+      throw new TimesheetError(422, "REVIEW_STATE_INVALID", "仍有字段需要审核");
+    }
+    const sourceProjects = new Set(
+      task.sourceRecordIds
+        .map((recordId) => recordsById.get(recordId)?.projectId)
+        .filter((value): value is string => Boolean(value)),
+    );
+    if (sourceProjects.size > 1) {
+      throw new TimesheetError(
+        422,
+        "TASK_CROSS_PROJECT_MERGE",
+        "不能把不同项目的随记合并为一条任务",
+      );
+    }
+    if (task.projectId && sourceProjects.size === 1 && !sourceProjects.has(task.projectId)) {
+      throw new TimesheetError(
+        422,
+        "TASK_PROJECT_CONTRADICTS_SOURCE",
+        "任务项目与来源随记不一致",
+      );
+    }
+    return {
+      ...task,
+      sortOrder: index,
+      projectName: task.projectId ? projects.get(task.projectId)?.name ?? "" : "",
+      categoryName: category?.name ?? "",
+      statusName: status?.name ?? "",
+    };
+  });
+}
+
+export async function updateDailyDraft(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  draftId: string;
+  expectedVersion: number;
+  tasks: EditableTimesheetTask[];
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  return getDb().transaction(async (tx) => {
+    const draft = await requireOwnedDraft(
+      input.principal,
+      input.draftId,
+      input.organizationId,
+      tx,
+      true,
+    );
+    if (draft.version !== input.expectedVersion) {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_VERSION_CONFLICT",
+        "日报已被其他请求修改，请刷新后重试",
+      );
+    }
+    const [batch] = await tx
+      .select({ id: timesheetSyncBatch.id })
+      .from(timesheetSyncBatch)
+      .where(eq(timesheetSyncBatch.draftId, draft.id))
+      .limit(1);
+    if (batch) {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_SYNC_HISTORY_EXISTS",
+        "已有同步历史的日报不能修改",
+      );
+    }
+    const normalized = await validateEditableTasks({
+      principal: input.principal,
+      organizationId: input.organizationId,
+      reportDate: draft.reportDate,
+      tasks: input.tasks,
+      requestHeaders: input.requestHeaders,
+      db: tx,
+    });
+    const existingTasks = await tx
+      .select({ id: timesheetTask.id })
+      .from(timesheetTask)
+      .where(eq(timesheetTask.draftId, draft.id));
+    const existingIds = new Set(existingTasks.map((task) => task.id));
+    await tx.delete(timesheetTask).where(eq(timesheetTask.draftId, draft.id));
+    await tx.insert(timesheetTask).values(
+      normalized.map((task) => ({
+        id: task.id && existingIds.has(task.id) ? task.id : crypto.randomUUID(),
+        draftId: draft.id,
+        description: task.description,
+        projectId: task.projectId,
+        projectNameSnapshot: task.projectName,
+        hours: task.hours === null ? null : String(task.hours),
+        categoryId: task.categoryId,
+        categoryNameSnapshot: task.categoryName,
+        workStatus: task.workStatus,
+        workStatusNameSnapshot: task.statusName,
+        confidence: task.confidence,
+        needsReview: task.needsReview,
+        reviewFields: task.reviewFields,
+        sourceRecordIds: task.sourceRecordIds,
+        sortOrder: task.sortOrder,
+      })),
+    );
+    const totalHours = normalized.reduce((sum, task) => sum + (task.hours ?? 0), 0);
+    const warnings = [...draft.warnings.filter((warning) => !warning.startsWith("TOTAL_HOURS:"))];
+    if (totalHours > 16) warnings.push(`TOTAL_HOURS:${totalHours}，请确认是否准确`);
+    const [updated] = await tx
+      .update(dailyTimesheetDraft)
+      .set({
+        status: "needs_review",
+        version: draft.version + 1,
+        totalHours: String(totalHours),
+        warnings,
+        confirmedAt: null,
+        updatedAt: new Date(),
+      })
+      .where(eq(dailyTimesheetDraft.id, draft.id))
+      .returning();
+    await writeAuditEvent(
+      {
+        actorUserId: input.principal.user.id,
+        eventType: "timesheet.updated",
+        entityType: "daily_timesheet_draft",
+        entityId: draft.id,
+        result: "succeeded",
+        metadata: {
+          organizationId: input.organizationId,
+          reportDate: draft.reportDate,
+          taskCount: normalized.length,
+          version: updated.version,
+        },
+        ...getRequestAuditContext(input.requestHeaders),
+      },
+      tx,
+    );
+    return draftPayload(updated, tx);
+  });
+}
+
+export async function confirmDailyDraft(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  draftId: string;
+  expectedVersion: number;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  return getDb().transaction(async (tx) => {
+    const draft = await requireOwnedDraft(
+      input.principal,
+      input.draftId,
+      input.organizationId,
+      tx,
+      true,
+    );
+    if (draft.status === "confirmed" && draft.version === input.expectedVersion) {
+      return draftPayload(draft, tx);
+    }
+    if (draft.version !== input.expectedVersion) {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_VERSION_CONFLICT",
+        "日报已被其他请求修改，请刷新后重试",
+      );
+    }
+    const tasks = await tx
+      .select()
+      .from(timesheetTask)
+      .where(eq(timesheetTask.draftId, draft.id))
+      .orderBy(asc(timesheetTask.sortOrder));
+    if (tasks.length === 0) {
+      throw new TimesheetError(422, "TIMESHEET_TASKS_REQUIRED", "日报没有可确认任务");
+    }
+    for (const task of tasks) {
+      if (
+        !task.projectId ||
+        task.hours === null ||
+        !task.categoryId ||
+        !task.workStatus ||
+        task.needsReview ||
+        task.reviewFields.length > 0
+      ) {
+        throw new TimesheetError(
+          422,
+          "TIMESHEET_REVIEW_REQUIRED",
+          "请先完成所有必填字段和人工审核",
+        );
+      }
+      await requireProjectInOrganization(
+        input.principal,
+        task.projectId,
+        input.organizationId,
+        input.requestHeaders,
+        tx,
+      );
+      if (!categoryById(task.categoryId) || !statusById(task.workStatus)) {
+        throw new TimesheetError(422, "TIMESHEET_CATALOG_INVALID", "日报字段已失效");
+      }
+    }
+    const confirmedAt = new Date();
+    await tx
+      .update(timesheetTask)
+      .set({ confirmedAt, updatedAt: confirmedAt })
+      .where(eq(timesheetTask.draftId, draft.id));
+    const [confirmed] = await tx
+      .update(dailyTimesheetDraft)
+      .set({ status: "confirmed", confirmedAt, updatedAt: confirmedAt })
+      .where(eq(dailyTimesheetDraft.id, draft.id))
+      .returning();
+    await writeAuditEvent(
+      {
+        actorUserId: input.principal.user.id,
+        eventType: "timesheet.confirmed",
+        entityType: "daily_timesheet_draft",
+        entityId: draft.id,
+        result: "succeeded",
+        metadata: {
+          organizationId: input.organizationId,
+          reportDate: draft.reportDate,
+          version: draft.version,
+          taskCount: tasks.length,
+        },
+        ...getRequestAuditContext(input.requestHeaders),
+      },
+      tx,
+    );
+    return draftPayload(confirmed, tx);
+  });
+}
+
+export async function exportDailyDraft(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  draftId: string;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  const db = getDb();
+  const draft = await requireOwnedDraft(
+    input.principal,
+    input.draftId,
+    input.organizationId,
+    db,
+  );
+  if (draft.status !== "confirmed" && draft.status !== "synced" && draft.status !== "partially_synced") {
+    throw new TimesheetError(422, "TIMESHEET_NOT_CONFIRMED", "未确认日报不能导出");
+  }
+  return draftPayload(draft, db);
+}
+
+function syncPayload(
+  batch: TimesheetSyncBatchRecord,
+  draft: DailyTimesheetDraft,
+  tasks: TimesheetTaskRecord[],
+): TimesheetSyncPayload {
+  if (!draft.confirmedAt) {
+    throw new TimesheetError(422, "TIMESHEET_NOT_CONFIRMED", "日报尚未确认");
+  }
+  return {
+    version: TIMESHEET_SYNC_PROTOCOL_VERSION,
+    request_id: batch.requestId,
+    sync_batch_id: batch.syncBatchId,
+    date: draft.reportDate,
+    source: "project-ai",
+    confirmed_at: draft.confirmedAt.toISOString(),
+    draft_version: draft.version,
+    dry_run: batch.dryRun,
+    tasks: tasks.map((task) => {
+      if (
+        !task.projectId ||
+        !task.projectNameSnapshot ||
+        task.hours === null ||
+        !task.categoryId ||
+        !task.categoryNameSnapshot ||
+        !task.workStatus ||
+        !task.workStatusNameSnapshot
+      ) {
+        throw new TimesheetError(422, "TIMESHEET_REVIEW_REQUIRED", "日报字段不完整");
+      }
+      return {
+        id: task.id,
+        description: task.description,
+        project: { id: task.projectId, name: task.projectNameSnapshot },
+        hours: Number(task.hours),
+        category: { id: task.categoryId, name: task.categoryNameSnapshot },
+        status: { id: task.workStatus, name: task.workStatusNameSnapshot },
+      };
+    }),
+  };
+}
+
+async function batchPayload(batch: TimesheetSyncBatchRecord, db: DatabaseExecutor) {
+  const items = await db
+    .select()
+    .from(timesheetSyncItem)
+    .where(eq(timesheetSyncItem.batchId, batch.id))
+    .orderBy(asc(timesheetSyncItem.createdAt));
+  return {
+    id: batch.id,
+    syncBatchId: batch.syncBatchId,
+    requestId: batch.requestId,
+    draftId: batch.draftId,
+    status: batch.status,
+    dryRun: batch.dryRun,
+    startedAt: batch.startedAt?.toISOString() ?? null,
+    finishedAt: batch.finishedAt?.toISOString() ?? null,
+    createdAt: batch.createdAt.toISOString(),
+    items: items.map((item) => ({
+      id: item.id,
+      taskId: item.taskId,
+      idempotencyKey: item.idempotencyKey,
+      status: item.status,
+      attemptCount: item.attemptCount,
+      externalReference: item.externalReference,
+      errorCode: item.errorCode,
+      errorMessage: item.errorMessageRedacted,
+      updatedAt: item.updatedAt.toISOString(),
+    })),
+  };
+}
+
+export async function createSyncBatch(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  draftId: string;
+  expectedVersion: number;
+  requestId: string;
+  dryRun: boolean;
+  requestHeaders: Headers;
+}) {
+  requireWecomSyncEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  return getDb().transaction(async (tx) => {
+    const draft = await requireOwnedDraft(
+      input.principal,
+      input.draftId,
+      input.organizationId,
+      tx,
+      true,
+    );
+    if (draft.version !== input.expectedVersion) {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_VERSION_CONFLICT",
+        "日报已被其他请求修改，请刷新后重试",
+      );
+    }
+    const tasks = await tx
+      .select()
+      .from(timesheetTask)
+      .where(eq(timesheetTask.draftId, draft.id))
+      .orderBy(asc(timesheetTask.sortOrder));
+    const [sameRequest] = await tx
+      .select()
+      .from(timesheetSyncBatch)
+      .where(
+        and(
+          eq(timesheetSyncBatch.organizationId, input.organizationId),
+          eq(timesheetSyncBatch.userId, input.principal.user.id),
+          eq(timesheetSyncBatch.requestId, input.requestId),
+        ),
+      )
+      .limit(1);
+    if (sameRequest) {
+      if (sameRequest.draftId !== draft.id || sameRequest.dryRun !== input.dryRun) {
+        throw new TimesheetError(
+          409,
+          "TIMESHEET_SYNC_REPLAY_CONFLICT",
+          "同步请求 ID 已绑定到不同参数",
+        );
+      }
+      const payload = syncPayload(sameRequest, draft, tasks);
+      return { batch: await batchPayload(sameRequest, tx), payload };
+    }
+    const [active] = await tx
+      .select({ id: timesheetSyncBatch.id })
+      .from(timesheetSyncBatch)
+      .where(
+        and(
+          eq(timesheetSyncBatch.draftId, draft.id),
+          inArray(timesheetSyncBatch.status, [...ACTIVE_BATCH_STATUSES]),
+        ),
+      )
+      .limit(1);
+    if (active) {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_SYNC_ACTIVE",
+        "当前日报已有活动同步批次",
+      );
+    }
+    if (draft.status === "synced") {
+      throw new TimesheetError(
+        409,
+        "TIMESHEET_ALREADY_SYNCED",
+        "该日报已经同步，不能重复创建任务",
+      );
+    }
+    if (draft.status !== "confirmed" || !draft.confirmedAt) {
+      throw new TimesheetError(422, "TIMESHEET_NOT_CONFIRMED", "未确认日报不能同步");
+    }
+    for (const task of tasks) {
+      if (!task.projectId) {
+        throw new TimesheetError(422, "TIMESHEET_REVIEW_REQUIRED", "日报项目不能为空");
+      }
+      await requireProjectInOrganization(
+        input.principal,
+        task.projectId,
+        input.organizationId,
+        input.requestHeaders,
+        tx,
+      );
+    }
+    if (!input.dryRun) {
+      const [completed] = await tx
+        .select({ id: timesheetSyncBatch.id })
+        .from(timesheetSyncBatch)
+        .where(
+          and(
+            eq(timesheetSyncBatch.draftId, draft.id),
+            eq(timesheetSyncBatch.dryRun, false),
+            eq(timesheetSyncBatch.status, "synced"),
+          ),
+        )
+        .limit(1);
+      if (completed) {
+        throw new TimesheetError(
+          409,
+          "TIMESHEET_ALREADY_SYNCED",
+          "该日报已经同步，不能重复创建任务",
+        );
+      }
+    }
+    const publicId = crypto.randomUUID();
+    const now = new Date();
+    const [batch] = await tx
+      .insert(timesheetSyncBatch)
+      .values({
+        id: crypto.randomUUID(),
+        organizationId: input.organizationId,
+        userId: input.principal.user.id,
+        draftId: draft.id,
+        syncBatchId: publicId,
+        requestId: input.requestId,
+        status: "pending",
+        dryRun: input.dryRun,
+        startedAt: now,
+      })
+      .returning();
+    await tx.insert(timesheetSyncItem).values(
+      tasks.map((task) => ({
+        id: crypto.randomUUID(),
+        batchId: batch.id,
+        taskId: task.id,
+        idempotencyKey: `${publicId}:${task.id}`,
+      })),
+    );
+    await tx
+      .update(dailyTimesheetDraft)
+      .set({ status: "syncing", updatedAt: now })
+      .where(eq(dailyTimesheetDraft.id, draft.id));
+    await writeAuditEvent(
+      {
+        actorUserId: input.principal.user.id,
+        eventType: "timesheet.sync_started",
+        entityType: "timesheet_sync_batch",
+        entityId: batch.id,
+        result: "succeeded",
+        metadata: {
+          organizationId: input.organizationId,
+          draftId: draft.id,
+          syncBatchId: publicId,
+          taskCount: tasks.length,
+          dryRun: input.dryRun,
+        },
+        ...getRequestAuditContext(input.requestHeaders),
+      },
+      tx,
+    );
+    return { batch: await batchPayload(batch, tx), payload: syncPayload(batch, draft, tasks) };
+  });
+}
+
+export async function listSyncBatches(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  requestHeaders: Headers;
+}) {
+  requireDailyReportEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  const db = getDb();
+  const batches = await db
+    .select()
+    .from(timesheetSyncBatch)
+    .where(
+      and(
+        eq(timesheetSyncBatch.organizationId, input.organizationId),
+        eq(timesheetSyncBatch.userId, input.principal.user.id),
+      ),
+    )
+    .orderBy(desc(timesheetSyncBatch.createdAt))
+    .limit(30);
+  return { batches: await Promise.all(batches.map((batch) => batchPayload(batch, db))) };
+}
+
+export async function updateSyncBatch(input: {
+  principal: AuthenticatedPrincipal;
+  organizationId: string;
+  syncBatchId: string;
+  status: string;
+  items: Array<{
+    taskId: string;
+    status: string;
+    attemptCount: number;
+    externalReference?: string | null;
+    errorCode?: string | null;
+    errorMessage?: string | null;
+  }>;
+  requestHeaders: Headers;
+}) {
+  requireWecomSyncEnabled();
+  await requireTimesheetOrganization(
+    input.principal,
+    input.organizationId,
+    input.requestHeaders,
+  );
+  return getDb().transaction(async (tx) => {
+    const [batch] = await tx
+      .select()
+      .from(timesheetSyncBatch)
+      .where(
+        and(
+          eq(timesheetSyncBatch.syncBatchId, input.syncBatchId),
+          eq(timesheetSyncBatch.organizationId, input.organizationId),
+          eq(timesheetSyncBatch.userId, input.principal.user.id),
+        ),
+      )
+      .limit(1)
+      .for("update", { of: timesheetSyncBatch });
+    if (!batch) throw new TimesheetError(404, "NOT_FOUND", "同步批次不存在");
+    const existingItems = await tx
+      .select()
+      .from(timesheetSyncItem)
+      .where(eq(timesheetSyncItem.batchId, batch.id));
+    const existingByTask = new Map(existingItems.map((item) => [item.taskId, item]));
+    if (new Set(input.items.map((item) => item.taskId)).size !== input.items.length) {
+      throw new TimesheetError(422, "SYNC_ITEM_DUPLICATE", "同步项不能重复");
+    }
+    if (input.items.length !== existingItems.length) {
+      throw new TimesheetError(422, "SYNC_ITEM_SET_MISMATCH", "同步项集合不完整");
+    }
+    assertSyncBatchTransition(batch.status, input.status);
+    if (TERMINAL_BATCH_STATUSES.has(batch.status)) {
+      const exactReplay =
+        input.status === batch.status &&
+        input.items.every((item) => {
+          const current = existingByTask.get(item.taskId);
+          return current?.status === item.status && current.attemptCount === item.attemptCount;
+        });
+      if (exactReplay) return batchPayload(batch, tx);
+      throw new TimesheetError(409, "SYNC_BATCH_TERMINAL", "同步批次已经结束，不能修改");
+    }
+    for (const update of input.items) {
+      const current = existingByTask.get(update.taskId);
+      if (!current) {
+        throw new TimesheetError(422, "SYNC_ITEM_INVALID", "同步项不属于当前批次");
+      }
+      assertSyncItemTransition(current.status, update.status, update);
+      if (update.attemptCount < current.attemptCount) {
+        throw new TimesheetError(409, "SYNC_ATTEMPT_ROLLBACK", "同步尝试次数不能回退");
+      }
+      existingByTask.set(update.taskId, {
+        ...current,
+        status: update.status as typeof current.status,
+        attemptCount: Math.max(current.attemptCount, update.attemptCount),
+      });
+      await tx
+        .update(timesheetSyncItem)
+        .set({
+          status: update.status,
+          attemptCount: Math.max(current.attemptCount, update.attemptCount),
+          externalReference: update.externalReference?.slice(0, 240) ?? null,
+          errorCode: update.errorCode ?? null,
+          errorMessageRedacted: redactConnectorError(update.errorMessage),
+          updatedAt: new Date(),
+        })
+        .where(eq(timesheetSyncItem.id, current.id));
+    }
+    const resultingItems = [...existingByTask.values()];
+    const itemStatuses = resultingItems.map((item) => item.status);
+    const savedCount = itemStatuses.filter((status) => status === "saved").length;
+    const terminalExpected =
+      savedCount === resultingItems.length
+        ? "synced"
+        : savedCount > 0 && itemStatuses.every((status) => ["saved", "failed", "cancelled"].includes(status))
+          ? "partially_synced"
+          : itemStatuses.every((status) => status === "failed")
+            ? "failed"
+            : itemStatuses.every((status) => ["saved", "cancelled"].includes(status))
+              ? "cancelled"
+              : null;
+    const terminal = ["synced", "partially_synced", "failed", "cancelled"].includes(
+      input.status,
+    );
+    if (terminal && terminalExpected !== input.status) {
+      throw new TimesheetError(
+        422,
+        "SYNC_TERMINAL_MISMATCH",
+        "同步终态与逐项结果不一致",
+      );
+    }
+    const now = new Date();
+    const [updated] = await tx
+      .update(timesheetSyncBatch)
+      .set({
+        status: input.status,
+        finishedAt: terminal ? now : null,
+        updatedAt: now,
+      })
+      .where(eq(timesheetSyncBatch.id, batch.id))
+      .returning();
+    const draftStatus = batch.dryRun && terminal
+      ? "confirmed"
+      : input.status === "synced"
+        ? "synced"
+        : input.status === "partially_synced"
+          ? "partially_synced"
+          : input.status === "failed"
+            ? "failed"
+            : input.status === "cancelled"
+              ? "confirmed"
+              : "syncing";
+    await tx
+      .update(dailyTimesheetDraft)
+      .set({ status: draftStatus, updatedAt: now })
+      .where(eq(dailyTimesheetDraft.id, batch.draftId));
+    if (terminal) {
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          eventType:
+            input.status === "synced" || input.status === "partially_synced"
+              ? "timesheet.sync_completed"
+              : "timesheet.sync_failed",
+          entityType: "timesheet_sync_batch",
+          entityId: batch.id,
+          result:
+            input.status === "synced" || input.status === "partially_synced"
+              ? "succeeded"
+              : "failed",
+          metadata: {
+            organizationId: input.organizationId,
+            syncBatchId: batch.syncBatchId,
+            status: input.status,
+            itemCount: input.items.length,
+            dryRun: batch.dryRun,
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+    }
+    return batchPayload(updated, tx);
+  });
+}
+
+export const timesheetCatalog = {
+  categories: TIMESHEET_CATEGORIES,
+  statuses: TIMESHEET_STATUSES,
+};

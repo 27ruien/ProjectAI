@@ -9,6 +9,7 @@ export * from "./knowledge-spaces";
 export * from "./knowledge-grants";
 export * from "./requirements-scope";
 export * from "./work-management";
+export * from "./timesheets";
 export * from "./audit-events";
 export * from "./project-documents";
 export * from "./document-ingestion";

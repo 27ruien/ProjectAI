@@ -40,6 +40,12 @@ try {
   `);
 
   await db.transaction(async (tx) => {
+    await tx.execute(sql`delete from timesheet_sync_items`);
+    await tx.execute(sql`delete from timesheet_sync_batches`);
+    await tx.execute(sql`delete from timesheet_tasks`);
+    await tx.execute(sql`delete from timesheet_ai_executions`);
+    await tx.execute(sql`delete from daily_timesheet_drafts`);
+    await tx.execute(sql`delete from work_log_records`);
     await tx.execute(sql`delete from weekly_report_versions`);
     await tx.execute(sql`delete from weekly_report_drafts`);
     await tx.execute(sql`delete from risk_sources`);
@@ -127,6 +133,12 @@ try {
     risks: number;
     weekly_reports: number;
     management_ai_executions: number;
+    work_log_records: number;
+    daily_timesheet_drafts: number;
+    timesheet_tasks: number;
+    timesheet_ai_executions: number;
+    timesheet_sync_batches: number;
+    timesheet_sync_items: number;
   }>(sql`
     select
       (select count(*)::int from sessions) as sessions,
@@ -151,6 +163,12 @@ try {
       (select count(*)::int from risks) as risks,
       (select count(*)::int from weekly_report_versions) as weekly_reports,
       (select count(*)::int from project_management_ai_executions) as management_ai_executions,
+      (select count(*)::int from work_log_records) as work_log_records,
+      (select count(*)::int from daily_timesheet_drafts) as daily_timesheet_drafts,
+      (select count(*)::int from timesheet_tasks) as timesheet_tasks,
+      (select count(*)::int from timesheet_ai_executions) as timesheet_ai_executions,
+      (select count(*)::int from timesheet_sync_batches) as timesheet_sync_batches,
+      (select count(*)::int from timesheet_sync_items) as timesheet_sync_items,
       (
         select count(*)::int
         from document_ingestion_jobs
