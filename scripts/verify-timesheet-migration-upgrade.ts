@@ -46,8 +46,12 @@ async function main(): Promise<void> {
     await upgrade.query(`
       insert into users (id, email, display_name)
       values ('timesheet-upgrade-user', 'timesheet-upgrade@projectai.invalid', 'Timesheet Upgrade User');
+      insert into organizations (id, name, slug, created_by)
+      values ('timesheet-upgrade-org', '[TEST] Timesheet Upgrade Organization', 'timesheet-upgrade', 'timesheet-upgrade-user');
+      insert into departments (id, organization_id, name, code, created_by)
+      values ('timesheet-upgrade-dept', 'timesheet-upgrade-org', '[TEST] Timesheet Upgrade Department', 'TIMESHEET-UPGRADE', 'timesheet-upgrade-user');
       insert into projects (id, organization_id, department_id, name, client_name, created_by)
-      values ('timesheet-upgrade-project', 'org-legacy-default', 'dept-legacy-default', '[TEST] Legacy Project', '[TEST] Client', 'timesheet-upgrade-user');
+      values ('timesheet-upgrade-project', 'timesheet-upgrade-org', 'timesheet-upgrade-dept', '[TEST] Legacy Project', '[TEST] Client', 'timesheet-upgrade-user');
     `);
     await apply(upgrade, "0016_tricky_revanche.sql");
     const result = await upgrade.query<{
