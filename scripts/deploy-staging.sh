@@ -2660,6 +2660,10 @@ printf 'Verifying the complete Phase 1 organization, ACL, AI-review, and work-ma
 "${compose_run[@]}" \
   --env "APP_BASE_URL=$public_base_url" \
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
+  projectai-phase1-smoke npm run phase1:staging-smoke -- --cleanup-stale
+"${compose_run[@]}" \
+  --env "APP_BASE_URL=$public_base_url" \
+  --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-phase1-smoke npm run phase1:staging-smoke
 
 printf 'Rechecking PostgreSQL and MinIO consistency after public verification.\n'

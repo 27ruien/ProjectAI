@@ -30,6 +30,25 @@ let departmentId = null;
 let knowledgeSpaceId = null;
 let projectId = null;
 
+function assertStagingBoundary() {
+  assert(process.env.NEXT_PUBLIC_APP_ENV === "staging", "cleanup requires the Staging runtime");
+  const applicationUrl = new URL(baseUrl);
+  assert(
+    applicationUrl.protocol === "https:" &&
+      applicationUrl.hostname === "gridworks.cn" &&
+      applicationUrl.pathname.replace(/\/+$/, "") === "/tool/projectai-staging",
+    "cleanup refused a non-Staging application URL",
+  );
+  const databaseUrl = new URL(required("DATABASE_URL"));
+  assert(
+    databaseUrl.hostname === "projectai-postgres" &&
+      databaseUrl.port === "5432" &&
+      databaseUrl.pathname === "/projectai_staging" &&
+      databaseUrl.username === "projectai_staging",
+    "cleanup refused a non-Staging database",
+  );
+}
+
 function required(name) {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
@@ -176,6 +195,134 @@ async function deleteProjectObjects(targetProjectId) {
   client.destroy();
 }
 
+async function deleteProjectDatabaseState(client, targetProjectId) {
+  const tables = [
+    "weekly_report_versions",
+    "weekly_report_drafts",
+    "risk_sources",
+    "risk_history",
+    "risk_reviews",
+    "risks",
+    "risk_drafts",
+    "action_item_dependencies",
+    "action_item_sources",
+    "action_item_history",
+    "action_item_reviews",
+    "action_items",
+    "action_item_drafts",
+    "project_management_ai_executions",
+    "project_management_audits",
+    "scope_diff_reviews",
+    "scope_diff_items",
+    "scope_comparison_runs",
+    "scope_versions",
+    "requirement_sources",
+    "requirement_versions",
+    "requirement_reviews",
+    "requirement_drafts",
+    "requirement_audits",
+    "requirements",
+    "requirement_extraction_runs",
+    "ai_message_citations",
+    "ai_retrieval_candidates",
+    "ai_retrieval_query_embedding_calls",
+    "ai_retrieval_runs",
+    "ai_executions",
+    "ai_messages",
+    "ai_threads",
+    "document_chunk_embeddings",
+    "document_embedding_provider_calls",
+    "document_embedding_batches",
+    "document_embedding_jobs",
+    "document_chunks",
+    "document_sections",
+    "document_ingestion_jobs",
+  ];
+  for (const table of tables) {
+    await client.query(`delete from ${table} where project_id = $1`, [targetProjectId]);
+  }
+  await client.query(
+    `delete from permission_audits
+     where project_id = $1
+        or resource_id = $1
+        or resource_id in (select id from project_documents where project_id = $1)
+        or resource_id in (select id from knowledge_spaces where project_id = $1)`,
+    [targetProjectId],
+  );
+  await client.query("delete from audit_events where project_id = $1 or entity_id = $1", [targetProjectId]);
+  await client.query("delete from document_grants where project_id = $1", [targetProjectId]);
+  await client.query("delete from project_knowledge_sources where project_id = $1", [targetProjectId]);
+  await client.query(
+    "delete from knowledge_space_grants where subject_type = 'project' and subject_id = $1",
+    [targetProjectId],
+  );
+  await client.query("delete from project_document_versions where project_id = $1", [targetProjectId]);
+  await client.query("delete from project_documents where project_id = $1", [targetProjectId]);
+  await client.query("delete from project_members where project_id = $1", [targetProjectId]);
+  await client.query("delete from projects where id = $1", [targetProjectId]);
+}
+
+async function deleteOrganizationState(client, input) {
+  const resourceIds = [
+    ...input.knowledgeSpaceIds,
+    ...input.departmentIds,
+    ...input.organizationIds,
+  ];
+  if (resourceIds.length > 0) {
+    await client.query(
+      "delete from permission_audits where resource_id = any($1::text[]) or organization_id = any($2::text[])",
+      [resourceIds, input.organizationIds],
+    );
+    await client.query("delete from audit_events where entity_id = any($1::text[])", [resourceIds]);
+  }
+  if (input.knowledgeSpaceIds.length > 0) {
+    await client.query("delete from knowledge_space_grants where knowledge_space_id = any($1::text[])", [input.knowledgeSpaceIds]);
+    await client.query("delete from knowledge_space_members where knowledge_space_id = any($1::text[])", [input.knowledgeSpaceIds]);
+    await client.query("delete from project_knowledge_sources where knowledge_space_id = any($1::text[])", [input.knowledgeSpaceIds]);
+    await client.query("delete from knowledge_spaces where id = any($1::text[])", [input.knowledgeSpaceIds]);
+  }
+  if (input.departmentIds.length > 0) {
+    await client.query("delete from department_members where department_id = any($1::text[])", [input.departmentIds]);
+    await client.query("delete from departments where id = any($1::text[])", [input.departmentIds]);
+  }
+  if (input.organizationIds.length > 0) {
+    await client.query("delete from organization_members where organization_id = any($1::text[])", [input.organizationIds]);
+    await client.query("delete from organizations where id = any($1::text[])", [input.organizationIds]);
+  }
+}
+
+async function cleanupStaleVerificationState() {
+  assertStagingBoundary();
+  const client = new pg.Client({ connectionString: required("DATABASE_URL") });
+  await client.connect();
+  try {
+    const [projects, spaces, departments, organizations] = await Promise.all([
+      client.query("select id from projects where name like '[TEST] phase1-staging-%'"),
+      client.query("select id from knowledge_spaces where name like '[TEST] phase1-staging-%'"),
+      client.query("select id from departments where name like '[TEST] phase1-staging-%'"),
+      client.query("select id from organizations where name like '[TEST] phase1-staging-%'"),
+    ]);
+    const projectIds = projects.rows.map((row) => row.id);
+    for (const targetProjectId of projectIds) await deleteProjectObjects(targetProjectId);
+    await client.query("begin");
+    for (const targetProjectId of projectIds) {
+      await deleteProjectDatabaseState(client, targetProjectId);
+    }
+    await deleteOrganizationState(client, {
+      knowledgeSpaceIds: spaces.rows.map((row) => row.id),
+      departmentIds: departments.rows.map((row) => row.id),
+      organizationIds: organizations.rows.map((row) => row.id),
+    });
+    await client.query("commit");
+    process.stdout.write(`${JSON.stringify({ status: "success", cleanup: "phase1-staging-stale", projects: projectIds.length })}\n`);
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    await client.end();
+  }
+}
+
 async function cleanup() {
   for (const [name, cookie] of [...sessions]) {
     try {
@@ -194,14 +341,12 @@ async function cleanup() {
   await client.connect();
   try {
     await client.query("begin");
-    if (projectId) await client.query("delete from projects where id = $1", [projectId]);
-    if (knowledgeSpaceId) {
-      await client.query("delete from knowledge_spaces where id = $1", [knowledgeSpaceId]);
-    }
-    if (departmentId) await client.query("delete from departments where id = $1", [departmentId]);
-    if (temporaryOrganizationId) {
-      await client.query("delete from organizations where id = $1", [temporaryOrganizationId]);
-    }
+    if (projectId) await deleteProjectDatabaseState(client, projectId);
+    await deleteOrganizationState(client, {
+      knowledgeSpaceIds: knowledgeSpaceId ? [knowledgeSpaceId] : [],
+      departmentIds: departmentId ? [departmentId] : [],
+      organizationIds: temporaryOrganizationId ? [temporaryOrganizationId] : [],
+    });
     await client.query(
       "delete from sessions where user_id in (select id from users where email = any($1::text[]))",
       [Object.values(credentials).map((item) => item.email.toLowerCase())],
@@ -559,6 +704,12 @@ async function main() {
   );
 }
 
+if (process.argv.includes("--cleanup-stale")) {
+  await cleanupStaleVerificationState();
+  process.exit(0);
+}
+
+assertStagingBoundary();
 let failure;
 try {
   await main();

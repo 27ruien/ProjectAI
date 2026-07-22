@@ -120,4 +120,29 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
     assert.match(management, /permission: "manage_permissions"/);
     assert.match(seed, /seed-membership-a-dept-admin/);
   });
+
+  it("keeps Phase 1 Staging cleanup project-scoped and parent-last", async () => {
+    const [verification, deployment] = await Promise.all([
+      source("scripts/verify-phase1-staging.mjs"),
+      source("scripts/deploy-staging.sh"),
+    ]);
+    assert.match(verification, /cleanup refused a non-Staging database/);
+    assert.match(verification, /projectai_staging/);
+    assert.match(verification, /deleteProjectDatabaseState/);
+    assert.ok(
+      verification.indexOf('"requirement_drafts"') <
+        verification.indexOf('"document_chunks"'),
+      "AI drafts must be removed before their document chunks",
+    );
+    assert.ok(
+      verification.indexOf("delete from project_document_versions") <
+        verification.indexOf("delete from projects where id"),
+      "document versions must be removed before their project",
+    );
+    assert.match(
+      verification,
+      /where name like '\[TEST\] phase1-staging-%'/,
+    );
+    assert.match(deployment, /phase1:staging-smoke -- --cleanup-stale/);
+  });
 });

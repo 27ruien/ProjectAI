@@ -172,11 +172,16 @@ describe("Qwen adapter and Gateway", () => {
     process.env.QWEN_API_KEY = "unit-test-qwen-secret";
     let requestedUrl = "";
     let authorization = "";
+    let requestedBody: Record<string, unknown> = {};
     const provider = new QwenProjectAssistantProvider(
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
       async (input, init) => {
         requestedUrl = String(input);
         authorization = new Headers(init?.headers).get("authorization") || "";
+        requestedBody = JSON.parse(String(init?.body)) as Record<
+          string,
+          unknown
+        >;
         return new Response(
           JSON.stringify({
             id: "request-1",
@@ -200,6 +205,7 @@ describe("Qwen adapter and Gateway", () => {
       systemPrompt: "system",
       userPrompt: "user",
       purpose: "answer",
+      responseFormat: "text",
       timeoutMs: 1_000,
       temperature: 0.2,
       maxOutputTokens: 1_800,
@@ -209,11 +215,47 @@ describe("Qwen adapter and Gateway", () => {
       "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
     );
     assert.equal(authorization, "Bearer unit-test-qwen-secret");
+    assert.equal("response_format" in requestedBody, false);
     assert.equal(JSON.stringify(result).includes("unit-test-qwen-secret"), false);
     assert.deepEqual(
       [result.inputTokens, result.outputTokens, result.totalTokens],
       [10, 4, 14],
     );
+  });
+
+  it("binds structured management purposes to Qwen JSON object mode", async () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "development";
+    process.env.QWEN_API_KEY = "unit-test-qwen-secret";
+    let requestedBody: Record<string, unknown> = {};
+    const provider = new QwenProjectAssistantProvider(
+      "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      async (_input, init) => {
+        requestedBody = JSON.parse(String(init?.body)) as Record<
+          string,
+          unknown
+        >;
+        return new Response(
+          JSON.stringify({
+            model: "qwen3.7-plus",
+            choices: [{ message: { content: '{"requirements":[]}' } }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+
+    await gateway.generate({
+      purpose: "requirement_extraction",
+      systemPrompt: "Only return JSON.",
+      userPrompt: "evidence",
+    });
+
+    assert.deepEqual(requestedBody.response_format, { type: "json_object" });
   });
 
   it("does not perform a network request when the Qwen Secret is missing", async () => {
@@ -234,6 +276,7 @@ describe("Qwen adapter and Gateway", () => {
         systemPrompt: "system",
         userPrompt: "user",
         purpose: "answer",
+        responseFormat: "text",
         timeoutMs: 1_000,
         temperature: 0.2,
         maxOutputTokens: 1_800,

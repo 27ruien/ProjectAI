@@ -571,8 +571,9 @@ export async function generateActionDrafts(input: {
   try {
     const result = await createProjectAssistantGateway(config).generate({
       purpose: "action_generation",
-      systemPrompt:
-        "只根据编号来源输出 JSON actions 草稿，不得创建正式任务，不得分配未提供用户。",
+      systemPrompt: `只根据编号来源输出一个 JSON 对象，不得输出 Markdown、代码围栏或解释，不得创建正式任务，不得分配用户。
+顶层必须且只能包含 actions 数组；每项必须且只能包含 title、description、priority、blocker、sourceIndex。
+priority 只能是 low、medium、high、critical；sourceIndex 必须是来源编号 S 后的非负整数；blocker 没有内容时使用空字符串。`,
       userPrompt: selected
         .map(
           (source, index) => `[S${index}] ${source.title}\n${source.content}`,
@@ -1233,7 +1234,9 @@ export async function generateRiskDrafts(input: {
   try {
     const result = await createProjectAssistantGateway(config).generate({
       purpose: "risk_generation",
-      systemPrompt: "只根据编号来源输出 JSON risks 草稿。不得创建正式风险。",
+      systemPrompt: `只根据编号来源输出一个 JSON 对象，不得输出 Markdown、代码围栏或解释，不得创建正式风险。
+顶层必须且只能包含 risks 数组；每项必须且只能包含 title、description、probability、impact、mitigation、trigger、sourceIndex。
+probability 和 impact 必须是 1 到 5 的整数；sourceIndex 必须是来源编号 S 后的非负整数。`,
       userPrompt: selected
         .map(
           (source, index) => `[S${index}] ${source.title}\n${source.content}`,
@@ -1757,7 +1760,8 @@ export async function generateWeeklyReport(input: {
   try {
     const result = await createProjectAssistantGateway(config).generate({
       purpose: "weekly_report",
-      systemPrompt: "仅根据正式项目数据摘要输出周报 JSON，不得补充无来源事实。",
+      systemPrompt: `仅根据正式项目数据摘要输出一个 JSON 对象，不得输出 Markdown、代码围栏或解释，不得补充无来源事实。
+顶层必须且只能包含 completed、inProgress、nextWeek、milestones、blockers、risks、scopeChanges、requirementChanges、overdueActions、decisionsNeeded；每个字段都必须是字符串数组，没有内容时使用 []。`,
       userPrompt: JSON.stringify({
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,

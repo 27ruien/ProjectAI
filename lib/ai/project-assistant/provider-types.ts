@@ -12,6 +12,7 @@ export type ProjectAssistantProviderRequest = {
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
+  responseFormat: "text" | "json_object";
   timeoutMs: number;
   temperature: number;
   maxOutputTokens: number;
