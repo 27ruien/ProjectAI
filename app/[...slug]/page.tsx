@@ -8,6 +8,7 @@ import {
 } from "@/lib/project-data/mock-project-service";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
+import { getTimesheetFeatureConfig } from "@/lib/timesheets/config";
 
 type CatchAllPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -27,6 +28,11 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
   );
   const requestHeaders = await headers();
   const [section, entityId, child] = route;
+  const featureFlags = getTimesheetFeatureConfig();
+
+  if (section === "daily-report" && !featureFlags.dailyReportEnabled) {
+    notFound();
+  }
 
   if (
     (section === "settings" || section === "analytics") &&
@@ -75,6 +81,10 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
       currentProject={currentProject}
       projectData={projectData}
       workspaceData={workspaceData}
+      featureFlags={{
+        pmDailyReport: featureFlags.dailyReportEnabled,
+        wecomTimesheetSync: featureFlags.wecomSyncEnabled,
+      }}
     />
   );
 }

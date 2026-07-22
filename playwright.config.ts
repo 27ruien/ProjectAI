@@ -59,6 +59,8 @@ export default defineConfig({
           AI_REGION: "cn-beijing",
           AI_PROJECT_ASSISTANT_PROFILE_ID:
             "qwen-project-assistant-cn-v1",
+          PM_DAILY_REPORT_ENABLED: "true",
+          WECOM_TIMESHEET_SYNC_ENABLED: "true",
           // The complete serial suite intentionally exercises several actors
           // through the real credential endpoint. Production keeps the strict
           // limit; only this guarded test runtime raises the allowance.

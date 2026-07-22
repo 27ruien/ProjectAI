@@ -21,6 +21,7 @@ import { ProjectAuditPage } from "@/components/audit";
 import { SkillsPage } from "@/components/skill";
 import { AIModelsPage } from "@/components/model-management";
 import { AccessDeniedPage, AnalyticsPage, GlobalKnowledgePage, NotFoundPage, SettingsPage } from "@/components/system";
+import { DailyReportPage } from "@/components/timesheet";
 import type {
   AuthorizedProjectSummary,
   ProjectMockPayload,
@@ -42,9 +43,10 @@ export interface WorkspaceProps {
   currentProject?: AuthorizedProjectSummary;
   projectData?: ProjectMockPayload;
   workspaceData: WorkspaceMockPayload;
+  featureFlags: { pmDailyReport: boolean; wecomTimesheetSync: boolean };
 }
 
-export function Workspace({ route, viewer, currentProject, projectData, workspaceData }: WorkspaceProps) {
+export function Workspace({ route, viewer, currentProject, projectData, workspaceData, featureFlags }: WorkspaceProps) {
   const router = useRouter();
   const [section = "dashboard", entityId, child] = route;
   const path = `/${route.join("/")}`;
@@ -77,11 +79,12 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   else if (section === "reviews") page = <StandardPage flush><ReviewsPage data={workspaceData} projects={viewer.projects} /></StandardPage>;
   else if (section === "skills") page = <StandardPage><SkillsPage data={workspaceData} initialSkillId={entityId} /></StandardPage>;
   else if (section === "knowledge") page = <StandardPage><GlobalKnowledgePage viewer={viewer} /></StandardPage>;
+  else if (section === "daily-report" && featureFlags.pmDailyReport) page = <StandardPage><DailyReportPage viewer={viewer} wecomSyncEnabled={featureFlags.wecomTimesheetSync} /></StandardPage>;
   else if (section === "analytics") page = <StandardPage><AnalyticsPage projects={viewer.projects} /></StandardPage>;
   else if (section === "settings" && viewer.user.systemRole !== "system_admin") page = <StandardPage><AccessDeniedPage /></StandardPage>;
   else if (section === "settings" && entityId === "ai-models") page = <StandardPage><AIModelsPage data={workspaceData} initialProfileId={child} /></StandardPage>;
   else if (section === "settings") page = <StandardPage><SettingsPage /></StandardPage>;
   else page = <StandardPage><NotFoundPage path={path} /></StandardPage>;
 
-  return <AppShell viewer={viewer} currentProject={exactProject} currentPath={path}>{page}</AppShell>;
+  return <AppShell viewer={viewer} currentProject={exactProject} currentPath={path} featureFlags={featureFlags}>{page}</AppShell>;
 }

@@ -40,7 +40,7 @@ test("root and every protected product route redirect anonymous users to login",
     "/", "/dashboard", "/projects", "/projects/new", "/projects/project-001/overview",
     "/projects/project-001/documents", "/projects/project-001/knowledge", "/projects/project-001/requirements",
     "/projects/project-001/scope", "/projects/project-001/actions", "/projects/project-001/meetings", "/projects/project-001/risks",
-    "/workflows", "/workflows/requirement-extraction", "/reviews", "/skills", "/skills/project-document-summary",
+    "/workflows", "/workflows/requirement-extraction", "/reviews", "/skills", "/skills/project-document-summary", "/daily-report",
     "/knowledge", "/analytics", "/settings", "/settings/ai-models", "/settings/ai-models/requirement-analysis",
   ];
   for (const route of routes) {
