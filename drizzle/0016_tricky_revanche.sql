@@ -170,20 +170,24 @@ DECLARE
   expected_organization text;
   task_draft text;
 BEGIN
-  IF TG_TABLE_NAME = 'work_log_records' AND NEW.project_id IS NOT NULL THEN
-    SELECT organization_id INTO expected_organization
-    FROM projects WHERE id = NEW.project_id;
-    IF expected_organization IS DISTINCT FROM NEW.organization_id THEN
-      RAISE EXCEPTION 'work log project is outside its organization' USING ERRCODE = '23514';
+  IF TG_TABLE_NAME = 'work_log_records' THEN
+    IF NEW.project_id IS NOT NULL THEN
+      SELECT organization_id INTO expected_organization
+      FROM projects WHERE id = NEW.project_id;
+      IF expected_organization IS DISTINCT FROM NEW.organization_id THEN
+        RAISE EXCEPTION 'work log project is outside its organization' USING ERRCODE = '23514';
+      END IF;
     END IF;
-  ELSIF TG_TABLE_NAME = 'timesheet_tasks' AND NEW.project_id IS NOT NULL THEN
-    SELECT d.organization_id INTO expected_organization
-    FROM daily_timesheet_drafts d WHERE d.id = NEW.draft_id;
-    IF NOT EXISTS (
-      SELECT 1 FROM projects p
-      WHERE p.id = NEW.project_id AND p.organization_id = expected_organization
-    ) THEN
-      RAISE EXCEPTION 'timesheet task project is outside its draft organization' USING ERRCODE = '23514';
+  ELSIF TG_TABLE_NAME = 'timesheet_tasks' THEN
+    IF NEW.project_id IS NOT NULL THEN
+      SELECT d.organization_id INTO expected_organization
+      FROM daily_timesheet_drafts d WHERE d.id = NEW.draft_id;
+      IF NOT EXISTS (
+        SELECT 1 FROM projects p
+        WHERE p.id = NEW.project_id AND p.organization_id = expected_organization
+      ) THEN
+        RAISE EXCEPTION 'timesheet task project is outside its draft organization' USING ERRCODE = '23514';
+      END IF;
     END IF;
   ELSIF TG_TABLE_NAME = 'timesheet_sync_batches' THEN
     IF NOT EXISTS (
@@ -194,14 +198,14 @@ BEGIN
     ) THEN
       RAISE EXCEPTION 'sync batch owner does not match its draft' USING ERRCODE = '23514';
     END IF;
-  ELSIF TG_TABLE_NAME = 'timesheet_ai_executions' AND NEW.draft_id IS NOT NULL THEN
-    IF NOT EXISTS (
-      SELECT 1 FROM daily_timesheet_drafts d
-      WHERE d.id = NEW.draft_id
-        AND d.organization_id = NEW.organization_id
-        AND d.user_id = NEW.user_id
-    ) THEN
-      RAISE EXCEPTION 'AI execution owner does not match its draft' USING ERRCODE = '23514';
+  ELSIF TG_TABLE_NAME = 'timesheet_ai_executions' THEN
+    IF NEW.draft_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM daily_timesheet_drafts d
+        WHERE d.id = NEW.draft_id
+          AND d.organization_id = NEW.organization_id
+          AND d.user_id = NEW.user_id
+      ) THEN
+        RAISE EXCEPTION 'AI execution owner does not match its draft' USING ERRCODE = '23514';
     END IF;
   ELSIF TG_TABLE_NAME = 'timesheet_sync_items' THEN
     SELECT draft_id INTO task_draft FROM timesheet_sync_batches WHERE id = NEW.batch_id;

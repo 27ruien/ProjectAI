@@ -54,8 +54,20 @@ async function main(): Promise<void> {
       values ('timesheet-upgrade-project', 'timesheet-upgrade-org', 'timesheet-upgrade-dept', '[TEST] Legacy Project', '[TEST] Client', 'timesheet-upgrade-user');
     `);
     await apply(upgrade, "0016_tricky_revanche.sql");
+    await upgrade.query(`
+      insert into timesheet_ai_executions (
+        id, organization_id, user_id, report_date, execution_id, skill_id,
+        model_profile_id, prompt_version, status, source_selection_digest, source_count
+      ) values (
+        'timesheet-upgrade-ai', 'timesheet-upgrade-org', 'timesheet-upgrade-user',
+        '2026-07-22', 'timesheet-upgrade-ai', 'pm-daily-timesheet-generation',
+        'qwen-project-assistant-cn-v1', 'pm-daily-report-v1', 'failed',
+        '${"0".repeat(64)}', 0
+      );
+    `);
     const result = await upgrade.query<{
       legacy_project: string;
+      ai_execution: string;
       draft_table: string | null;
       work_log_table: string | null;
       sync_table: string | null;
@@ -64,6 +76,7 @@ async function main(): Promise<void> {
     }>(`
       select
         (select count(*)::text from projects where id = 'timesheet-upgrade-project') as legacy_project,
+        (select count(*)::text from timesheet_ai_executions where id = 'timesheet-upgrade-ai') as ai_execution,
         to_regclass('public.daily_timesheet_drafts')::text as draft_table,
         to_regclass('public.work_log_records')::text as work_log_table,
         to_regclass('public.timesheet_sync_batches')::text as sync_table,
@@ -73,6 +86,7 @@ async function main(): Promise<void> {
     const row = result.rows[0];
     if (
       row.legacy_project !== "1" ||
+      row.ai_execution !== "1" ||
       row.draft_table !== "daily_timesheet_drafts" ||
       row.work_log_table !== "work_log_records" ||
       row.sync_table !== "timesheet_sync_batches" ||
