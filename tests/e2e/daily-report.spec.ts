@@ -55,7 +55,8 @@ test("项目经理从随记生成、审核并确认个人日报", async ({ page 
     await page.getByRole("button", { name: "AI 整理今日工时" }).click();
     await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
     const taskCard = page.locator("article").filter({ hasText: "任务 1" });
-    await taskCard.locator("input[type='number']").fill("1");
+    await taskCard.getByRole("spinbutton", { name: /^正常工时/ }).fill("1");
+    await taskCard.getByRole("spinbutton", { name: /^加班工时/ }).fill("0");
     await taskCard.getByRole("button", { name: "标记已审核" }).click();
     await page.getByRole("button", { name: "确认工时" }).click();
     await expect(page.getByRole("status")).toContainText("工时已由你人工确认");
