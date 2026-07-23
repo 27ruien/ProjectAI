@@ -25,14 +25,11 @@ Mock build:
 npm run extension:build:mock
 ```
 
-For a real approved board URL:
+For a real approved board URL, keep the full URL in the ignored local UAT
+configuration and use the guarded builder:
 
 ```bash
-PROJECTAI_ALLOWED_ORIGIN=https://projectai.example \
-WECOM_ALLOWED_ORIGIN=https://approved.example \
-WECOM_TASK_BOARD_URL=https://approved.example/path \
-WECOM_SELECTOR_CONFIG_PATH=wecom-selector.local.json \
-npm run extension:package
+npm run uat:wecom:build
 ```
 
 Load `dist/wecom-timesheet-extension` through Chrome's “Load unpacked” action.
@@ -44,11 +41,21 @@ bundle, manifest, bindings, logs, or review ZIP.
 Start with Dry Run. Clearing local sync history requires a second confirmation
 and never deletes tasks from the target board.
 
-The default review build has no WeCom optional host permission and therefore
-cannot operate on a real WeCom page. A publishable build requires the exact
-user-provided HTTPS board Origin and a selector review after the user manually
-logs in and demonstrates one task creation. Never use `<all_urls>`, guess a
-production selector, or commit `selector-config.local*`.
+The default Review build declares only the exact ProjectAI and WeCom Origins;
+it does not embed a private board path, access parameter, or real Selector and
+therefore cannot execute a real sync. The UAT builder remains diagnostics-only
+until the ignored `.local/wecom-selector.local.json` passes review. A
+publishable build requires the exact user-approved HTTPS Origin and a selector
+review after the user manually logs in and demonstrates one task creation.
+Never request a broad all-sites host pattern, guess a production selector, or
+commit `selector-config.local*`.
+
+The extension requests only `storage` and `tabs`: `storage` persists the local
+idempotency queue and approved settings; `tabs` finds or opens the exact board,
+reports connection state, and supports explicit recovery after a Service Worker
+restart. It does not request `scripting`, cookies, history, downloads, clipboard,
+webRequest, or broad host access. Content scripts are declaratively restricted
+to the exact ProjectAI paths and the exact WeCom Origin.
 
 Runtime flow:
 

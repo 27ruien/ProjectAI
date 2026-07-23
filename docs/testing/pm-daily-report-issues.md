@@ -26,17 +26,21 @@
 | PMDR-QA-020 | P1 | AI 正常/加班工时和进度证据缺数字边界，正常工时只验证“存在某个时长”，同一来源还可能被重复生成 | 正常工时精确绑定 hint、小时、分钟或起止时间；加班/进度使用完整数字边界；同一来源只能用于一个 AI task；新增错误数值和重复来源回归 |
 | PMDR-QA-021 | P1 | 登录失效项显式继续后未重新入队；手工 Popup 在真实构建可切到实写，伪造消息来源还可能绕过 ProjectAI 确认链 | resume 仅在用户显式操作时把待登录项恢复 pending；Review/真实构建强制手工 JSON 为 Dry Run；Service Worker 复验 ProjectAI tab/Popup sender 与来源路径，只有隔离 Mock 允许手工实写 |
 | PMDR-QA-022 | P1 | saved+cancelled 的批次被错误派生为 partially_synced，且非终态允许迟到消息倒退 | 批次/逐项状态改为单调 allowlist；saved+cancelled 正确派生 cancelled；保留终态、unknown、saved、cancelled 不可逆 |
+| PMDR-QA-023 | P1 | Fake Provider 把“验收准备”等名词误判为未来态，且没有稳定保留显式进行中/未开始状态 | 优先使用受信 status hint 与原文事实，补充完成/进行中/未开始回归；Local UAT 三类状态保持正确 |
+| PMDR-QA-024 | P1 | Review 扩展依赖动态 `scripting` 注入且缺少企业微信精确 Site Access | 改为分离的声明式 Content Script；只保留 `storage`/`tabs`，精确绑定 ProjectAI 与 `doc.weixin.qq.com`，ZIP 自动拒绝宽泛权限、完整 URL 和认证状态 |
+| PMDR-QA-025 | P2 | 本地缺少可重复的三账号、Migration、Feature Flag 与数据库集成 UAT 环境 | 增加 Local-only pgvector Compose、默认拒绝的幂等 Seed/Cleanup、真实 Session E2E、Flag E2E 和临时数据库集成 runner |
 
 ## 环境阻塞
 
 | ID | 类型 | 状态 | 需要 |
 | --- | --- | --- | --- |
-| PMDR-ENV-001 | 本地数据库 | 阻塞本地验证，不阻塞代码继续 | 运行中的 Docker 或隔离本地 PostgreSQL 17/pgvector |
-| PMDR-ENV-002 | 真实 WeCom DOM | URL/字段可见性已只读核对；稳定 DOM/iframe/Selector 仍阻塞 | 恢复 Chrome DOM 控制扩展后，由用户手动演示一条任务流程；禁止坐标或模糊点击 |
+| PMDR-ENV-001 | 本地数据库 | 已关闭 | Local PostgreSQL 17/pgvector 0.8.1、Migration、UAT 与隔离数据库 integration 均通过 |
+| PMDR-ENV-002 | 真实 WeCom DOM | 页面访问/登录已完成；Canvas 无可靠 DOM Overlay，仍阻塞 | 页面需提供可唯一审核的 DOM/iframe 控件；禁止坐标、OCR 或模糊点击 |
 | PMDR-ENV-003 | Chrome Web Store | 非代码阻塞 | 法务审核隐私政策、发布者信息和商店账号 |
 | PMDR-ENV-004 | 依赖告警 | 合并前需 Reviewer 批准 | `sharp` 2 high、旧 loader `esbuild` 4 moderate；详见 `docs/dependency-security.md`，禁止 force downgrade |
-| PMDR-ENV-005 | Chrome DOM 通道 | 阻塞真实 Dry Run/保存 | Chrome 控制扩展/native host 恢复后继续；当前创建/删除均为 0 |
+| PMDR-ENV-005 | Chrome DOM 通道 | 已关闭 | 隔离 Playwright 已取得登录后 DOM 计数并关闭 Context，未保存认证状态 |
+| PMDR-ENV-006 | Smart Sheet Canvas | 阻塞真实 Dry Run/保存/清理 | 主表为 1 Canvas、0 table/grid；等待稳定 DOM Overlay 或受支持自动化接口，当前创建/删除均为 0 |
 
 ## 未发现的范围
 
-当前没有已知 P0/P1 代码缺陷。数据库 CI、当前 Head 的完整 ProjectAI E2E、依赖告警处置和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明真实 WeCom DOM 兼容；在真实 Selector 审核、Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。
+当前没有已知未修复 P0/P1 代码缺陷。本地数据库、ProjectAI UAT 和 Mock 扩展验证已关闭；当前 Head 的 GitHub CI、依赖风险审批、Staging 和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明 Canvas 真实页面兼容；在可靠 DOM/受支持接口、真实 Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。

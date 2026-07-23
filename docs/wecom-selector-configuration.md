@@ -1,6 +1,6 @@
 # 企业微信 Selector Config 配置
 
-真实企业微信页面已经完成可见字段的只读核对，但受控 DOM 通道尚不可用。本仓库只提交 Mock Selector 示例，不猜测正式选择器。真实配置必须由用户手动登录并演示一次“创建单条任务”后，由开发者确认稳定 DOM、iframe 和控件语义；不得读取、记录或导出 Cookie、Token、二维码、完整 HTML。真实地址在证据中只能写为 `https://doc.weixin.qq.com/smartsheet/[REDACTED]`。
+真实企业微信页面已通过隔离 Playwright 由用户手动登录并完成只读 DOM 核对。主看板当前由 Canvas 呈现，没有暴露可唯一审核的表格/单元格 DOM；因此正式 Selector、Dry Run 和保存仍被安全阻塞。本仓库只提交 Mock Selector 示例，不猜测正式选择器。只有页面提供稳定 DOM、iframe 和控件语义后才可生成真实配置；不得读取、记录或导出 Cookie、Token、二维码、完整 HTML。真实地址在证据中只能写为 `https://doc.weixin.qq.com/smartsheet/[REDACTED]`。
 
 ## 构建 Origin 边界
 
@@ -15,8 +15,8 @@
    npm run extension:build
    ```
 
-3. 检查 `dist/wecom-timesheet-extension/manifest.json`：`optional_host_permissions` 只能包含该精确 Origin，不得出现 `<all_urls>` 或通配任意域。
-4. 在 Options 保存精确完整看板 URL 并授予 Origin 权限。运行时只复用 Origin、pathname、query 与 fragment 全部一致的标签页，避免误操作同文档的其他视图；构建只嵌入允许 Origin，不把文档路径或访问参数写入 JS/manifest/build bindings。
+3. 检查 `dist/wecom-timesheet-extension/manifest.json`：`host_permissions` 只包含精确 ProjectAI 与 WeCom Origin，`optional_host_permissions` 为空，不得出现任意域通配。
+4. 在 Options 保存精确完整看板 URL。运行时只复用 Origin、pathname、query 与 fragment 全部一致的标签页，避免误操作同文档的其他视图；构建只嵌入允许 Origin，不把文档路径或访问参数写入 JS/manifest/build bindings。
 
 未提供构建 Origin 时，Options 会明确拒绝真实 URL，扩展不会对未知网站执行 Adapter。
 

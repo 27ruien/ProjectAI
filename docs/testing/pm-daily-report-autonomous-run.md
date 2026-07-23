@@ -28,17 +28,16 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
   未输出其内容。
 - 修复：补充忽略本地 Selector、隔离浏览器 Profile、认证状态和私有截图目录。
 
-### 2. 真实页面只读审计（第一轮）
+### 2. 真实页面只读审计
 
-- 状态：部分完成 / DOM 通道阻塞
-- 环境：用户当前 Chrome 中已打开的唯一授权 Smart Sheet 页面。
-- 只读结果：目标文档和工作表可见；八个目标字段标题均可见；未出现登录提示；
-  当前可访问性树未暴露唯一的新增行、单元格、下拉或保存控件。
-- 页面结构：可访问性层出现单一 frame 边界；未暴露可操作表格语义、Canvas 控件
-  或 Shadow DOM。此结果不足以断言底层真实 DOM 类型。
-- 阻塞：ChatGPT Chrome Extension 与 native host 当前不可用，无法取得受控 DOM、
-  iframe 层级或稳定 Selector。根据“禁止坐标、模糊点击、选择首项”的边界，未执行
-  Dry Run 或写入。
+- 状态：页面访问与登录完成 / Canvas DOM 阻塞
+- 环境：独立、临时 Playwright Chromium；用户手动登录，Context 随检查结束关闭，
+  未导出或保存 Cookie、Token、二维码、Storage State 或 Profile。
+- 只读结果：HTTP 200、批准 Origin 保持、登录失效提示消失、存在编辑控件。
+- 页面结构：0 iframe、1 Canvas、0 Shadow Root、0 table/grid/treegrid、4 个普通可编辑
+  控件、88 个按钮。主表没有暴露可唯一审核的行、单元格和八字段 DOM。
+- 阻塞：`CANVAS_WITHOUT_SEMANTIC_GRID`。根据“禁止坐标、OCR、模糊点击、选择首项”的
+  边界，未生成猜测 Selector，未执行真实 Dry Run 或写入。
 - 创建测试记录：0；删除测试记录：0；原有记录：未修改。
 
 ### 3. 合并前代码审查与本地修复
@@ -50,7 +49,8 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
 - 已实施并纳入本次变更：服务端 ACL/版本/同步历史/Feature Flag 保护、服务端权威导出、
   单调状态写、八字段安全契约、精确工时/进度证据、重复来源拒绝、旧 hours 兼容、
   分类不写、保存双证据、登录显式恢复、Selector 唯一匹配、精确 Origin 构建、
-  完整 URL 仅本地保存且不嵌入产物、真实构建手工入口强制 Dry Run，以及无真实权限 Review ZIP。
+  完整 URL 仅本地保存且不嵌入产物、真实构建手工入口强制 Dry Run，以及只含精确
+  Origin、无私有 URL/Selector/认证状态的 Review ZIP。
 - Migration：追加 0017，不修改 0016；升级脚本覆盖非空 0015→0016→0017。
 
 ### 4. 依赖与 Workflow
@@ -61,16 +61,30 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
 
 ### 5. 本地回归
 
-- 通过：typecheck、lint、build、git diff check、timesheets 55、extension E2E 12、
-  extension package 5、artifacts 32、assistant 15、embeddings 14、retrieval 10、
-  documents 15、files 20、phase1 7、round2 4、round3 5、deployment 23、release 16、
+- 通过：typecheck、lint、build、git diff check、timesheets 57、extension E2E 16、
+  extension package 5、artifacts 32、assistant 16、embeddings 14、retrieval 10、
+  documents 15、files 20、phase1 11、round2 4、round3 5、deployment 23、release 16、
   production-rollout isolated tests 62。
-- `npm test`：build 通过；SSR/Proxy 5/7，通过项外的 2 项因本机数据库不可用失败。
-- 未执行：Migration upgrade、数据库 integration、ProjectAI authenticated E2E；等待当前 Head CI。
+- `npm test`：build 与 SSR/Proxy 7/7 通过。
+- Local UAT：PostgreSQL 17 + pgvector 0.8.1；全部 Migration 到 0017；三账号、两项目和
+  三条虚构随记 Seed 幂等验证；真实登录/Session/退出/重新登录、ACL、日报完整流程、
+  JSON、同步 replay 共 4/4 通过；两个 Feature Flag 的 UI/API 关闭门禁 2/2 通过。
+- 数据库：非空 0015→0016→0017 upgrade 通过；临时隔离数据库中 identity/ACL、Phase 1、
+  AI、Embedding、Retrieval、Timesheet 共 111/111 integration 通过，临时数据库已删除。
+- UAT 保护：Production/未授权 Seed/Cleanup/错误本地数据库拒绝用例均通过。
+
+### 6. 继续执行基线
+
+- 继续时 Head：`32d47dee82087dccae80e17b4133a3a99fc2cfdb`
+- `origin/main`：`82b516a48141d6cdd68467938573e16cc5b6487a`
+- Docker daemon 与隔离 PostgreSQL 可用；此前“本机数据库不可用”已关闭。
+- 完整真实 Smart Sheet URL 只保存在 `.local/wecom-uat.env`，四个本地私有文件均为
+  `0600` 且被 Git 忽略。
 
 ## 当前阻塞
 
-- `PMDR-ENV-005`：Chrome DOM 控制通道缺失，真实 Selector、Dry Run、实写和清理不可安全执行。
+- `PMDR-ENV-006`：真实 Smart Sheet 主表为 Canvas 且无可靠 DOM Overlay，真实 Selector、
+  Dry Run、实写、刷新幂等和清理不可安全执行。
 - Staging Migration 仍需单独、明确的 Staging 授权；本轮不会自行推断授权。
 
 ## 安全计数
