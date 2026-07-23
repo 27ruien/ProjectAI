@@ -28,9 +28,9 @@ test("项目经理从随记生成、审核并确认个人日报", async ({ page 
     const notes = page.locator("section").filter({
       has: page.getByRole("heading", { name: "今日随记" }),
     });
-    await notes.getByPlaceholder(/例如：CHAGEE/).fill(uniqueText);
-    await notes.locator("select").selectOption({ index: 1 });
-    await notes.getByRole("button", { name: "保存", exact: true }).click();
+    await notes.getByRole("textbox", { name: "随记内容（必填）" }).fill(uniqueText);
+    await notes.getByRole("combobox", { name: "项目（可选）" }).selectOption({ index: 1 });
+    await notes.getByRole("button", { name: "保存随记", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("随记已保存");
 
     const query = new URLSearchParams({
