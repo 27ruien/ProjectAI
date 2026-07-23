@@ -13,6 +13,8 @@ import {
   type GeneratedContext,
 } from "../lib/timesheets/service";
 import { TimesheetError } from "../lib/timesheets/errors";
+import { mockSmartSheetResult } from "../lib/timesheets/mock-smartsheet-provider";
+import { updateSyncBatchSchema } from "../lib/timesheets/contracts";
 
 const now = new Date("2026-07-22T02:30:00.000Z");
 
@@ -101,12 +103,51 @@ describe("daily timesheet AI trust boundary", () => {
     );
   });
 
-  it("treats saved plus cancelled items as a cancelled batch", () => {
-    assert.equal(expectedSyncTerminalStatus(["saved", "cancelled"]), "cancelled");
+  it("keeps saved items committed when another item is cancelled or unknown", () => {
+    assert.equal(expectedSyncTerminalStatus(["saved", "cancelled"]), "partially_synced");
     assert.equal(expectedSyncTerminalStatus(["saved", "failed"]), "partially_synced");
     assert.equal(expectedSyncTerminalStatus(["saved", "saved"]), "synced");
     assert.equal(expectedSyncTerminalStatus(["failed", "failed"]), "failed");
-    assert.equal(expectedSyncTerminalStatus(["saved", "unknown"]), null);
+    assert.equal(expectedSyncTerminalStatus(["saved", "unknown"]), "partially_synced");
+  });
+
+  it("requires provider verification before accepting a saved sync item", () => {
+    const base = {
+      status: "synced",
+      items: [{
+        taskId: "task-1",
+        status: "saved",
+        attemptCount: 1,
+        externalReference: "record-1",
+      }],
+    };
+    assert.equal(updateSyncBatchSchema.safeParse(base).success, false);
+    assert.equal(
+      updateSyncBatchSchema.safeParse({
+        ...base,
+        items: [{ ...base.items[0], verified: true }],
+      }).success,
+      true,
+    );
+  });
+
+  it("provides deterministic Mock SmartSheet success, failure, unknown, timeout, readback, and retry results", () => {
+    const common = { idempotencyKey: "batch:task", dryRun: false };
+    const saved = mockSmartSheetResult({ ...common, description: "正常任务", hadPreviousFailure: false });
+    assert.deepEqual(
+      { status: saved.status, verified: saved.verified },
+      { status: "saved", verified: true },
+    );
+    assert.match(saved.externalUrl ?? "", /^https:\/\/mock-smartsheet\.invalid\//u);
+    assert.deepEqual(
+      mockSmartSheetResult({ ...common, description: "正常任务", hadPreviousFailure: false }),
+      saved,
+    );
+    assert.equal(mockSmartSheetResult({ ...common, description: "[mock:failed]", hadPreviousFailure: false }).status, "failed");
+    assert.equal(mockSmartSheetResult({ ...common, description: "[mock:unknown]", hadPreviousFailure: false }).status, "unknown");
+    assert.equal(mockSmartSheetResult({ ...common, description: "[mock:timeout]", hadPreviousFailure: false }).errorCode, "MOCK_TIMEOUT_RESULT_UNKNOWN");
+    assert.equal(mockSmartSheetResult({ ...common, description: "[mock:readback-mismatch]", hadPreviousFailure: false }).errorCode, "MOCK_READBACK_MISMATCH");
+    assert.equal(mockSmartSheetResult({ ...common, description: "[mock:fail-once]", hadPreviousFailure: true }).status, "saved");
   });
 
   it("accounts for both model calls when one controlled repair is required", () => {

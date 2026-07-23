@@ -5,7 +5,11 @@ import type { AuthenticatedPrincipal } from "../../lib/auth/session";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   auditEvent,
+  department,
+  departmentMember,
   dailyTimesheetDraft,
+  organization,
+  organizationMember,
   project,
   projectMember,
   timesheetAiExecution,
@@ -20,6 +24,7 @@ import {
   confirmDailyDraft,
   createSyncBatch,
   createWorkLog,
+  executeMockSyncBatch,
   exportDailyDraft,
   generateDailyTimesheet,
   getDailyDraft,
@@ -34,7 +39,8 @@ import { TimesheetError } from "../../lib/timesheets/errors";
 const prefix = "timesheet-mvp-test-";
 const projectId = `${prefix}project`;
 const otherProjectId = `${prefix}other-project`;
-const organizationId = "org-legacy-default";
+const organizationId = `${prefix}organization`;
+const departmentId = `${prefix}department`;
 const headers = new Headers({
   origin: "http://127.0.0.1:3200",
   "user-agent": "projectai-timesheet-integration-test",
@@ -137,11 +143,32 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     ]);
     assert.ok(users[0] && users[1]);
     [manager, otherManager] = users as UserRecord[];
+    await getDb().insert(organization).values({
+      id: organizationId,
+      name: "[TEST] Timesheet Organization",
+      slug: `timesheet-mvp-${process.pid}`,
+      createdBy: manager.id,
+    });
+    await getDb().insert(organizationMember).values([
+      { id: `${prefix}org-manager`, organizationId, userId: manager.id, role: "organization_member", createdBy: manager.id },
+      { id: `${prefix}org-other`, organizationId, userId: otherManager.id, role: "organization_member", createdBy: manager.id },
+    ]);
+    await getDb().insert(department).values({
+      id: departmentId,
+      organizationId,
+      name: "[TEST] Timesheet Department",
+      code: "TIMESHEET-MVP",
+      createdBy: manager.id,
+    });
+    await getDb().insert(departmentMember).values([
+      { id: `${prefix}dept-manager`, organizationId, departmentId, userId: manager.id, role: "department_member", createdBy: manager.id },
+      { id: `${prefix}dept-other`, organizationId, departmentId, userId: otherManager.id, role: "department_member", createdBy: manager.id },
+    ]);
     await getDb().insert(project).values([
       {
         id: projectId,
         organizationId,
-        departmentId: "dept-legacy-default",
+        departmentId,
         name: "[TEST] Timesheet Project",
         clientName: "[TEST] Fictional Client",
         createdBy: manager.id,
@@ -149,7 +176,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       {
         id: otherProjectId,
         organizationId,
-        departmentId: "dept-legacy-default",
+        departmentId,
         name: "[TEST] Other Timesheet Project",
         clientName: "[TEST] Other Fictional Client",
         createdBy: manager.id,
@@ -200,6 +227,10 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       );
       await tx.delete(projectMember).where(inArray(projectMember.projectId, [projectId, otherProjectId]));
       await tx.delete(project).where(inArray(project.id, [projectId, otherProjectId]));
+      await tx.delete(departmentMember).where(eq(departmentMember.departmentId, departmentId));
+      await tx.delete(organizationMember).where(eq(organizationMember.organizationId, organizationId));
+      await tx.delete(department).where(eq(department.id, departmentId));
+      await tx.delete(organization).where(eq(organization.id, organizationId));
     });
     await closeDatabasePool();
   });
@@ -255,7 +286,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     );
   });
 
-  it("requires review, enforces optimistic locking, and confirms idempotently", async () => {
+  it("confirms the whole batch without a task-level review gate and enforces optimistic locking", async () => {
     await makeRecord("2026-07-22", "已完成虚构 EARN 页面跳转确认，1 小时");
     const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-22", timezone: "Asia/Shanghai", requestHeaders: headers });
     assert.equal(generated.status, "needs_review");
@@ -284,7 +315,11 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       organizationId,
       draftId: generated.id,
       expectedVersion: generated.version,
-      tasks: [reviewedTask(generated.tasks[0])],
+      tasks: [{
+        ...reviewedTask(generated.tasks[0]),
+        needsReview: true,
+        reviewFields: ["description"],
+      }],
       requestHeaders: headers,
     });
     await expectCode(
@@ -341,6 +376,12 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     const changed = await updateDailyDraft({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, tasks: [{ ...reviewedTask(confirmed.tasks[0]), description: "完成虚构状态回退验证并复核" }], requestHeaders: headers });
     assert.equal(changed.status, "needs_review");
     assert.equal(changed.confirmedAt, null);
+    const [returnedAudit] = await getDb()
+      .select({ eventType: auditEvent.eventType })
+      .from(auditEvent)
+      .where(and(eq(auditEvent.entityId, confirmed.id), eq(auditEvent.eventType, "timesheet.returned_to_draft")))
+      .limit(1);
+    assert.equal(returnedAudit?.eventType, "timesheet.returned_to_draft");
     await expectCode(
       () => updateDailyDraft({ principal: principal(manager), organizationId, draftId: changed.id, expectedVersion: confirmed.version, tasks: [reviewedTask(changed.tasks[0])], requestHeaders: headers }),
       "TIMESHEET_VERSION_CONFLICT",
@@ -374,7 +415,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       organizationId,
       syncBatchId: first.batch.syncBatchId,
       status: "synced",
-      items: first.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1 })),
+      items: first.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1, externalReference: `record-${item.taskId}`, externalUrl: "https://mock-smartsheet.invalid/records/first", verified: true })),
       requestHeaders: headers,
     });
     assert.equal(completed.status, "synced");
@@ -384,7 +425,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
         organizationId,
         syncBatchId: first.batch.syncBatchId,
         status: "synced",
-        items: first.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1 })),
+        items: first.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1, externalReference: `record-${item.taskId}`, externalUrl: "https://mock-smartsheet.invalid/records/first", verified: true })),
         requestHeaders: headers,
       })).status,
       "synced",
@@ -395,18 +436,38 @@ describe("daily timesheet ownership, review, and sync integration", () => {
         organizationId,
         syncBatchId: first.batch.syncBatchId,
         status: "running",
-        items: first.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1 })),
+        items: first.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1, externalReference: `record-${item.taskId}`, externalUrl: "https://mock-smartsheet.invalid/records/first", verified: true })),
         requestHeaders: headers,
       }),
       "SYNC_BATCH_TERMINAL",
     );
-    await expectCode(
-      () => createSyncBatch({ principal: principal(manager), organizationId, draftId: draft.id, expectedVersion: draft.version, requestId: "66666666-6666-4666-8666-666666666666", dryRun: false, requestHeaders: headers }),
-      "TIMESHEET_ALREADY_SYNCED",
-    );
+    const afterFirst = (await getDailyDraft({ principal: principal(manager), organizationId, reportDate: "2026-07-22", requestHeaders: headers })).draft;
+    assert.equal(afterFirst?.tasks.length, 0);
+    assert.equal(afterFirst?.submittedTasks.length, 1);
+    assert.equal(afterFirst?.submittedTasks[0].submissionStatus, "submitted");
+    const secondRecord = await makeRecord("2026-07-22", "已完成第二批虚构项目复盘，1 小时");
+    const secondGenerated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-22", timezone: "Asia/Shanghai", requestHeaders: headers });
+    assert.deepEqual(secondGenerated.tasks[0].sourceRecordIds, [secondRecord.id]);
+    assert.equal(secondGenerated.submittedTasks.length, 1);
+    const secondUpdated = await updateDailyDraft({ principal: principal(manager), organizationId, draftId: secondGenerated.id, expectedVersion: secondGenerated.version, tasks: [reviewedTask(secondGenerated.tasks[0])], requestHeaders: headers });
+    const secondConfirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: secondUpdated.id, expectedVersion: secondUpdated.version, requestHeaders: headers });
+    const second = await createSyncBatch({ principal: principal(manager), organizationId, draftId: secondConfirmed.id, expectedVersion: secondConfirmed.version, requestId: "66666666-6666-4666-8666-666666666666", dryRun: false, requestHeaders: headers });
+    assert.equal(second.payload.tasks.length, 1);
+    assert.equal(second.payload.tasks[0].id, secondConfirmed.tasks[0].id);
+    assert.notEqual(second.payload.tasks[0].id, first.payload.tasks[0].id);
+    const oldReplay = await createSyncBatch({ principal: principal(manager), organizationId, draftId: secondConfirmed.id, expectedVersion: secondConfirmed.version, requestId, dryRun: false, requestHeaders: headers });
+    assert.deepEqual(oldReplay.payload, first.payload);
+    await updateSyncBatch({
+      principal: principal(manager),
+      organizationId,
+      syncBatchId: second.batch.syncBatchId,
+      status: "synced",
+      items: second.batch.items.map((item) => ({ taskId: item.taskId, status: "saved", attemptCount: 1, externalReference: `record-${item.taskId}`, externalUrl: "https://mock-smartsheet.invalid/records/second", verified: true })),
+      requestHeaders: headers,
+    });
   });
 
-  it("prevents changing sources or regenerating after any sync history exists", async () => {
+  it("freezes submitted sources while allowing a later unprocessed work log", async () => {
     const [record] = await getDb()
       .select()
       .from(workLogRecord)
@@ -419,15 +480,132 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     assert.ok(record);
     await expectCode(
       () => updateWorkLog({ principal: principal(manager), organizationId, recordId: record.id, values: { rawText: "不允许修改的已同步来源" }, requestHeaders: headers }),
-      "TIMESHEET_SYNC_HISTORY_EXISTS",
+      "WORK_LOG_ALREADY_SUBMITTED",
     );
-    const before = await getDb().select({ count: sql<number>`count(*)::int` }).from(timesheetAiExecution).where(eq(timesheetAiExecution.reportDate, "2026-07-22"));
+    const workLogs = await listWorkLogs({ principal: principal(manager), organizationId, reportDate: "2026-07-22", requestHeaders: headers });
+    assert.equal(workLogs.records.filter((item) => item.consumptionStatus === "submitted").length, 2);
+    const newRecord = await makeRecord("2026-07-22", "已完成第三批虚构项目复盘，1 小时");
+    const refreshed = await listWorkLogs({ principal: principal(manager), organizationId, reportDate: "2026-07-22", requestHeaders: headers });
+    assert.equal(refreshed.records.find((item) => item.id === newRecord.id)?.consumptionStatus, "unprocessed");
+    const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-22", timezone: "Asia/Shanghai", requestHeaders: headers });
+    assert.deepEqual(generated.tasks[0].sourceRecordIds, [newRecord.id]);
+    assert.equal(generated.submittedTasks.length, 2);
+  });
+
+  it("persists saved, failed, and unknown task outcomes independently", async () => {
+    const reportDate = "2026-07-17";
+    const source = await makeRecord(reportDate, "已完成虚构部分同步验证，3 小时");
+    const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate, timezone: "Asia/Shanghai", requestHeaders: headers });
+    const base = reviewedTask(generated.tasks[0]);
+    const edited = await updateDailyDraft({
+      principal: principal(manager),
+      organizationId,
+      draftId: generated.id,
+      expectedVersion: generated.version,
+      tasks: [
+        { ...base, description: "虚构任务 A", regularHours: 1 },
+        { ...base, id: undefined, description: "虚构任务 B", regularHours: 1 },
+        { ...base, id: undefined, description: "虚构任务 C", regularHours: 1 },
+      ],
+      requestHeaders: headers,
+    });
+    const confirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: edited.id, expectedVersion: edited.version, requestHeaders: headers });
+    const batch = await createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId: "12121212-1212-4212-8212-121212121212", dryRun: false, requestHeaders: headers });
+    const [saved, failed, unknown] = batch.batch.items;
+    const partialBatch = await updateSyncBatch({
+      principal: principal(manager),
+      organizationId,
+      syncBatchId: batch.batch.syncBatchId,
+      status: "partially_synced",
+      items: [
+        { taskId: saved.taskId, status: "saved", attemptCount: 1, externalReference: "mock-record-a", externalUrl: "https://mock-smartsheet.invalid/records/a", verified: true },
+        { taskId: failed.taskId, status: "failed", attemptCount: 1, errorCode: "MOCK_SAVE_FAILED", errorMessage: "虚构失败" },
+        { taskId: unknown.taskId, status: "unknown", attemptCount: 1, errorCode: "MOCK_RESULT_UNKNOWN", errorMessage: "虚构未知" },
+      ],
+      requestHeaders: headers,
+    });
+    const savedBeforeReconciliation = partialBatch.items.find((item) => item.taskId === saved.taskId);
+    assert.ok(savedBeforeReconciliation?.savedAt);
+    const partial = (await getDailyDraft({ principal: principal(manager), organizationId, reportDate, requestHeaders: headers })).draft;
+    assert.equal(partial?.submittedTasks.length, 1);
+    assert.deepEqual(partial?.tasks.map((task) => task.submissionStatus).sort(), ["failed", "unknown"]);
+    assert.equal((await listWorkLogs({ principal: principal(manager), organizationId, reportDate, requestHeaders: headers })).records[0].consumptionStatus, "included");
     await expectCode(
-      () => generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate: "2026-07-22", timezone: "Asia/Shanghai", requestHeaders: headers }),
-      "TIMESHEET_SYNC_HISTORY_EXISTS",
+      () => updateWorkLog({ principal: principal(manager), organizationId, recordId: source.id, values: { rawText: "禁止改写已部分提交的来源" }, requestHeaders: headers }),
+      "WORK_LOG_ALREADY_SUBMITTED",
     );
-    const after = await getDb().select({ count: sql<number>`count(*)::int` }).from(timesheetAiExecution).where(eq(timesheetAiExecution.reportDate, "2026-07-22"));
-    assert.equal(after[0].count, before[0].count);
+    const reconciled = await updateSyncBatch({
+      principal: principal(manager),
+      organizationId,
+      syncBatchId: batch.batch.syncBatchId,
+      status: "partially_synced",
+      items: [
+        { taskId: saved.taskId, status: "saved", attemptCount: 1, externalReference: "mock-record-a", externalUrl: "https://mock-smartsheet.invalid/records/a", verified: true },
+        { taskId: failed.taskId, status: "failed", attemptCount: 1, errorCode: "MOCK_SAVE_FAILED", errorMessage: "虚构失败" },
+        { taskId: unknown.taskId, status: "failed", attemptCount: 1, verified: false, errorCode: "MANUAL_RECONCILIATION_NOT_SAVED", errorMessage: "人工确认未保存" },
+      ],
+      requestHeaders: headers,
+    });
+    assert.equal(reconciled.status, "partially_synced");
+    assert.deepEqual(
+      reconciled.items.find((item) => item.taskId === saved.taskId),
+      savedBeforeReconciliation,
+    );
+    const [resolvedAudit] = await getDb()
+      .select({ eventType: auditEvent.eventType })
+      .from(auditEvent)
+      .where(and(eq(auditEvent.entityId, unknown.taskId), eq(auditEvent.eventType, "timesheet.unknown_resolved")))
+      .limit(1);
+    assert.equal(resolvedAudit?.eventType, "timesheet.unknown_resolved");
+    const afterReconciliation = (await getDailyDraft({ principal: principal(manager), organizationId, reportDate, requestHeaders: headers })).draft;
+    assert.equal(afterReconciliation?.tasks.filter((task) => task.submissionStatus === "failed").length, 2);
+  });
+
+  it("runs the local Mock SmartSheet provider and retries only a fail-once item", async () => {
+    process.env.WECOM_TIMESHEET_SYNC_PROVIDER = "mock_smartsheet";
+    process.env.PROJECTAI_UAT_ENVIRONMENT = "local";
+    try {
+      const reportDate = "2026-07-16";
+      await makeRecord(reportDate, "已完成虚构 Mock SmartSheet 验证，2 小时");
+      const generated = await generateDailyTimesheet({ principal: principal(manager), organizationId, reportDate, timezone: "Asia/Shanghai", requestHeaders: headers });
+      const base = reviewedTask(generated.tasks[0]);
+      const edited = await updateDailyDraft({
+        principal: principal(manager),
+        organizationId,
+        draftId: generated.id,
+        expectedVersion: generated.version,
+        tasks: [
+          { ...base, description: "Mock 正常保存任务" },
+          { ...base, id: undefined, description: "Mock 重试任务 [mock:fail-once]" },
+        ],
+        requestHeaders: headers,
+      });
+      const confirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: edited.id, expectedVersion: edited.version, requestHeaders: headers });
+      const first = await createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId: "13131313-1313-4313-8313-131313131313", dryRun: false, requestHeaders: headers });
+      const firstResult = await executeMockSyncBatch({ principal: principal(manager), organizationId, syncBatchId: first.batch.syncBatchId, requestHeaders: headers });
+      assert.equal(firstResult.status, "partially_synced");
+      assert.deepEqual(firstResult.items.map((item) => item.status).sort(), ["failed", "saved"]);
+      const partial = (await getDailyDraft({ principal: principal(manager), organizationId, reportDate, requestHeaders: headers })).draft;
+      assert.equal(partial?.submittedTasks.length, 1);
+      assert.equal(partial?.tasks[0].submissionStatus, "failed");
+      const retry = await createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId: "14141414-1414-4414-8414-141414141414", dryRun: false, requestHeaders: headers });
+      assert.equal(retry.payload.tasks.length, 1);
+      const [retryAudit] = await getDb()
+        .select({ eventType: auditEvent.eventType })
+        .from(auditEvent)
+        .where(and(eq(auditEvent.entityId, retry.payload.tasks[0].id), eq(auditEvent.eventType, "timesheet.task_retry_requested")))
+        .limit(1);
+      assert.equal(retryAudit?.eventType, "timesheet.task_retry_requested");
+      const retryResult = await executeMockSyncBatch({ principal: principal(manager), organizationId, syncBatchId: retry.batch.syncBatchId, requestHeaders: headers });
+      assert.equal(retryResult.status, "synced");
+      const completed = (await getDailyDraft({ principal: principal(manager), organizationId, reportDate, requestHeaders: headers })).draft;
+      assert.equal(completed?.tasks.length, 0);
+      assert.equal(completed?.submittedTasks.length, 2);
+      assert.ok(completed?.submittedTasks.every((task) => task.externalReference));
+    } finally {
+      delete process.env.WECOM_TIMESHEET_SYNC_PROVIDER;
+      delete process.env.PROJECTAI_UAT_ENVIRONMENT;
+    }
   });
 
   it("rejects sync after project access is lost", async () => {

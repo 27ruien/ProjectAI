@@ -32,11 +32,11 @@ async function createNote(page: Page, text: string) {
 }
 
 function taskCards(page: Page) {
-  return page.locator("article").filter({ has: page.getByText(/^任务 \d+$/) });
+  return page.locator("article").filter({ has: page.getByText(/^任务 \d+ ·/) });
 }
 
 function confirmationRoute(page: Page) {
-  return page.getByRole("button", { name: /确认工时|已确认工时/ });
+  return page.getByRole("button", { name: /确认本次工时|本次工时已确认/ });
 }
 
 async function exists(filePath: string) {
@@ -211,7 +211,6 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
       if (!(await selects.nth(0).inputValue())) await selects.nth(0).selectOption(authorizedProjectId);
       if (!(await selects.nth(1).inputValue())) await selects.nth(1).selectOption("execution");
       if (!(await selects.nth(2).inputValue())) await selects.nth(2).selectOption("completed");
-      await card.getByRole("button", { name: "标记已审核" }).click();
       await expect(page.getByTestId("confirmation-errors")).toHaveCount(0);
     });
 
@@ -251,7 +250,7 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
       await expect(page.getByTestId("confirmation-state")).toHaveAttribute("data-state", "success");
       expect(requestCount).toBe(1);
       await expect(page.getByTestId("draft-status")).toContainText("confirmed");
-      await expect(page.getByRole("button", { name: "已确认工时" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "本次工时已确认" })).toBeDisabled();
       await capture(page, "06-confirmed.png");
 
       await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: new URL(page.url()).origin });
@@ -274,9 +273,9 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
 
     await test.step("scenario 6: editing a confirmed draft returns it to review and allows reconfirmation", async () => {
       const card = taskCards(page).first();
+      await page.getByRole("button", { name: "修改本次工时" }).click();
       await card.getByRole("spinbutton", { name: /任务进度（可选）/ }).fill("99");
       await expect(page.getByTestId("draft-status")).toContainText("needs_review");
-      await card.getByRole("button", { name: "标记已审核" }).click();
       await confirmationRoute(page).click();
       await expect(page.getByTestId("confirmation-state")).toHaveAttribute("data-state", "success");
       await expect(page.getByTestId("draft-status")).toContainText("confirmed");
@@ -284,10 +283,10 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
 
     await test.step("scenario 7: 401, 403, 409, 422, and 500 produce visible feedback", async () => {
       const card = taskCards(page).first();
+      await page.getByRole("button", { name: "修改本次工时" }).click();
       await card.getByRole("spinbutton", { name: /任务进度（可选）/ }).fill("98");
-      await card.getByRole("button", { name: "标记已审核" }).click();
-      await page.getByRole("button", { name: "保存草稿" }).click();
-      await expect(page.getByRole("status")).toContainText("草稿已保存");
+      await page.getByRole("button", { name: "保存修改" }).click();
+      await expect(page.getByRole("status")).toContainText("本次草稿修改已保存");
       await expect(page.getByTestId("draft-status")).toContainText("needs_review");
 
       const failures = [
@@ -309,7 +308,11 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
         await expect(page.getByRole("alert").first()).toContainText(failure.response);
         await expect(page.getByTestId("confirmation-state")).toHaveAttribute(
           "data-state",
-          failure.status === 422 ? "validation_error" : "server_error",
+          failure.status === 422
+            ? "validation_error"
+            : failure.status === 409
+              ? "conflict_error"
+              : "server_error",
         );
         await page.unroute("**/api/timesheets/drafts/*/confirm", handler);
       }

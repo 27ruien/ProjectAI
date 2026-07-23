@@ -292,8 +292,8 @@ async function verify(credentials: CredentialFile): Promise<void> {
     }
   }
   const schemaVersion = await db.execute<{ id: number }>(sql`select id from drizzle.__drizzle_migrations order by id desc limit 1`);
-  if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 18) throw new Error("UAT_MIGRATION_0017_REQUIRED");
-  process.stdout.write(`UAT verification passed: schema=0017; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
+  if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 20) throw new Error("UAT_MIGRATION_0019_REQUIRED");
+  process.stdout.write(`UAT verification passed: schema=0019; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
 }
 
 async function cleanup(): Promise<void> {

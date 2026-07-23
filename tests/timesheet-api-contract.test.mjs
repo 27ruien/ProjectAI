@@ -21,7 +21,7 @@ async function listRouteFiles(directory) {
 describe("timesheet API authorization contracts", () => {
   it("requires a server-authenticated principal on every route", async () => {
     const files = await listRouteFiles(routeRoot);
-    assert.equal(files.length, 9, "unexpected timesheet route count; review new routes explicitly");
+    assert.equal(files.length, 10, "unexpected timesheet route count; review new routes explicitly");
     for (const file of files) {
       const source = await readFile(file, "utf8");
       assert.match(source, /await requireApiPrincipal\(request\.headers\)/, file);
@@ -44,6 +44,6 @@ describe("timesheet API authorization contracts", () => {
         assert.ok(boundaryIndex < principalIndex, `${file} ${method[1]} authenticates before validating origin`);
       }
     }
-    assert.equal(mutationCount, 8, "unexpected mutation handler count; review new handlers explicitly");
+    assert.equal(mutationCount, 9, "unexpected mutation handler count; review new handlers explicitly");
   });
 });

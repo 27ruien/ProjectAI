@@ -90,6 +90,8 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
   await loginByApi(page, "uatManager");
   await page.goto(appPath("/daily-report"));
   await expect(page.getByRole("heading", { name: "工作日报" })).toBeVisible();
+  await expect(page.getByText("当前使用 Mock AI，仅用于功能测试，不代表真实 AI 输出质量。")).toBeVisible();
+  await expect(page.getByText(/虚构项目工作记录 [123]/)).toHaveCount(0);
   await expect(page.getByRole("option", { name: "ProjectAI WeCom UAT" })).toBeAttached();
   await expect(page.getByRole("option", { name: "ProjectAI Restricted UAT" })).toHaveCount(0);
 
@@ -123,10 +125,10 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
 
   await page.getByRole("button", { name: "AI 整理今日工时" }).click();
   await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
-  const taskCards = page.locator("article").filter({ has: page.getByText(/^任务 \d+$/) });
+  const taskCards = page.locator("article").filter({ has: page.getByText(/^任务 \d+ ·/) });
   expect(await taskCards.count()).toBeGreaterThanOrEqual(3);
   await expect(taskCards.locator("select").filter({ has: page.getByRole("option", { name: "ProjectAI Restricted UAT" }) })).toHaveCount(0);
-  await expect(page.getByText(/需确认：/).first()).toBeVisible();
+  await expect(page.getByText(/低置信度提示/).first()).toBeVisible();
 
   const statusValues: string[] = [];
   for (let index = 0; index < await taskCards.count(); index += 1) {
@@ -135,7 +137,7 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
     const project = selects.nth(0);
     if (!(await project.inputValue())) await project.selectOption(authorizedProjectId);
     const regular = card.getByRole("spinbutton", { name: /^正常工时/ });
-    if (!(await regular.inputValue())) await regular.fill("0.25");
+    await regular.fill("2");
     const overtime = card.getByRole("spinbutton", { name: /^加班工时/ });
     if (!(await overtime.inputValue())) await overtime.fill("0");
     const category = selects.nth(1);
@@ -143,7 +145,6 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
     const status = selects.nth(2);
     statusValues.push(await status.inputValue());
     if (!(await status.inputValue())) await status.selectOption("pending");
-    await card.getByRole("button", { name: /标记已审核|已人工审核/ }).click();
   }
   expect(statusValues).toContain("in_progress");
   expect(statusValues).toContain("pending");
@@ -160,19 +161,16 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
 
   await taskCards.first().getByRole("button", { name: "拆分" }).click();
   await expect(taskCards).toHaveCount(beforeSplitCount + 1);
-  await taskCards.nth(0).getByRole("button", { name: "标记已审核" }).click();
-  await taskCards.nth(1).getByRole("button", { name: "标记已审核" }).click();
-  await page.getByRole("button", { name: "保存草稿" }).click();
-  await expect(page.getByRole("status")).toContainText("草稿已保存");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("status")).toContainText("本次草稿修改已保存");
   await taskCards.nth(0).locator('input[type="checkbox"]').check();
   await taskCards.nth(1).locator('input[type="checkbox"]').check();
   await page.getByRole("button", { name: "合并所选" }).click();
   await expect(taskCards).toHaveCount(beforeSplitCount);
-  await taskCards.last().getByRole("button", { name: "标记已审核" }).click();
-  await page.getByRole("button", { name: "保存草稿" }).click();
-  await expect(page.getByRole("status")).toContainText("草稿已保存");
-  await page.getByRole("button", { name: "确认工时" }).click();
-  await expect(page.getByRole("status")).toContainText("工时已由你人工确认");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("status")).toContainText("本次草稿修改已保存");
+  await page.getByRole("button", { name: "确认本次工时" }).click();
+  await expect(page.getByRole("status")).toContainText("本次工时已整批确认");
   await expect(page.getByRole("button", { name: "复制 JSON" })).toBeEnabled();
 
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], {
@@ -200,10 +198,11 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
   expect(json.tasks.every((item) => item.regularHours >= 0 && item.overtimeHours >= 0)).toBeTruthy();
 
   const firstCard = taskCards.first();
+  await page.getByRole("button", { name: "修改本次工时" }).click();
   await firstCard.getByRole("spinbutton", { name: /^任务进度/ }).fill("99");
   await expect(page.getByRole("button", { name: "复制 JSON" })).toBeDisabled();
-  await page.getByRole("button", { name: "保存草稿" }).click();
-  await expect(page.getByRole("status")).toContainText("草稿已保存");
+  await page.getByRole("button", { name: "保存修改" }).click();
+  await expect(page.getByRole("status")).toContainText("本次草稿修改已保存");
   await expect(page.getByText(/Draft v\d+ · needs_review/)).toBeVisible();
 
   let current = await (await page.request.get(appPath(`/api/timesheets/drafts?organizationId=${organizationId}&date=${todayInShanghai()}`))).json() as {
@@ -225,42 +224,126 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
     code: "TIMESHEET_NOT_CONFIRMED",
   });
 
-  await firstCard.getByRole("button", { name: "标记已审核" }).click();
-  await page.getByRole("button", { name: "确认工时" }).click();
-  await expect(page.getByRole("status")).toContainText("工时已由你人工确认");
+  await page.getByRole("button", { name: "确认本次工时" }).click();
+  await expect(page.getByRole("status")).toContainText("本次工时已整批确认");
+  await expect(page.getByTestId("daily-summary")).toContainText("待提交 6.00 h");
+  await expect(page.getByText(/Mock SmartSheet Provider/)).toBeVisible();
+
+  const dryRunResponse = page.waitForResponse(
+    (candidate) => candidate.url().endsWith("/execute-mock") && candidate.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "同步到腾讯文档" }).click();
+  expect((await dryRunResponse).status()).toBe(200);
+  await expect(page.getByRole("status")).toContainText("Mock SmartSheet 批次已完成：synced");
+  await expect(taskCards).toHaveCount(beforeSplitCount);
+  await expect(page.getByTestId("submitted-tasks")).toHaveCount(0);
+
+  await page.getByRole("checkbox", { name: /Dry Run/ }).uncheck();
+  const firstSaveRequest = page.waitForResponse(
+    (candidate) => candidate.url().endsWith("/api/timesheets/sync-batches") && candidate.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "同步到腾讯文档" }).click();
+  const firstSavePayload = await (await firstSaveRequest).json() as { payload: { tasks: Array<{ regularHours: number }> } };
+  expect(firstSavePayload.payload.tasks.reduce((sum, task) => sum + task.regularHours, 0)).toBe(6);
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(beforeSplitCount);
+  await expect(page.getByTestId("submitted-tasks")).toContainText("已提交至 Mock SmartSheet。该记录仅用于本地生命周期验收。");
+  await expect(page.getByTestId("submitted-tasks").getByRole("link", { name: "查看 Mock 记录" })).toHaveCount(beforeSplitCount);
+  await expect(taskCards).toHaveCount(0);
+  await expect(page.getByTestId("daily-summary")).toContainText("待提交 0.00 h");
+  await expect(page.getByTestId("daily-summary")).toContainText("已提交 6.00 h");
+
+  const secondNote = "[UAT] 已完成第二批虚构日报任务，2 小时，状态已完成，无加班。";
+  await notes.getByPlaceholder(/例如：/).fill(secondNote);
+  await notes.locator("select").first().selectOption(authorizedProjectId);
+  await notes.getByRole("button", { name: "保存随记", exact: true }).click();
+  await expect(notes.getByText(secondNote, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "AI 整理今日工时" }).click();
+  await expect(taskCards).toHaveCount(1);
+  const secondCard = taskCards.first();
+  await secondCard.getByRole("spinbutton", { name: /^正常工时/ }).fill("2");
+  await secondCard.getByRole("spinbutton", { name: /^加班工时/ }).fill("0");
+  const secondSelects = secondCard.locator("select");
+  if (!(await secondSelects.nth(0).inputValue())) await secondSelects.nth(0).selectOption(authorizedProjectId);
+  if (!(await secondSelects.nth(1).inputValue())) await secondSelects.nth(1).selectOption("execution");
+  if (!(await secondSelects.nth(2).inputValue())) await secondSelects.nth(2).selectOption("completed");
+  await page.getByRole("button", { name: "确认本次工时" }).click();
+  await expect(page.getByTestId("draft-status")).toContainText("confirmed");
+  await expect(page.getByRole("button", { name: "同步到腾讯文档" })).toBeEnabled();
+  const secondSaveRequest = page.waitForResponse(
+    (candidate) => candidate.url().endsWith("/api/timesheets/sync-batches") && candidate.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "同步到腾讯文档" }).click();
+  const secondSavePayload = await (await secondSaveRequest).json() as { payload: { tasks: Array<{ regularHours: number; description: string }> } };
+  expect(secondSavePayload.payload.tasks).toHaveLength(1);
+  expect(secondSavePayload.payload.tasks[0]).toMatchObject({ regularHours: 2, description: secondNote });
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(beforeSplitCount + 1);
+  await page.reload();
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(beforeSplitCount + 1);
+  await expect(page.getByRole("button", { name: "本次工时已提交" })).toBeDisabled();
+  await page.getByRole("checkbox", { name: /Dry Run/ }).uncheck();
+
+  for (const note of [
+    "[UAT] 已完成部分同步任务 A，1 小时，无加班。",
+    "[UAT] 已完成部分同步任务 B，1 小时，无加班。",
+    "[UAT] 已完成部分同步任务 C，1 小时，无加班。",
+  ]) {
+    await notes.getByPlaceholder(/例如：/).fill(note);
+    await notes.locator("select").first().selectOption(authorizedProjectId);
+    await notes.getByRole("button", { name: "保存随记", exact: true }).click();
+  }
+  await page.getByRole("button", { name: "AI 整理今日工时" }).click();
+  await expect(taskCards).toHaveCount(3);
+  const partialDescriptions = [
+    "Mock 部分同步成功任务",
+    "Mock 部分同步失败后重试任务 [mock:fail-once]",
+    "Mock 部分同步未知任务 [mock:unknown]",
+  ];
+  for (let index = 0; index < 3; index += 1) {
+    const card = taskCards.nth(index);
+    await card.getByRole("textbox", { name: /任务详情/ }).fill(partialDescriptions[index]);
+    await card.getByRole("spinbutton", { name: /^正常工时/ }).fill("1");
+    await card.getByRole("spinbutton", { name: /^加班工时/ }).fill("0");
+    const selects = card.locator("select");
+    if (!(await selects.nth(0).inputValue())) await selects.nth(0).selectOption(authorizedProjectId);
+    if (!(await selects.nth(1).inputValue())) await selects.nth(1).selectOption("execution");
+    if (!(await selects.nth(2).inputValue())) await selects.nth(2).selectOption("completed");
+  }
+  await page.getByRole("button", { name: "确认本次工时" }).click();
+  await expect(page.getByTestId("draft-status")).toContainText("confirmed");
+  await expect(page.getByRole("button", { name: "同步到腾讯文档" })).toBeEnabled();
+  const partialExecute = page.waitForResponse(
+    (candidate) => candidate.url().endsWith("/execute-mock") && candidate.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "同步到腾讯文档" }).click();
+  expect((await partialExecute).status()).toBe(200);
+  await expect(page.getByRole("alert")).toContainText("partially_synced");
+  await expect(taskCards).toHaveCount(2);
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(beforeSplitCount + 2);
+  await expect(page.getByRole("button", { name: "重试失败项" })).toBeEnabled();
+
+  await page.getByRole("button", { name: "重试失败项" }).click();
+  await expect(taskCards).toHaveCount(1);
+  await expect(taskCards.first()).toHaveAttribute("data-task-status", "unknown");
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(beforeSplitCount + 3);
+  await expect(page.getByRole("button", { name: "同步到腾讯文档" })).toBeDisabled();
+  await page.getByRole("button", { name: "人工确认已保存" }).click();
+  await expect(taskCards).toHaveCount(0);
+  const finalSubmittedCount = beforeSplitCount + 4;
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(finalSubmittedCount);
+  await page.reload();
+  await expect(page.getByTestId("submitted-tasks").locator("article")).toHaveCount(finalSubmittedCount);
+  await expect(page.getByRole("button", { name: "本次工时已提交" })).toBeDisabled();
+
   current = await (await page.request.get(appPath(`/api/timesheets/drafts?organizationId=${organizationId}&date=${todayInShanghai()}`))).json() as {
     draft: { id: string; version: number };
   };
-  const requestId = crypto.randomUUID();
   const batchRequest = {
     organizationId,
     draftId: current.draft.id,
     expectedVersion: current.draft.version,
-    requestId,
-    dryRun: true,
+    requestId: crypto.randomUUID(),
+    dryRun: false,
   };
-  const created = await page.request.post(appPath("/api/timesheets/sync-batches"), {
-    data: batchRequest,
-    headers: { origin: "http://127.0.0.1:3300" },
-  });
-  expect(created.status()).toBe(201);
-  const createdPayload = await created.json() as {
-    batch: { syncBatchId: string; items: unknown[] };
-    payload: { tasks: Array<{ project: { id: string }; category: { id: string }; urgency: unknown }> };
-  };
-  expect(createdPayload.payload.tasks.every((item) => item.project.id === authorizedProjectId)).toBeTruthy();
-  expect(createdPayload.payload.tasks.every((item) => item.category.id === "execution" && item.urgency === null)).toBeTruthy();
-  const replay = await page.request.post(appPath("/api/timesheets/sync-batches"), {
-    data: batchRequest,
-    headers: { origin: "http://127.0.0.1:3300" },
-  });
-  expect(replay.status()).toBe(201);
-  const replayPayload = await replay.json() as { batch: { syncBatchId: string } };
-  expect(replayPayload.batch.syncBatchId).toBe(createdPayload.batch.syncBatchId);
-  const history = await page.request.get(appPath(`/api/timesheets/sync-batches?organizationId=${organizationId}`));
-  expect(history.status()).toBe(200);
-  const historyPayload = await history.json() as { batches: Array<{ syncBatchId: string }> };
-  expect(historyPayload.batches.filter((batch) => batch.syncBatchId === createdPayload.batch.syncBatchId)).toHaveLength(1);
 
   const restrictedPage = await page.context().browser()!.newPage();
   await loginByApi(restrictedPage, "uatRestricted");

@@ -7,7 +7,7 @@ const credentials = JSON.parse(readFileSync(path.resolve(".local/uat-credentials
 };
 const port = Number(process.env.UAT_FLAG_TEST_PORT);
 if (!Number.isInteger(port) || port < 1024) throw new Error("UAT_FLAG_TEST_PORT is required.");
-if (!new Set(["daily-off", "wecom-off"]).has(process.env.UAT_FLAG_CASE ?? "")) throw new Error("UAT_FLAG_CASE is invalid.");
+if (!new Set(["daily-off", "wecom-off", "ai-real-unconfigured"]).has(process.env.UAT_FLAG_CASE ?? "")) throw new Error("UAT_FLAG_CASE is invalid.");
 process.env.PLAYWRIGHT_BASE_URL = `http://127.0.0.1:${port}/tool/projectai-uat`;
 process.env.NEXT_PUBLIC_BASE_PATH = "/tool/projectai-uat";
 process.env.UAT_MANAGER_EMAIL = credentials.accounts.manager.email;

@@ -81,4 +81,11 @@ const baseEnvironment = {
 };
 await runCase("daily-off", 3310, false, true, baseEnvironment);
 await runCase("wecom-off", 3320, true, false, baseEnvironment);
-process.stdout.write("Both Local UAT Feature Flag boundaries passed.\n");
+await runCase("ai-real-unconfigured", 3330, true, true, {
+  ...baseEnvironment,
+  UAT_AI_PROVIDER: "real",
+  AI_PROVIDER: "qwen",
+  QWEN_API_KEY: "",
+  QWEN_API_KEY_FILE: "",
+});
+process.stdout.write("Local UAT feature flags and unconfigured Real AI boundary passed.\n");

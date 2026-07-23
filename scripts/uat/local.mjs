@@ -65,6 +65,10 @@ function run(executable, args, env) {
 async function main() {
   if (!["database", "start", "stop", "reseed"].includes(command)) throw new Error("Expected database, start, stop, or reseed.");
   const runtime = await runtimeEnvironment();
+  const uatAiProvider = process.env.UAT_AI_PROVIDER?.trim() || "mock";
+  if (uatAiProvider !== "mock" && uatAiProvider !== "real") {
+    throw new Error("UAT_AI_PROVIDER must be mock or real.");
+  }
   const env = {
     ...process.env,
     ...runtime,
@@ -79,12 +83,15 @@ async function main() {
     // across independent suites. Keep rate limiting enabled while allowing the
     // documented gate sequence to finish inside one minute.
     AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100",
-    AI_PROVIDER: "fake",
+    UAT_AI_PROVIDER: uatAiProvider,
+    AI_PROVIDER: uatAiProvider === "real" ? "qwen" : "fake",
     AI_ASSISTANT_ENABLED: "true",
     AI_REGION: "cn-beijing",
     AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v1",
     PM_DAILY_REPORT_ENABLED: "true",
     WECOM_TIMESHEET_SYNC_ENABLED: "true",
+    WECOM_TIMESHEET_SYNC_PROVIDER:
+      process.env.WECOM_TIMESHEET_SYNC_PROVIDER?.trim() || "mock_smartsheet",
     START_DOCUMENT_WORKER: "false",
   };
   const composeArgs = ["compose", "--env-file", RUNTIME_FILE, "-f", COMPOSE_FILE];

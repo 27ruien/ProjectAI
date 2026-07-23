@@ -57,12 +57,11 @@ test("项目经理从随记生成、审核并确认个人日报", async ({ page 
     const taskCard = page.locator("article").filter({ hasText: "任务 1" });
     await taskCard.getByRole("spinbutton", { name: /^正常工时/ }).fill("1");
     await taskCard.getByRole("spinbutton", { name: /^加班工时/ }).fill("0");
-    await taskCard.getByRole("button", { name: "标记已审核" }).click();
-    await page.getByRole("button", { name: "确认工时" }).click();
-    await expect(page.getByRole("status")).toContainText("工时已由你人工确认");
+    await page.getByRole("button", { name: "确认本次工时" }).click();
+    await expect(page.getByRole("status")).toContainText("本次工时已整批确认");
     await expect(page.getByRole("button", { name: "复制 JSON" })).toBeEnabled();
-    await expect(page.getByText("扩展未安装或未连接")).toBeVisible();
-    await expect(page.getByRole("button", { name: "同步到企业微信" })).toBeDisabled();
+    await expect(page.getByText(/扩展未安装或未连接|Mock SmartSheet Provider/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "同步到腾讯文档" })).toBeDisabled();
     await reviewScreenshot(page, "daily-report-confirmed.png");
   } finally {
     if (recordId) {
