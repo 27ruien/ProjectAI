@@ -66,9 +66,11 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
   documents 15、files 20、phase1 11、round2 4、round3 5、deployment 23、release 16、
   production-rollout isolated tests 62。
 - `npm test`：build 与 SSR/Proxy 7/7 通过。
-- Local UAT：PostgreSQL 17 + pgvector 0.8.1；全部 Migration 到 0017；三账号、两项目和
-  三条虚构随记 Seed 幂等验证；真实登录/Session/退出/重新登录、ACL、日报完整流程、
-  JSON、同步 replay 共 4/4 通过；两个 Feature Flag 的 UI/API 关闭门禁 2/2 通过。
+- Local UAT 历史 4/4 结论已于 2026-07-23 撤回并重新建立：Seed 现在为 0 条随记；
+  专用 `test:uat:ui` 在真实 Local 服务、数据库和 Chromium 中从空状态完成全 UI 随记
+  CRUD、AI、字段校验、确认、刷新持久化、JSON 和五类错误反馈，1/1 通过；人工复核
+  7 张虚构数据截图和脱敏 Trace，未处理 Console/Page Error 为 0。既有 `test:uat`
+  4/4 与 Feature Flag 2/2 仍分别只代表各自边界，不替代该真实 UI 门禁。
 - 数据库：非空 0015→0016→0017 upgrade 通过；临时隔离数据库中 identity/ACL、Phase 1、
   AI、Embedding、Retrieval、Timesheet 共 111/111 integration 通过，临时数据库已删除。
 - UAT 保护：Production/未授权 Seed/Cleanup/错误本地数据库拒绝用例均通过。

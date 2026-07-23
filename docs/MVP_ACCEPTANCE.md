@@ -139,8 +139,8 @@
 
 | ID | 验收项 | 当前状态 | 关闭条件 |
 | --- | --- | --- | --- |
-| PMDR-001 | 当前用户随记 CRUD、组织/所有权/项目 ACL 与审计 | 代码完成，当前 Head CI 集成待验证 | Migration 0016→0017 升级、所有权/越权/Flag 集成全绿 |
-| PMDR-002 | 结构化 AI 输入/输出、事实约束、一次 Repair、低置信度与人工确认 | 单元通过 | 当前 Head CI、Fake Provider 集成和 ProjectAI E2E 全绿 |
+| PMDR-001 | 当前用户随记 CRUD、组织/所有权/项目 ACL 与审计 | Local UAT UI 与数据库集成通过，当前 Head CI 待验证 | Migration 0016→0017、所有权/越权/Flag 与空 Seed 全 UI CRUD 均绿 |
+| PMDR-002 | 结构化 AI 输入/输出、事实约束、一次 Repair、低置信度与人工确认 | Unit/集成/Real Local UAT UI 通过，当前 Head CI 待验证 | Fake Provider 草稿、字段错误、人工确认、刷新持久化和 JSON 均绿 |
 | PMDR-003 | 版本锁、未确认拒绝、权限丢失、同步幂等和终态一致性 | 代码完成，CI 集成待验证 | PostgreSQL 集成全绿 |
 | PMDR-004 | MV3 协议、Origin、权限最小化、重放/中断恢复和日志脱敏 | 单元/package 通过 | CI package + Mock E2E 全绿 |
 | PMDR-005 | iframe Adapter、精确字段匹配、分类不写、双工时、保存双证据、不触碰最终提交 | Mock E2E 11/11 通过 | 真实 DOM 审查、真实 Dry Run、一条虚构任务验收 |

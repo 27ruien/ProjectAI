@@ -2,6 +2,10 @@
 
 本文件只记录稳定的测试范围；最终 Head SHA、CI Run 与 Artifact Digest 写入 PR/CI Provenance，不写入 tracked 文档。
 
+## Local UAT 结论修正（2026-07-23）
+
+此前 `test:uat` 的 4/4 结果混合了 API、数据库、预置随记和渲染页面操作，不能证明普通用户从空状态完成随记 CRUD、AI 整理与人工确认。用户真实操作发现确认按钮因待审核而静默禁用，且 Seed 已预置 3 条随记，因此旧结论已撤回。2026-07-23 增加独立 `test:uat:ui` 后，空 Seed 下的全 UI 随记 CRUD、AI 整理、字段错误、确认、刷新持久化、JSON 和 401/403/409/422/500 反馈重新通过，Local UAT 的 ProjectAI 日报流程才恢复为 **PASS**。Unit、API、Database Integration、Mock E2E、Real Local UAT UI E2E 和人工截图复核仍是六类独立证据，互不替代。
+
 ## 当前本地结果
 
 | 命令 | 结果 | 覆盖 |
@@ -20,7 +24,8 @@
 | `npm run test:deployment` | 23/23 通过 | Staging/Production 配置保护回归 |
 | `npm run test:release` | 16/16 通过 | Release tooling 回归 |
 | `npm run test:production-rollout` | 62/62 通过 | B3-C2A executor/authorization/lock 回归 |
-| `npm run test:uat` | 4/4 通过 | 三账号真实认证、Session、项目 ACL、日报 CRUD/AI/拆分/合并/确认/JSON/同步幂等 |
+| `npm run test:uat` | 4/4 通过 | 三账号认证、Session、项目 ACL 与既有混合 API/UI 回归；不单独作为真实用户流程证据 |
+| `npm run test:uat:ui` | 1/1 通过 | 真实 Local 服务/数据库/Chromium，空 Seed，全 UI 随记 CRUD、AI、字段错误、确认状态机、持久化、JSON 与五类错误反馈 |
 | `npm run test:uat:flags` | 2/2 通过 | 日报与 WeCom Flag 分别关闭时 UI/API 都拒绝 |
 | `npm run test:uat:database` | 111/111 通过 | 临时隔离数据库中的身份、ACL、Phase 1、AI、Embedding、Retrieval、日报集成 |
 | `npm run timesheets:migration-upgrade` | 通过 | 非空 0015→0016→0017，旧 hours 与新八字段约束 |
@@ -50,4 +55,6 @@ Actions 已从 checkout/setup-node/upload-artifact v4 升级为官方 v7（Node 
 
 ## 浏览器证据
 
-ProjectAI E2E 在 `PLAYWRIGHT_REVIEW_ARTIFACTS=1` 时生成 `daily-report-confirmed.png`，仅含虚构随记。真实 WeCom 未保存截图。用户已在隔离临时 Chromium 中手动登录；只读 DOM 审计确认 HTTP 200、批准 Origin、1 Canvas、0 table/grid/treegrid。由于没有唯一 DOM Overlay，真实创建、保存、删除与最终提交点击计数均为 0，真实 Dry Run/保存不得标记为通过。
+Real Local UAT UI E2E 在真实 Chromium 中从登录页和空数据库开始，只通过渲染页面创建、编辑和删除随记，再执行 AI 整理、人工确认、刷新、复制与下载。忽略目录 `test-results/uat-ui/evidence/` 保存 7 张仅含虚构数据的截图、脱敏 JSON 和 `local-uat-ui-trace.sanitized.zip`；人工复核确认入口、错误、成功和刷新状态可见。Trace 在登录后才启动，并在保留前移除密码、Cookie、Session/Authorization 元数据；原始 Trace 随即删除。浏览器未处理 Console/Page Error 为 0，五条预期失败注入的浏览器网络错误单独计数，确认请求为一次 200。
+
+ProjectAI 的上述 PASS 不等于真实 WeCom PASS。真实 WeCom 未保存截图；此前只读 DOM 审计确认 HTTP 200、批准 Origin、1 Canvas、0 table/grid/treegrid。由于没有唯一 DOM Overlay，真实创建、保存、删除与最终提交点击计数均为 0，真实 Dry Run/保存仍不得标记为通过。

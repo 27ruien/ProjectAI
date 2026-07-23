@@ -29,6 +29,9 @@
 | PMDR-QA-023 | P1 | Fake Provider 把“验收准备”等名词误判为未来态，且没有稳定保留显式进行中/未开始状态 | 优先使用受信 status hint 与原文事实，补充完成/进行中/未开始回归；Local UAT 三类状态保持正确 |
 | PMDR-QA-024 | P1 | Review 扩展依赖动态 `scripting` 注入且缺少企业微信精确 Site Access | 改为分离的声明式 Content Script；只保留 `storage`/`tabs`，精确绑定 ProjectAI 与 `doc.weixin.qq.com`，ZIP 自动拒绝宽泛权限、完整 URL 和认证状态 |
 | PMDR-QA-025 | P2 | 本地缺少可重复的三账号、Migration、Feature Flag 与数据库集成 UAT 环境 | 增加 Local-only pgvector Compose、默认拒绝的幂等 Seed/Cleanup、真实 Session E2E、Flag E2E 和临时数据库集成 runner |
+| PMDR-QA-026 | P1 | UAT Seed 预置 3 条随记，旧验收绕过空状态和用户创建入口 | Seed 改为 0 条；真实 UI 门禁从空状态完成随记 CRUD、刷新持久化和 AI 整理，1/1 通过 |
+| PMDR-QA-027 | P1 | 待审核任务会把“确认工时”直接禁用，点击无请求、无字段错误和无状态反馈 | 点击后执行字段校验并显示五态 UI；真实确认一次 200、重复提交受阻、刷新保持，401/403/409/422/500 均有可读反馈 |
+| PMDR-QA-028 | P1 | 0.25 小时任务拆分会把第二条工时变成 `null`，导致后续合并/确认失败 | 拆分保留合法 0 值并由完整 Local UAT 拆分、合并、确认回归覆盖 |
 
 ## 环境阻塞
 
@@ -43,4 +46,4 @@
 
 ## 未发现的范围
 
-当前没有已知未修复 P0/P1 代码缺陷。本地数据库、ProjectAI UAT 和 Mock 扩展验证已关闭；当前 Head 的 GitHub CI、依赖风险审批、Staging 和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明 Canvas 真实页面兼容；在可靠 DOM/受支持接口、真实 Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。
+当前没有已知未修复 P0/P1 代码缺陷；PMDR-QA-026/027/028 已由真实 Local UI 与既有 UAT 回归关闭。Local 数据库和 Mock 扩展测试不能替代真实 WeCom 验收；当前 Head 的 GitHub CI、依赖风险审批、Staging 和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明 Canvas 真实页面兼容；在可靠 DOM/受支持接口、真实 Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。
