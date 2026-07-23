@@ -31,6 +31,8 @@ type CredentialFile = {
 
 const ROOT = process.cwd();
 const CREDENTIAL_PATH = path.join(ROOT, ".local", "uat-credentials.json");
+const UAT_ENVIRONMENT = process.env.PROJECTAI_UAT_ENVIRONMENT?.trim().toLowerCase();
+const IS_STAGING_UAT = UAT_ENVIRONMENT === "staging";
 const ORGANIZATION_ID = "uat-org-projectai-v1";
 const DEPARTMENT_ID = "uat-dept-project-management-v1";
 const PROJECT_MAIN_ID = "uat-project-wecom-v1";
@@ -41,12 +43,29 @@ const USER_IDS: Record<AccountKey, string> = {
   restricted: "uat-user-restricted-v1",
 };
 const USER_SPECS: Record<AccountKey, { displayName: string; email: string }> = {
-  admin: { displayName: "UAT Admin", email: "uat-admin@test.projectai.local" },
-  manager: { displayName: "UAT Project Manager", email: "uat-manager@test.projectai.local" },
-  restricted: { displayName: "UAT Restricted User", email: "uat-restricted@test.projectai.local" },
+  admin: {
+    displayName: IS_STAGING_UAT ? "ProjectAI Staging UAT Admin" : "UAT Admin",
+    email: "uat-admin@test.projectai.local",
+  },
+  manager: {
+    displayName: IS_STAGING_UAT ? "Staging UAT Project Manager" : "UAT Project Manager",
+    email: "uat-manager@test.projectai.local",
+  },
+  restricted: {
+    displayName: IS_STAGING_UAT ? "Staging UAT Restricted User" : "UAT Restricted User",
+    email: "uat-restricted@test.projectai.local",
+  },
 };
 const PROJECT_IDS = [PROJECT_MAIN_ID, PROJECT_RESTRICTED_ID];
-const UAT_MARKER = "[UAT]";
+const UAT_MARKER = IS_STAGING_UAT ? "[ProjectAI-STAGING-UAT]" : "[UAT]";
+const ORGANIZATION_NAME = IS_STAGING_UAT ? "ProjectAI Staging UAT" : "ProjectAI UAT";
+const ORGANIZATION_SLUG = IS_STAGING_UAT ? "projectai-staging-uat" : "projectai-uat";
+const MAIN_PROJECT_NAME = IS_STAGING_UAT
+  ? "ProjectAI WeCom Staging UAT"
+  : "ProjectAI WeCom UAT";
+const RESTRICTED_PROJECT_NAME = IS_STAGING_UAT
+  ? "ProjectAI Restricted Staging UAT"
+  : "ProjectAI Restricted UAT";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -83,6 +102,9 @@ function validateSafety(command: Command): void {
     (!new Set(["127.0.0.1", "localhost", "::1"]).has(host) || databaseName !== "projectai_uat")
   ) {
     throw new Error("UAT_LOCAL_DATABASE_TARGET_INVALID");
+  }
+  if (environment === "staging" && databaseName !== "projectai_staging") {
+    throw new Error("UAT_STAGING_DATABASE_TARGET_INVALID");
   }
 }
 
@@ -197,8 +219,8 @@ async function seed(credentials: CredentialFile): Promise<void> {
 
     await tx.insert(organization).values({
       id: ORGANIZATION_ID,
-      name: "ProjectAI UAT",
-      slug: "projectai-uat",
+      name: ORGANIZATION_NAME,
+      slug: ORGANIZATION_SLUG,
       createdBy: USER_IDS.admin,
     }).onConflictDoNothing({ target: organization.id });
 
@@ -241,8 +263,8 @@ async function seed(credentials: CredentialFile): Promise<void> {
     }
 
     for (const item of [
-      { id: PROJECT_MAIN_ID, name: "ProjectAI WeCom UAT", clientName: "[UAT] Fictional Collaboration Client" },
-      { id: PROJECT_RESTRICTED_ID, name: "ProjectAI Restricted UAT", clientName: "[UAT] Fictional Restricted Client" },
+      { id: PROJECT_MAIN_ID, name: MAIN_PROJECT_NAME, clientName: `${UAT_MARKER} Fictional Collaboration Client` },
+      { id: PROJECT_RESTRICTED_ID, name: RESTRICTED_PROJECT_NAME, clientName: `${UAT_MARKER} Fictional Restricted Client` },
     ]) {
       await tx.insert(project).values({
         ...item,
@@ -273,7 +295,7 @@ async function verify(credentials: CredentialFile): Promise<void> {
   const users = await db.select().from(user).where(inArray(user.id, Object.values(USER_IDS)));
   if (users.length !== 3) throw new Error("UAT_VERIFY_USERS_FAILED");
   const [org] = await db.select().from(organization).where(eq(organization.id, ORGANIZATION_ID)).limit(1);
-  if (!org || org.name !== "ProjectAI UAT" || org.slug !== "projectai-uat") throw new Error("UAT_VERIFY_ORGANIZATION_FAILED");
+  if (!org || org.name !== ORGANIZATION_NAME || org.slug !== ORGANIZATION_SLUG) throw new Error("UAT_VERIFY_ORGANIZATION_FAILED");
   const projects = await db.select().from(project).where(inArray(project.id, PROJECT_IDS));
   if (projects.length !== 2 || projects.some((item) => item.organizationId !== ORGANIZATION_ID)) throw new Error("UAT_VERIFY_PROJECTS_FAILED");
   const memberships = await db.select().from(projectMember).where(inArray(projectMember.projectId, PROJECT_IDS));
@@ -301,7 +323,7 @@ async function cleanup(): Promise<void> {
   await db.transaction(async (tx) => {
     const [org] = await tx.select().from(organization).where(eq(organization.id, ORGANIZATION_ID)).limit(1);
     if (!org) return;
-    if (org.name !== "ProjectAI UAT" || org.slug !== "projectai-uat") throw new Error("UAT_CLEANUP_OWNERSHIP_MISMATCH");
+    if (org.name !== ORGANIZATION_NAME || org.slug !== ORGANIZATION_SLUG) throw new Error("UAT_CLEANUP_OWNERSHIP_MISMATCH");
     const projects = await tx.select().from(project).where(inArray(project.id, PROJECT_IDS));
     if (projects.some((item) => item.organizationId !== ORGANIZATION_ID || !item.description.startsWith(UAT_MARKER))) {
       throw new Error("UAT_CLEANUP_OWNERSHIP_MISMATCH");

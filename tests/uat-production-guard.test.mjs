@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -57,4 +58,25 @@ test("local UAT refuses a non-UAT database name", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /UAT_LOCAL_DATABASE_TARGET_INVALID/);
   assert.doesNotMatch(result.stderr, /ECONNREFUSED|password|session|cookie/i);
+});
+
+test("Staging UAT refuses a non-Staging database name", () => {
+  const result = invoke("seed", {
+    PROJECTAI_UAT_ENVIRONMENT: "staging",
+    ALLOW_UAT_SEED: "true",
+    ALLOW_STAGING_UAT: "true",
+    DATABASE_URL: "postgresql://127.0.0.1:1/projectai_uat",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /UAT_STAGING_DATABASE_TARGET_INVALID/);
+  assert.doesNotMatch(result.stderr, /ECONNREFUSED|password|session|cookie/i);
+});
+
+test("Staging UAT data uses the reviewed synthetic marker and names", async () => {
+  const source = await readFile("scripts/uat/manage.ts", "utf8");
+  assert.match(source, /\[ProjectAI-STAGING-UAT\]/);
+  assert.match(source, /ProjectAI Staging UAT/);
+  assert.match(source, /ProjectAI WeCom Staging UAT/);
+  assert.match(source, /Staging UAT Project Manager/);
+  assert.match(source, /Staging UAT Restricted User/);
 });

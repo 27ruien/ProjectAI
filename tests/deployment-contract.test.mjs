@@ -376,7 +376,12 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(script, /DEFAULT_EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(
+    script,
+    /EXPECTED_BRANCH="\$\{PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH\}"/,
+  );
+  assert.match(script, /PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch/);
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -658,7 +663,11 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
     readFile(productionCompose, "utf8"),
     readFile(groundedAiVerifier, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(script, /DEFAULT_EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(
+    script,
+    /EXPECTED_BRANCH="\$\{PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH\}"/,
+  );
   const lexical = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"');
   const evaluation = script.indexOf("npm run retrieval:evaluate");
   const shadow = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=shadow"');

@@ -120,6 +120,7 @@
     "test:uat": "npm run uat:reseed && playwright test --config=playwright.uat.config.ts",
     "test:uat:database": "node scripts/uat/test-database.mjs",
     "test:uat:ui": "npm run uat:reseed && playwright test --config=playwright.uat-ui.config.ts",
+    "test:uat:staging": "playwright test --config=playwright.staging-uat.config.ts",
     "uat:wecom:inspect": "node scripts/uat/inspect-wecom-page.mjs",
     "uat:wecom:build": "node scripts/uat/build-wecom-extension.mjs",
     "test:uat:flags": "node scripts/uat/test-feature-flags.mjs"

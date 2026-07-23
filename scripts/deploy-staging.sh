@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/phase1-project-knowledge-management"
+readonly DEFAULT_EXPECTED_BRANCH="agent/phase1-project-knowledge-management"
+readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
@@ -95,6 +96,7 @@ fi
 
 CURRENT_BRANCH="$(git branch --show-current)"
 [[ "$CURRENT_BRANCH" != "main" ]] || fail "Refusing to deploy main"
+[[ "$EXPECTED_BRANCH" == agent/* ]] || fail "PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch"
 [[ "$CURRENT_BRANCH" == "$EXPECTED_BRANCH" ]] || fail "Expected branch ${EXPECTED_BRANCH}, found ${CURRENT_BRANCH:-detached HEAD}"
 [[ -z "$(git status --porcelain)" ]] || fail "Refusing to deploy a dirty working tree"
 git diff --check --cached
