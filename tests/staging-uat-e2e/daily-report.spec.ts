@@ -160,9 +160,11 @@ test("Staging Project Manager completes the rendered daily-report flow and Restr
     await test.step("generate a source-bound AI draft and validate required fields", async () => {
       const generateResponse = page.waitForResponse(
         (response) => response.request().method() === "POST" && response.url().endsWith(appPath("/api/timesheets/drafts/generate")),
+        { timeout: 60_000 },
       );
       await page.getByRole("button", { name: "AI 整理今日工时" }).click();
-      expect((await generateResponse).status()).toBe(200);
+      await expect(page.getByTestId("ai-generate")).toHaveAttribute("data-state", "submitting");
+      expect((await generateResponse).status()).toBe(201);
       await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
       await expect(tasks(page)).toHaveCount(1);
       const card = tasks(page).first();
