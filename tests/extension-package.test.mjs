@@ -12,13 +12,17 @@ describe("WeCom MV3 release package", () => {
       await readFile(`${outputDirectory}/manifest.json`, "utf8"),
     );
     assert.equal(manifest.manifest_version, 3);
-    assert.deepEqual(manifest.permissions, ["storage", "tabs", "scripting"]);
+    assert.deepEqual(manifest.permissions, ["storage", "tabs"]);
     assert.deepEqual(manifest.host_permissions, [
-      "https://gridworks.cn/tool/projectai/*",
-      "https://gridworks.cn/tool/projectai-staging/*",
+      "https://gridworks.cn/*",
+      "https://doc.weixin.qq.com/*",
     ]);
     assert.deepEqual(manifest.optional_host_permissions, []);
     assert.equal(manifest.content_scripts[0].all_frames, false);
+    assert.deepEqual(manifest.content_scripts.map((entry) => entry.js), [
+      ["projectai-content.js"],
+      ["wecom-content.js"],
+    ]);
     assert.doesNotMatch(JSON.stringify(manifest), /<all_urls>|https:\/\/\*\//);
   });
 
@@ -41,6 +45,15 @@ describe("WeCom MV3 release package", () => {
       false,
     );
     assert.equal(entries.some((entry) => entry.startsWith("wecom-timesheet-extension/")), false);
+    assert.equal(
+      entries.some((entry) => /(?:cookies?|login data|local state|storage-state|browser-profile|playwright-auth)/i.test(entry)),
+      false,
+    );
+    const archiveText = execFileSync("unzip", ["-p", packagePath], {
+      encoding: "utf8",
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    assert.doesNotMatch(archiveText, /scode=|\/smartsheet\/s3_|<all_urls>|\*:\/\/\*\/\*/i);
   });
 
   it("has no adapter selector for final submission", async () => {
@@ -51,14 +64,14 @@ describe("WeCom MV3 release package", () => {
     assert.doesNotMatch(selectorConfig, /final|submit.?all|daily.?submit/i);
   });
 
-  it("ships a review build with no real WeCom host permission", async () => {
+  it("ships a review build with the exact approved WeCom origin but no full board URL", async () => {
     const bindings = JSON.parse(
       await readFile(`${outputDirectory}/build-bindings.json`, "utf8"),
     );
     assert.deepEqual(bindings, {
       extensionVersion: "0.1.0",
       projectAiOrigin: "https://gridworks.cn",
-      wecomOrigin: null,
+      wecomOrigin: "https://doc.weixin.qq.com",
       wecomBoardConfigured: false,
       manualActualSyncAllowed: false,
       selectorConfigSource: "review-default",

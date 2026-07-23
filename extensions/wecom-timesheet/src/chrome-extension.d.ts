@@ -37,15 +37,8 @@ declare const chrome: {
       removeListener(callback: (tabId: number, changeInfo: { status?: string }, tab: ChromeTab) => void): void;
     };
   };
-  scripting: {
-    executeScript(input: {
-      target: { tabId: number; allFrames?: boolean };
-      files: string[];
-    }): Promise<unknown>;
-  };
   permissions: {
     contains(input: { origins: string[] }): Promise<boolean>;
-    request(input: { origins: string[] }): Promise<boolean>;
   };
 };
 

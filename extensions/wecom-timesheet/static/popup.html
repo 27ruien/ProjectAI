@@ -11,12 +11,20 @@
     <p class="boundary">只逐条保存任务，绝不点击日报或看板的最终提交。</p>
     <label>手动 JSON 测试入口（Review/真实构建仅 Dry Run）<textarea id="payload" rows="9" placeholder="粘贴已确认的 ProjectAI JSON"></textarea></label>
     <label class="check"><input id="dry-run" type="checkbox" checked />Dry Run（不点击单条保存）</label>
-    <div class="buttons"><button id="validate">校验与预览</button><button id="start" class="primary">开始同步</button></div>
+    <div class="buttons"><button id="validate">测试 Payload 预览</button><button id="start" class="primary">开始一条测试</button></div>
     <p id="preview" class="message">等待导入</p>
+    <section>
+      <strong>页面诊断（不读取任务正文）</strong>
+      <p>页面：<span id="diagnostic-page">检测中</span> · Content Script：<span id="diagnostic-script">检测中</span></p>
+      <p>Origin：<span id="diagnostic-origin" class="mono">—</span></p>
+      <p>工作表：<span id="diagnostic-worksheet">—</span></p>
+      <p>工作表/视图：<span id="diagnostic-view">—</span></p>
+      <div class="buttons"><button id="open-board">打开企业微信页面</button><button id="copy-diagnostics">复制脱敏诊断</button></div>
+    </section>
     <section><strong>当前批次</strong><p id="batch-id" class="mono">—</p><p id="status">加载中</p></section>
     <div class="buttons"><button id="pause">暂停</button><button id="resume">继续</button><button id="cancel">取消</button></div>
     <div class="boundary"><strong>unknown 人工核对</strong><p>只有先在企业微信确认当前任务是否已保存，才能使用以下按钮。</p><div class="buttons"><button id="resolve-saved">确认已保存</button><button id="resolve-failed">确认未保存</button></div></div>
-    <div class="buttons"><button id="options">配置</button><button id="export-logs">导出脱敏日志</button><button id="clear">清除本地记录</button></div>
+    <div class="buttons"><button id="options">配置</button><button id="export-logs">导出脱敏日志</button><button id="clear">清除 UAT 状态</button></div>
     <script src="popup.js"></script>
   </body>
 </html>

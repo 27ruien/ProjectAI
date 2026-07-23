@@ -203,11 +203,41 @@ async function boardTab(batch: PersistedBatch): Promise<{ batch: PersistedBatch;
   if (typeof tab.id !== "number") throw new Error("BOARD_TAB_UNAVAILABLE");
   await waitForTab(tab.id);
   try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["wecom-content.js"] });
+    const diagnostic = await chrome.tabs.sendMessage<{ loaded?: boolean }>(tab.id, {
+      kind: "GET_PAGE_DIAGNOSTICS",
+    });
+    if (!diagnostic?.loaded) throw new Error("WECOM_CONTENT_SCRIPT_UNAVAILABLE");
   } catch {
-    throw new Error("WECOM_HOST_PERMISSION_REQUIRED");
+    throw new Error("WECOM_CONTENT_SCRIPT_UNAVAILABLE");
   }
   return { batch, tabId: tab.id };
+}
+
+async function diagnostics() {
+  const config = await loadConfig();
+  const url = validBoardUrl(config.boardUrl);
+  if (!url || url.origin !== __WECOM_ALLOWED_ORIGIN__) {
+    return { pageDetected: false, contentScriptLoaded: false, origin: __WECOM_ALLOWED_ORIGIN__ || null, worksheet: null, view: null };
+  }
+  const tabs = await chrome.tabs.query({ url: [`${url.origin}/*`] });
+  const tab = tabs.find((candidate) => typeof candidate.id === "number" && sameBoardPage(candidate, url));
+  if (typeof tab?.id !== "number") {
+    return { pageDetected: false, contentScriptLoaded: false, origin: url.origin, worksheet: null, view: null };
+  }
+  try {
+    const page = await chrome.tabs.sendMessage<{ loaded?: boolean; origin?: string; worksheet?: string | null; view?: string | null }>(tab.id, {
+      kind: "GET_PAGE_DIAGNOSTICS",
+    });
+    return {
+      pageDetected: true,
+      contentScriptLoaded: page?.loaded === true,
+      origin: page?.origin === url.origin ? page.origin : url.origin,
+      worksheet: typeof page?.worksheet === "string" ? page.worksheet.slice(0, 80) : null,
+      view: typeof page?.view === "string" ? page.view.slice(0, 80) : null,
+    };
+  } catch {
+    return { pageDetected: true, contentScriptLoaded: false, origin: url.origin, worksheet: null, view: null };
+  }
 }
 
 async function processBatch(initial: PersistedBatch): Promise<void> {
@@ -420,6 +450,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     void openConfiguredBoard().then(sendResponse);
     return true;
   }
+  if (value.kind === "OPEN_BOARD_FROM_POPUP") {
+    if (value.source !== "popup" || !popupSender(sender)) {
+      sendResponse({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
+      return;
+    }
+    void openConfiguredBoard().then(sendResponse);
+    return true;
+  }
   if (value.kind === "CONTROL_SYNC") {
     const allowed =
       (value.source === "project-ai-content" && projectAiSender(sender)) ||
@@ -441,6 +479,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
   if (value.kind === "GET_STATE") {
     void runRequestMutation(loadBatches).then((batches) => sendResponse({ batches }));
+    return true;
+  }
+  if (value.kind === "GET_DIAGNOSTICS") {
+    if (value.source !== "popup" || !popupSender(sender)) {
+      sendResponse({ ok: false, code: "MESSAGE_SENDER_REJECTED" });
+      return;
+    }
+    void diagnostics().then((result) => sendResponse({ ok: true, ...result }));
     return true;
   }
 });

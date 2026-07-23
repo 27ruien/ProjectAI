@@ -7,6 +7,13 @@ const input = document.querySelector<HTMLTextAreaElement>("#payload")!;
 const preview = document.querySelector<HTMLElement>("#preview")!;
 const status = document.querySelector<HTMLElement>("#status")!;
 const dryRun = document.querySelector<HTMLInputElement>("#dry-run")!;
+let lastDiagnostics: {
+  pageDetected: boolean;
+  contentScriptLoaded: boolean;
+  origin: string | null;
+  worksheet: string | null;
+  view: string | null;
+} | null = null;
 dryRun.disabled = !__MANUAL_ACTUAL_SYNC_ALLOWED__;
 if (!__MANUAL_ACTUAL_SYNC_ALLOWED__) dryRun.checked = true;
 
@@ -33,6 +40,26 @@ function renderBatch(batch: PersistedBatch | null): void {
 
 async function refresh(): Promise<void> {
   renderBatch(latestBatch(await loadBatches()));
+  const diagnostics = await chrome.runtime.sendMessage<{
+    ok?: boolean;
+    pageDetected?: boolean;
+    contentScriptLoaded?: boolean;
+    origin?: string | null;
+    worksheet?: string | null;
+    view?: string | null;
+  }>({ kind: "GET_DIAGNOSTICS", source: "popup" }).catch(() => null);
+  lastDiagnostics = diagnostics?.ok ? {
+    pageDetected: diagnostics.pageDetected === true,
+    contentScriptLoaded: diagnostics.contentScriptLoaded === true,
+    origin: diagnostics.origin ?? null,
+    worksheet: diagnostics.worksheet ?? null,
+    view: diagnostics.view ?? null,
+  } : null;
+  text("#diagnostic-page", diagnostics?.pageDetected ? "已检测" : "未检测");
+  text("#diagnostic-script", diagnostics?.contentScriptLoaded ? "已加载" : "未加载");
+  text("#diagnostic-origin", diagnostics?.origin ?? "未绑定");
+  text("#diagnostic-worksheet", diagnostics?.worksheet ?? "未识别（不会读取任务内容）");
+  text("#diagnostic-view", diagnostics?.view ?? "未识别（不会读取任务内容）");
 }
 
 document.querySelector("#validate")?.addEventListener("click", () => {
@@ -63,6 +90,8 @@ document.querySelector("#start")?.addEventListener("click", () => {
       raw.dry_run = __MANUAL_ACTUAL_SYNC_ALLOWED__ ? dryRun.checked : true;
       const parsed = validateSyncPayload(raw);
       if (!parsed.ok) throw new Error(parsed.code);
+      if (parsed.value.tasks.length !== 1) throw new Error("ONE_RECORD_TEST_REQUIRED");
+      if (!parsed.value.dry_run && !window.confirm("确认只保存这一条虚构 UAT 任务？扩展仍不会点击最终提交。")) return;
       const result = await chrome.runtime.sendMessage<{ ok?: boolean; code?: string }>({
         kind: "START_SYNC",
         source: "popup",
@@ -120,6 +149,15 @@ document.querySelector("#cancel")?.addEventListener("click", () => void control(
 document.querySelector("#resolve-saved")?.addEventListener("click", () => void resolveUnknown("saved"));
 document.querySelector("#resolve-failed")?.addEventListener("click", () => void resolveUnknown("failed"));
 document.querySelector("#options")?.addEventListener("click", () => void chrome.runtime.openOptionsPage());
+document.querySelector("#open-board")?.addEventListener("click", () => {
+  void chrome.runtime.sendMessage<{ ok?: boolean; code?: string }>({
+    kind: "OPEN_BOARD_FROM_POPUP",
+    source: "popup",
+  }).then((result) => {
+    preview.textContent = result?.ok ? "已打开配置的企业微信页面" : `打开失败：${result?.code ?? "UNKNOWN"}`;
+    return refresh();
+  });
+});
 document.querySelector("#export-logs")?.addEventListener("click", () => {
   void (async () => {
     const blob = new Blob([JSON.stringify(sanitizeLogs(await loadLogs()), null, 2)], {
@@ -132,6 +170,21 @@ document.querySelector("#export-logs")?.addEventListener("click", () => {
     anchor.click();
     URL.revokeObjectURL(url);
   })();
+});
+document.querySelector("#copy-diagnostics")?.addEventListener("click", () => {
+  const report = {
+    extensionVersion: __EXTENSION_VERSION__,
+    pageDetected: lastDiagnostics?.pageDetected ?? false,
+    contentScriptLoaded: lastDiagnostics?.contentScriptLoaded ?? false,
+    origin: lastDiagnostics?.origin ?? null,
+    worksheet: lastDiagnostics?.worksheet ?? null,
+    view: lastDiagnostics?.view ?? null,
+    fullUrlIncluded: false,
+    taskContentIncluded: false,
+  };
+  void navigator.clipboard.writeText(JSON.stringify(report, null, 2)).then(() => {
+    preview.textContent = "已复制脱敏诊断结果";
+  });
 });
 document.querySelector("#clear")?.addEventListener("click", () => {
   if (!window.confirm("确认清除本地同步状态和脱敏日志？此操作不会删除企业微信任务。")) return;

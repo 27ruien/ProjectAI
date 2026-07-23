@@ -14,14 +14,14 @@ const extensionRoot = path.resolve("dist/wecom-timesheet-extension");
 
 const task = {
   id: "task-001",
-  description: "完成虚构 EARN 页面跳转逻辑确认",
-  project: { id: "project-001", name: "CHAGEE Valley Fair Campaign" },
+  description: "完成虚构日报同步字段确认",
+  project: { id: "project-001", name: "ProjectAI WeCom UAT" },
   submitter: { id: null, name: null, source: "authenticated-user" },
   regularHours: 1,
   overtimeHours: 0,
   category: { id: "communication", name: "项目沟通" },
   status: { id: null, name: "已完成" },
-  urgency: null,
+  urgency: { id: null, name: "重要" },
   progress: 100,
 };
 
@@ -114,6 +114,7 @@ test("Dry Run 精确填写 iframe 字段且不点击任何保存/最终提交", 
     regularHours: "filled",
     overtimeHours: "filled",
     status: "matched",
+    urgency: "matched",
     progress: "filled",
   });
   const frame = page.frameLocator("iframe[data-testid='mock-task-frame']");
@@ -351,14 +352,62 @@ test("正式模式只保存单条任务，不触碰最终提交", async ({ page 
   const result = await execute(page, false);
   expect(result.status).toBe("saved");
   await expect(page.frameLocator("iframe").locator("[data-testid='mock-save-success']")).toHaveCount(1);
-  await expect(page.locator("[data-testid='mock-record-row']")).toHaveCount(1);
-  await expect(page.locator("[data-field='description']")).toHaveText(task.description);
-  await expect(page.locator("[data-field='submitter']")).toHaveText("当前登录用户");
-  await expect(page.locator("[data-field='regular-hours']")).toHaveText("1");
-  await expect(page.locator("[data-field='overtime-hours']")).toHaveText("0");
-  await expect(page.locator("[data-field='progress']")).toHaveText("100");
+  await expect(page.locator("[data-projectai-e2e='true']")).toHaveCount(1);
+  const savedRow = page.locator("[data-projectai-e2e='true']");
+  await expect(savedRow.locator("[data-field='description']")).toHaveText(task.description);
+  await expect(savedRow.locator("[data-field='submitter']")).toHaveText("当前登录用户");
+  await expect(savedRow.locator("[data-field='regular-hours']")).toHaveText("1");
+  await expect(savedRow.locator("[data-field='overtime-hours']")).toHaveText("0");
+  await expect(savedRow.locator("[data-field='urgency']")).toHaveText("重要");
+  await expect(savedRow.locator("[data-field='progress']")).toHaveText("100");
   await expect(page.frameLocator("iframe").locator("[data-testid='mock-unmapped-category']")).toHaveValue("企业微信未映射");
   await expect(page.locator("#final-submit-count")).toHaveText("0");
+});
+
+test("Portal 下拉与虚拟选项仍要求项目精确唯一匹配", async ({ page }) => {
+  await loadAdapter(page, "?portal=1", {
+    ...selectors,
+    projectControl: "button[data-testid='mock-project-portal-control']",
+    projectOptions: "[data-testid='mock-project-portal'] [role='option']",
+    projectSelectedValue: "button[data-testid='mock-project-portal-control']",
+  });
+  const result = await execute(page, true);
+  expect(result.status).toBe("validated");
+  expect(result.fieldResults.project).toBe("matched");
+  await expect(page.frameLocator("iframe").locator("[data-testid='mock-project-portal-control']")).toHaveText("ProjectAI WeCom UAT");
+});
+
+test("项目无匹配时明确失败，不使用模糊候选", async ({ page }) => {
+  await loadAdapter(page, "?noMatch=1");
+  const result = await execute(page, true);
+  expect(result.status).toBe("failed");
+  expect(result.code).toBe("OPTION_NOT_FOUND");
+  await expect(page.locator("#final-submit-count")).toHaveText("0");
+});
+
+test("只读进度只能回读验证，不能被脚本强制覆盖", async ({ page }) => {
+  await loadAdapter(page, "?progressReadonly=1");
+  const matched = await execute(page, true);
+  expect(matched.status).toBe("validated");
+  expect(matched.fieldResults.progress).toBe("verified");
+
+  await loadAdapter(page, "?progressReadonly=mismatch");
+  const mismatch = await execute(page, true);
+  expect(mismatch.status).toBe("failed");
+  expect(mismatch.code).toBe("PROGRESS_READ_ONLY_MISMATCH");
+  await expect(page.frameLocator("iframe").locator("input[name='progress']")).toHaveValue("80");
+});
+
+test("页面刷新保留测试记录且清理只删除 ProjectAI E2E 数据", async ({ page }) => {
+  await loadAdapter(page);
+  expect((await execute(page, false)).status).toBe("saved");
+  await expect(page.locator("[data-projectai-e2e='true']")).toHaveCount(1);
+  await page.reload();
+  await expect(page.locator("[data-projectai-e2e='true']")).toHaveCount(1);
+  await expect(page.locator("[data-record-id='original-record'] [data-field='description']")).toHaveText("原有虚构任务（不可修改）");
+  await page.locator("[data-testid='mock-clear-e2e']").click();
+  await expect(page.locator("[data-projectai-e2e='true']")).toHaveCount(0);
+  await expect(page.locator("[data-record-id='original-record']")).toHaveCount(1);
 });
 
 test("保存反馈与列表回读不一致时拒绝宣布成功", async ({ page }) => {

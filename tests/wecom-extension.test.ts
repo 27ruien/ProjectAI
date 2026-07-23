@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import {
   idempotencyKey,
@@ -49,6 +50,17 @@ const payload: SyncPayload = {
 };
 
 describe("WeCom extension trust and recovery contracts", () => {
+  it("keeps the manual UAT example aligned with the strict current protocol", async () => {
+    const example = JSON.parse(await readFile("examples/uat-timesheet-payload.json", "utf8"));
+    const result = validateSyncPayload(example);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.value.dry_run, true);
+    assert.equal(result.value.tasks.length, 1);
+    assert.equal(result.value.tasks[0].category.name, "项目执行");
+    assert.equal(result.value.tasks[0].urgency?.name, "重要");
+  });
+
   it("strictly validates the shared payload schema", () => {
     assert.equal(validateSyncPayload(payload).ok, true);
     assert.equal(validateSyncPayload({ ...payload, unexpected: true }).ok, false);

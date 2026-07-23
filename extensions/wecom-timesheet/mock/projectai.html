@@ -15,7 +15,7 @@
         confirmed_at: "2026-07-22T10:00:00+08:00",
         draft_version: 1,
         dry_run: true,
-        tasks: [{ id: "task-001", description: "完成 EARN 页面登录及 H5 回流逻辑确认", project: { id: "project-001", name: "CHAGEE Valley Fair Campaign" }, hours: 1, category: { id: "communication", name: "项目沟通" }, status: { id: "completed", name: "已完成" } }]
+        tasks: [{ id: "task-001", description: "完成虚构页面流程确认", project: { id: "project-001", name: "ProjectAI WeCom UAT" }, hours: 1, category: { id: "communication", name: "项目沟通" }, status: { id: "completed", name: "已完成" } }]
       };
       document.querySelector("#send").addEventListener("click", () => window.postMessage({ source: "project-ai", type: "PROJECT_AI_SYNC_TIMESHEET", version: 1, requestId: payload.request_id, payload }, location.origin));
       window.addEventListener("message", (event) => { if (event.source === window && event.data?.source === "project-ai-extension") document.querySelector("#events").textContent += `${JSON.stringify(event.data)}\n`; });

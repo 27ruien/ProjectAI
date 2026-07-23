@@ -6,11 +6,19 @@ import { build } from "esbuild";
 
 const ROOT = process.cwd();
 const VERSION = "0.1.0";
-const OUT_DIR = path.join(ROOT, "dist", "wecom-timesheet-extension");
+const configuredOutputDirectory = process.env.WECOM_EXTENSION_OUTPUT_DIR?.trim() || "dist/wecom-timesheet-extension";
+const OUT_DIR = path.resolve(ROOT, configuredOutputDirectory);
 const ZIP_PATH = path.join(ROOT, "release", `wecom-timesheet-extension-v${VERSION}.zip`);
 const SOURCE = path.join(ROOT, "extensions", "wecom-timesheet");
 const packageMode = process.argv.includes("--package");
 const mockMode = process.env.WECOM_EXTENSION_BUILD_MODE === "mock";
+const uatMode = process.env.WECOM_EXTENSION_BUILD_MODE === "uat";
+if (OUT_DIR !== path.join(ROOT, "dist", "wecom-timesheet-extension") && !OUT_DIR.startsWith(`${path.join(ROOT, "dist")}${path.sep}`)) {
+  throw new Error("WECOM_EXTENSION_OUTPUT_DIR must stay under dist/.");
+}
+if (packageMode && OUT_DIR !== path.join(ROOT, "dist", "wecom-timesheet-extension")) {
+  throw new Error("Only the default Review output can be packaged.");
+}
 
 function exactOrigin(name, fallback = "") {
   const raw = process.env[name]?.trim() || fallback;
@@ -91,10 +99,7 @@ const projectAiMatches = mockMode
     ];
 const projectAiOrigins = [projectAiOrigin];
 const configuredBoardUrl = boardUrl();
-const wecomOrigin = exactOrigin("WECOM_ALLOWED_ORIGIN");
-if (Boolean(configuredBoardUrl) !== Boolean(wecomOrigin)) {
-  throw new Error("WECOM_TASK_BOARD_URL and WECOM_ALLOWED_ORIGIN must be supplied together.");
-}
+const wecomOrigin = exactOrigin("WECOM_ALLOWED_ORIGIN", "https://doc.weixin.qq.com");
 if (configuredBoardUrl && new URL(configuredBoardUrl).origin !== wecomOrigin) {
   throw new Error("WECOM_TASK_BOARD_URL must belong to WECOM_ALLOWED_ORIGIN.");
 }
@@ -109,6 +114,9 @@ const defaultSelectorPath = selectorConfigPath
 const defaultSelectorText = await readFile(defaultSelectorPath, "utf8");
 const defaultSelectors = validateBuildSelectors(JSON.parse(defaultSelectorText));
 const normalizedSelectorText = `${JSON.stringify(defaultSelectors, null, 2)}\n`;
+const manualActualSyncAllowed = mockMode || (
+  uatMode && Boolean(configuredBoardUrl) && Boolean(selectorConfigPath)
+);
 await rm(OUT_DIR, { recursive: true, force: true });
 await mkdir(OUT_DIR, { recursive: true });
 
@@ -123,7 +131,7 @@ const common = {
     __WECOM_ALLOWED_ORIGIN__: JSON.stringify(wecomOrigin),
     __EXTENSION_VERSION__: JSON.stringify(VERSION),
     __WECOM_ADAPTER_TIMEOUT_MS__: JSON.stringify(mockMode ? 500 : 8_000),
-    __MANUAL_ACTUAL_SYNC_ALLOWED__: JSON.stringify(mockMode),
+    __MANUAL_ACTUAL_SYNC_ALLOWED__: JSON.stringify(manualActualSyncAllowed),
   },
 };
 
@@ -156,7 +164,7 @@ await writeFile(
       projectAiOrigin,
       wecomOrigin: wecomOrigin || null,
       wecomBoardConfigured: Boolean(configuredBoardUrl),
-      manualActualSyncAllowed: mockMode,
+      manualActualSyncAllowed,
       selectorConfigSource: selectorConfigPath ? "provided" : "review-default",
       selectorConfigSha256: createHash("sha256").update(normalizedSelectorText).digest("hex"),
     },
@@ -172,9 +180,9 @@ const manifest = {
   description: "将 ProjectAI 已人工确认的工时逐条填写并保存到企业微信任务看板，最终提交始终由用户完成。",
   version: VERSION,
   minimum_chrome_version: "120",
-  permissions: ["storage", "tabs", "scripting"],
-  host_permissions: projectAiMatches,
-  optional_host_permissions: wecomOrigin ? [`${wecomOrigin}/*`] : [],
+  permissions: ["storage", "tabs"],
+  host_permissions: Array.from(new Set([`${projectAiOrigin}/*`, `${wecomOrigin}/*`])),
+  optional_host_permissions: [],
   background: { service_worker: "service-worker.js", type: "module" },
   action: { default_popup: "popup.html", default_title: "ProjectAI 工时同步" },
   options_page: "options.html",
@@ -182,6 +190,12 @@ const manifest = {
     {
       matches: projectAiMatches,
       js: ["projectai-content.js"],
+      run_at: "document_idle",
+      all_frames: false,
+    },
+    {
+      matches: [`${wecomOrigin}/*`],
+      js: ["wecom-content.js"],
       run_at: "document_idle",
       all_frames: false,
     },

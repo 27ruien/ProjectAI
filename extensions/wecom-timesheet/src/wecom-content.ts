@@ -24,7 +24,20 @@ async function execute(message: unknown) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (!message || typeof message !== "object" || (message as Record<string, unknown>).kind !== "EXECUTE_TASK") return;
+  if (!message || typeof message !== "object") return;
+  if ((message as Record<string, unknown>).kind === "GET_PAGE_DIAGNOSTICS") {
+    const rawView = document.documentElement.dataset.projectaiView ?? "";
+    sendResponse({
+      loaded: true,
+      origin: location.origin,
+      worksheet: /^[\p{L}\p{N}\s._-]{1,80}$/u.test(document.documentElement.dataset.projectaiWorksheet ?? "")
+        ? document.documentElement.dataset.projectaiWorksheet
+        : null,
+      view: /^[\p{L}\p{N}\s._-]{1,80}$/u.test(rawView) ? rawView : null,
+    });
+    return;
+  }
+  if ((message as Record<string, unknown>).kind !== "EXECUTE_TASK") return;
   void execute(message).then(sendResponse, () =>
     sendResponse({ status: "failed", code: "ADAPTER_UNAVAILABLE", message: "页面适配器不可用" }),
   );

@@ -92,6 +92,7 @@ function setInput(element: Element, value: string): void {
   if (!isTextControl(element)) {
     throw new Error("FIELD_NOT_INPUT");
   }
+  if (element.readOnly || element.disabled) throw new Error("FIELD_READ_ONLY");
   element.focus();
   element.value = value;
   element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -347,8 +348,16 @@ export async function executeTaskWithAdapter(input: {
       fieldResults.urgency = "matched";
     }
     if (input.task.progress !== null) {
-      setInput(await waitForElement(root, input.selectors.progressInput), String(input.task.progress));
-      fieldResults.progress = "filled";
+      const progress = await waitForElement(root, input.selectors.progressInput);
+      if (isTextControl(progress) && (progress.readOnly || progress.disabled)) {
+        if (Number(controlValue(progress)) !== input.task.progress) {
+          throw new Error("PROGRESS_READ_ONLY_MISMATCH");
+        }
+        fieldResults.progress = "verified";
+      } else {
+        setInput(progress, String(input.task.progress));
+        fieldResults.progress = "filled";
+      }
     }
     if (input.dryRun) {
       return {

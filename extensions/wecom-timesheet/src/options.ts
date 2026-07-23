@@ -52,11 +52,9 @@ document.querySelector("#save")?.addEventListener("click", () => {
       status.textContent = `Selector Config 被拒绝：${parsed.code}`;
       return;
     }
-    const originPattern = `${url.origin}/*`;
-    const hasPermission = await chrome.permissions.contains({ origins: [originPattern] });
-    const granted = hasPermission || (await chrome.permissions.request({ origins: [originPattern] }));
-    if (!granted) {
-      status.textContent = "未获得该企业微信 Origin 的权限。";
+    const hasPermission = await chrome.permissions.contains({ origins: [`${url.origin}/*`] });
+    if (!hasPermission) {
+      status.textContent = "当前构建未包含该企业微信 Origin 的精确权限。";
       return;
     }
     await saveConfig({ boardUrl: url.toString(), selectors: parsed.value });
