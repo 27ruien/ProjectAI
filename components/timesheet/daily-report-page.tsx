@@ -26,7 +26,11 @@ import {
   TIMESHEET_STATUSES,
   TIMESHEET_SYNC_PROTOCOL_VERSION,
 } from "@/lib/timesheets/contracts";
-import { timesheetMutation, timesheetRequest } from "@/lib/timesheets/client";
+import {
+  TimesheetApiError,
+  timesheetMutation,
+  timesheetRequest,
+} from "@/lib/timesheets/client";
 
 type WorkLog = {
   id: string;
@@ -126,6 +130,125 @@ type ExtensionMessage = {
   items?: unknown;
 };
 
+type ConfirmationState =
+  | "idle"
+  | "submitting"
+  | "success"
+  | "validation_error"
+  | "server_error";
+
+type WorkLogState = "idle" | "submitting" | "success" | "error";
+
+type TaskField =
+  | "description"
+  | "project"
+  | "regularHours"
+  | "overtimeHours"
+  | "category"
+  | "status"
+  | "review";
+
+type ConfirmationIssue = {
+  taskIndex: number;
+  field: TaskField;
+  message: string;
+};
+
+function validHours(value: number | null): value is number {
+  return (
+    value !== null &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 24 &&
+    Number.isInteger(value * 4)
+  );
+}
+
+function confirmationIssues(tasks: DraftTask[]): ConfirmationIssue[] {
+  return tasks.flatMap((task, taskIndex) => {
+    const issues: ConfirmationIssue[] = [];
+    const taskLabel = `任务 ${taskIndex + 1}`;
+    if (task.description.trim().length < 2) {
+      issues.push({
+        taskIndex,
+        field: "description",
+        message: `${taskLabel}：请填写至少 2 个字的任务详情`,
+      });
+    }
+    if (!task.projectId) {
+      issues.push({
+        taskIndex,
+        field: "project",
+        message: `${taskLabel}：请选择项目`,
+      });
+    }
+    if (!validHours(task.regularHours)) {
+      issues.push({
+        taskIndex,
+        field: "regularHours",
+        message: `${taskLabel}：请填写 0–24 小时、以 0.25 为步长的正常工时`,
+      });
+    }
+    if (!validHours(task.overtimeHours)) {
+      issues.push({
+        taskIndex,
+        field: "overtimeHours",
+        message: `${taskLabel}：请填写 0–24 小时、以 0.25 为步长的加班工时；没有加班请填 0`,
+      });
+    }
+    if (
+      validHours(task.regularHours) &&
+      validHours(task.overtimeHours) &&
+      task.regularHours + task.overtimeHours > 24
+    ) {
+      issues.push({
+        taskIndex,
+        field: "overtimeHours",
+        message: `${taskLabel}：正常与加班工时合计不能超过 24 小时`,
+      });
+    }
+    if (!task.categoryId) {
+      issues.push({
+        taskIndex,
+        field: "category",
+        message: `${taskLabel}：请选择分类`,
+      });
+    }
+    if (!task.workStatus) {
+      issues.push({
+        taskIndex,
+        field: "status",
+        message: `${taskLabel}：请选择状态`,
+      });
+    }
+    if (
+      issues.length === 0 &&
+      (task.needsReview || task.reviewFields.length > 0)
+    ) {
+      issues.push({
+        taskIndex,
+        field: "review",
+        message: `${taskLabel}：请先点击“标记已审核”`,
+      });
+    }
+    return issues;
+  });
+}
+
+function confirmationServerMessage(error: unknown): string {
+  if (!(error instanceof TimesheetApiError)) {
+    return error instanceof Error ? error.message : "确认失败，请稍后重试";
+  }
+  if (error.status === 401) return "登录已失效，请重新登录后再确认";
+  if (error.status === 403 || error.status === 404) {
+    return "你没有权限确认这份日报，或日报已不可访问";
+  }
+  if (error.status === 409) return "日报已被其他请求修改，请刷新后重试";
+  if (error.status === 422) return error.message || "请检查日报必填字段";
+  if (error.status >= 500) return "服务暂时不可用，日报尚未确认，请稍后重试";
+  return error.message;
+}
+
 function todayInShanghai(): string {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai",
@@ -190,6 +313,11 @@ export function DailyReportPage({
     "loading",
   );
   const [notice, setNotice] = useState<string | null>(null);
+  const [noticeTone, setNoticeTone] = useState<"info" | "success" | "error">("info");
+  const [workLogState, setWorkLogState] = useState<WorkLogState>("idle");
+  const [confirmationState, setConfirmationState] =
+    useState<ConfirmationState>("idle");
+  const [confirmationErrors, setConfirmationErrors] = useState<ConfirmationIssue[]>([]);
   const [dirty, setDirty] = useState(false);
   const [extension, setExtension] = useState<{
     connected: boolean;
@@ -197,6 +325,7 @@ export function DailyReportPage({
   }>({ connected: false, version: null });
   const [activeBatch, setActiveBatch] = useState<SyncBatch | null>(null);
   const statusWriteQueue = useRef<Promise<void>>(Promise.resolve());
+  const confirmationInFlight = useRef(false);
 
   const load = useCallback(async () => {
     if (!organizationId) {
@@ -232,14 +361,20 @@ export function DailyReportPage({
         ) ?? null,
       );
       setDirty(false);
+      setConfirmationErrors([]);
+      setConfirmationState(
+        draftPayload.draft?.status === "confirmed" ? "success" : "idle",
+      );
       setPhase("ready");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "工作日报加载失败");
+      setNoticeTone("error");
       setPhase("error");
     }
   }, [organizationId, reportDate, wecomSyncEnabled]);
 
   useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
@@ -296,11 +431,13 @@ export function DailyReportPage({
           setActiveBatch(batch);
           if (["synced", "failed", "cancelled", "partially_synced"].includes(batch.status)) {
             setNotice(`同步批次状态：${batch.status}`);
+            setNoticeTone(batch.status === "synced" ? "success" : "error");
             await load();
           }
         })
         .catch((error: unknown) => {
           setNotice(error instanceof Error ? error.message : "同步状态保存失败");
+          setNoticeTone("error");
         });
     };
     window.addEventListener("message", receive);
@@ -320,17 +457,24 @@ export function DailyReportPage({
     setNotice(null);
     try {
       await operation();
-      if (success) setNotice(success);
+      if (success) {
+        setNotice(success);
+        setNoticeTone("success");
+      }
       setPhase("ready");
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "操作失败");
+      setNoticeTone("error");
       setPhase("ready");
+      return false;
     }
   };
 
   const addRecord = async () => {
     if (!rawText.trim() || !organizationId) return;
-    await run(async () => {
+    setWorkLogState("submitting");
+    const succeeded = await run(async () => {
       await timesheetMutation("/api/timesheets/work-logs", "POST", {
         organizationId,
         recordDate: reportDate,
@@ -343,11 +487,13 @@ export function DailyReportPage({
       setRecordedAt(localDateTimeInShanghai());
       await load();
     }, "随记已保存");
+    setWorkLogState(succeeded ? "success" : "error");
   };
 
   const saveRecord = async () => {
     if (!editingRecord) return;
-    await run(async () => {
+    setWorkLogState("submitting");
+    const succeeded = await run(async () => {
       await timesheetMutation(
         `/api/timesheets/work-logs/${encodeURIComponent(editingRecord.id)}`,
         "PATCH",
@@ -363,22 +509,26 @@ export function DailyReportPage({
       setEditingRecord(null);
       await load();
     }, "随记已更新；已有确认将自动失效");
+    setWorkLogState(succeeded ? "success" : "error");
   };
 
   const removeRecord = async (record: WorkLog) => {
     if (!window.confirm("确认删除这条随记？关联草稿将回到待审核状态。")) return;
-    await run(async () => {
+    setWorkLogState("submitting");
+    const succeeded = await run(async () => {
       await timesheetMutation(
         `/api/timesheets/work-logs/${encodeURIComponent(record.id)}?${requestQuery(organizationId)}`,
         "DELETE",
       );
       await load();
     }, "随记已删除");
+    setWorkLogState(succeeded ? "success" : "error");
   };
 
   const generate = async () => {
     if (records.length === 0) {
       setNotice("请先添加至少一条今日随记；系统不会调用模型生成空日报。");
+      setNoticeTone("info");
       return;
     }
     await run(async () => {
@@ -401,27 +551,28 @@ export function DailyReportPage({
       ),
     );
     setDirty(true);
+    setConfirmationState("idle");
+    setConfirmationErrors((current) =>
+      current.filter((issue) => issue.taskIndex !== index),
+    );
   };
 
   const markReviewed = (index: number) => {
     const task = tasks[index];
-    const complete = Boolean(
-      task.description.trim() &&
-        task.projectId &&
-        task.regularHours !== null &&
-        task.overtimeHours !== null &&
-        task.categoryId &&
-        task.workStatus,
-    );
-    if (!complete) {
-      setNotice("项目、工时、分类和状态均填写后才能标记已审核");
-      return;
-    }
-    if ((task.regularHours ?? 0) + (task.overtimeHours ?? 0) > 24) {
-      setNotice("正常与加班工时合计不能超过 24 小时");
+    const issues = confirmationIssues([
+      { ...task, needsReview: false, reviewFields: [] },
+    ]);
+    if (issues.length > 0) {
+      const normalized = issues.map((issue) => ({ ...issue, taskIndex: index }));
+      setConfirmationErrors(normalized);
+      setConfirmationState("validation_error");
+      setNotice(normalized.map((issue) => issue.message).join("；"));
+      setNoticeTone("error");
       return;
     }
     changeTask(index, { needsReview: false, reviewFields: [] });
+    setNotice(`任务 ${index + 1} 已标记为人工审核`);
+    setNoticeTone("success");
   };
 
   const saveDraft = async (): Promise<Draft | null> => {
@@ -456,10 +607,22 @@ export function DailyReportPage({
   };
 
   const confirmDraft = async () => {
-    if (!draft) return;
-    await run(async () => {
+    if (!draft || confirmationInFlight.current) return;
+    const issues = confirmationIssues(tasks);
+    if (issues.length > 0) {
+      setConfirmationErrors(issues);
+      setConfirmationState("validation_error");
+      setNotice("请修正下方必填字段后再确认工时");
+      setNoticeTone("error");
+      return;
+    }
+    confirmationInFlight.current = true;
+    setConfirmationErrors([]);
+    setConfirmationState("submitting");
+    setNotice(null);
+    try {
       const saved = dirty ? await saveDraft() : draft;
-      if (!saved) return;
+      if (!saved) throw new Error("日报草稿不存在");
       const payload = await timesheetMutation<{ draft: Draft }>(
         `/api/timesheets/drafts/${encodeURIComponent(saved.id)}/confirm`,
         "POST",
@@ -467,15 +630,32 @@ export function DailyReportPage({
       );
       setDraft(payload.draft);
       setTasks(payload.draft.tasks);
-    }, "工时已由你人工确认，可以导出或创建同步批次");
+      setDirty(false);
+      setConfirmationState("success");
+      setNotice("工时已由你人工确认，可以复制或下载确认版 JSON");
+      setNoticeTone("success");
+    } catch (error) {
+      const state = error instanceof TimesheetApiError && error.status === 422
+        ? "validation_error"
+        : "server_error";
+      setConfirmationState(state);
+      setNotice(confirmationServerMessage(error));
+      setNoticeTone("error");
+    } finally {
+      confirmationInFlight.current = false;
+    }
   };
 
   const splitTask = (index: number) => {
     const task = tasks[index];
-    const firstHours = task.regularHours
-      ? Math.max(0.25, Math.floor(task.regularHours * 2) / 4)
-      : null;
-    const secondHours = task.regularHours && firstHours ? task.regularHours - firstHours : null;
+    const firstHours = task.regularHours === null
+      ? null
+      : task.regularHours < 0.5
+        ? task.regularHours
+        : Math.max(0.25, Math.floor(task.regularHours * 2) / 4);
+    const secondHours = task.regularHours === null || firstHours === null
+      ? null
+      : task.regularHours - firstHours;
     const firstOvertime = task.overtimeHours
       ? Math.max(0.25, Math.floor(task.overtimeHours * 2) / 4)
       : task.overtimeHours;
@@ -495,8 +675,8 @@ export function DailyReportPage({
       ...task,
       id: undefined,
       description: `${task.description}（拆分 2）`,
-      hours: secondHours && secondHours > 0 ? secondHours : null,
-      regularHours: secondHours && secondHours > 0 ? secondHours : null,
+      hours: secondHours,
+      regularHours: secondHours,
       overtimeHours:
         secondOvertime !== null && secondOvertime >= 0 ? secondOvertime : null,
       needsReview: true,
@@ -515,6 +695,7 @@ export function DailyReportPage({
     const selected = tasks.filter((task) => task.id && selectedTaskIds.includes(task.id));
     if (selected.length < 2) {
       setNotice("请至少选择两条任务进行合并");
+      setNoticeTone("error");
       return;
     }
     const [first] = selected;
@@ -527,6 +708,7 @@ export function DailyReportPage({
       )
     ) {
       setNotice("只有项目、分类和状态完全一致的任务可以合并");
+      setNoticeTone("error");
       return;
     }
     const merged: DraftTask = {
@@ -623,6 +805,7 @@ export function DailyReportPage({
       window.location.origin,
     );
     setNotice("已请求扩展打开已配置的企业微信任务看板");
+    setNoticeTone("info");
   };
 
   const startSync = async () => {
@@ -682,6 +865,12 @@ export function DailyReportPage({
   const currentSyncTask = currentSyncItem
     ? tasks.find((task) => task.id === currentSyncItem.taskId)
     : null;
+  const effectiveDraftStatus =
+    dirty && draft?.status === "confirmed" ? "needs_review" : draft?.status;
+  const taskError = (taskIndex: number, field: TaskField) =>
+    confirmationErrors.find(
+      (issue) => issue.taskIndex === taskIndex && issue.field === field,
+    );
 
   if (!organizationId) {
     return (
@@ -692,7 +881,7 @@ export function DailyReportPage({
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" data-testid="daily-report-page" aria-busy={phase === "loading"}>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
@@ -718,54 +907,91 @@ export function DailyReportPage({
       </header>
 
       {notice ? (
-        <div role="status" className="rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">
+        <div
+          role={noticeTone === "error" ? "alert" : "status"}
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            noticeTone === "error"
+              ? "border-danger/20 bg-danger-soft text-danger"
+              : noticeTone === "success"
+                ? "border-success/20 bg-success-soft text-success"
+                : "border-info/20 bg-info-soft text-info"
+          }`}
+        >
           {notice}
         </div>
       ) : null}
 
-      <section className="rounded-xl border border-border bg-card">
+      {phase === "loading" ? (
+        <div className="flex items-center gap-2 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground" aria-live="polite">
+          <LoaderCircle className="size-4 animate-spin" />正在加载今日日报…
+        </div>
+      ) : null}
+
+      <section className="rounded-xl border-2 border-primary/25 bg-card shadow-sm" data-testid="work-log-section">
         <div className="border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold">今日随记</h2>
-          <p className="mt-1 text-xs text-muted-foreground">只记录事实即可，正式字段可以稍后审核。</p>
+          <h2 className="text-base font-semibold">今日随记</h2>
+          <p className="mt-1 text-xs text-muted-foreground">从这里创建今天的第一条记录；只记录事实即可，正式字段可以稍后审核。</p>
         </div>
         <div className="grid gap-3 p-5 lg:grid-cols-[1fr_220px_190px_auto]">
-          <textarea
-            value={rawText}
-            onChange={(event) => setRawText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void addRecord();
-              }
-            }}
-            rows={2}
-            className="rounded-lg border border-input bg-background px-3 py-2 text-sm"
-            placeholder="例如：CHAGEE｜确认 EARN 跳转逻辑｜约 1 小时｜已确认"
-          />
-          <select
-            value={projectId}
-            onChange={(event) => setProjectId(event.target.value)}
-            className="h-10 rounded-lg border border-input bg-background px-3 text-xs"
-          >
-            <option value="">暂不选择项目</option>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>{project.name}</option>
-            ))}
-          </select>
-          <input
-            type="datetime-local"
-            value={recordedAt}
-            onChange={(event) => setRecordedAt(event.target.value)}
-            className="h-10 rounded-lg border border-input bg-background px-3 text-xs"
-          />
+          <label>
+            <span className="mb-1 block text-xs font-medium">随记内容（必填）</span>
+            <textarea
+              disabled={workLogState === "submitting"}
+              value={rawText}
+              onChange={(event) => {
+                setRawText(event.target.value);
+                if (workLogState !== "submitting") setWorkLogState("idle");
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  void addRecord();
+                }
+              }}
+              rows={2}
+              className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+              placeholder="例如：完成虚构验收准备，1 小时，已完成"
+            />
+          </label>
+          <label>
+            <span className="mb-1 block text-xs font-medium">项目（可选）</span>
+            <select
+              disabled={workLogState === "submitting"}
+              value={projectId}
+              onChange={(event) => setProjectId(event.target.value)}
+              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-xs"
+            >
+              <option value="">暂不选择项目</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span className="mb-1 block text-xs font-medium">记录时间（必填）</span>
+            <input
+              disabled={workLogState === "submitting"}
+              type="datetime-local"
+              value={recordedAt}
+              onChange={(event) => setRecordedAt(event.target.value)}
+              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-xs"
+            />
+          </label>
           <button
-            disabled={!rawText.trim() || phase === "working"}
+            disabled={!rawText.trim() || workLogState === "submitting"}
             onClick={() => void addRecord()}
-            className="inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground disabled:opacity-40"
+            className="mt-5 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 text-xs font-medium text-primary-foreground disabled:opacity-40"
           >
-            <Plus className="size-3.5" /> 保存
+            {workLogState === "submitting" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+            {workLogState === "submitting" ? "保存中…" : "保存随记"}
           </button>
         </div>
+        <p className="border-t border-border px-5 py-2 text-xs text-muted-foreground" data-testid="work-log-state" data-state={workLogState} aria-live="polite">
+          {workLogState === "idle" ? "填写后保存，记录会立即出现在下方列表。" : null}
+          {workLogState === "submitting" ? "正在保存随记…" : null}
+          {workLogState === "success" ? "随记操作成功，页面与数据库已同步。" : null}
+          {workLogState === "error" ? "随记操作失败；输入内容已保留，请根据上方错误重试。" : null}
+        </p>
         <div className="divide-y divide-border border-t border-border">
           {records.map((record) => (
             <article key={record.id} className="flex flex-wrap items-start gap-3 px-5 py-4">
@@ -803,7 +1029,7 @@ export function DailyReportPage({
               )}
             </article>
           ))}
-          {!records.length ? <p className="p-8 text-center text-sm text-muted-foreground">今天还没有随记。</p> : null}
+          {!records.length ? <p className="p-8 text-center text-sm text-muted-foreground">今天还没有随记。请在上方输入事实记录并点击“保存随记”。</p> : null}
         </div>
       </section>
 
@@ -816,12 +1042,17 @@ export function DailyReportPage({
           <button
             disabled={!records.length || phase === "working"}
             onClick={() => void generate()}
+            data-testid="ai-generate"
+            data-state={phase === "working" ? "submitting" : "idle"}
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-medium text-white disabled:opacity-40"
           >
             {phase === "working" ? <LoaderCircle className="size-4 animate-spin" /> : <Bot className="size-4" />}
             AI 整理今日工时
           </button>
         </div>
+        {!records.length ? (
+          <p className="mt-3 text-xs text-warning" data-testid="ai-disabled-reason">请先添加至少一条今日随记，AI 整理才会启用。</p>
+        ) : null}
       </section>
 
       {draft ? (
@@ -829,7 +1060,7 @@ export function DailyReportPage({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold">工时审核</h2>
-              <p className="text-xs text-muted-foreground">Draft v{draft.version} · {draft.status} · {pendingReview} 条待审核</p>
+              <p className="text-xs text-muted-foreground" data-testid="draft-status">Draft v{draft.version} · {effectiveDraftStatus} · {pendingReview} 条待审核</p>
             </div>
             <button onClick={mergeTasks} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs"><RefreshCw className="size-3.5" />合并所选</button>
           </div>
@@ -854,16 +1085,49 @@ export function DailyReportPage({
                 </div>
               </div>
               <div className="grid gap-3 lg:grid-cols-6">
-                <label className="lg:col-span-2"><span className="mb-1 block text-[10px] text-muted-foreground">任务详情 · {confidenceLabel(task.confidence.description)}</span><textarea value={task.description} onChange={(event) => changeTask(index, { description: event.target.value, needsReview: true })} rows={2} className="w-full rounded-lg border border-input px-3 py-2 text-xs" /></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">项目 · {confidenceLabel(task.confidence.project)}</span><select value={task.projectId ?? ""} onChange={(event) => changeTask(index, { projectId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">正常工时 · {confidenceLabel(task.confidence.hours)}</span><input type="number" min="0" max="24" step="0.25" value={task.regularHours ?? ""} onChange={(event) => { const value = event.target.value ? Number(event.target.value) : null; changeTask(index, { hours: value, regularHours: value, needsReview: true }); }} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">加班工时 · {confidenceLabel(task.confidence.overtimeHours ?? 0)}</span><input type="number" min="0" max="24" step="0.25" value={task.overtimeHours ?? ""} onChange={(event) => changeTask(index, { overtimeHours: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">分类 · {confidenceLabel(task.confidence.category)}</span><select value={task.categoryId ?? ""} onChange={(event) => changeTask(index, { categoryId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">状态 · {confidenceLabel(task.confidence.status)}</span><select value={task.workStatus ?? ""} onChange={(event) => changeTask(index, { workStatus: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_STATUSES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">紧急重要度</span><input value={task.urgency ?? ""} disabled placeholder="待真实候选项配置" className="h-10 w-full rounded-lg border border-input bg-muted px-3 text-xs" /></label>
-                <label><span className="mb-1 block text-[10px] text-muted-foreground">任务进度 · {confidenceLabel(task.confidence.progress ?? 0)}</span><input type="number" min="0" max="100" step="1" value={task.progress ?? ""} onChange={(event) => changeTask(index, { progress: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" /></label>
+                <label className="lg:col-span-2">
+                  <span className="mb-1 block text-[10px] text-muted-foreground">任务详情（必填） · {confidenceLabel(task.confidence.description)}</span>
+                  <textarea aria-invalid={Boolean(taskError(index, "description"))} aria-describedby={taskError(index, "description") ? `task-${index}-description-error` : undefined} value={task.description} onChange={(event) => changeTask(index, { description: event.target.value, needsReview: true })} rows={2} className="w-full rounded-lg border border-input px-3 py-2 text-xs" />
+                  {taskError(index, "description") ? <span id={`task-${index}-description-error`} className="mt-1 block text-[10px] text-danger">{taskError(index, "description")?.message}</span> : null}
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">项目（必填） · {confidenceLabel(task.confidence.project)}</span>
+                  <select aria-invalid={Boolean(taskError(index, "project"))} value={task.projectId ?? ""} onChange={(event) => changeTask(index, { projectId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
+                  {taskError(index, "project") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "project")?.message}</span> : null}
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">正常工时（必填） · {confidenceLabel(task.confidence.hours)}</span>
+                  <input aria-invalid={Boolean(taskError(index, "regularHours"))} type="number" min="0" max="24" step="0.25" value={task.regularHours ?? ""} onChange={(event) => { const value = event.target.value ? Number(event.target.value) : null; changeTask(index, { hours: value, regularHours: value, needsReview: true }); }} className="h-10 w-full rounded-lg border border-input px-3 text-xs" />
+                  {taskError(index, "regularHours") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "regularHours")?.message}</span> : null}
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">加班工时（必填，无加班填 0） · {confidenceLabel(task.confidence.overtimeHours ?? 0)}</span>
+                  <input aria-invalid={Boolean(taskError(index, "overtimeHours"))} type="number" min="0" max="24" step="0.25" value={task.overtimeHours ?? ""} onChange={(event) => changeTask(index, { overtimeHours: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" />
+                  {taskError(index, "overtimeHours") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "overtimeHours")?.message}</span> : null}
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">分类（必填） · {confidenceLabel(task.confidence.category)}</span>
+                  <select aria-invalid={Boolean(taskError(index, "category"))} value={task.categoryId ?? ""} onChange={(event) => changeTask(index, { categoryId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+                  {taskError(index, "category") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "category")?.message}</span> : null}
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">状态（必填） · {confidenceLabel(task.confidence.status)}</span>
+                  <select aria-invalid={Boolean(taskError(index, "status"))} value={task.workStatus ?? ""} onChange={(event) => changeTask(index, { workStatus: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_STATUSES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+                  {taskError(index, "status") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "status")?.message}</span> : null}
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">紧急重要度（可选）</span>
+                  <input value={task.urgency ?? ""} disabled placeholder="可选，当前不设置" className="h-10 w-full rounded-lg border border-input bg-muted px-3 text-xs" />
+                </label>
+                <label>
+                  <span className="mb-1 block text-[10px] text-muted-foreground">任务进度（可选） · {confidenceLabel(task.confidence.progress ?? 0)}</span>
+                  <input type="number" min="0" max="100" step="1" value={task.progress ?? ""} onChange={(event) => changeTask(index, { progress: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" />
+                </label>
                 <div className="lg:col-span-5"><p className="text-[10px] text-muted-foreground">来源记录：{task.sourceRecordIds.map((id) => records.find((record) => record.id === id)?.rawText ?? id).join("；")}</p>{task.reviewFields.length ? <p className="mt-1 text-[10px] text-warning">需确认：{task.reviewFields.join("、")}</p> : null}</div>
-                <button onClick={() => markReviewed(index)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-success/30 text-xs text-success"><Check className="size-3.5" />{task.needsReview ? "标记已审核" : "已人工审核"}</button>
+                <div>
+                  <button onClick={() => markReviewed(index)} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-success/30 text-xs text-success"><Check className="size-3.5" />{task.needsReview ? "标记已审核" : "已人工审核"}</button>
+                  {taskError(index, "review") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "review")?.message}</span> : null}
+                </div>
               </div>
             </article>
           ))}
@@ -877,14 +1141,39 @@ export function DailyReportPage({
               <p className="text-xs text-muted-foreground">今日总工时</p>
               <p className="text-2xl font-semibold">{totalHours.toFixed(2)} h</p>
               {totalHours > 16 ? <p className="text-xs text-warning">总工时异常偏高，请人工确认；系统不会自动修正。</p> : null}
+              <p className="mt-2 text-xs text-muted-foreground">必填：任务详情、项目、正常工时、加班工时、分类、状态；可选：紧急重要度、任务进度。</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button disabled={!dirty || phase === "working"} onClick={() => void run(async () => { await saveDraft(); }, "草稿已保存，仍需人工确认")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Save className="size-3.5" />保存草稿</button>
-              <button disabled={pendingReview > 0 || tasks.length === 0 || phase === "working"} onClick={() => void confirmDraft()} className="inline-flex items-center gap-1.5 rounded-lg bg-success px-3 py-2 text-xs font-medium text-white disabled:opacity-40"><Check className="size-3.5" />确认工时</button>
+              <button disabled={tasks.length === 0 || confirmationState === "submitting" || phase === "loading" || phase === "working" || (draft.status === "confirmed" && !dirty)} onClick={() => void confirmDraft()} className="inline-flex items-center gap-1.5 rounded-lg bg-success px-3 py-2 text-xs font-medium text-white disabled:opacity-40">
+                {confirmationState === "submitting" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                {confirmationState === "submitting" ? "正在确认…" : draft.status === "confirmed" && !dirty ? "已确认工时" : "确认工时"}
+              </button>
               <button disabled={!draft.confirmedAt || dirty || phase === "working"} onClick={() => void copyJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Clipboard className="size-3.5" />复制 JSON</button>
               <button disabled={!draft.confirmedAt || dirty || phase === "working"} onClick={() => void downloadJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载 JSON</button>
             </div>
           </div>
+          <div className={`mt-4 rounded-lg border px-3 py-2 text-xs ${
+            confirmationState === "success"
+              ? "border-success/20 bg-success-soft text-success"
+              : confirmationState === "validation_error" || confirmationState === "server_error"
+                ? "border-danger/20 bg-danger-soft text-danger"
+                : "border-border bg-muted/30 text-muted-foreground"
+          }`} data-testid="confirmation-state" data-state={confirmationState} aria-live="polite">
+            {confirmationState === "idle" ? "确认状态：待操作" : null}
+            {confirmationState === "submitting" ? "确认状态：正在保存并提交，请勿重复点击" : null}
+            {confirmationState === "success" ? "确认状态：成功，服务端已保存 confirmed 状态" : null}
+            {confirmationState === "validation_error" ? "确认状态：字段校验未通过，日报尚未确认" : null}
+            {confirmationState === "server_error" ? "确认状态：服务端确认失败，日报尚未确认，可修正后重试" : null}
+          </div>
+          {confirmationErrors.length > 0 ? (
+            <div className="mt-3 rounded-lg border border-danger/20 bg-danger-soft px-3 py-2 text-xs text-danger" role="alert" data-testid="confirmation-errors">
+              <p className="font-medium">请先处理以下问题：</p>
+              <ul className="mt-1 list-disc space-y-1 pl-5">
+                {confirmationErrors.map((issue) => <li key={`${issue.taskIndex}-${issue.field}`}>{issue.message}</li>)}
+              </ul>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
