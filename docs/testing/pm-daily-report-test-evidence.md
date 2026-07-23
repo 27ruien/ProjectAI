@@ -35,7 +35,7 @@
 | `npm test` | 7/7 通过 | Local 数据库、AI flags=false 下的 build、SSR、Proxy、匿名路由与健康检查 |
 | `git diff --check` | 通过 | whitespace |
 
-Local Docker 隔离 PostgreSQL 已启用。UAT 数据库使用固定 Local-only 名称和 loopback 端口；额外数据库集成在随机临时数据库执行并在结束后删除。Migration upgrade、认证 SSR、Local UAT 与日报数据库集成均已本地通过。当前未提交 Head 推送后的 GitHub CI 仍是合并前独立门禁。
+Local Docker 隔离 PostgreSQL 已启用。UAT 数据库使用固定 Local-only 名称和 loopback 端口；额外数据库集成在随机临时数据库执行并在结束后删除。Migration upgrade、认证 SSR、Local UAT 与日报数据库集成均已本地通过。当前已推送 Head 的 GitHub CI 仍是合并前独立门禁。
 
 `npm audit --omit=dev` 仍报告 6 个传递依赖告警：Next 间接 `sharp` 2 个 high、当前最新版 `drizzle-kit` 的旧 loader 间接 `esbuild` 4 个 moderate。Next 16.2.11 与 drizzle-kit 0.31.10 均为当前稳定最新版；没有使用会降级框架的 `npm audit fix --force`，也没有把超出 Next 支持范围的 override 宣称为修复。路径、runtime 影响、缓解、有效期与升级条件见 `docs/dependency-security.md`，仍需 Reviewer 明确批准。
 
