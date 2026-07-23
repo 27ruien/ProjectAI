@@ -31,7 +31,7 @@
 }
 ```
 
-`confirmed_at` 与 `draft_version` 使扩展只能接收人工确认后的版本。后端创建批次时重新核对所有必填字段和项目权限。`submitter` 只表示“使用当前企业微信登录用户”，Adapter 不选择或写入其他人；它只回读页面自动填充的非空提交人。`category` 保留为 ProjectAI 内部审核字段，Adapter 不把它写入企业微信任何列，尤其不会写入“紧急重要度”。
+`confirmed_at` 与 `draft_version` 是批次创建时固化的服务端快照，使 Provider 只能接收人工确认后的精确任务集合。后端创建批次时重新核对所有必填字段和项目权限，并排除 submitted/unknown；failed 只在用户显式重试时进入新批次。`submitter` 只表示“使用当前企业微信登录用户”，Adapter 不选择或写入其他人；它只回读页面自动填充的非空提交人。`category` 保留为 ProjectAI 内部审核字段，Adapter 不把它写入企业微信任何列，尤其不会写入“紧急重要度”。
 
 手工 Popup JSON 不是服务端确认凭据，因此 Review 与真实 Origin 构建会强制它保持 Dry Run；实际逐条保存只能由已认证 ProjectAI 页面取得服务端批次后发起。只有隔离 Mock 构建允许用手工 JSON 演练非 Dry Run 路径。
 
@@ -52,12 +52,18 @@
 
 幂等键为 `sync_batch_id:task.id`。扩展对整个 Payload 做排序后的精确 canonical JSON 比较，不用短哈希作信任决策。同 batch 的相同 Payload 返回已有状态；内容变化返回 replay conflict。
 
-- saved：永远跳过；保存成功必须同时取得本次页面反馈，并在任务列表中按字段重新回读；
+- saved：永远跳过；保存成功必须同时取得本次页面反馈，并在任务列表中按字段重新回读。服务端只在 `verified=true` 且有外部引用时把任务转为 submitted；
 - failed：仅用户点击继续后重试；
 - unknown：暂停且拒绝继续；用户先在企业微信人工核对，再在 Popup 二次确认“已保存”或“未保存”。前者永久跳过，后者转 failed 后仍需主动继续；
 - Service Worker 启动时遗留 running：转 unknown，不自动执行；登录失效项只在用户明确点击继续后重新入队；
 - cancel：已保存项不回滚；正在保存的单条先等待明确结果，再取消剩余项；若结果 unknown，批次保持 paused 并要求人工核对。
 
 ProjectAI 服务端要求每次进度回写包含批次完整 task 集合。终态批次不可重新打开，attempt 不能回退，`saved`、`unknown` 和 `cancelled` 项不能通过迟到消息改回可执行状态。页面按扩展事件顺序串行写回，避免并发 HTTP 响应重排。
+
+## ProjectAI 任务生命周期
+
+确认和同步是两个独立动作。全局“确认本次工时”只把活动任务变成 confirmed；同步按钮才创建批次并把非 Dry Run 任务变成 syncing。逐项结果决定后续状态：verified saved → submitted，明确失败 → failed，不确定/超时/回读不一致 → unknown。submitted 从活动草稿移除但保留在“今日已提交”、数据库、来源关联和批次审计中；failed 可由用户主动重试；unknown 必须先人工核对，不能自动重试。
+
+隔离 Local UAT 可使用 `mock_smartsheet` 服务端 Provider。它用保留域名生成确定性外部引用，支持成功、明确失败、fail-once、unknown、timeout、回读不一致和相同 idempotency key 的确定性重放。Mock 成功只证明 ProjectAI 生命周期，不代表真实腾讯文档写入。
 
 状态和脱敏日志只保存在 `chrome.storage.local`。扩展不上传 Cookie、Token、二维码、HTML、浏览历史或完整 DOM。

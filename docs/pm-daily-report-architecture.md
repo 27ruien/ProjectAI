@@ -11,7 +11,7 @@ flowchart LR
   U["项目经理"] --> W["ProjectAI /daily-report"]
   W --> API["鉴权 API"]
   API --> ACL["组织成员 + 项目 ACL"]
-  API --> DB[("PostgreSQL / Migration 0016 + 0017")]
+  API --> DB[("PostgreSQL / Migration 0016–0019")]
   API --> GW["现有 AI Gateway"]
   GW --> Q["既有 Qwen Provider 或 CI Fake Provider"]
   W <-->|"protocol v1 / same-origin postMessage"| C["ProjectAI content script"]
@@ -27,20 +27,26 @@ flowchart LR
 - 所有日报查询同时绑定 `organizationId` 和 Session 用户；资源不属于当前用户时统一返回 404。
 - 项目下拉来自服务端授权 Viewer；创建记录、审核、确认和同步时再次校验项目访问权。
 - AI 只接收当前用户、当前组织、当前日期的有效随记，当前用户可访问的项目与正式 Action；会议来源目前为空数组。
-- AI 输出经严格 Zod Schema 和事实校验，只写 `needs_review` 草稿。用户填写全部必填字段并标记审核后才能确认。
-- 同步批次只来自已确认且版本匹配的草稿；扩展进度写回时后端验证批次创建者、逐项归属和终态一致性。
+- AI 输出经严格 Zod Schema 和事实校验，只写活动草稿。低置信度是提示，不要求逐条“标记已审核”；全局确认一次校验整批必填字段。
+- 同步批次只选取已确认且版本匹配的活动任务；扩展或 Local Mock Provider 写回时，后端验证批次创建者、逐项归属、幂等键、保存验证和终态一致性。
 - 扩展不包含模型调用、账号、Cookie、Token、最终提交 Selector 或跨域后端凭据。
 
 ## 状态流
 
 ```text
-随记 → AI execution(running/succeeded/failed)
-     → needs_review → 用户编辑/审核 → confirmed
-     → sync batch(pending/running/paused)
-     → synced | partially_synced | failed | cancelled
+随记(unprocessed) → AI execution(running/succeeded/failed)
+     → task(draft) → 用户编辑 → 全局确认 → confirmed
+     → sync batch → task(syncing)
+     → submitted | failed | unknown | cancelled
+
+submitted → 今日已提交（只读、终态）
+failed → 仅用户主动重试
+unknown → 人工核对后转 submitted 或 failed
 ```
 
-草稿使用单调递增 `version` 做乐观锁。随记变更会使尚无同步历史的确认草稿回到 `needs_review`。已有同步历史的草稿不能重写或重新生成。AI 并发由 PostgreSQL advisory lock 与“每用户/日期仅一个 running execution”的部分唯一索引限制；超时 execution 被受控标记为 `AI_EXECUTION_STALE` 后才允许重试。
+草稿使用单调递增 `version` 做乐观锁。确认与同步是两个动作：确认后任务仍留在“本次待提交”；非 Dry Run 批次创建后进入 `syncing`；只有逐项 `saved + verified + externalReference` 才进入 `submitted`。submitted 任务从活动查询排除但不删除，保留来源、批次、外部引用、审计和当日统计；其来源随记也不再进入 AI。用户当天新增随记时会形成新的活动批次，旧 submitted 任务不会进入新模型输入或 Payload。
+
+编辑 confirmed 活动任务会使草稿回到 `needs_review` 并要求重新确认。failed 任务只进入显式重试批次；unknown 不自动重试。AI 并发由 PostgreSQL advisory lock 与“每用户/日期仅一个 running execution”的部分唯一索引限制；超时 execution 被受控标记为 `AI_EXECUTION_STALE` 后才允许重试。
 
 扩展按 `sync_batch_id + task.id` 幂等。`saved` 永不回退；`failed` 仅用户主动继续时重试；`unknown` 与 Service Worker 中断后的 `running` 会暂停，绝不自动重放。用户在企业微信人工核对后，可在 Popup 二次确认其“已保存”或“未保存”；前者永久跳过，后者转为 failed 后仍需主动继续。
 

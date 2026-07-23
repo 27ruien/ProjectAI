@@ -139,9 +139,9 @@
 
 | ID | 验收项 | 当前状态 | 关闭条件 |
 | --- | --- | --- | --- |
-| PMDR-001 | 当前用户随记 CRUD、组织/所有权/项目 ACL 与审计 | Local UAT UI 与数据库集成通过，当前 Head CI 待验证 | Migration 0016→0017、所有权/越权/Flag 与空 Seed 全 UI CRUD 均绿 |
-| PMDR-002 | 结构化 AI 输入/输出、事实约束、一次 Repair、低置信度与人工确认 | Unit/集成/Real Local UAT UI 通过，当前 Head CI 待验证 | Fake Provider 草稿、字段错误、人工确认、刷新持久化和 JSON 均绿 |
-| PMDR-003 | 版本锁、未确认拒绝、权限丢失、同步幂等和终态一致性 | 代码完成，CI 集成待验证 | PostgreSQL 集成全绿 |
+| PMDR-001 | 当前用户随记 CRUD、组织/所有权/项目 ACL、消费状态与审计 | Local UAT UI 与数据库集成通过，当前 Head CI 待验证 | Migration 0016–0019、所有权/越权/Flag、空 Seed CRUD 与 submitted 来源排除均绿 |
+| PMDR-002 | 结构化 AI 输入/输出、事实约束、一次 Repair、低置信度提示与整批确认 | Mock AI Unit/Local UAT 通过；Real AI 人工质量 NOT RUN | Fake 输出关联输入、无逐条审核、统一字段错误和一次整批确认；真实质量需独立人工验收 |
+| PMDR-003 | 确认/同步分离、任务生命周期、同日多批、版本锁、幂等和逐项终态 | Local Mock SmartSheet UI 与 PostgreSQL 集成通过，当前 Head CI 待验证 | 6h+2h、submitted 只读历史、部分成功、failed 重试、unknown 人工核对、刷新/重放不重复均绿 |
 | PMDR-004 | MV3 协议、Origin、权限最小化、重放/中断恢复和日志脱敏 | 单元/package 通过 | CI package + Mock E2E 全绿 |
-| PMDR-005 | iframe Adapter、精确字段匹配、分类不写、双工时、保存双证据、不触碰最终提交 | Mock E2E 11/11 通过 | 真实 DOM 审查、真实 Dry Run、一条虚构任务验收 |
+| PMDR-005 | iframe Adapter、精确字段匹配、分类不写、双工时、保存双证据、不触碰最终提交 | Mock E2E 通过；真实 WeCom BLOCKED/NOT RUN | 真实 DOM 审查、真实 Dry Run、一条虚构任务验收 |
 | PMDR-006 | Production 默认关闭且不变 | 通过 | 最终 diff 与只读基线确认无 Production rollout/启用 |

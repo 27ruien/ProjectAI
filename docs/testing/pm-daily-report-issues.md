@@ -32,6 +32,11 @@
 | PMDR-QA-026 | P1 | UAT Seed 预置 3 条随记，旧验收绕过空状态和用户创建入口 | Seed 改为 0 条；真实 UI 门禁从空状态完成随记 CRUD、刷新持久化和 AI 整理，1/1 通过 |
 | PMDR-QA-027 | P1 | 待审核任务会把“确认工时”直接禁用，点击无请求、无字段错误和无状态反馈 | 点击后执行字段校验并显示五态 UI；真实确认一次 200、重复提交受阻、刷新保持，401/403/409/422/500 均有可读反馈 |
 | PMDR-QA-028 | P1 | 0.25 小时任务拆分会把第二条工时变成 `null`，导致后续合并/确认失败 | 拆分保留合法 0 值并由完整 Local UAT 拆分、合并、确认回归覆盖 |
+| PMDR-QA-029 | P1 | Fake Provider 统一生成“虚构项目工作记录 1/2/3”，无法证明输入关联且易被误报为真实 AI | Fake 输出改为对应随记文本，保留明确工时/状态/sourceRecordIds；页面显示 Mock 边界，Real 未配置时禁用而不回退 |
+| PMDR-QA-030 | P1 | 每条任务的“标记已审核”形成无意义门禁，低置信字段会静默阻止整批确认 | 删除逐条按钮和 task-level gate；一次全局确认执行前后端字段校验、错误摘要、字段错误和首错聚焦 |
+| PMDR-QA-031 | P1 | confirmed 与外部提交语义混合，已成功任务仍留在活动草稿，导致同日第二批重复 | 引入任务生命周期；确认与同步分离，只有 verified saved 才 submitted 并进入只读历史，后续 AI/Payload 排除 submitted 来源与任务 |
+| PMDR-QA-032 | P1 | 部分同步可能重发成功项或自动重试 unknown，旧批次人工核对还可能覆盖后续重试结果 | 每项独立状态；failed 显式重试只选失败项，unknown 只人工核对；旧批次 reconciliation 只修改目标 unknown task |
+| PMDR-QA-033 | P1 | 同 request replay 可能受后续草稿版本/任务变化影响，失去原批次证据 | 批次持久化 confirmed/version 快照和精确 task set；重放返回原 Payload，idempotency key 与 submitted 聚合不重复 |
 
 ## 环境阻塞
 
@@ -46,4 +51,4 @@
 
 ## 未发现的范围
 
-当前没有已知未修复 P0/P1 代码缺陷；PMDR-QA-026/027/028 已由真实 Local UI 与既有 UAT 回归关闭。Local 数据库和 Mock 扩展测试不能替代真实 WeCom 验收；当前 Head 的 GitHub CI、依赖风险审批、Staging 和真实 WeCom 验收仍未关闭，因此 PR 不应合并。Mock E2E 不能证明 Canvas 真实页面兼容；在可靠 DOM/受支持接口、真实 Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。
+当前没有已知未修复 P0/P1 代码缺陷；PMDR-QA-026–033 已由真实 Local UI、数据库集成、迁移 rehearsal 和确定性 Mock 回归覆盖。Local 数据库、Mock AI、Mock SmartSheet 和 Mock 扩展不能替代真实 AI、真实 WeCom 或 Staging 验收；当前 Head 的 GitHub CI、依赖风险审批、Staging 和真实 WeCom 验收仍未关闭，因此 PR 必须保持 Draft 且不应合并。Mock E2E 不能证明 Canvas 真实页面兼容；在可靠 DOM/受支持接口、真实 Dry Run 和一条虚构任务验收完成前，连接器不得宣称可用于正式页面或发布到商店。

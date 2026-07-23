@@ -51,7 +51,7 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
   分类不写、保存双证据、登录显式恢复、Selector 唯一匹配、精确 Origin 构建、
   完整 URL 仅本地保存且不嵌入产物、真实构建手工入口强制 Dry Run，以及只含精确
   Origin、无私有 URL/Selector/认证状态的 Review ZIP。
-- Migration：追加 0017，不修改 0016；升级脚本覆盖非空 0015→0016→0017。
+- Migration：追加 0017 后，本轮再追加 0018/0019，不修改 0016/0017；升级脚本覆盖非空 0015→0019。
 
 ### 4. 依赖与 Workflow
 
@@ -61,7 +61,7 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
 
 ### 5. 本地回归
 
-- 通过：typecheck、lint、build、git diff check、timesheets 57、extension E2E 16、
+- 通过：typecheck、lint、build、git diff check、timesheets 59、extension E2E 16、
   extension package 5、artifacts 32、assistant 16、embeddings 14、retrieval 10、
   documents 15、files 20、phase1 11、round2 4、round3 5、deployment 23、release 16、
   production-rollout isolated tests 62。
@@ -71,8 +71,8 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
   CRUD、AI、字段校验、确认、刷新持久化、JSON 和五类错误反馈，1/1 通过；人工复核
   7 张虚构数据截图和脱敏 Trace，未处理 Console/Page Error 为 0。既有 `test:uat`
   4/4 与 Feature Flag 2/2 仍分别只代表各自边界，不替代该真实 UI 门禁。
-- 数据库：非空 0015→0016→0017 upgrade 通过；临时隔离数据库中 identity/ACL、Phase 1、
-  AI、Embedding、Retrieval、Timesheet 共 111/111 integration 通过，临时数据库已删除。
+- 数据库：非空 0015→0019 upgrade 通过；临时隔离数据库中 identity/ACL、Phase 1、
+  AI、Embedding、Retrieval、Timesheet 共 113/113 integration 通过，临时数据库已删除。
 - UAT 保护：Production/未授权 Seed/Cleanup/错误本地数据库拒绝用例均通过。
 
 ### 6. 继续执行基线
@@ -88,6 +88,20 @@ Token、浏览器认证状态、原有任务正文或私有 Selector。
 - `PMDR-ENV-006`：真实 Smart Sheet 主表为 Canvas 且无可靠 DOM Overlay，真实 Selector、
   Dry Run、实写、刷新幂等和清理不可安全执行。
 - Staging Migration 仍需单独、明确的 Staging 授权；本轮不会自行推断授权。
+
+## 7. 日报审核与多批提交生命周期收敛
+
+- Local UAT AI 模式为 Mock；页面明确说明“不代表真实 AI 输出质量”。Fake Provider 任务描述
+  绑定输入随记，不再输出固定的“虚构项目工作记录 1/2/3”。Real 模式未配置时 AI 入口
+  禁用且不静默回退；真实 AI 人工质量测试为 **NOT RUN**。
+- 删除逐条“标记已审核”及其门禁。一次“确认本次工时”统一执行前后端必填校验；
+  低置信度仅提示。确认与同步是两个动作，confirmed 仍留在活动区。
+- Migration 0018/0019 增加 task lifecycle、verified 保存证据和批次确认快照。
+  只有 non-Dry-Run `saved + verified + externalReference` 进入 submitted；submitted 保留在
+  只读历史并从活动任务、后续 AI 输入和 Payload 排除。
+- Local Mock SmartSheet 浏览器流程：首批 6h 成功、第二批仅新增 2h；第三批分别得到
+  saved/failed/unknown，failed 仅主动重试失败项，unknown 仅人工核对；刷新与重放无重复。
+- 本轮未执行 Staging、Production、真实 WeCom Canvas 或真实 AI 调用；PR 继续保持 Draft。
 
 ## 安全计数
 
