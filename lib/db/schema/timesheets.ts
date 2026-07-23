@@ -180,6 +180,13 @@ export const timesheetTask = pgTable(
       .$type<string[]>()
       .notNull(),
     sortOrder: integer("sort_order").notNull(),
+    submissionStatus: varchar("submission_status", { length: 24 })
+      .notNull()
+      .default("draft"),
+    submittedAt: timestamp("submitted_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     confirmedAt: timestamp("confirmed_at", {
       withTimezone: true,
       mode: "date",
@@ -193,6 +200,11 @@ export const timesheetTask = pgTable(
   },
   (table) => [
     index("timesheet_tasks_draft_order_idx").on(table.draftId, table.sortOrder),
+    index("timesheet_tasks_draft_submission_idx").on(
+      table.draftId,
+      table.submissionStatus,
+      table.sortOrder,
+    ),
     index("timesheet_tasks_project_idx").on(table.projectId),
     check(
       "timesheet_tasks_description_check",
@@ -215,6 +227,14 @@ export const timesheetTask = pgTable(
       sql`${table.progress} is null or (${table.progress} >= 0 and ${table.progress} <= 100)`,
     ),
     check("timesheet_tasks_sort_order_check", sql`${table.sortOrder} >= 0`),
+    check(
+      "timesheet_tasks_submission_status_check",
+      sql`${table.submissionStatus} in ('draft', 'confirmed', 'syncing', 'submitted', 'failed', 'unknown', 'cancelled')`,
+    ),
+    check(
+      "timesheet_tasks_submitted_at_check",
+      sql`(${table.submissionStatus} = 'submitted') = (${table.submittedAt} is not null)`,
+    ),
   ],
 );
 
@@ -236,6 +256,11 @@ export const timesheetSyncBatch = pgTable(
     connectorType: varchar("connector_type", { length: 40 })
       .notNull()
       .default("wecom_chrome_extension"),
+    draftVersion: integer("draft_version").notNull(),
+    confirmedAtSnapshot: timestamp("confirmed_at_snapshot", {
+      withTimezone: true,
+      mode: "date",
+    }).notNull(),
     status: varchar("status", { length: 40 }).notNull().default("pending"),
     dryRun: boolean("dry_run").notNull().default(true),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
@@ -280,6 +305,9 @@ export const timesheetSyncItem = pgTable(
     status: varchar("status", { length: 40 }).notNull().default("pending"),
     attemptCount: integer("attempt_count").notNull().default(0),
     externalReference: varchar("external_reference", { length: 240 }),
+    externalUrl: varchar("external_url", { length: 500 }),
+    verified: boolean("verified").notNull().default(false),
+    savedAt: timestamp("saved_at", { withTimezone: true, mode: "date" }),
     errorCode: varchar("error_code", { length: 80 }),
     errorMessageRedacted: varchar("error_message_redacted", { length: 500 }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
@@ -308,6 +336,10 @@ export const timesheetSyncItem = pgTable(
     check(
       "timesheet_sync_items_attempt_count_check",
       sql`${table.attemptCount} >= 0 and ${table.attemptCount} <= 100`,
+    ),
+    check(
+      "timesheet_sync_items_saved_verification_check",
+      sql`${table.status} <> 'saved' or (${table.verified} = true and ${table.savedAt} is not null)`,
     ),
   ],
 );

@@ -116,6 +116,13 @@ async function main(): Promise<void> {
     await expectConstraintFailure(upgrade, `
       update timesheet_tasks set progress = 101 where id = 'timesheet-upgrade-zero-task'
     `);
+    await apply(upgrade, "0018_simple_sue_storm.sql");
+    await expectConstraintFailure(upgrade, `
+      update timesheet_tasks
+      set submission_status = 'submitted'
+      where id = 'timesheet-upgrade-zero-task'
+    `);
+    await apply(upgrade, "0019_lame_dracula.sql");
     const result = await upgrade.query<{
       legacy_project: string;
       ai_execution: string;
@@ -130,6 +137,10 @@ async function main(): Promise<void> {
       urgency_column: string | null;
       progress_column: string | null;
       new_constraint_count: string;
+      lifecycle_column: string | null;
+      verified_column: string | null;
+      conservative_task_count: string;
+      batch_snapshot_column_count: string;
     }>(`
       select
         (select count(*)::text from projects where id = 'timesheet-upgrade-project') as legacy_project,
@@ -144,7 +155,11 @@ async function main(): Promise<void> {
         (select column_name from information_schema.columns where table_schema = 'public' and table_name = 'timesheet_tasks' and column_name = 'overtime_hours') as overtime_column,
         (select column_name from information_schema.columns where table_schema = 'public' and table_name = 'timesheet_tasks' and column_name = 'urgency_name_snapshot') as urgency_column,
         (select column_name from information_schema.columns where table_schema = 'public' and table_name = 'timesheet_tasks' and column_name = 'progress') as progress_column,
-        (select count(*)::text from pg_constraint where conname in ('timesheet_tasks_hours_check', 'timesheet_tasks_overtime_hours_check', 'timesheet_tasks_total_daily_hours_check', 'timesheet_tasks_progress_check')) as new_constraint_count
+        (select count(*)::text from pg_constraint where conname in ('timesheet_tasks_hours_check', 'timesheet_tasks_overtime_hours_check', 'timesheet_tasks_total_daily_hours_check', 'timesheet_tasks_progress_check')) as new_constraint_count,
+        (select column_name from information_schema.columns where table_schema = 'public' and table_name = 'timesheet_tasks' and column_name = 'submission_status') as lifecycle_column,
+        (select column_name from information_schema.columns where table_schema = 'public' and table_name = 'timesheet_sync_items' and column_name = 'verified') as verified_column,
+        (select count(*)::text from timesheet_tasks where draft_id = 'timesheet-upgrade-draft' and submission_status = 'confirmed' and submitted_at is null) as conservative_task_count,
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'timesheet_sync_batches' and column_name in ('draft_version', 'confirmed_at_snapshot') and is_nullable = 'NO') as batch_snapshot_column_count
     `);
     const row = result.rows[0];
     if (
@@ -161,10 +176,14 @@ async function main(): Promise<void> {
       || row.urgency_column !== "urgency_name_snapshot"
       || row.progress_column !== "progress"
       || row.new_constraint_count !== "4"
+      || row.lifecycle_column !== "submission_status"
+      || row.verified_column !== "verified"
+      || row.conservative_task_count !== "2"
+      || row.batch_snapshot_column_count !== "2"
     ) {
       throw new Error(`Timesheet migration contract failed: ${JSON.stringify(row)}`);
     }
-    process.stdout.write("Non-empty 0015 to 0016 to 0017 timesheet migration upgrade verified.\n");
+    process.stdout.write("Non-empty 0015 to 0016 to 0017 to 0018 to 0019 timesheet migration upgrade verified.\n");
   } finally {
     if (upgrade) await upgrade.end();
     await admin.query(`drop database if exists "${name}" with (force)`);

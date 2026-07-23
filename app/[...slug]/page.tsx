@@ -9,6 +9,7 @@ import {
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { getTimesheetFeatureConfig } from "@/lib/timesheets/config";
+import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
 
 type CatchAllPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -29,9 +30,13 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
   const requestHeaders = await headers();
   const [section, entityId, child] = route;
   const featureFlags = getTimesheetFeatureConfig();
+  let timesheetAiProviderConfigured = false;
 
   if (section === "daily-report" && !featureFlags.dailyReportEnabled) {
     notFound();
+  }
+  if (section === "daily-report") {
+    timesheetAiProviderConfigured = await isAiProviderConfigured();
   }
 
   if (
@@ -84,6 +89,11 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
       featureFlags={{
         pmDailyReport: featureFlags.dailyReportEnabled,
         wecomTimesheetSync: featureFlags.wecomSyncEnabled,
+        timesheetAiMode: featureFlags.aiMode,
+        timesheetAiProvider: featureFlags.aiProvider,
+        timesheetAiProviderConfigured,
+        timesheetAiModelProfileId: featureFlags.aiModelProfileId,
+        timesheetSyncProvider: featureFlags.syncProvider,
       }}
     />
   );

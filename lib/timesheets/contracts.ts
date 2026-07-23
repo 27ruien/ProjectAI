@@ -270,6 +270,23 @@ export const updateSyncBatchSchema = z
             status: syncItemStatusSchema,
             attemptCount: z.number().int().min(0).max(100),
             externalReference: z.string().trim().max(240).nullable().optional(),
+            externalUrl: z
+              .string()
+              .url()
+              .max(500)
+              .refine((value) => {
+                const parsed = new URL(value);
+                return (
+                  parsed.protocol === "https:" &&
+                  !parsed.username &&
+                  !parsed.password &&
+                  !parsed.search &&
+                  !parsed.hash
+                );
+              }, "外部记录地址必须是无凭据的 HTTPS URL")
+              .nullable()
+              .optional(),
+            verified: z.boolean().optional(),
             errorCode: z
               .string()
               .regex(/^[A-Z0-9_]{2,80}$/)
@@ -277,7 +294,18 @@ export const updateSyncBatchSchema = z
               .optional(),
             errorMessage: z.string().max(2000).nullable().optional(),
           })
-          .strict(),
+          .strict()
+          .superRefine((value, context) => {
+            if (
+              value.status === "saved" &&
+              (value.verified !== true || !value.externalReference)
+            ) {
+              context.addIssue({
+                code: "custom",
+                message: "saved 结果必须包含已验证的外部引用",
+              });
+            }
+          }),
       )
       .max(50),
   })

@@ -69,6 +69,7 @@ function statusMessage(batch: PersistedBatch, forcedType?: string) {
       status: item.status,
       attemptCount: item.attemptCount,
       externalReference: item.externalReference,
+      verified: item.status === "saved",
       errorCode: item.errorCode,
       errorMessage: item.errorMessage,
     })),

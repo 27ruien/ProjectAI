@@ -137,6 +137,19 @@ export class FakeProjectAssistantProvider
         typeof input?.available_projects?.[0]?.id === "string"
           ? input.available_projects[0].id
           : null;
+      const inferHours = (rawText: string): number | null => {
+        const hours = rawText.match(/(\d+(?:\.\d+)?)\s*(?:小时|h\b)/iu);
+        if (hours) {
+          const value = Number(hours[1]);
+          return Number.isFinite(value) && value >= 0 && value <= 24 ? value : null;
+        }
+        const minutes = rawText.match(/(\d+)\s*(?:分钟|min\b)/iu);
+        if (minutes) {
+          const value = Number(minutes[1]) / 60;
+          return Number.isInteger(value * 4) && value <= 24 ? value : null;
+        }
+        return null;
+      };
       text = JSON.stringify({
         tasks: records.map((record, index) => {
           const rawText = typeof record.raw_text === "string" ? record.raw_text : "";
@@ -160,17 +173,27 @@ export class FakeProjectAssistantProvider
             record.hours_hint >= 0 &&
             record.hours_hint <= 24
               ? record.hours_hint
-              : null;
+              : inferHours(rawText);
           const approximateHours = /约|大约|大概|左右|差不多/u.test(rawText);
           const progress = status === "completed" ? 100 : status === "pending" ? 0 : null;
           const reviewFields = ["overtimeHours"];
           if (hours === null || approximateHours) reviewFields.push("hours");
+          const category = /沟通|会议|对齐|确认/u.test(rawText)
+            ? "communication"
+            : /文档|整理|记录|报告/u.test(rawText)
+              ? "documentation"
+              : /评审|验收|测试|复核/u.test(rawText)
+                ? "review"
+                : /方案|规划|计划/u.test(rawText)
+                  ? "planning"
+                  : "execution";
+          const description = rawText.trim().replace(/\s+/gu, " ").slice(0, 500);
           return {
-            description: `虚构项目工作记录 ${index + 1}`,
+            description: description.length >= 2 ? description : `Mock 记录 ${index + 1}`,
             project_id: projectId,
             hours,
             overtime_hours: null,
-            category_id: "execution",
+            category_id: category,
             status,
             urgency: null,
             progress,
@@ -191,7 +214,7 @@ export class FakeProjectAssistantProvider
             review_fields: reviewFields,
           };
         }),
-        warnings: ["虚构 Provider 未推断无依据工时"],
+        warnings: ["MOCK_AI：结果仅用于流程测试；未从输入推断出的字段保持待确认"],
         unresolved_record_ids: [],
       });
     } else if (request.purpose === "probe") {

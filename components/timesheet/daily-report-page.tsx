@@ -43,6 +43,7 @@ type WorkLog = {
   hoursHint: number | null;
   statusHint: string | null;
   includedInDraft: boolean;
+  consumptionStatus: "unprocessed" | "included" | "submitted";
 };
 
 type Confidence = {
@@ -84,6 +85,11 @@ type DraftTask = {
   >;
   sourceRecordIds: string[];
   sortOrder?: number;
+  submissionStatus: "draft" | "confirmed" | "syncing" | "submitted" | "failed" | "unknown" | "cancelled";
+  submittedAt: string | null;
+  externalReference: string | null;
+  externalUrl: string | null;
+  savedAt: string | null;
 };
 
 type Draft = {
@@ -96,7 +102,17 @@ type Draft = {
   unresolvedRecordIds: string[];
   confirmedAt: string | null;
   updatedAt: string;
+  aiProvider: string | null;
+  aiModel: string | null;
   tasks: DraftTask[];
+  submittedTasks: DraftTask[];
+  summary: {
+    pendingCount: number;
+    submittedCount: number;
+    pendingHours: number;
+    submittedHours: number;
+    cumulativeHours: number;
+  };
 };
 
 type SyncItem = {
@@ -104,6 +120,10 @@ type SyncItem = {
   idempotencyKey: string;
   status: string;
   attemptCount: number;
+  externalReference: string | null;
+  externalUrl: string | null;
+  verified: boolean;
+  savedAt: string | null;
   errorCode: string | null;
   errorMessage: string | null;
 };
@@ -132,9 +152,11 @@ type ExtensionMessage = {
 
 type ConfirmationState =
   | "idle"
+  | "validating"
   | "submitting"
   | "success"
   | "validation_error"
+  | "conflict_error"
   | "server_error";
 
 type WorkLogState = "idle" | "submitting" | "success" | "error";
@@ -145,8 +167,7 @@ type TaskField =
   | "regularHours"
   | "overtimeHours"
   | "category"
-  | "status"
-  | "review";
+  | "status";
 
 type ConfirmationIssue = {
   taskIndex: number;
@@ -221,16 +242,6 @@ function confirmationIssues(tasks: DraftTask[]): ConfirmationIssue[] {
         message: `${taskLabel}：请选择状态`,
       });
     }
-    if (
-      issues.length === 0 &&
-      (task.needsReview || task.reviewFields.length > 0)
-    ) {
-      issues.push({
-        taskIndex,
-        field: "review",
-        message: `${taskLabel}：请先点击“标记已审核”`,
-      });
-    }
     return issues;
   });
 }
@@ -285,9 +296,19 @@ function confidenceLabel(value: number): string {
 export function DailyReportPage({
   viewer,
   wecomSyncEnabled,
+  aiMode,
+  aiProvider,
+  aiProviderConfigured,
+  aiModelProfileId,
+  syncProvider,
 }: {
   viewer: ViewerContext;
   wecomSyncEnabled: boolean;
+  aiMode: "mock" | "real";
+  aiProvider: "fake" | "qwen";
+  aiProviderConfigured: boolean;
+  aiModelProfileId: string;
+  syncProvider: "mock_smartsheet" | "wecom_extension";
 }) {
   const reportDate = todayInShanghai();
   const organizations = useMemo(
@@ -363,7 +384,10 @@ export function DailyReportPage({
       setDirty(false);
       setConfirmationErrors([]);
       setConfirmationState(
-        draftPayload.draft?.status === "confirmed" ? "success" : "idle",
+        draftPayload.draft?.status === "confirmed" &&
+          (draftPayload.draft?.tasks.length ?? 0) > 0
+          ? "success"
+          : "idle",
       );
       setPhase("ready");
     } catch (error) {
@@ -380,7 +404,7 @@ export function DailyReportPage({
   }, [load]);
 
   useEffect(() => {
-    if (!wecomSyncEnabled) return;
+    if (!wecomSyncEnabled || syncProvider !== "wecom_extension") return;
     const receive = (event: MessageEvent) => {
       if (event.source !== window || event.origin !== window.location.origin) return;
       if (!event.data || typeof event.data !== "object") return;
@@ -413,7 +437,8 @@ export function DailyReportPage({
       const typeToStatus: Record<string, string> = {
         PROJECT_AI_SYNC_ACCEPTED: "validating",
         PROJECT_AI_SYNC_PROGRESS: message.status,
-        PROJECT_AI_SYNC_COMPLETED: "synced",
+        PROJECT_AI_SYNC_COMPLETED:
+          message.status === "partially_synced" ? "partially_synced" : "synced",
         PROJECT_AI_SYNC_FAILED: "failed",
         PROJECT_AI_SYNC_CANCELLED: "cancelled",
       };
@@ -450,7 +475,7 @@ export function DailyReportPage({
       window.location.origin,
     );
     return () => window.removeEventListener("message", receive);
-  }, [load, organizationId, wecomSyncEnabled]);
+  }, [load, organizationId, syncProvider, wecomSyncEnabled]);
 
   const run = async (operation: () => Promise<void>, success?: string) => {
     setPhase("working");
@@ -526,6 +551,11 @@ export function DailyReportPage({
   };
 
   const generate = async () => {
+    if (!aiProviderConfigured) {
+      setNotice("真实 AI Provider 尚未配置；随记功能仍可使用，也可显式切换到 Mock 测试模式。");
+      setNoticeTone("error");
+      return;
+    }
     if (records.length === 0) {
       setNotice("请先添加至少一条今日随记；系统不会调用模型生成空日报。");
       setNoticeTone("info");
@@ -541,7 +571,7 @@ export function DailyReportPage({
       setTasks(payload.draft.tasks);
       setDirty(false);
       await load();
-    }, "AI 工时草稿已生成，请逐项审核后确认");
+    }, `AI 工时草稿已生成（${aiMode === "real" ? "真实 AI" : "Mock AI"}），请整批核对后确认`);
   };
 
   const changeTask = (index: number, changes: Partial<DraftTask>) => {
@@ -555,24 +585,6 @@ export function DailyReportPage({
     setConfirmationErrors((current) =>
       current.filter((issue) => issue.taskIndex !== index),
     );
-  };
-
-  const markReviewed = (index: number) => {
-    const task = tasks[index];
-    const issues = confirmationIssues([
-      { ...task, needsReview: false, reviewFields: [] },
-    ]);
-    if (issues.length > 0) {
-      const normalized = issues.map((issue) => ({ ...issue, taskIndex: index }));
-      setConfirmationErrors(normalized);
-      setConfirmationState("validation_error");
-      setNotice(normalized.map((issue) => issue.message).join("；"));
-      setNoticeTone("error");
-      return;
-    }
-    changeTask(index, { needsReview: false, reviewFields: [] });
-    setNotice(`任务 ${index + 1} 已标记为人工审核`);
-    setNoticeTone("success");
   };
 
   const saveDraft = async (): Promise<Draft | null> => {
@@ -608,12 +620,21 @@ export function DailyReportPage({
 
   const confirmDraft = async () => {
     if (!draft || confirmationInFlight.current) return;
+    setConfirmationState("validating");
     const issues = confirmationIssues(tasks);
     if (issues.length > 0) {
       setConfirmationErrors(issues);
       setConfirmationState("validation_error");
-      setNotice("请修正下方必填字段后再确认工时");
+      setNotice("请修正下方必填字段后再确认本次工时");
       setNoticeTone("error");
+      window.requestAnimationFrame(() => {
+        const first = issues[0];
+        const target = document.querySelector<HTMLElement>(
+          `[data-task-index="${first.taskIndex}"][data-task-field="${first.field}"]`,
+        );
+        target?.scrollIntoView({ behavior: "smooth", block: "center" });
+        target?.focus({ preventScroll: true });
+      });
       return;
     }
     confirmationInFlight.current = true;
@@ -632,12 +653,15 @@ export function DailyReportPage({
       setTasks(payload.draft.tasks);
       setDirty(false);
       setConfirmationState("success");
-      setNotice("工时已由你人工确认，可以复制或下载确认版 JSON");
+      setNotice("本次工时已整批确认；确认不会自动发起同步");
       setNoticeTone("success");
     } catch (error) {
-      const state = error instanceof TimesheetApiError && error.status === 422
-        ? "validation_error"
-        : "server_error";
+      const state =
+        error instanceof TimesheetApiError && error.status === 422
+          ? "validation_error"
+          : error instanceof TimesheetApiError && error.status === 409
+            ? "conflict_error"
+            : "server_error";
       setConfirmationState(state);
       setNotice(confirmationServerMessage(error));
       setNoticeTone("error");
@@ -795,7 +819,11 @@ export function DailyReportPage({
   };
 
   const openWecomBoard = () => {
-    if (!wecomSyncEnabled || !extension.connected) return;
+    if (
+      !wecomSyncEnabled ||
+      syncProvider !== "wecom_extension" ||
+      !extension.connected
+    ) return;
     window.postMessage(
       {
         source: "project-ai",
@@ -809,7 +837,12 @@ export function DailyReportPage({
   };
 
   const startSync = async () => {
-    if (!wecomSyncEnabled || !draft?.confirmedAt || dirty || !extension.connected) return;
+    if (
+      !wecomSyncEnabled ||
+      !draft?.confirmedAt ||
+      dirty ||
+      (syncProvider === "wecom_extension" && !extension.connected)
+    ) return;
     await run(async () => {
       const response = await timesheetMutation<{
         batch: SyncBatch;
@@ -822,21 +855,37 @@ export function DailyReportPage({
         dryRun,
       });
       setActiveBatch(response.batch);
-      window.postMessage(
-        {
-          source: "project-ai",
-          type: "PROJECT_AI_SYNC_TIMESHEET",
-          version: TIMESHEET_SYNC_PROTOCOL_VERSION,
-          requestId: response.payload.request_id,
-          payload: response.payload,
-        },
-        window.location.origin,
-      );
-    }, dryRun ? "Dry Run 批次已发送到扩展" : "同步批次已发送到扩展");
+      if (syncProvider === "mock_smartsheet") {
+        const completed = await timesheetMutation<{ batch: SyncBatch }>(
+          `/api/timesheets/sync-batches/${encodeURIComponent(response.batch.syncBatchId)}/execute-mock`,
+          "POST",
+          { organizationId },
+        );
+        setActiveBatch(null);
+        setNotice(`Mock SmartSheet 批次已完成：${completed.batch.status}`);
+        setNoticeTone(completed.batch.status === "synced" ? "success" : "error");
+        await load();
+      } else {
+        window.postMessage(
+          {
+            source: "project-ai",
+            type: "PROJECT_AI_SYNC_TIMESHEET",
+            version: TIMESHEET_SYNC_PROTOCOL_VERSION,
+            requestId: response.payload.request_id,
+            payload: response.payload,
+          },
+          window.location.origin,
+        );
+      }
+    }, syncProvider === "mock_smartsheet"
+      ? undefined
+      : dryRun
+        ? "Dry Run 批次已发送到扩展"
+        : "同步批次已发送到扩展");
   };
 
   const controlSync = (action: "pause" | "resume" | "cancel") => {
-    if (!wecomSyncEnabled || !activeBatch) return;
+    if (!wecomSyncEnabled || !activeBatch || syncProvider !== "wecom_extension") return;
     window.postMessage(
       {
         source: "project-ai",
@@ -850,13 +899,71 @@ export function DailyReportPage({
     );
   };
 
+  const reconcileUnknown = async (
+    batch: SyncBatch,
+    taskId: string,
+    resolution: "saved" | "failed",
+  ) => {
+    if (syncProvider !== "mock_smartsheet") return;
+    await run(async () => {
+      const items = batch.items.map((item) => {
+        if (item.taskId !== taskId) {
+          return {
+            taskId: item.taskId,
+            status: item.status,
+            attemptCount: item.attemptCount,
+            externalReference: item.externalReference,
+            externalUrl: item.externalUrl,
+            verified: item.verified,
+            errorCode: item.errorCode,
+            errorMessage: item.errorMessage,
+          };
+        }
+        return resolution === "saved"
+          ? {
+              taskId,
+              status: "saved",
+              attemptCount: item.attemptCount,
+              externalReference: "manual-reconciliation",
+              externalUrl: null,
+              verified: true,
+              errorCode: null,
+              errorMessage: null,
+            }
+          : {
+              taskId,
+              status: "failed",
+              attemptCount: item.attemptCount,
+              externalReference: null,
+              externalUrl: null,
+              verified: false,
+              errorCode: "MANUAL_RECONCILIATION_NOT_SAVED",
+              errorMessage: "用户人工核对后确认未保存",
+            };
+      });
+      const statuses = items.map((item) => item.status);
+      const status = statuses.every((value) => value === "saved")
+        ? "synced"
+        : statuses.every((value) => value === "failed")
+          ? "failed"
+          : statuses.every((value) => value === "cancelled")
+            ? "cancelled"
+            : "partially_synced";
+      await timesheetMutation(
+        `/api/timesheets/sync-batches/${encodeURIComponent(batch.syncBatchId)}`,
+        "PATCH",
+        { organizationId, status, items },
+      );
+      await load();
+    }, resolution === "saved" ? "未知项已人工核对为已保存" : "未知项已人工核对为未保存");
+  };
+
   const totalHours = tasks.reduce(
     (sum, task) => sum + (task.regularHours ?? 0) + (task.overtimeHours ?? 0),
     0,
   );
-  const pendingReview = tasks.filter(
-    (task) => task.needsReview || task.reviewFields.length > 0,
-  ).length;
+  const hasFailedTasks = tasks.some((task) => task.submissionStatus === "failed");
+  const hasUnknownTasks = tasks.some((task) => task.submissionStatus === "unknown");
   const currentSyncItem = activeBatch?.items.find((item) =>
     ["validating", "waiting_for_login", "running", "unknown"].includes(
       item.status,
@@ -885,11 +992,11 @@ export function DailyReportPage({
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="flex items-center gap-1.5 text-xs font-medium text-primary">
-            <Bot className="size-3.5" /> 随手记录 → AI 草稿 → 人工确认 → 扩展同步
+            <Bot className="size-3.5" /> 随手记录 → AI 草稿 → 整批确认 → 独立同步
           </p>
           <h1 className="mt-1 text-2xl font-semibold">工作日报</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {reportDate} · AI 不会自动确认工时，扩展不会点击企业微信最终提交。
+            {reportDate} · 确认只锁定本批工时，不会自动同步或点击企业微信最终提交。
           </p>
         </div>
         {organizations.length > 1 ? (
@@ -1019,12 +1126,24 @@ export function DailyReportPage({
                       <span>{new Date(record.recordedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}</span>
                       <span>{record.source}</span>
                       <span>{projects.find((project) => project.id === record.projectId)?.name ?? "待匹配项目"}</span>
-                      {record.includedInDraft ? <span className="rounded-full bg-success-soft px-2 py-0.5 text-success">已纳入草稿</span> : null}
+                      <span className={`rounded-full px-2 py-0.5 ${
+                        record.consumptionStatus === "submitted"
+                          ? "bg-muted text-muted-foreground"
+                          : record.consumptionStatus === "included"
+                            ? "bg-success-soft text-success"
+                            : "bg-info-soft text-info"
+                      }`}>
+                        {record.consumptionStatus === "submitted"
+                          ? "已提交"
+                          : record.consumptionStatus === "included"
+                            ? "已纳入本次"
+                            : "未整理"}
+                      </span>
                     </div>
                     <p className="mt-1 text-sm leading-6">{record.rawText}</p>
                   </div>
-                  <button onClick={() => setEditingRecord(record)} className="rounded-lg border border-border px-3 py-1.5 text-xs">编辑</button>
-                  <button onClick={() => void removeRecord(record)} className="rounded-lg border border-danger/20 p-2 text-danger" aria-label="删除随记"><Trash2 className="size-3.5" /></button>
+                  <button disabled={record.consumptionStatus === "submitted"} onClick={() => setEditingRecord(record)} className="rounded-lg border border-border px-3 py-1.5 text-xs disabled:opacity-40">编辑</button>
+                  <button disabled={record.consumptionStatus === "submitted"} onClick={() => void removeRecord(record)} className="rounded-lg border border-danger/20 p-2 text-danger disabled:opacity-40" aria-label="删除随记"><Trash2 className="size-3.5" /></button>
                 </>
               )}
             </article>
@@ -1036,11 +1155,24 @@ export function DailyReportPage({
       <section className="rounded-xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold">AI 整理今日工时</h2>
-            <p className="mt-1 text-xs text-muted-foreground">只使用当前组织、当前用户和已授权项目；会议来源当前为空数组。</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">AI 整理今日工时</h2>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${aiMode === "real" ? "bg-success-soft text-success" : "bg-warning-soft text-warning"}`} data-testid="ai-mode">
+                {aiMode === "real"
+                  ? aiProviderConfigured
+                    ? "真实 AI 人工 UAT"
+                    : "真实 AI 未配置"
+                  : "Mock AI 流程测试"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              服务端 Provider：{aiProvider} · Profile：{aiModelProfileId}。只使用当前用户未提交的随记和已授权项目。
+            </p>
+            {aiMode === "mock" ? <p className="mt-1 text-xs text-warning">当前使用 Mock AI，仅用于功能测试，不代表真实 AI 输出质量。</p> : null}
+            {aiMode === "real" && !aiProviderConfigured ? <p className="mt-1 text-xs text-danger">真实 AI Provider 尚未配置；日报随记仍可使用，AI 整理暂不可用。</p> : null}
           </div>
           <button
-            disabled={!records.length || phase === "working"}
+            disabled={!aiProviderConfigured || !records.some((record) => record.consumptionStatus !== "submitted") || phase === "working"}
             onClick={() => void generate()}
             data-testid="ai-generate"
             data-state={phase === "working" ? "submitting" : "idle"}
@@ -1059,8 +1191,9 @@ export function DailyReportPage({
         <section className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold">工时审核</h2>
-              <p className="text-xs text-muted-foreground" data-testid="draft-status">Draft v{draft.version} · {effectiveDraftStatus} · {pendingReview} 条待审核</p>
+              <h2 className="text-lg font-semibold">本次待提交</h2>
+              <p className="text-xs text-muted-foreground" data-testid="draft-status">Draft v{draft.version} · {effectiveDraftStatus} · {tasks.length} 条待处理</p>
+              <p className="mt-1 text-[10px] text-muted-foreground">本次生成：{draft.aiProvider ?? "未记录"} / {draft.aiModel ?? "未记录"}；低置信度只提示，不增加逐条审核门禁。</p>
             </div>
             <button onClick={mergeTasks} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs"><RefreshCw className="size-3.5" />合并所选</button>
           </div>
@@ -1068,7 +1201,7 @@ export function DailyReportPage({
             <div key={warning} className="flex items-start gap-2 rounded-lg border border-warning/25 bg-warning-soft px-4 py-3 text-xs text-warning"><AlertTriangle className="mt-0.5 size-3.5" />{warning}</div>
           ))}
           {tasks.map((task, index) => (
-            <article key={task.id ?? `new-${index}`} className="rounded-xl border border-border bg-card p-5">
+            <article key={task.id ?? `new-${index}`} className="rounded-xl border border-border bg-card p-5" data-task-status={task.submissionStatus}>
               <div className="mb-4 flex items-center justify-between gap-3">
                 <label className="flex items-center gap-2 text-xs text-muted-foreground">
                   <input
@@ -1077,42 +1210,42 @@ export function DailyReportPage({
                     checked={Boolean(task.id && selectedTaskIds.includes(task.id))}
                     onChange={(event) => task.id && setSelectedTaskIds((current) => event.target.checked ? [...current, task.id!] : current.filter((id) => id !== task.id))}
                   />
-                  任务 {index + 1}
+                  任务 {index + 1} · {task.submissionStatus}
                 </label>
                 <div className="flex gap-2">
-                  <button onClick={() => splitTask(index)} className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px]"><Scissors className="size-3" />拆分</button>
-                  <button onClick={() => { setTasks((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }} className="rounded-lg border border-danger/20 p-1.5 text-danger" aria-label="删除任务"><Trash2 className="size-3.5" /></button>
+                  <button disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} onClick={() => splitTask(index)} className="inline-flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-[11px] disabled:opacity-40"><Scissors className="size-3" />拆分</button>
+                  <button disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} onClick={() => { setTasks((current) => current.filter((_, itemIndex) => itemIndex !== index)); setDirty(true); }} className="rounded-lg border border-danger/20 p-1.5 text-danger disabled:opacity-40" aria-label="删除任务"><Trash2 className="size-3.5" /></button>
                 </div>
               </div>
               <div className="grid gap-3 lg:grid-cols-6">
                 <label className="lg:col-span-2">
                   <span className="mb-1 block text-[10px] text-muted-foreground">任务详情（必填） · {confidenceLabel(task.confidence.description)}</span>
-                  <textarea aria-invalid={Boolean(taskError(index, "description"))} aria-describedby={taskError(index, "description") ? `task-${index}-description-error` : undefined} value={task.description} onChange={(event) => changeTask(index, { description: event.target.value, needsReview: true })} rows={2} className="w-full rounded-lg border border-input px-3 py-2 text-xs" />
+                  <textarea data-task-index={index} data-task-field="description" disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} aria-invalid={Boolean(taskError(index, "description"))} aria-describedby={taskError(index, "description") ? `task-${index}-description-error` : undefined} value={task.description} onChange={(event) => changeTask(index, { description: event.target.value })} rows={2} className="w-full rounded-lg border border-input px-3 py-2 text-xs disabled:bg-muted" />
                   {taskError(index, "description") ? <span id={`task-${index}-description-error`} className="mt-1 block text-[10px] text-danger">{taskError(index, "description")?.message}</span> : null}
                 </label>
                 <label>
                   <span className="mb-1 block text-[10px] text-muted-foreground">项目（必填） · {confidenceLabel(task.confidence.project)}</span>
-                  <select aria-invalid={Boolean(taskError(index, "project"))} value={task.projectId ?? ""} onChange={(event) => changeTask(index, { projectId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
+                  <select data-task-index={index} data-task-field="project" disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} aria-invalid={Boolean(taskError(index, "project"))} value={task.projectId ?? ""} onChange={(event) => changeTask(index, { projectId: event.target.value || null })} className="h-10 w-full rounded-lg border border-input px-2 text-xs disabled:bg-muted"><option value="">待确认</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select>
                   {taskError(index, "project") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "project")?.message}</span> : null}
                 </label>
                 <label>
                   <span className="mb-1 block text-[10px] text-muted-foreground">正常工时（必填） · {confidenceLabel(task.confidence.hours)}</span>
-                  <input aria-invalid={Boolean(taskError(index, "regularHours"))} type="number" min="0" max="24" step="0.25" value={task.regularHours ?? ""} onChange={(event) => { const value = event.target.value ? Number(event.target.value) : null; changeTask(index, { hours: value, regularHours: value, needsReview: true }); }} className="h-10 w-full rounded-lg border border-input px-3 text-xs" />
+                  <input data-task-index={index} data-task-field="regularHours" disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} aria-invalid={Boolean(taskError(index, "regularHours"))} type="number" min="0" max="24" step="0.25" value={task.regularHours ?? ""} onChange={(event) => { const value = event.target.value ? Number(event.target.value) : null; changeTask(index, { hours: value, regularHours: value }); }} className="h-10 w-full rounded-lg border border-input px-3 text-xs disabled:bg-muted" />
                   {taskError(index, "regularHours") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "regularHours")?.message}</span> : null}
                 </label>
                 <label>
                   <span className="mb-1 block text-[10px] text-muted-foreground">加班工时（必填，无加班填 0） · {confidenceLabel(task.confidence.overtimeHours ?? 0)}</span>
-                  <input aria-invalid={Boolean(taskError(index, "overtimeHours"))} type="number" min="0" max="24" step="0.25" value={task.overtimeHours ?? ""} onChange={(event) => changeTask(index, { overtimeHours: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" />
+                  <input data-task-index={index} data-task-field="overtimeHours" disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} aria-invalid={Boolean(taskError(index, "overtimeHours"))} type="number" min="0" max="24" step="0.25" value={task.overtimeHours ?? ""} onChange={(event) => changeTask(index, { overtimeHours: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null })} className="h-10 w-full rounded-lg border border-input px-3 text-xs disabled:bg-muted" />
                   {taskError(index, "overtimeHours") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "overtimeHours")?.message}</span> : null}
                 </label>
                 <label>
                   <span className="mb-1 block text-[10px] text-muted-foreground">分类（必填） · {confidenceLabel(task.confidence.category)}</span>
-                  <select aria-invalid={Boolean(taskError(index, "category"))} value={task.categoryId ?? ""} onChange={(event) => changeTask(index, { categoryId: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+                  <select data-task-index={index} data-task-field="category" disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} aria-invalid={Boolean(taskError(index, "category"))} value={task.categoryId ?? ""} onChange={(event) => changeTask(index, { categoryId: event.target.value || null })} className="h-10 w-full rounded-lg border border-input px-2 text-xs disabled:bg-muted"><option value="">待确认</option>{TIMESHEET_CATEGORIES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
                   {taskError(index, "category") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "category")?.message}</span> : null}
                 </label>
                 <label>
                   <span className="mb-1 block text-[10px] text-muted-foreground">状态（必填） · {confidenceLabel(task.confidence.status)}</span>
-                  <select aria-invalid={Boolean(taskError(index, "status"))} value={task.workStatus ?? ""} onChange={(event) => changeTask(index, { workStatus: event.target.value || null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-2 text-xs"><option value="">待确认</option>{TIMESHEET_STATUSES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
+                  <select data-task-index={index} data-task-field="status" disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} aria-invalid={Boolean(taskError(index, "status"))} value={task.workStatus ?? ""} onChange={(event) => changeTask(index, { workStatus: event.target.value || null })} className="h-10 w-full rounded-lg border border-input px-2 text-xs disabled:bg-muted"><option value="">待确认</option>{TIMESHEET_STATUSES.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select>
                   {taskError(index, "status") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "status")?.message}</span> : null}
                 </label>
                 <label>
@@ -1121,13 +1254,9 @@ export function DailyReportPage({
                 </label>
                 <label>
                   <span className="mb-1 block text-[10px] text-muted-foreground">任务进度（可选） · {confidenceLabel(task.confidence.progress ?? 0)}</span>
-                  <input type="number" min="0" max="100" step="1" value={task.progress ?? ""} onChange={(event) => changeTask(index, { progress: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null, needsReview: true })} className="h-10 w-full rounded-lg border border-input px-3 text-xs" />
+                  <input disabled={["syncing", "failed", "unknown"].includes(task.submissionStatus)} type="number" min="0" max="100" step="1" value={task.progress ?? ""} onChange={(event) => changeTask(index, { progress: event.target.value ? Number(event.target.value) : event.target.value === "0" ? 0 : null })} className="h-10 w-full rounded-lg border border-input px-3 text-xs disabled:bg-muted" />
                 </label>
-                <div className="lg:col-span-5"><p className="text-[10px] text-muted-foreground">来源记录：{task.sourceRecordIds.map((id) => records.find((record) => record.id === id)?.rawText ?? id).join("；")}</p>{task.reviewFields.length ? <p className="mt-1 text-[10px] text-warning">需确认：{task.reviewFields.join("、")}</p> : null}</div>
-                <div>
-                  <button onClick={() => markReviewed(index)} className="inline-flex h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-success/30 text-xs text-success"><Check className="size-3.5" />{task.needsReview ? "标记已审核" : "已人工审核"}</button>
-                  {taskError(index, "review") ? <span className="mt-1 block text-[10px] text-danger">{taskError(index, "review")?.message}</span> : null}
-                </div>
+                <div className="lg:col-span-6"><p className="text-[10px] text-muted-foreground">来源记录：{task.sourceRecordIds.map((id) => records.find((record) => record.id === id)?.rawText ?? id).join("；")}</p>{task.reviewFields.length ? <p className="mt-1 text-[10px] text-warning">低置信度提示（不阻塞整批确认）：{task.reviewFields.join("、")}</p> : null}</div>
               </div>
             </article>
           ))}
@@ -1135,19 +1264,21 @@ export function DailyReportPage({
       ) : null}
 
       {draft ? (
-        <section className="rounded-xl border border-border bg-card p-5">
+        <section className="rounded-xl border border-border bg-card p-5" data-testid="daily-summary">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="text-xs text-muted-foreground">今日总工时</p>
-              <p className="text-2xl font-semibold">{totalHours.toFixed(2)} h</p>
+              <p className="text-xs font-medium text-muted-foreground">今日汇总</p>
+              <p className="text-2xl font-semibold">待提交 {totalHours.toFixed(2)} h</p>
+              <p className="mt-1 text-xs text-muted-foreground">已提交 {(draft.summary?.submittedHours ?? 0).toFixed(2)} h · 今日累计 {(draft.summary?.cumulativeHours ?? totalHours).toFixed(2)} h</p>
               {totalHours > 16 ? <p className="text-xs text-warning">总工时异常偏高，请人工确认；系统不会自动修正。</p> : null}
               <p className="mt-2 text-xs text-muted-foreground">必填：任务详情、项目、正常工时、加班工时、分类、状态；可选：紧急重要度、任务进度。</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <button disabled={!dirty || phase === "working"} onClick={() => void run(async () => { await saveDraft(); }, "草稿已保存，仍需人工确认")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Save className="size-3.5" />保存草稿</button>
-              <button disabled={tasks.length === 0 || confirmationState === "submitting" || phase === "loading" || phase === "working" || (draft.status === "confirmed" && !dirty)} onClick={() => void confirmDraft()} className="inline-flex items-center gap-1.5 rounded-lg bg-success px-3 py-2 text-xs font-medium text-white disabled:opacity-40">
+              {draft.status === "confirmed" && !dirty && tasks.length > 0 ? <button onClick={() => { setDirty(true); setConfirmationState("idle"); setNotice("已进入本次工时修改状态；修改后需要重新整批确认"); setNoticeTone("info"); }} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs"><RefreshCw className="size-3.5" />修改本次工时</button> : null}
+              <button disabled={!dirty || phase === "working"} onClick={() => void run(async () => { await saveDraft(); }, "本次草稿修改已保存，仍需整批确认")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Save className="size-3.5" />保存修改</button>
+              <button disabled={tasks.length === 0 || confirmationState === "validating" || confirmationState === "submitting" || phase === "loading" || phase === "working" || (draft.status === "confirmed" && !dirty) || tasks.some((task) => ["syncing", "failed", "unknown"].includes(task.submissionStatus))} onClick={() => void confirmDraft()} className="inline-flex items-center gap-1.5 rounded-lg bg-success px-3 py-2 text-xs font-medium text-white disabled:opacity-40">
                 {confirmationState === "submitting" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-                {confirmationState === "submitting" ? "正在确认…" : draft.status === "confirmed" && !dirty ? "已确认工时" : "确认工时"}
+                {confirmationState === "validating" ? "正在校验…" : confirmationState === "submitting" ? "正在确认…" : draft.status === "confirmed" && !dirty ? "本次工时已确认" : "确认本次工时"}
               </button>
               <button disabled={!draft.confirmedAt || dirty || phase === "working"} onClick={() => void copyJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Clipboard className="size-3.5" />复制 JSON</button>
               <button disabled={!draft.confirmedAt || dirty || phase === "working"} onClick={() => void downloadJson()} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载 JSON</button>
@@ -1156,14 +1287,16 @@ export function DailyReportPage({
           <div className={`mt-4 rounded-lg border px-3 py-2 text-xs ${
             confirmationState === "success"
               ? "border-success/20 bg-success-soft text-success"
-              : confirmationState === "validation_error" || confirmationState === "server_error"
+              : confirmationState === "validation_error" || confirmationState === "conflict_error" || confirmationState === "server_error"
                 ? "border-danger/20 bg-danger-soft text-danger"
                 : "border-border bg-muted/30 text-muted-foreground"
           }`} data-testid="confirmation-state" data-state={confirmationState} aria-live="polite">
             {confirmationState === "idle" ? "确认状态：待操作" : null}
+            {confirmationState === "validating" ? "确认状态：正在校验整批必填字段" : null}
             {confirmationState === "submitting" ? "确认状态：正在保存并提交，请勿重复点击" : null}
-            {confirmationState === "success" ? "确认状态：成功，服务端已保存 confirmed 状态" : null}
-            {confirmationState === "validation_error" ? "确认状态：字段校验未通过，日报尚未确认" : null}
+            {confirmationState === "success" ? "确认状态：本批工时已确认；尚未发起同步" : null}
+            {confirmationState === "validation_error" ? "确认状态：整批字段校验未通过，本次工时尚未确认" : null}
+            {confirmationState === "conflict_error" ? "确认状态：版本冲突，请刷新后重新核对" : null}
             {confirmationState === "server_error" ? "确认状态：服务端确认失败，日报尚未确认，可修正后重试" : null}
           </div>
           {confirmationErrors.length > 0 ? (
@@ -1177,12 +1310,45 @@ export function DailyReportPage({
         </section>
       ) : null}
 
+      {draft?.submittedTasks?.length ? (
+        <section className="rounded-xl border border-border bg-card" data-testid="submitted-tasks">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold">今日已提交</h2>
+            <p className="mt-1 text-xs text-muted-foreground">只读历史；不会再次进入 AI 输入、活动草稿或后续同步批次。</p>
+          </div>
+          <div className="divide-y divide-border">
+            {draft.submittedTasks.map((task) => (
+              <article key={task.id} className="grid gap-2 px-5 py-4 text-xs md:grid-cols-[1fr_auto]">
+                <div>
+                  <p className="font-medium">{task.description}</p>
+                  <p className="mt-1 text-muted-foreground">{task.projectName} · 正常 {task.regularHours ?? 0} h · 加班 {task.overtimeHours ?? 0} h · {task.categoryName} · {task.workStatusName}</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {syncProvider === "mock_smartsheet"
+                      ? "已提交至 Mock SmartSheet。该记录仅用于本地生命周期验收。"
+                      : "已提交至腾讯文档。如需修改，请前往腾讯文档。"}
+                  </p>
+                  <p className="mt-1 font-mono text-[10px] text-muted-foreground">外部引用：{task.externalReference ?? "已验证但无公开引用"}</p>
+                </div>
+                <div className="text-right text-[10px] text-muted-foreground">
+                  <p>{task.submittedAt ? new Date(task.submittedAt).toLocaleString("zh-CN") : "提交时间未记录"}</p>
+                  {task.externalUrl ? <a href={task.externalUrl} target="_blank" rel="noreferrer" className="text-primary underline">{syncProvider === "mock_smartsheet" ? "查看 Mock 记录" : "前往腾讯文档"}</a> : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="rounded-xl border border-border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <h2 className="text-sm font-semibold">企业微信同步中心</h2>
+            <h2 className="text-sm font-semibold">腾讯文档同步中心</h2>
             <p className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-              {extension.connected ? <><Check className="size-3 text-success" />扩展已连接 {extension.version ? `v${extension.version}` : ""}</> : <><Unplug className="size-3" />扩展未安装或未连接</>}
+              {syncProvider === "mock_smartsheet"
+                ? <><Check className="size-3 text-success" />Mock SmartSheet Provider（仅本地流程测试，不代表真实企业微信）</>
+                : extension.connected
+                  ? <><Check className="size-3 text-success" />企业微信扩展已连接 {extension.version ? `v${extension.version}` : ""}</>
+                  : <><Unplug className="size-3" />企业微信扩展未安装或未连接</>}
             </p>
           </div>
           <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={dryRun} onChange={(event) => setDryRun(event.target.checked)} />Dry Run（不点击单条保存）</label>
@@ -1190,18 +1356,35 @@ export function DailyReportPage({
         <div className="space-y-4 p-5">
           {!wecomSyncEnabled ? <div className="flex items-center gap-2 rounded-lg border border-warning/25 bg-warning-soft p-3 text-xs text-warning"><CloudOff className="size-4" />企业微信同步 Feature Flag 当前关闭。</div> : null}
           <div className="flex flex-wrap gap-2">
-            <button disabled={!wecomSyncEnabled || !extension.connected || !draft?.confirmedAt || dirty || Boolean(activeBatch)} onClick={() => void startSync()} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs text-white disabled:opacity-40"><Send className="size-3.5" />同步到企业微信</button>
-            <button disabled={!wecomSyncEnabled || !extension.connected} onClick={openWecomBoard} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40">打开企业微信任务看板</button>
-            <button disabled={!wecomSyncEnabled || !activeBatch} onClick={() => controlSync("pause")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Pause className="size-3.5" />暂停</button>
-            <button disabled={!wecomSyncEnabled || !activeBatch} onClick={() => controlSync("resume")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Play className="size-3.5" />继续</button>
-            <button disabled={!wecomSyncEnabled || !activeBatch} onClick={() => controlSync("cancel")} className="inline-flex items-center gap-1.5 rounded-lg border border-danger/20 px-3 py-2 text-xs text-danger disabled:opacity-40"><Square className="size-3.5" />取消</button>
+            <button disabled={!wecomSyncEnabled || phase === "working" || (syncProvider === "wecom_extension" && !extension.connected) || !draft?.confirmedAt || dirty || Boolean(activeBatch) || tasks.length === 0 || (hasUnknownTasks && !hasFailedTasks)} onClick={() => void startSync()} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs text-white disabled:opacity-40">
+              {phase === "working" ? <LoaderCircle className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+              {phase === "working"
+                ? "正在同步…"
+                : tasks.length === 0 && draft?.status === "synced"
+                  ? "本次工时已提交"
+                  : hasFailedTasks
+                    ? "重试失败项"
+                    : "同步到腾讯文档"}
+            </button>
+            <button disabled={!wecomSyncEnabled || syncProvider !== "wecom_extension" || !extension.connected} onClick={openWecomBoard} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40">打开企业微信任务看板</button>
+            <button disabled={!wecomSyncEnabled || syncProvider !== "wecom_extension" || !activeBatch} onClick={() => controlSync("pause")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Pause className="size-3.5" />暂停</button>
+            <button disabled={!wecomSyncEnabled || syncProvider !== "wecom_extension" || !activeBatch} onClick={() => controlSync("resume")} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Play className="size-3.5" />恢复</button>
+            <button disabled={!wecomSyncEnabled || syncProvider !== "wecom_extension" || !activeBatch} onClick={() => controlSync("cancel")} className="inline-flex items-center gap-1.5 rounded-lg border border-danger/20 px-3 py-2 text-xs text-danger disabled:opacity-40"><Square className="size-3.5" />取消</button>
             <button disabled={!wecomSyncEnabled || (!activeBatch && batches.length === 0)} onClick={downloadSyncResult} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"><Download className="size-3.5" />下载同步结果</button>
           </div>
           {activeBatch ? <div className="rounded-lg border border-border bg-muted/30 p-3 text-xs"><p>批次 {activeBatch.syncBatchId} · {activeBatch.status} · {activeBatch.dryRun ? "Dry Run" : "实际逐条保存"}</p><p className="mt-1 text-muted-foreground">当前任务：{currentSyncTask?.description ?? currentSyncItem?.taskId ?? "等待调度"}</p><p className="mt-1 text-muted-foreground">总数 {activeBatch.items.length} / 成功 {activeBatch.items.filter((item) => item.status === "saved").length} / 失败 {activeBatch.items.filter((item) => item.status === "failed").length} / 未知 {activeBatch.items.filter((item) => item.status === "unknown").length}</p></div> : null}
           <div>
             <h3 className="text-xs font-semibold">同步历史</h3>
             <div className="mt-2 divide-y divide-border rounded-lg border border-border">
-              {batches.map((batch) => <div key={batch.syncBatchId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs"><span>{new Date(batch.createdAt).toLocaleString("zh-CN")} · {batch.dryRun ? "Dry Run" : "保存"}</span><span className="font-mono text-[10px] text-muted-foreground">{batch.status} · {batch.items.filter((item) => item.status === "saved").length}/{batch.items.length}</span></div>)}
+              {batches.map((batch) => <div key={batch.syncBatchId} className="px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2"><span>{new Date(batch.createdAt).toLocaleString("zh-CN")} · {batch.dryRun ? "Dry Run" : "保存"}</span><span className="font-mono text-[10px] text-muted-foreground">{batch.status} · {batch.items.filter((item) => item.status === "saved").length}/{batch.items.length}</span></div>
+                {batch.items.some((item) => item.status === "unknown") ? <div className="mt-2 space-y-2 rounded-lg border border-warning/25 bg-warning-soft p-2 text-warning">
+                  {batch.items.filter((item) => item.status === "unknown").map((item) => <div key={item.taskId} className="flex flex-wrap items-center justify-between gap-2">
+                    <span>任务 {item.taskId} 保存结果未知，禁止自动重试</span>
+                    {syncProvider === "mock_smartsheet" ? <span className="flex gap-2"><button onClick={() => void reconcileUnknown(batch, item.taskId, "saved")} className="rounded border border-warning/40 px-2 py-1">人工确认已保存</button><button onClick={() => void reconcileUnknown(batch, item.taskId, "failed")} className="rounded border border-warning/40 px-2 py-1">人工确认未保存</button></span> : <span>请在扩展弹窗中人工核对</span>}
+                  </div>)}
+                </div> : null}
+              </div>)}
               {!batches.length ? <p className="p-4 text-center text-xs text-muted-foreground">暂无同步历史。</p> : null}
             </div>
           </div>

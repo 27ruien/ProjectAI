@@ -127,6 +127,20 @@
       "when": 1784741557687,
       "tag": "0017_nosy_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1784787881163,
+      "tag": "0018_simple_sue_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1784789001476,
+      "tag": "0019_lame_dracula",
+      "breakpoints": true
     }
   ]
 }
