@@ -75,6 +75,10 @@ async function main() {
     ALLOW_UAT_SEED: "true",
     AUTH_LOCAL_ORIGIN: "http://127.0.0.1:3300",
     AUTH_COOKIE_PREFIX: "projectai_uat_local",
+    // A complete Local UAT run logs the same synthetic actors in repeatedly
+    // across independent suites. Keep rate limiting enabled while allowing the
+    // documented gate sequence to finish inside one minute.
+    AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100",
     AI_PROVIDER: "fake",
     AI_ASSISTANT_ENABLED: "true",
     AI_REGION: "cn-beijing",

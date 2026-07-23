@@ -51,8 +51,20 @@ test("UAT project ACL and restricted-user timesheet boundaries are enforced by A
   const records = await managerPage.request.get(appPath(`/api/timesheets/work-logs?${query}`));
   expect(records.status()).toBe(200);
   const recordsPayload = await records.json() as { records: Array<{ id: string }> };
-  expect(recordsPayload.records).toHaveLength(3);
-  const managerRecordId = recordsPayload.records[0].id;
+  expect(recordsPayload.records).toHaveLength(0);
+  const created = await managerPage.request.post(appPath("/api/timesheets/work-logs"), {
+    data: {
+      organizationId,
+      recordDate: todayInShanghai(),
+      recordedAt: new Date().toISOString(),
+      rawText: "[UAT] API ACL boundary record",
+      source: "manual",
+      projectId: authorizedProjectId,
+    },
+    headers: { origin: "http://127.0.0.1:3300" },
+  });
+  expect(created.status()).toBe(201);
+  const managerRecordId = (await created.json() as { record: { id: string } }).record.id;
 
   const restrictedPage = await browser.newPage();
   await loginByApi(restrictedPage, "uatRestricted");
@@ -67,6 +79,9 @@ test("UAT project ACL and restricted-user timesheet boundaries are enforced by A
   expect((await restrictedPage.request.delete(appPath(`/api/timesheets/work-logs/${managerRecordId}?organizationId=${organizationId}`), {
     headers: { origin: "http://127.0.0.1:3300" },
   })).status()).toBe(404);
+  expect((await managerPage.request.delete(appPath(`/api/timesheets/work-logs/${managerRecordId}?organizationId=${organizationId}`), {
+    headers: { origin: "http://127.0.0.1:3300" },
+  })).status()).toBe(200);
   await managerPage.close();
   await restrictedPage.close();
 });
@@ -82,7 +97,7 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
   const notes = page.locator("section").filter({ has: page.getByRole("heading", { name: "今日随记" }) });
   await notes.getByPlaceholder(/例如：/).fill(temporary);
   await notes.locator("select").first().selectOption(authorizedProjectId);
-  await notes.getByRole("button", { name: "保存", exact: true }).click();
+  await notes.getByRole("button", { name: "保存随记", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("随记已保存");
   const temporaryRow = notes.locator("article").filter({ hasText: temporary });
   await temporaryRow.getByRole("button", { name: "编辑" }).click();
@@ -93,6 +108,18 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
   page.once("dialog", (dialog) => dialog.accept());
   await editedRow.getByRole("button", { name: "删除随记" }).click();
   await expect(page.getByRole("status")).toContainText("随记已删除");
+
+  for (const note of [
+    "[UAT] 已完成虚构日报创建入口验收，1 小时，状态已完成。",
+    "[UAT] 正在进行虚构日报字段验收，约 30 分钟，状态进行中。",
+    "[UAT] 虚构日报持久化回归尚未开始。",
+  ]) {
+    await notes.getByPlaceholder(/例如：/).fill(note);
+    await notes.locator("select").first().selectOption(authorizedProjectId);
+    await notes.getByRole("button", { name: "保存随记", exact: true }).click();
+    await expect(notes.getByText(note, { exact: true })).toBeVisible();
+    await expect(page.getByTestId("work-log-state")).toHaveAttribute("data-state", "success");
+  }
 
   await page.getByRole("button", { name: "AI 整理今日工时" }).click();
   await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
@@ -127,7 +154,7 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
   await taskCards.nth(0).locator('input[type="checkbox"]').check();
   await taskCards.nth(differentStatusIndex).locator('input[type="checkbox"]').check();
   await page.getByRole("button", { name: "合并所选" }).click();
-  await expect(page.getByRole("status")).toContainText("只有项目、分类和状态完全一致的任务可以合并");
+  await expect(page.getByRole("alert")).toContainText("只有项目、分类和状态完全一致的任务可以合并");
   await taskCards.nth(0).locator('input[type="checkbox"]').uncheck();
   await taskCards.nth(differentStatusIndex).locator('input[type="checkbox"]').uncheck();
 
@@ -176,6 +203,7 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
   await firstCard.getByRole("spinbutton", { name: /^任务进度/ }).fill("99");
   await expect(page.getByRole("button", { name: "复制 JSON" })).toBeDisabled();
   await page.getByRole("button", { name: "保存草稿" }).click();
+  await expect(page.getByRole("status")).toContainText("草稿已保存");
   await expect(page.getByText(/Draft v\d+ · needs_review/)).toBeVisible();
 
   let current = await (await page.request.get(appPath(`/api/timesheets/drafts?organizationId=${organizationId}&date=${todayInShanghai()}`))).json() as {
@@ -191,7 +219,11 @@ test("UAT Project Manager completes work-log CRUD, AI review, confirmation, JSON
     },
     headers: { origin: "http://127.0.0.1:3300" },
   });
-  expect(unconfirmedSync.status()).toBe(422);
+  const unconfirmedSyncError = await unconfirmedSync.json() as { error?: { code?: string } };
+  expect({ status: unconfirmedSync.status(), code: unconfirmedSyncError.error?.code }).toEqual({
+    status: 422,
+    code: "TIMESHEET_NOT_CONFIRMED",
+  });
 
   await firstCard.getByRole("button", { name: "标记已审核" }).click();
   await page.getByRole("button", { name: "确认工时" }).click();

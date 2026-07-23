@@ -140,15 +140,6 @@ async function loadOrCreateCredentials(create: boolean): Promise<CredentialFile>
   return credentials;
 }
 
-function shanghaiDate(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-}
-
 async function seedUser(tx: DatabaseTransaction, key: AccountKey, credentials: CredentialFile): Promise<void> {
   const expected = credentials.accounts[key];
   const [byId] = await tx.select().from(user).where(eq(user.id, USER_IDS[key])).limit(1);
@@ -274,24 +265,6 @@ async function seed(credentials: CredentialFile): Promise<void> {
         .onConflictDoNothing({ target: [projectMember.projectId, projectMember.userId] });
     }
 
-    const reportDate = shanghaiDate();
-    const recordedAt = new Date();
-    for (const item of [
-      { id: `uat-worklog-completed-${reportDate}`, rawText: `${UAT_MARKER} 完成企业微信同步验收准备，耗时 1 小时，状态已完成。`, hoursHint: "1.00", statusHint: "completed" },
-      { id: `uat-worklog-progress-${reportDate}`, rawText: `${UAT_MARKER} 继续整理虚构日报字段，约 30 分钟，状态进行中。`, hoursHint: "0.50", statusHint: "in_progress" },
-      { id: `uat-worklog-unestimated-${reportDate}`, rawText: `${UAT_MARKER} 记录下一轮虚构验收备注，尚未估算工时，状态未开始。`, hoursHint: null, statusHint: "not_started" },
-    ]) {
-      await tx.insert(workLogRecord).values({
-        ...item,
-        organizationId: ORGANIZATION_ID,
-        userId: USER_IDS.manager,
-        recordDate: reportDate,
-        recordedAt,
-        source: "manual",
-        projectId: PROJECT_MAIN_ID,
-        projectHint: "ProjectAI WeCom UAT",
-      }).onConflictDoNothing({ target: workLogRecord.id });
-    }
   });
 }
 
@@ -310,17 +283,7 @@ async function verify(credentials: CredentialFile): Promise<void> {
     throw new Error("UAT_VERIFY_PROJECT_ISOLATION_FAILED");
   }
   const logs = await db.select().from(workLogRecord).where(and(eq(workLogRecord.organizationId, ORGANIZATION_ID), eq(workLogRecord.userId, USER_IDS.manager)));
-  const expectedLogIds = [
-    `uat-worklog-completed-${shanghaiDate()}`,
-    `uat-worklog-progress-${shanghaiDate()}`,
-    `uat-worklog-unestimated-${shanghaiDate()}`,
-  ];
-  if (
-    expectedLogIds.some((id) => !logs.some((item) => item.id === id)) ||
-    logs.some((item) => !item.rawText.startsWith(UAT_MARKER))
-  ) {
-    throw new Error("UAT_VERIFY_WORK_LOGS_FAILED");
-  }
+  if (logs.length !== 0) throw new Error("UAT_VERIFY_EMPTY_WORK_LOGS_FAILED");
   for (const key of Object.keys(USER_SPECS) as AccountKey[]) {
     const [credential] = await db.select({ hash: account.passwordHash }).from(account)
       .where(and(eq(account.userId, USER_IDS[key]), eq(account.providerId, "credential"))).limit(1);
@@ -330,7 +293,7 @@ async function verify(credentials: CredentialFile): Promise<void> {
   }
   const schemaVersion = await db.execute<{ id: number }>(sql`select id from drizzle.__drizzle_migrations order by id desc limit 1`);
   if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 18) throw new Error("UAT_MIGRATION_0017_REQUIRED");
-  process.stdout.write(`UAT verification passed: schema=0017; users=3; projects=2; seededWorkLogs=3; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
+  process.stdout.write(`UAT verification passed: schema=0017; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
 }
 
 async function cleanup(): Promise<void> {

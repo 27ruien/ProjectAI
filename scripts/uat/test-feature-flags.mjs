@@ -73,6 +73,7 @@ const baseEnvironment = {
   NEXT_PUBLIC_APP_ENV: "test",
   NEXT_PUBLIC_BASE_PATH: "/tool/projectai-uat",
   START_DOCUMENT_WORKER: "false",
+  AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100",
   AI_PROVIDER: "fake",
   AI_ASSISTANT_ENABLED: "true",
   AI_REGION: "cn-beijing",
