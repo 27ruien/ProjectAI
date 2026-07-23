@@ -123,7 +123,13 @@ export class FakeProjectAssistantProvider
       request.purpose === "timesheet_repair"
     ) {
       const input = taggedJsonValue(request.userPrompt, "timesheet_input_json") as {
-        today_records?: Array<{ id?: unknown; raw_text?: unknown; project_id?: unknown }>;
+        today_records?: Array<{
+          id?: unknown;
+          raw_text?: unknown;
+          project_id?: unknown;
+          hours_hint?: unknown;
+          status_hint?: unknown;
+        }>;
         available_projects?: Array<{ id?: unknown }>;
       } | null;
       const records = input?.today_records ?? [];
@@ -133,28 +139,56 @@ export class FakeProjectAssistantProvider
           : null;
       text = JSON.stringify({
         tasks: records.map((record, index) => {
+          const rawText = typeof record.raw_text === "string" ? record.raw_text : "";
           const projectId =
             typeof record.project_id === "string"
               ? record.project_id
               : fallbackProjectId;
+          const hintedStatus = typeof record.status_hint === "string" ? record.status_hint : "";
+          const status = ["completed", "in_progress", "blocked", "pending"].includes(hintedStatus)
+            ? hintedStatus
+            : /尚未开始|未开始|待开始/u.test(rawText)
+              ? "pending"
+              : /阻塞|blocked/iu.test(rawText)
+                ? "blocked"
+                : /已完成|完成了|全部完成/u.test(rawText) && !/尚未|未完成|进行中/u.test(rawText)
+                  ? "completed"
+                  : "in_progress";
+          const hours =
+            typeof record.hours_hint === "number" &&
+            Number.isFinite(record.hours_hint) &&
+            record.hours_hint >= 0 &&
+            record.hours_hint <= 24
+              ? record.hours_hint
+              : null;
+          const approximateHours = /约|大约|大概|左右|差不多/u.test(rawText);
+          const progress = status === "completed" ? 100 : status === "pending" ? 0 : null;
+          const reviewFields = ["overtimeHours"];
+          if (hours === null || approximateHours) reviewFields.push("hours");
           return {
-            description: `完成虚构项目工作记录整理并确认当前进展 ${index + 1}`,
+            description: `虚构项目工作记录 ${index + 1}`,
             project_id: projectId,
-            hours: null,
+            hours,
+            overtime_hours: null,
             category_id: "execution",
-            status: "in_progress",
+            status,
+            urgency: null,
+            progress,
             source_record_ids: [
               typeof record.id === "string" ? record.id : `record-missing-${index}`,
             ],
             confidence: {
               description: 0.94,
               project: projectId ? 0.95 : 0.4,
-              hours: 0.2,
+              hours: hours === null ? 0.2 : approximateHours ? 0.7 : 0.95,
+              overtimeHours: 0.2,
               category: 0.9,
-              status: 0.86,
+              status: 0.95,
+              urgency: 0.2,
+              progress: progress === null ? 0.2 : 0.95,
             },
             needs_review: true,
-            review_fields: ["hours"],
+            review_fields: reviewFields,
           };
         }),
         warnings: ["虚构 Provider 未推断无依据工时"],

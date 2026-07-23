@@ -332,8 +332,12 @@ function recordSupportsProgress(record: WorkLogRecord, progress: number): boolea
 }
 
 function recordContradictsCompletion(record: WorkLogRecord): boolean {
-  return /计划|准备|讨论中|对齐中|待确认|尚未|未完成|进行中|阻塞/.test(
-    `${record.rawText} ${record.statusHint ?? ""}`,
+  const status = record.statusHint?.trim().toLowerCase();
+  if (status && ["in_progress", "blocked", "pending", "not_started"].includes(status)) {
+    return true;
+  }
+  return /(?:计划|准备|待)(?:做|进行|开始|处理|完成|验证|联调)|讨论中|对齐中|待确认|尚未|未完成|进行中|阻塞/u.test(
+    record.rawText,
   );
 }
 

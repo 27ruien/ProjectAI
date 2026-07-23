@@ -63,6 +63,7 @@ wecom-selector.local.json
 /playwright-auth/
 /screenshots/private/
 /artifacts/private/
+/.local/
 storage-state*.json
 /release/wecom-timesheet-extension-*.zip
 /work/

@@ -160,6 +160,17 @@ describe("daily timesheet AI trust boundary", () => {
     assert.equal(result.tasks[0].hours, 1);
   });
 
+  it("does not treat a completed acceptance-preparation noun as future work", () => {
+    const records = [record({
+      id: "record-001",
+      rawText: "完成企业微信同步验收准备，耗时 1 小时，状态已完成。",
+      hoursHint: "1",
+      statusHint: "completed",
+    })];
+    const result = normalizeGeneratedOutput(output(), context(records), 0.85);
+    assert.equal(result.tasks[0].status, "completed");
+  });
+
   it("keeps hours empty when the record has no duration", () => {
     const records = [record({ id: "record-001", rawText: "CHAGEE，确认 EARN 跳转逻辑，进行中" })];
     const result = normalizeGeneratedOutput(output({ hours: null, status: "in_progress" }), context(records), 0.85);
