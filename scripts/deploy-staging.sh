@@ -1043,6 +1043,7 @@ log "Syncing tracked release ${SHORT_SHA} to ${REMOTE_HOST}:${REMOTE_DIR}"
 
 rsync --archive --compress --delete \
   --filter='protect /backups/***' \
+  --filter='protect /.local/***' \
   --filter='protect /.env.auth-staging' \
   --filter='protect /.env.ai' \
   --filter='protect /.env.embedding' \
@@ -1060,6 +1061,7 @@ rsync --archive --compress --delete \
   --exclude '/test-results/' \
   --exclude '/coverage/' \
   --exclude '/backups/' \
+  --exclude '/.local/' \
   --exclude '/.env' \
   --exclude '/.env.*' \
   --exclude '/.env.auth-staging' \

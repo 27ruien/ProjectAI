@@ -81,6 +81,7 @@ published ports: none
 
 - 默认分支精确为 `agent/phase1-project-knowledge-management`；经当前 PR 明确授权时，可通过 `PROJECTAI_STAGING_DEPLOY_BRANCH` 绑定另一个精确 `agent/*` 分支。`main` 始终拒绝，工作区必须 clean，Commit 必须为完整 40 位 SHA。
 - 固定 Compose project `projectai-staging`、目录 `/srv/projectai-staging` 和远端平台。
+- 受控 Staging UAT 凭据只保存在 root-owned `/.local/` 运行时目录；发布同步必须保护并排除该目录，不得读取、覆盖或打包其内容。
 - 原子取得 Staging 专属部署锁；发布目录、环境、备份、锁和 marker 均不得是 symlink。
 - 记录 Production 容器 ID、running、restart count、health，进入发布事务后的成功/失败/回滚出口都必须精确一致。
 

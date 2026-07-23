@@ -382,6 +382,8 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     /EXPECTED_BRANCH="\$\{PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH\}"/,
   );
   assert.match(script, /PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch/);
+  assert.ok(script.includes("--filter='protect /.local/***'"));
+  assert.ok(script.includes("--exclude '/.local/'"));
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
