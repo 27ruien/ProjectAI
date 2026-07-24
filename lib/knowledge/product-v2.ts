@@ -14,6 +14,7 @@ import {
   user,
 } from "@/lib/db/schema";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
+import { resolveProjectPermissions } from "@/lib/auth/authorization";
 import { KnowledgeManagementError } from "./errors";
 
 type SpaceAccess = "view" | "edit";
@@ -86,14 +87,37 @@ export async function listProductKnowledgeSpaces(principal: AuthenticatedPrincip
   const directAccessBySpaceId = new Map(directMemberships.map((item) => [item.knowledgeSpaceId, item.accessLevel]));
   const visibleProjects = isProductAdmin(principal)
     ? projects
-    : projects.filter((item) => projectRoleById.has(item.id));
+    : projects.filter((item) =>
+        item.createdBy === principal.user.id || projectRoleById.has(item.id));
 
   const summaries = spaces.flatMap((space) => {
     const currentProject = space.projectId ? projectById.get(space.projectId) : undefined;
     const effectiveDepartmentId = space.departmentId ?? currentProject?.departmentId ?? null;
     const currentDepartment = effectiveDepartmentId ? departmentById.get(effectiveDepartmentId) : undefined;
     const directAccess = directAccessBySpaceId.get(space.id);
-    const projectRole = space.projectId ? projectRoleById.get(space.projectId) : undefined;
+    const storedProjectRole = space.projectId
+      ? projectRoleById.get(space.projectId)
+      : undefined;
+    const projectRole = storedProjectRole ?? (
+      directAccess === "edit"
+        ? "project_member"
+        : directAccess === "view"
+          ? "viewer"
+          : null
+    );
+    const hasProjectAccess = Boolean(
+      currentProject && (
+        isProductAdmin(principal) ||
+        currentProject.createdBy === principal.user.id ||
+        projectRole
+      ),
+    );
+    const projectPermissions = currentProject && hasProjectAccess
+      ? resolveProjectPermissions(principal, {
+          createdBy: currentProject.createdBy,
+          projectRole,
+        })
+      : null;
     const departmentAccess = Boolean(
       space.type === "department" &&
       space.visibility === "department_shared" &&
@@ -102,19 +126,18 @@ export async function listProductKnowledgeSpaces(principal: AuthenticatedPrincip
     );
     const isDepartmentHead = Boolean(currentDepartment?.headUserIds.includes(principal.user.id));
     let accessLevel: SpaceAccess | null = null;
-    if (isProductAdmin(principal)) accessLevel = "edit";
-    else if (projectRole === "project_manager" || projectRole === "project_member") accessLevel = "edit";
+    if (space.type === "project" && projectPermissions) {
+      accessLevel = projectPermissions.canEditProject ? "edit" : "view";
+    } else if (isProductAdmin(principal)) accessLevel = "edit";
     else if (directAccess === "edit") accessLevel = "edit";
-    else if (projectRole === "viewer" || directAccess === "view") accessLevel = "view";
+    else if (directAccess === "view") accessLevel = "view";
     else if (departmentAccess) accessLevel = isDepartmentHead ? "edit" : "view";
     if (!accessLevel || !["department", "project"].includes(space.type)) return [];
 
     const projectContext = currentProject ?? visibleProjects.find((item) => item.departmentId === effectiveDepartmentId);
-    const canManageMembers = Boolean(
-      (space.type === "department" && isProductAdmin(principal)) ||
-      (space.type === "project" &&
-        (isProductAdmin(principal) || space.createdBy === principal.user.id || projectRole === "project_manager")),
-    );
+    const canManageMembers = space.type === "project"
+      ? Boolean(projectPermissions?.canManageMembers)
+      : isProductAdmin(principal);
     return [{
       id: space.id,
       name: space.name,
@@ -127,7 +150,10 @@ export async function listProductKnowledgeSpaces(principal: AuthenticatedPrincip
       projectName: currentProject?.name ?? null,
       projectContextId: projectContext?.id ?? null,
       accessLevel,
-      canUpload: accessLevel === "edit" && Boolean(projectContext),
+      permissions: projectPermissions,
+      canUpload: space.type === "project"
+        ? Boolean(projectPermissions?.canUploadDocuments && projectContext)
+        : accessLevel === "edit" && Boolean(projectContext),
       canManageMembers,
       createdBy: space.createdBy,
       updatedAt: space.updatedAt.toISOString(),

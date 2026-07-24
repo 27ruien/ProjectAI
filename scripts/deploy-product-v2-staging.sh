@@ -286,10 +286,11 @@ trap rollback ERR
 
 env_temp="$(sudo mktemp "$remote_dir/.env.auth-staging.product-v2.XXXXXX")"
 sudo awk -F= '
-  BEGIN { auth=0; mock=0; rate=0; org=0; daily=0; sync=0 }
+  BEGIN { auth=0; mock=0; debug=0; rate=0; org=0; daily=0; sync=0 }
   $1 ~ /^SEED_.*_PASSWORD$/ || $1 == "PROJECTAI_SEED_ENVIRONMENT" { next }
   $1 == "AUTH_PROVIDER" { print "AUTH_PROVIDER=mock-wecom"; auth += 1; next }
   $1 == "ALLOW_MOCK_WECOM_AUTH" { print "ALLOW_MOCK_WECOM_AUTH=true"; mock += 1; next }
+  $1 == "ALLOW_DEBUG_IDENTITY" { print "ALLOW_DEBUG_IDENTITY=true"; debug += 1; next }
   $1 == "AUTH_MOCK_LOGIN_RATE_LIMIT_MAX" { print "AUTH_MOCK_LOGIN_RATE_LIMIT_MAX=60"; rate += 1; next }
   $1 == "ORGANIZATION_NAME" { print "ORGANIZATION_NAME=Kivisense"; org += 1; next }
   $1 == "PM_DAILY_REPORT_ENABLED" { print "PM_DAILY_REPORT_ENABLED=true"; daily += 1; next }
@@ -298,6 +299,7 @@ sudo awk -F= '
   END {
     if (!auth) print "AUTH_PROVIDER=mock-wecom"
     if (!mock) print "ALLOW_MOCK_WECOM_AUTH=true"
+    if (!debug) print "ALLOW_DEBUG_IDENTITY=true"
     if (!rate) print "AUTH_MOCK_LOGIN_RATE_LIMIT_MAX=60"
     if (!org) print "ORGANIZATION_NAME=Kivisense"
     if (!daily) print "PM_DAILY_REPORT_ENABLED=true"

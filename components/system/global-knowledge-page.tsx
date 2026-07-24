@@ -9,6 +9,7 @@ import {
   FolderOpen,
   FolderPlus,
   LoaderCircle,
+  Pencil,
   Search,
   Settings2,
   Upload,
@@ -18,7 +19,7 @@ import {
 import { PageHeader } from "@/components/common";
 import { ProjectAssistantPanel } from "@/components/knowledge";
 import { useSearchParams } from "next/navigation";
-import type { ViewerContext } from "@/lib/auth/ui-types";
+import type { ProjectUiPermissions, ViewerContext } from "@/lib/auth/ui-types";
 import {
   documentErrorMessage,
   downloadProjectDocumentVersion,
@@ -40,6 +41,7 @@ type KnowledgeSpaceSummary = {
   projectName: string | null;
   projectContextId: string | null;
   accessLevel: "view" | "edit";
+  permissions: ProjectUiPermissions | null;
   canUpload: boolean;
   canManageMembers: boolean;
   createdBy: string;
@@ -62,6 +64,16 @@ type SpaceMemberPayload = {
   }>;
   eligibleUsers: Array<{ userId: string; displayName: string; productRole: string }>;
 };
+
+function requireProjectPermissionContracts(index: KnowledgeIndex): KnowledgeIndex {
+  const missing = index.knowledgeSpaces.find(
+    (space) => space.type === "project" && !space.permissions,
+  );
+  if (missing) {
+    throw new Error(`权限数据不可用：项目空间 ${missing.name} 缺少服务端权限契约。`);
+  }
+  return index;
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(withBasePath(path), {
@@ -92,6 +104,7 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
   const [scope, setScope] = useState<"space" | "department" | "all">("space");
   const [uploading, setUploading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -99,7 +112,9 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
   const selectedProject = viewer.projects.find((item) => item.id === selectedSpace?.projectContextId);
 
   const refreshIndex = useCallback(async () => {
-    const next = await api<KnowledgeIndex>("/api/knowledge-spaces");
+    const next = requireProjectPermissionContracts(
+      await api<KnowledgeIndex>("/api/knowledge-spaces"),
+    );
     setIndex(next);
     setSelectedSpaceId((current) => next.knowledgeSpaces.some((item) => item.id === current) ? current : next.knowledgeSpaces[0]?.id ?? "");
     return next;
@@ -115,6 +130,7 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
     const controller = new AbortController();
     void api<KnowledgeIndex>("/api/knowledge-spaces", { signal: controller.signal })
       .then((next) => {
+        requireProjectPermissionContracts(next);
         setIndex(next);
         setSelectedSpaceId(
           next.knowledgeSpaces.find((item) => item.projectId === requestedProjectId)?.id ??
@@ -167,7 +183,10 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
   }, [documentsByProject, query, visibleSpaceIds]);
 
   const upload = async (file: File) => {
-    if (!selectedSpace?.projectContextId || !selectedSpace.canUpload) return;
+    const canUpload = selectedSpace?.type === "project"
+      ? selectedSpace.permissions?.canUploadDocuments
+      : selectedSpace?.canUpload;
+    if (!selectedSpace?.projectContextId || !canUpload) return;
     const payload = documentsByProject[selectedSpace.projectContextId] ?? await loadProject(selectedSpace.projectContextId);
     const destination = payload.permissions.uploadDestinations.find((item) => item.id === selectedSpace.id);
     if (!destination) {
@@ -195,6 +214,13 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
 
   if (loading) return <div className="grid min-h-[50vh] place-items-center"><LoaderCircle className="size-6 animate-spin text-primary" /></div>;
 
+  const selectedCanManageMembers = selectedSpace?.type === "project"
+    ? Boolean(selectedSpace.permissions?.canManageMembers)
+    : Boolean(selectedSpace?.canManageMembers);
+  const selectedCanUpload = selectedSpace?.type === "project"
+    ? Boolean(selectedSpace.permissions?.canUploadDocuments)
+    : Boolean(selectedSpace?.canUpload);
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -216,8 +242,9 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
               <div className="flex items-start justify-between gap-3">
                 <div><h2 className="flex items-center gap-2 text-sm font-semibold"><FolderOpen className="size-4 text-primary" />{selectedSpace?.name}</h2><p className="mt-1 text-[11px] text-muted-foreground">{selectedSpace?.departmentName ?? "未分配部门"} · {selectedSpace?.accessLevel === "edit" ? "可编辑" : "只读"}</p></div>
                 <div className="flex gap-2">
-                  {selectedSpace?.canManageMembers ? <button type="button" onClick={() => setManageOpen(true)} className="grid size-9 place-items-center rounded-lg border" aria-label="管理空间成员"><Settings2 className="size-4" /></button> : null}
-                  <button type="button" disabled={!selectedSpace?.canUpload || uploading} onClick={() => fileInput.current?.click()} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground disabled:opacity-50">{uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}上传</button>
+                  {selectedSpace?.type === "project" && selectedSpace.permissions?.canEditProject ? <button type="button" onClick={() => setEditOpen(true)} className="grid size-9 place-items-center rounded-lg border" aria-label="编辑项目信息"><Pencil className="size-4" /></button> : null}
+                  {selectedCanManageMembers ? <button type="button" onClick={() => setManageOpen(true)} className="grid size-9 place-items-center rounded-lg border" aria-label="管理空间成员"><Settings2 className="size-4" /></button> : null}
+                  <button type="button" disabled={!selectedCanUpload || uploading} onClick={() => fileInput.current?.click()} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground disabled:opacity-50">{uploading ? <LoaderCircle className="size-4 animate-spin" /> : <Upload className="size-4" />}上传</button>
                   <input ref={fileInput} type="file" hidden accept=".pdf,.docx,.xlsx,.pptx,.txt,.md" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); }} />
                 </div>
               </div>
@@ -238,6 +265,7 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
         </div>
       )}
       {createOpen ? <CreateProjectSpace departments={index?.departments ?? []} onClose={() => setCreateOpen(false)} onCreated={async () => { setCreateOpen(false); await refreshIndex(); }} /> : null}
+      {editOpen && selectedSpace?.type === "project" && selectedSpace.projectId ? <EditProjectSpace space={selectedSpace} onClose={() => setEditOpen(false)} onUpdated={async () => { setEditOpen(false); await refreshIndex(); setFeedback("项目信息已更新。"); }} /> : null}
       {manageOpen && selectedSpace ? <SpaceMembersDialog space={selectedSpace} onClose={() => setManageOpen(false)} /> : null}
     </div>
   );
@@ -283,6 +311,36 @@ function CreateProjectSpace({ departments, onClose, onCreated }: { departments: 
     }
   };
   return <Modal title="新建项目空间" onClose={onClose}><form onSubmit={submit} className="space-y-4"><p className="text-xs text-muted-foreground">创建者自动获得编辑和成员管理权限；管理员默认可见。</p><label className="block text-xs font-medium">所属部门<select name="departmentId" required className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm">{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label className="block text-xs font-medium">空间名称<input name="name" required minLength={2} className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-primary" /></label><label className="block text-xs font-medium">说明<textarea name="description" rows={3} maxLength={4000} className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-primary" /></label>{error ? <p role="alert" className="rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{error}</p> : null}<div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="h-9 rounded-lg border px-4 text-xs">取消</button><button disabled={submitting || !departments.length} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground disabled:opacity-60">{submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}创建</button></div></form></Modal>;
+}
+
+function EditProjectSpace({ space, onClose, onUpdated }: {
+  space: KnowledgeSpaceSummary;
+  onClose: () => void;
+  onUpdated: () => Promise<void>;
+}) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!space.projectId) return;
+    const values = new FormData(event.currentTarget);
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api(`/api/projects/${encodeURIComponent(space.projectId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: String(values.get("name") || ""),
+          description: String(values.get("description") || ""),
+        }),
+      });
+      await onUpdated();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "项目信息更新失败");
+      setSubmitting(false);
+    }
+  };
+  return <Modal title="编辑项目信息" onClose={onClose}><form onSubmit={submit} className="space-y-4"><p className="text-xs text-muted-foreground">此操作使用服务端返回的编辑能力显示入口，提交时仍会重新校验项目权限。</p><label className="block text-xs font-medium">空间名称<input name="name" defaultValue={space.name} required minLength={2} className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-primary" /></label><label className="block text-xs font-medium">说明<textarea name="description" defaultValue={space.description} rows={3} maxLength={4000} className="mt-1.5 w-full rounded-lg border bg-background px-3 py-2 text-sm outline-none focus:border-primary" /></label>{error ? <p role="alert" className="rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{error}</p> : null}<div className="flex justify-end gap-2"><button type="button" onClick={onClose} className="h-9 rounded-lg border px-4 text-xs">取消</button><button disabled={submitting} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground disabled:opacity-60">{submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}保存</button></div></form></Modal>;
 }
 
 function SpaceMembersDialog({ space, onClose }: { space: KnowledgeSpaceSummary; onClose: () => void }) {

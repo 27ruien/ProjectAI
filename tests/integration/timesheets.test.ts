@@ -615,20 +615,27 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     const confirmed = await confirmDailyDraft({ principal: principal(manager), organizationId, draftId: generated.id, expectedVersion: updated.version, requestHeaders: headers });
     const requestId = "77777777-7777-4777-8777-777777777777";
     const created = await createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId, dryRun: true, requestHeaders: headers });
-    await getDb().delete(projectMember).where(and(eq(projectMember.projectId, projectId), eq(projectMember.userId, manager.id)));
-    await expectCode(
-      () => createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId, dryRun: true, requestHeaders: headers }),
-      "NOT_FOUND",
-    );
-    await expectCode(
-      () => updateSyncBatch({ principal: principal(manager), organizationId, syncBatchId: created.batch.syncBatchId, status: "cancelled", items: created.batch.items.map((item) => ({ taskId: item.taskId, status: "cancelled", attemptCount: 0 })), requestHeaders: headers }),
-      "NOT_FOUND",
-    );
-    await expectCode(
-      () => listSyncBatches({ principal: principal(manager), organizationId, requestHeaders: headers }),
-      "NOT_FOUND",
-    );
-    await getDb().insert(projectMember).values({ id: `${prefix}membership-restored`, projectId, userId: manager.id, role: "project_manager", createdBy: manager.id });
+    // Project creators retain authority independently of membership. Transfer
+    // ownership first so deleting the membership models a real access loss.
+    await getDb().update(project).set({ createdBy: otherManager.id }).where(eq(project.id, projectId));
+    try {
+      await getDb().delete(projectMember).where(and(eq(projectMember.projectId, projectId), eq(projectMember.userId, manager.id)));
+      await expectCode(
+        () => createSyncBatch({ principal: principal(manager), organizationId, draftId: confirmed.id, expectedVersion: confirmed.version, requestId, dryRun: true, requestHeaders: headers }),
+        "NOT_FOUND",
+      );
+      await expectCode(
+        () => updateSyncBatch({ principal: principal(manager), organizationId, syncBatchId: created.batch.syncBatchId, status: "cancelled", items: created.batch.items.map((item) => ({ taskId: item.taskId, status: "cancelled", attemptCount: 0 })), requestHeaders: headers }),
+        "NOT_FOUND",
+      );
+      await expectCode(
+        () => listSyncBatches({ principal: principal(manager), organizationId, requestHeaders: headers }),
+        "NOT_FOUND",
+      );
+    } finally {
+      await getDb().update(project).set({ createdBy: manager.id }).where(eq(project.id, projectId));
+      await getDb().insert(projectMember).values({ id: `${prefix}membership-restored`, projectId, userId: manager.id, role: "project_manager", createdBy: manager.id });
+    }
   });
 
   it("enforces the server-side feature flag", async () => {

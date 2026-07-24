@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
   getDb,
   type Database,
@@ -33,6 +33,15 @@ function isGlobalProjectReader(role: RepositoryRole): boolean {
   return role === "super_admin" || role === "admin" || role === "system_admin";
 }
 
+function withEffectiveCreatorRole(
+  row: AuthorizedProjectRecord,
+  userId: string,
+): AuthorizedProjectRecord {
+  return row.createdBy === userId
+    ? { ...row, projectRole: "project_manager" }
+    : row;
+}
+
 const projectSelection = {
   id: project.id,
   organizationId: project.organizationId,
@@ -62,12 +71,19 @@ export async function listAuthorizedProjects(
     return rows.map((row) => ({ ...row, projectRole: null }));
   }
 
-  return db
+  const rows = await db
     .select({ ...projectSelection, projectRole: projectMember.role })
-    .from(projectMember)
-    .innerJoin(project, eq(project.id, projectMember.projectId))
-    .where(eq(projectMember.userId, userId))
+    .from(project)
+    .leftJoin(
+      projectMember,
+      and(
+        eq(projectMember.projectId, project.id),
+        eq(projectMember.userId, userId),
+      ),
+    )
+    .where(or(eq(project.createdBy, userId), isNotNull(projectMember.id)))
     .orderBy(desc(project.updatedAt));
+  return rows.map((row) => withEffectiveCreatorRole(row, userId));
 }
 
 export async function findAuthorizedProject(
@@ -102,9 +118,11 @@ export async function findAuthorizedProject(
         ),
       )
       .limit(1);
-    return membership
-      ? { ...lockedProject, projectRole: membership.role }
-      : null;
+    if (lockedProject.createdBy === userId) {
+      return { ...lockedProject, projectRole: "project_manager" };
+    }
+    if (membership) return { ...lockedProject, projectRole: membership.role };
+    return null;
   }
 
   if (isGlobalProjectReader(productRole)) {
@@ -118,19 +136,23 @@ export async function findAuthorizedProject(
 
   const query = db
     .select({ ...projectSelection, projectRole: projectMember.role })
-    .from(projectMember)
-    .innerJoin(project, eq(project.id, projectMember.projectId))
+    .from(project)
+    .leftJoin(
+      projectMember,
+      and(
+        eq(projectMember.projectId, project.id),
+        eq(projectMember.userId, userId),
+      ),
+    )
     .where(
       and(
-        eq(projectMember.userId, userId),
-        eq(projectMember.projectId, projectId),
+        eq(project.id, projectId),
+        or(eq(project.createdBy, userId), isNotNull(projectMember.id)),
       ),
     )
     .limit(1);
-  const [record] = options.lockForUpdate
-    ? await query.for("update", { of: projectMember })
-    : await query;
-  return record ?? null;
+  const [record] = await query;
+  return record ? withEffectiveCreatorRole(record, userId) : null;
 }
 
 export async function listProjectRosterSummaries(
@@ -220,5 +242,20 @@ export async function updateProject(
     .set({ ...changes, updatedAt: new Date() })
     .where(eq(project.id, projectId))
     .returning();
+  if (record && (
+    changes.name !== undefined ||
+    changes.description !== undefined ||
+    changes.departmentId !== undefined
+  )) {
+    await db
+      .update(knowledgeSpace)
+      .set({
+        name: record.name,
+        description: record.description || "项目知识空间",
+        departmentId: record.departmentId,
+        updatedAt: new Date(),
+      })
+      .where(eq(knowledgeSpace.projectId, projectId));
+  }
   return record ?? null;
 }

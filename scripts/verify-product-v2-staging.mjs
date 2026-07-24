@@ -113,8 +113,28 @@ assert(memberKnowledgeBody.knowledgeSpaces.every((space) => ["view", "edit"].inc
 const projectsResponse = await authenticated("api/projects", memberCookie);
 assert(projectsResponse.status === 200, "Member project listing failed");
 const projects = (await json(projectsResponse, "Member projects")).projects;
+assert(Array.isArray(projects), "API_CONTRACT_MISSING: Member projects is not an array");
+const missingPermissionContract = projects.find((project) =>
+  !project.permissions ||
+  typeof project.permissions.canEditProject !== "boolean" ||
+  typeof project.permissions.canManageMembers !== "boolean" ||
+  typeof project.permissions.canUploadDocuments !== "boolean" ||
+  typeof project.permissions.canInviteMembers !== "boolean"
+);
+assert(
+  !missingPermissionContract,
+  `API_CONTRACT_MISSING: project ${missingPermissionContract?.id ?? "unknown"} has no complete server permissions`,
+);
 const target = projects.find((project) => project.permissions?.canEditProject);
-assert(target, "Member does not have an editable fictional project context");
+assert(target, "PROJECT_PERMISSION_DENIED: Member does not have an editable fictional project context");
+const detailResponse = await authenticated(`api/projects/${encodeURIComponent(target.id)}`, memberCookie);
+assert(detailResponse.status === 200, `Member project detail returned ${detailResponse.status}`);
+const detailProject = (await json(detailResponse, "Member project detail")).project;
+assert(detailProject?.permissions, "API_CONTRACT_MISSING: project detail has no server permissions");
+assert(
+  JSON.stringify(detailProject.permissions) === JSON.stringify(target.permissions),
+  "PROJECT_PERMISSION_MISMATCH: list and detail permissions differ",
+);
 const emptyWorkflow = await authenticated(`api/projects/${encodeURIComponent(target.id)}/requirement-extractions`, memberCookie, {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -132,6 +152,7 @@ process.stdout.write(JSON.stringify({
   departmentsVerified: organizationBody.departments.length,
   adminSpaceCount: adminKnowledgeBody.knowledgeSpaces.length,
   memberSpaceCount: memberKnowledgeBody.knowledgeSpaces.length,
+  memberEditableProjectPermissions: "list-detail-consistent",
   legacyCredentialLogin: "rejected",
   requirementEmptyState: "SOURCE_REQUIRED",
 }) + "\n");

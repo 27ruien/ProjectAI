@@ -10,6 +10,7 @@ const original = {
   nodeEnvironment: process.env.NODE_ENV,
   provider: process.env.AUTH_PROVIDER,
   allowMock: process.env.ALLOW_MOCK_WECOM_AUTH,
+  allowDebugIdentity: process.env.ALLOW_DEBUG_IDENTITY,
   allowLegacyCredentialTest: process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH,
 };
 
@@ -22,6 +23,8 @@ afterEach(() => {
   else process.env.AUTH_PROVIDER = original.provider;
   if (original.allowMock === undefined) delete process.env.ALLOW_MOCK_WECOM_AUTH;
   else process.env.ALLOW_MOCK_WECOM_AUTH = original.allowMock;
+  if (original.allowDebugIdentity === undefined) delete process.env.ALLOW_DEBUG_IDENTITY;
+  else process.env.ALLOW_DEBUG_IDENTITY = original.allowDebugIdentity;
   if (original.allowLegacyCredentialTest === undefined) {
     delete process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH;
   } else {
@@ -34,6 +37,7 @@ describe("Product V2 auth provider guard", () => {
     process.env.NEXT_PUBLIC_APP_ENV = "staging";
     process.env.AUTH_PROVIDER = "mock-wecom";
     process.env.ALLOW_MOCK_WECOM_AUTH = "true";
+    process.env.ALLOW_DEBUG_IDENTITY = "true";
     assert.deepEqual(getAuthProviderConfig(), {
       environment: "staging",
       provider: "mock-wecom",
@@ -41,8 +45,14 @@ describe("Product V2 auth provider guard", () => {
     });
     const publicConfig = publicAuthProvider();
     assert.equal(publicConfig.provider, "mock-wecom");
-    assert.deepEqual(Object.keys(publicConfig).sort(), ["configured", "implemented", "provider"]);
+    assert.deepEqual(Object.keys(publicConfig).sort(), [
+      "configured",
+      "debugIdentityEnabled",
+      "implemented",
+      "provider",
+    ]);
     assert.equal(publicConfig.implemented, true);
+    assert.equal(publicConfig.debugIdentityEnabled, true);
   });
 
   it("rejects Mock WeCom and debug identity capability in Production", () => {
@@ -50,6 +60,22 @@ describe("Product V2 auth provider guard", () => {
     process.env.AUTH_PROVIDER = "mock-wecom";
     process.env.ALLOW_MOCK_WECOM_AUTH = "true";
     assert.throws(() => getAuthProviderConfig(), /MOCK_WECOM_AUTH_PRODUCTION_FORBIDDEN/);
+  });
+
+  it("hard-rejects the debug identity flag in Production even with the formal provider", () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "production";
+    process.env.AUTH_PROVIDER = "wecom";
+    process.env.ALLOW_MOCK_WECOM_AUTH = "false";
+    process.env.ALLOW_DEBUG_IDENTITY = "true";
+    assert.throws(() => publicAuthProvider(), /DEBUG_IDENTITY_PRODUCTION_FORBIDDEN/);
+  });
+
+  it("does not enable debug identity without its dedicated flag", () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "staging";
+    process.env.AUTH_PROVIDER = "mock-wecom";
+    process.env.ALLOW_MOCK_WECOM_AUTH = "true";
+    delete process.env.ALLOW_DEBUG_IDENTITY;
+    assert.equal(publicAuthProvider().debugIdentityEnabled, false);
   });
 
   it("rejects Mock WeCom when the explicit flag is absent", () => {

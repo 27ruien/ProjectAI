@@ -18,10 +18,13 @@ test("debug admin is a Mock WeCom POST flow and never a Production identity clai
     read("components/auth/auth-client.ts"),
   ]);
   assert.match(login, /debugAdminRequested/);
+  assert.match(login, /debugIdentityEnabled/);
   assert.match(login, /provider === "mock-wecom"/);
   assert.doesNotMatch(login, /type="password"|邮箱或密码/);
   assert.match(client, /method: "POST"/);
   assert.match(providers, /MOCK_WECOM_AUTH_PRODUCTION_FORBIDDEN/);
+  assert.match(providers, /DEBUG_IDENTITY_PRODUCTION_FORBIDDEN/);
+  assert.match(providers, /ALLOW_DEBUG_IDENTITY/);
 });
 
 test("Requirement Extraction exposes structured sources, one repair, and HTTP 200", async () => {
@@ -78,9 +81,21 @@ test("knowledge UI provides scoped file search, AI, project creation, and member
     assert.match(page, new RegExp(label));
   }
   assert.match(page, /accessLevel: "view" \| "edit"/);
+  assert.match(page, /权限数据不可用/);
+  assert.match(page, /permissions\?\.canEditProject/);
+  assert.match(page, /permissions\?\.canManageMembers/);
+  assert.match(page, /permissions\?\.canUploadDocuments/);
+  assert.match(page, /编辑项目信息/);
   assert.match(page, /requestedProjectId/);
   assert.match(topbar, /\/api\/knowledge-spaces/);
   assert.doesNotMatch(page, /授权规则|权限变更审计/);
+});
+
+test("Staging smoke distinguishes a missing permission contract from a denial", async () => {
+  const smoke = await read("scripts/verify-product-v2-staging.mjs");
+  assert.match(smoke, /API_CONTRACT_MISSING/);
+  assert.match(smoke, /PROJECT_PERMISSION_DENIED/);
+  assert.match(smoke, /PROJECT_PERMISSION_MISMATCH/);
 });
 
 test("organization service protects depth, cycles, default spaces, and last super admin", async () => {
@@ -94,7 +109,8 @@ test("organization service protects depth, cycles, default spaces, and last supe
 test("project managers cannot be downgraded or removed through knowledge-space membership", async () => {
   const service = await read("lib/knowledge/product-v2.ts");
   assert.match(service, /PROJECT_MANAGER_EDIT_REQUIRED/);
-  assert.match(service, /projectRole === "project_manager" \|\| projectRole === "project_member"/);
+  assert.match(service, /existingProjectMember\?\.role === "project_manager"/);
+  assert.match(service, /projectMembership\?\.role === "project_manager"/);
 });
 
 test("Product V2 document authorization keeps explicit deny ahead of every admin bypass", async () => {
@@ -127,6 +143,7 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
     "verified Staging backup must finish before the release tree is synchronized",
   );
   assert.match(deploy, /AUTH_PROVIDER=mock-wecom/);
+  assert.match(deploy, /ALLOW_DEBUG_IDENTITY=true/);
   assert.match(deploy, /WECOM_TIMESHEET_SYNC_ENABLED=false/);
   assert.match(deploy, /ai:probe:qwen/);
   assert.match(deploy, /x-projectai-commit-sha/);

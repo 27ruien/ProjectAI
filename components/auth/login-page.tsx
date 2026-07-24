@@ -22,6 +22,7 @@ type LoginPageProps = {
   provider: "wecom" | "mock-wecom";
   providerConfigured: boolean;
   providerImplemented: boolean;
+  debugIdentityEnabled: boolean;
   debugAdminRequested?: boolean;
 };
 
@@ -56,6 +57,7 @@ export function LoginPage({
   provider,
   providerConfigured,
   providerImplemented,
+  debugIdentityEnabled,
   debugAdminRequested = false,
 }: LoginPageProps) {
   const returnTo = safeReturnTo(initialReturnTo);
@@ -79,13 +81,14 @@ export function LoginPage({
   useEffect(() => {
     if (
       debugAdminRequested &&
+      debugIdentityEnabled &&
       provider === "mock-wecom" &&
       !debugAttempted.current
     ) {
       debugAttempted.current = true;
       void signIn("admin");
     }
-  }, [debugAdminRequested, provider, signIn]);
+  }, [debugAdminRequested, debugIdentityEnabled, provider, signIn]);
 
   return (
     <main className="grid min-h-screen bg-background lg:grid-cols-[minmax(0,1.06fr)_minmax(460px,0.94fr)]">
@@ -165,9 +168,9 @@ export function LoginPage({
             </button>
           )}
 
-          {debugAdminRequested && provider !== "mock-wecom" ? (
+          {debugAdminRequested && !debugIdentityEnabled ? (
             <p role="alert" className="mt-4 rounded-lg border border-destructive/20 bg-destructive-soft px-3.5 py-3 text-sm text-destructive">
-              debug=admin 只允许在显式启用 Mock WeCom 的 Local / Staging 环境使用。
+              debug=admin 只允许在显式启用测试身份的 Local / Staging 环境使用。
             </p>
           ) : null}
           {error ? (

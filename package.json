@@ -26,7 +26,7 @@
     "db:seed:product-v2": "tsx scripts/db/seed-product-v2.ts",
     "workflows:temporary-cleanup": "tsx scripts/cleanup-temporary-workflow-documents.ts",
     "product-v2:migration-upgrade": "tsx scripts/verify-product-v2-migration-upgrade.ts",
-    "test:product-v2": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AUTH_PROVIDER=mock-wecom ALLOW_MOCK_WECOM_AUTH=true node --import tsx --test --test-concurrency=1 tests/product-v2-auth.test.ts tests/product-v2-contract.test.mjs",
+    "test:product-v2": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AUTH_PROVIDER=mock-wecom ALLOW_MOCK_WECOM_AUTH=true ALLOW_DEBUG_IDENTITY=true node --import tsx --test --test-concurrency=1 tests/project-permissions.test.ts tests/product-v2-auth.test.ts tests/product-v2-contract.test.mjs",
     "test:product-v2-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test NEXT_PUBLIC_BASE_PATH=/tool/projectai AUTH_LOCAL_ORIGIN=http://127.0.0.1:3200 AUTH_PROVIDER=mock-wecom ALLOW_MOCK_WECOM_AUTH=true AUTH_TEST_LOGIN_RATE_LIMIT_MAX=100 node --import tsx --test --test-concurrency=1 tests/integration/product-v2.test.ts",
     "product-v2:staging-smoke": "tsx scripts/verify-product-v2-staging.mjs",
     "test:staging:auth": "playwright test --config=playwright.product-v2-staging.config.ts --grep @auth",

@@ -137,6 +137,11 @@ test("@auth @navigation Mock WeCom roles and debug admin stay inside the reviewe
   await expect(page).toHaveURL(/\/daily-report$/u);
   await page.getByRole("button", { name: "账户菜单" }).click();
   await expect(page.getByText("Kivisense Admin", { exact: true }).first()).toBeVisible();
+  for (const label of ["工作日报", "AI 工作流", "知识库"]) {
+    await expect(page.getByRole("link", { name: label })).toBeVisible();
+  }
+  await expect(page.getByRole("link", { name: "组织架构" })).toHaveCount(0);
+  expect((await page.request.get(appPath("/api/organization/departments"))).status()).toBe(404);
   await capture(page, "01-debug-admin-navigation.png");
 
   await switchIdentity(page, "member");
@@ -209,6 +214,76 @@ test("@organization four-level hierarchy is created, edited, moved, and rejected
   assertNoErrors();
 });
 
+test("@knowledge @knowledge-permissions Member creator keeps edit rights after refresh", async ({ page }) => {
+  const assertNoErrors = observe(page);
+  await login(page, "member");
+  const marker = crypto.randomUUID().slice(0, 8);
+  const projectName = `Member Creator UAT ${marker}`;
+  const renamedProject = `${projectName} 已更新`;
+  const displayName = `创建者权限-${marker}.txt`;
+  await page.goto(appPath("/knowledge"));
+
+  const createResponsePromise = page.waitForResponse((response) =>
+    response.url().includes("/api/projects") && response.request().method() === "POST",
+  );
+  await createProjectThroughUi(page, { name: projectName, departmentName: "产品管理部" });
+  const createResponse = await createResponsePromise;
+  expect(createResponse.status()).toBe(201);
+  const created = await createResponse.json() as {
+    project: { id: string; permissions?: { canEditProject?: boolean; canManageMembers?: boolean; canUploadDocuments?: boolean } };
+  };
+  expect(created.project.permissions, "create permission contract").toMatchObject({
+    canEditProject: true,
+    canManageMembers: true,
+    canUploadDocuments: true,
+  });
+
+  await page.reload();
+  const projectsResponse = await page.request.get(appPath("/api/projects"));
+  expect(projectsResponse.status()).toBe(200);
+  const projectList = await projectsResponse.json() as {
+    projects: Array<{ id: string; permissions?: { canEditProject?: boolean; canManageMembers?: boolean } }>;
+  };
+  const listed = projectList.projects.find((item) => item.id === created.project.id);
+  expect(listed?.permissions, "list permission contract").toMatchObject({
+    canEditProject: true,
+    canManageMembers: true,
+  });
+  const detailResponse = await page.request.get(appPath(`/api/projects/${created.project.id}`));
+  expect(detailResponse.status()).toBe(200);
+  const detail = await detailResponse.json() as {
+    project: { permissions?: { canEditProject?: boolean; canManageMembers?: boolean } };
+  };
+  expect(detail.project.permissions).toEqual(listed!.permissions);
+
+  await chooseSpace(page, projectName);
+  await expect(page.getByRole("button", { name: "编辑项目信息" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "管理空间成员" })).toBeVisible();
+  await page.getByRole("button", { name: "编辑项目信息" }).click();
+  const editDialog = page.getByRole("dialog", { name: "编辑项目信息" });
+  await editDialog.getByLabel("空间名称").fill(renamedProject);
+  await editDialog.getByLabel("说明").fill(`虚构创建者权限验收 ${marker}`);
+  await editDialog.getByRole("button", { name: "保存" }).click();
+  await expect(editDialog).toBeHidden();
+  await expect(page.getByRole("heading", { name: renamedProject, exact: true })).toBeVisible();
+
+  await page.locator('input[type="file"]').setInputFiles({
+    name: displayName,
+    mimeType: "text/plain",
+    buffer: Buffer.from(`虚构创建者权限验收文件 ${marker}，不包含客户信息。`),
+  });
+  await expect(page.getByRole("status")).toContainText("文件已安全上传");
+  await expect(page.getByText(displayName, { exact: true })).toBeVisible();
+  await capture(page, "03-member-creator-refresh-edit-upload.png");
+
+  const documentsResponse = await page.request.get(appPath(`/api/projects/${created.project.id}/documents?status=active`));
+  const documents = await documentsResponse.json() as { documents: Array<{ id: string; displayName: string }> };
+  const uploaded = documents.documents.find((item) => item.displayName === displayName);
+  expect(uploaded).toBeTruthy();
+  expect((await mutation(page, `/api/projects/${created.project.id}/documents/${uploaded!.id}/archive`, "post", {})).status()).toBe(200);
+  assertNoErrors();
+});
+
 test("@knowledge @knowledge-permissions project creation, sharing, upload, preview, and revoke use the UI", async ({ page }) => {
   const assertNoErrors = observe(page);
   await login(page, "admin");
@@ -265,6 +340,13 @@ test("@knowledge @knowledge-permissions project creation, sharing, upload, previ
   await switchIdentity(page, "member");
   expect((await spaces(page)).some((space) => space.id === target!.id)).toBe(false);
   expect((await page.request.get(appPath(`/api/projects/${target!.projectId}`))).status()).toBe(404);
+  expect((await page.request.get(appPath(`/api/projects/${target!.projectId}/ai/threads`))).status()).toBe(404);
+  await page.goto(appPath("/daily-report"));
+  await page.keyboard.press("ControlOrMeta+K");
+  const unauthorizedSearch = page.getByPlaceholder("搜索已授权知识空间");
+  await unauthorizedSearch.fill(projectName);
+  await expect(page.getByRole("dialog", { name: "全局搜索" })).not.toContainText(projectName);
+  await unauthorizedSearch.press("Escape");
 
   await switchIdentity(page, "admin");
   expect((await mutation(page, `/api/projects/${target!.projectId}/documents/${uploaded!.id}/archive`, "post", {})).status()).toBe(200);
@@ -371,9 +453,17 @@ test("@daily-report @global-search retained daily report and keyboard search rem
   await expect(page.getByTestId("work-log-section")).toBeVisible();
   await expect(page.getByText("今日随记", { exact: false })).toBeVisible();
   await expect(page.getByText("日报草稿", { exact: false })).toBeVisible();
+  const searchTrigger = page.getByRole("button", { name: "全局搜索" }).first();
+  await searchTrigger.focus();
   await page.keyboard.press("ControlOrMeta+K");
-  const search = page.getByPlaceholder("搜索已授权知识空间");
+  let search = page.getByPlaceholder("搜索已授权知识空间");
   await expect(search).toBeFocused();
+  await search.press("Escape");
+  await expect(page.getByRole("dialog", { name: "全局搜索" })).toHaveCount(0);
+  await expect(searchTrigger).toBeFocused();
+
+  await page.keyboard.press("ControlOrMeta+K");
+  search = page.getByPlaceholder("搜索已授权知识空间");
   await search.fill("Product Management UAT");
   await expect(page.getByRole("dialog", { name: "全局搜索" })).toContainText("Product Management UAT");
   await search.press("Enter");

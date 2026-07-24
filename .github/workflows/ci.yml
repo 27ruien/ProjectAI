@@ -332,6 +332,7 @@ jobs:
           NODE_ENV: production
           AUTH_PROVIDER: wecom
           ALLOW_MOCK_WECOM_AUTH: "false"
+          ALLOW_DEBUG_IDENTITY: "false"
           ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"
         run: |
           set -o pipefail

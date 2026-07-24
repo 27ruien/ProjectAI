@@ -12,16 +12,15 @@ import {
   isProductAdmin,
 } from "./session";
 
-const EDIT_ROLES: readonly ProjectRole[] = ["project_manager", "project_member"];
-const MANAGE_MEMBER_ROLES: readonly ProjectRole[] = ["project_manager"];
-
 export type ProjectPermissionSet = {
-  canRead: true;
+  canViewProject: true;
+  canManageProject: boolean;
   canEditProject: boolean;
-  canManageProjectMembers: boolean;
+  canManageMembers: boolean;
+  canDeleteProject: boolean;
   canUploadDocuments: boolean;
+  canInviteMembers: boolean;
   canManageDocuments: boolean;
-  canCreateProject: boolean;
   canViewAudit: boolean;
 };
 
@@ -30,23 +29,26 @@ export type ProjectAuthorizationOptions = {
   lockForUpdate?: boolean;
 };
 
-export function getProjectPermissions(
+export function resolveProjectPermissions(
   principal: AuthenticatedPrincipal,
-  projectRole: ProjectRole | null,
+  project: Pick<AuthorizedProjectRecord, "createdBy" | "projectRole">,
 ): ProjectPermissionSet {
   const admin = isProductAdmin(principal.user.productRole);
+  const creator = project.createdBy === principal.user.id;
+  const manager = project.projectRole === "project_manager";
+  const editor = project.projectRole === "project_member";
+  const canEditProject = admin || creator || manager || editor;
+  const canManageMembers = admin || creator || manager;
   return {
-    canRead: true,
-    canEditProject: admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
-    canManageProjectMembers:
-      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
-    canUploadDocuments:
-      admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
-    canManageDocuments:
-      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
-    canCreateProject: admin,
-    canViewAudit:
-      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
+    canViewProject: true,
+    canManageProject: canEditProject,
+    canEditProject,
+    canManageMembers,
+    canDeleteProject: canManageMembers,
+    canUploadDocuments: canEditProject,
+    canInviteMembers: canManageMembers,
+    canManageDocuments: canManageMembers,
+    canViewAudit: canManageMembers,
   };
 }
 
@@ -128,8 +130,14 @@ export async function requireProjectRole(
   );
   if (
     !isProductAdmin(principal.user.productRole) &&
-    (!authorizedProject.projectRole ||
-      !allowedRoles.includes(authorizedProject.projectRole))
+    !(
+      authorizedProject.projectRole &&
+      allowedRoles.includes(authorizedProject.projectRole)
+    ) &&
+    !(
+      authorizedProject.createdBy === principal.user.id &&
+      allowedRoles.includes("project_manager")
+    )
   ) {
     const requestContext = requestHeaders
       ? getRequestAuditContext(requestHeaders)
@@ -165,7 +173,7 @@ export async function canEditProject(
     projectId,
   );
   if (!authorizedProject) return false;
-  return getProjectPermissions(principal, authorizedProject.projectRole)
+  return resolveProjectPermissions(principal, authorizedProject)
     .canEditProject;
 }
 
@@ -179,6 +187,6 @@ export async function canManageProjectMembers(
     projectId,
   );
   if (!authorizedProject) return false;
-  return getProjectPermissions(principal, authorizedProject.projectRole)
-    .canManageProjectMembers;
+  return resolveProjectPermissions(principal, authorizedProject)
+    .canManageMembers;
 }

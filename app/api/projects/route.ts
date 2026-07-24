@@ -15,7 +15,6 @@ import {
 import { knowledgeManagementErrorResponse } from "@/lib/knowledge/http";
 import {
   serializeAuthorizedProject,
-  serializeProject,
 } from "@/lib/projects/serialization";
 import { resolveProjectCreationScope } from "@/lib/knowledge/product-v2";
 
@@ -58,7 +57,8 @@ export async function GET(request: Request): Promise<Response> {
       principal.user.productRole,
     );
     return jsonResponse({
-      projects: projects.map(serializeAuthorizedProject),
+      projects: projects.map((project) =>
+        serializeAuthorizedProject(project, principal)),
     });
   } catch (error) {
     return knowledgeManagementErrorResponse(error);
@@ -116,7 +116,13 @@ export async function POST(request: Request): Promise<Response> {
       .limit(1);
     if (!createdSpace) throw new Error("Created project is missing its knowledge space.");
     return jsonResponse(
-      { project: serializeProject(createdProject), knowledgeSpaceId: createdSpace.id },
+      {
+        project: serializeAuthorizedProject(
+          { ...createdProject, projectRole: "project_manager" },
+          principal,
+        ),
+        knowledgeSpaceId: createdSpace.id,
+      },
       { status: 201 },
     );
   } catch (error) {

@@ -15,6 +15,7 @@ import {
 import { findUserByEmail } from "@/lib/db/repositories/user-repository";
 import { getPostgresErrorCode } from "@/lib/db/errors";
 import { getDb } from "@/lib/db/client";
+import { serializeAuthorizedProject } from "@/lib/projects/serialization";
 
 type MembersRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -32,9 +33,16 @@ export async function GET(
   try {
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
-    await requireProjectAccess(principal, projectId, request.headers);
+    const authorizedProject = await requireProjectAccess(
+      principal,
+      projectId,
+      request.headers,
+    );
     const members = await listProjectMembersWithUsers(projectId);
-    return jsonResponse({ members });
+    return jsonResponse({
+      project: serializeAuthorizedProject(authorizedProject, principal),
+      members,
+    });
   } catch (error) {
     return authorizationErrorResponse(error);
   }
@@ -58,8 +66,9 @@ export async function POST(
       );
     }
     const result = await getDb().transaction(async (tx) => {
+      let authorizedProject: Awaited<ReturnType<typeof requireProjectRole>>;
       try {
-        await requireProjectRole(
+        authorizedProject = await requireProjectRole(
           principal,
           projectId,
           ["project_manager"],
@@ -101,7 +110,11 @@ export async function POST(
         },
         tx,
       );
-      return { kind: "created", member: created } as const;
+      return {
+        kind: "created",
+        member: created,
+        project: authorizedProject,
+      } as const;
     });
 
     if (result.kind === "authorization_error") throw result.error;
@@ -111,7 +124,10 @@ export async function POST(
         { status: 404 },
       );
     }
-    return jsonResponse({ member: result.member }, { status: 201 });
+    return jsonResponse({
+      project: serializeAuthorizedProject(result.project, principal),
+      member: result.member,
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof SyntaxError) {
       return jsonResponse(

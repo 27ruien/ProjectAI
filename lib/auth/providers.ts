@@ -83,6 +83,20 @@ export function isLegacyCredentialAuthEnabled(): boolean {
   return getAuthProviderConfig().provider === "legacy-credential-test";
 }
 
+export function isDebugIdentityEnabled(): boolean {
+  const config = getAuthProviderConfig();
+  const explicitlyEnabled = process.env.ALLOW_DEBUG_IDENTITY === "true";
+  if (config.environment === "production" && explicitlyEnabled) {
+    throw new Error("DEBUG_IDENTITY_PRODUCTION_FORBIDDEN");
+  }
+  return (
+    explicitlyEnabled &&
+    config.environment !== "production" &&
+    config.provider === "mock-wecom" &&
+    config.mockEnabled
+  );
+}
+
 export const MOCK_WECOM_IDENTITIES: Readonly<
   Record<MockWeComIdentityKey, {
     userId: string;
@@ -160,17 +174,25 @@ export function publicAuthProvider(): {
   provider: "wecom" | "mock-wecom";
   configured: boolean;
   implemented: boolean;
+  debugIdentityEnabled: boolean;
 } {
   const config = getAuthProviderConfig();
+  const debugIdentityEnabled = isDebugIdentityEnabled();
   if (config.provider === "mock-wecom") {
     return {
       provider: "mock-wecom",
       configured: true,
       implemented: true,
+      debugIdentityEnabled,
     };
   }
   if (config.provider === "legacy-credential-test") {
-    return { provider: "wecom", configured: false, implemented: false };
+    return {
+      provider: "wecom",
+      configured: false,
+      implemented: false,
+      debugIdentityEnabled,
+    };
   }
   return {
     provider: "wecom",
@@ -181,5 +203,6 @@ export function publicAuthProvider(): {
       secretFile: process.env.WECOM_AUTH_SECRET_FILE,
     }).success,
     implemented: false,
+    debugIdentityEnabled,
   };
 }

@@ -25,6 +25,7 @@ export default async function LoginRoute({ searchParams }: LoginRouteProps) {
       provider={authProvider.provider}
       providerConfigured={authProvider.configured}
       providerImplemented={authProvider.implemented}
+      debugIdentityEnabled={authProvider.debugIdentityEnabled}
       debugAdminRequested={debug === "admin"}
     />
   );

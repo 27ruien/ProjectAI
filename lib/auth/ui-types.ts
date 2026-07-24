@@ -7,11 +7,14 @@ export type ProjectMembershipRole =
   | "viewer";
 
 export interface ProjectUiPermissions {
+  canViewProject: boolean;
   canManageProject: boolean;
   canEditProject: boolean;
   canManageMembers: boolean;
+  canDeleteProject: boolean;
   canViewAudit: boolean;
   canUploadDocuments: boolean;
+  canInviteMembers: boolean;
   canManageDocuments: boolean;
 }
 

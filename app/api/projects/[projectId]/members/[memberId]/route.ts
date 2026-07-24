@@ -13,6 +13,7 @@ import {
   removeProjectMember,
 } from "@/lib/projects/member-management";
 import { getDb } from "@/lib/db/client";
+import { serializeAuthorizedProject } from "@/lib/projects/serialization";
 
 type MemberRouteContext = {
   params: Promise<{ projectId: string; memberId: string }>;
@@ -39,8 +40,9 @@ export async function PATCH(
       );
     }
     const result = await getDb().transaction(async (tx) => {
+      let authorizedProject: Awaited<ReturnType<typeof requireProjectRole>>;
       try {
-        await requireProjectRole(
+        authorizedProject = await requireProjectRole(
           principal,
           projectId,
           ["project_manager"],
@@ -54,24 +56,28 @@ export async function PATCH(
         throw error;
       }
 
-      return changeProjectMemberRole(
+      const changed = await changeProjectMemberRole(
         { memberId, projectId, role: parsed.data.role },
         { actorUserId: principal.user.id, ...requestContext },
         tx,
       );
+      return { changed, authorizedProject } as const;
     });
 
     if (result.kind === "authorization_error") throw result.error;
-    if (result.kind === "not_found") {
+    if (result.changed.kind === "not_found") {
       return jsonResponse(
         { error: { code: "NOT_FOUND", message: "成员不存在" } },
         { status: 404 },
       );
     }
-    if (result.kind === "last_project_manager") {
+    if (result.changed.kind === "last_project_manager") {
       return jsonResponse(LAST_PROJECT_MANAGER_ERROR, { status: 409 });
     }
-    return jsonResponse({ member: result.member });
+    return jsonResponse({
+      project: serializeAuthorizedProject(result.authorizedProject, principal),
+      member: result.changed.member,
+    });
   } catch (error) {
     if (error instanceof SyntaxError) {
       return jsonResponse(

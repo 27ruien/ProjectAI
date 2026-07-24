@@ -54,6 +54,8 @@ try {
     NEXT_PUBLIC_BASE_PATH: "/tool/projectai",
     BETTER_AUTH_URL: "http://127.0.0.1:3200/tool/projectai/api/auth",
     BETTER_AUTH_SECRET: randomBytes(48).toString("base64url"),
+    AUTH_PROVIDER: "legacy-credential-test",
+    ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true",
     PROJECTAI_SEED_ENVIRONMENT: "test",
     PM_DAILY_REPORT_ENABLED: "true",
     WECOM_TIMESHEET_SYNC_ENABLED: "true",

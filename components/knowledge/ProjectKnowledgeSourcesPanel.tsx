@@ -177,7 +177,7 @@ export function ProjectKnowledgeSourcesPanel({
             <Link2 className="size-3 text-primary" />
             {item.spaceName ?? item.source.documentId ?? "资料"}
             <small className="text-muted-foreground">{item.spaceType ?? "document"}</small>
-            {(project.projectRole === "project_manager" || project.projectRole === null) &&
+            {project.permissions.canManageDocuments &&
             item.spaceType !== "project" ? (
               <button
                 type="button"
@@ -192,7 +192,7 @@ export function ProjectKnowledgeSourcesPanel({
           </span>
         ))}
       </div>
-      {project.projectRole === "project_manager" || project.projectRole === null ? (
+      {project.permissions.canManageDocuments ? (
         <div className="mt-4 grid gap-3 lg:grid-cols-2">
           <div className="flex gap-2">
             <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} className="h-9 flex-1 rounded-lg border bg-background px-3 text-xs">
