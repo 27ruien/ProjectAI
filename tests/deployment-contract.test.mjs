@@ -221,6 +221,10 @@ test("operations use scoped Compose services and storage verification stays read
   assert.ok(composeRun);
   assert.match(composeRun, /--interactive=false/);
   assert.match(composeRun, /--no-TTY/);
+  assert.match(composeRun, /timeout/);
+  assert.match(composeRun, /--signal=TERM/);
+  assert.match(composeRun, /--kill-after=30s/);
+  assert.match(composeRun, /45m/);
   assert.match(script, /compose_run=\(/);
   assert.match(script, /--no-deps/);
   assert.match(script, /--pull never/);
@@ -324,6 +328,22 @@ test("operations use scoped Compose services and storage verification stays read
   );
   assert.match(script, /sudo nginx -T 2>\/dev\/null/);
   assert.match(script, /client_max_body_size 52m/);
+});
+
+test("Staging deployment bounds remote operations and keeps SSH sessions alive", async () => {
+  const script = await readFile(deployScript, "utf8");
+  assert.match(script, /command -v timeout >\/dev\/null 2>&1/);
+  assert.match(script, /ServerAliveInterval=15/);
+  assert.match(script, /ServerAliveCountMax=12/);
+  assert.match(script, /ConnectTimeout=10/);
+  assert.match(
+    script,
+    /--rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10'/,
+  );
+  assert.equal(
+    [...script.matchAll(/--kill-after=30s\n\s+45m/g)].length,
+    2,
+  );
 });
 
 test("rollback preserves the previous application health contract", async () => {

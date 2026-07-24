@@ -110,7 +110,14 @@ export NEXT_PUBLIC_APP_VERSION="$APP_VERSION"
 export NEXT_PUBLIC_COMMIT_SHA="$COMMIT_SHA"
 export NEXT_PUBLIC_BUILD_TIME="$BUILD_TIME"
 
-SSH=(ssh -o BatchMode=yes "$REMOTE_HOST")
+SSH=(
+  ssh
+  -o BatchMode=yes
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=12
+  -o ConnectTimeout=10
+  "$REMOTE_HOST"
+)
 
 release_deploy_lock() {
   [[ "$LOCK_ACQUIRED" == "1" ]] || return 0
@@ -199,6 +206,7 @@ embedding_worker_container_name="${16}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
+command -v timeout >/dev/null 2>&1
 sudo -n true
 sudo docker compose version >/dev/null
 
@@ -1069,7 +1077,7 @@ rsync --archive --compress --delete \
   --exclude '/.env.embedding' \
   --exclude '/secrets/' \
   --exclude '*.log' \
-  --rsh='ssh -o BatchMode=yes' \
+  --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 
 log "Transferring locally built Staging images without building on the shared host"
@@ -1221,7 +1229,12 @@ trap remote_deploy_error ERR
 trap cleanup_minio_backup_env EXIT
 
 compose_run=(
-  "${compose[@]}"
+  sudo
+  timeout
+  --signal=TERM
+  --kill-after=30s
+  45m
+  "${compose[@]:1}"
   run
   --rm
   --no-deps
@@ -2615,7 +2628,12 @@ embedding_env_file="${14}"
 cd "$remote_dir"
 sudo test -e "$deploy_marker"
 compose_run=(
-  sudo env
+  sudo
+  timeout
+  --signal=TERM
+  --kill-after=30s
+  45m
+  env
   "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
   "NEXT_PUBLIC_APP_VERSION=$app_version"
   "NEXT_PUBLIC_BUILD_TIME=$build_time"
