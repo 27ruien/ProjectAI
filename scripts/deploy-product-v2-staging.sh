@@ -130,8 +130,11 @@ sudo awk -F= '
   END { exit(ok == 4 ? 0 : 1) }
 ' "$env_file" || { printf 'Staging boundary configuration is invalid.\n' >&2; exit 1; }
 arch="$(sudo docker info --format '{{.Architecture}}')"
-[[ "$arch" == "amd64" || "$arch" == "arm64" ]]
-printf '%s' "$arch"
+case "$arch" in
+  amd64|x86_64) printf 'amd64' ;;
+  arm64|aarch64) printf 'arm64' ;;
+  *) printf 'Unsupported Staging Docker architecture.\n' >&2; exit 1 ;;
+esac
 REMOTE_PREFLIGHT
 )"
 REMOTE_PLATFORM="linux/${REMOTE_ARCH}"

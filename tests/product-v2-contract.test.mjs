@@ -130,6 +130,8 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.match(deploy, /WECOM_TIMESHEET_SYNC_ENABLED=false/);
   assert.match(deploy, /ai:probe:qwen/);
   assert.match(deploy, /x-projectai-commit-sha/);
+  assert.match(deploy, /amd64\|x86_64[\s\S]*printf 'amd64'/);
+  assert.match(deploy, /arm64\|aarch64[\s\S]*printf 'arm64'/);
 });
 
 test("CI separates legacy regression, Mock WeCom, and production-build auth modes", async () => {
