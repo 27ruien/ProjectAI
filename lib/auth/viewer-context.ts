@@ -32,7 +32,7 @@ export async function buildViewerContext(
 ): Promise<ViewerContext> {
   const projects = await listAuthorizedProjects(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
   );
   const rosters = await listProjectRosterSummaries(
     projects.map((project) => project.id),
@@ -61,16 +61,17 @@ export async function buildViewerContext(
       permissions: toUiPermissions(principal, project.projectRole),
     };
   });
-  const admin = principal.user.systemRole === "system_admin";
+  const superAdmin = principal.user.productRole === "super_admin";
   return {
     user: {
       id: principal.user.id,
       email: principal.user.email,
       displayName: principal.user.displayName,
       systemRole: principal.user.systemRole,
+      productRole: principal.user.productRole,
     },
     projects: projectSummaries,
-    canCreateProject: admin,
-    canViewAudit: admin,
+    canCreateProject: true,
+    canViewAudit: superAdmin,
   };
 }

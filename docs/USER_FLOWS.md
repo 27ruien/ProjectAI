@@ -95,18 +95,21 @@ flowchart LR
 - 回答只写 AI Thread/Message/Execution/Citation/Audit，不写正式 Requirement、Scope、Action、Risk 或 Meeting。
 - 页面必须准确提示“基于项目全文知识索引”；不得宣称向量 RAG、Hybrid Search 或 Rerank。
 
-## 需求提取与审核（目标流程，当前 Mock）
+## 需求提取与审核（Product V2）
 
 ```mermaid
 flowchart LR
-  A["选择项目文件（目标）"] --> B["读取已解析 Chunk（真实基础）"]
-  B --> C["需求提取（Mock）"]
-  C --> D["形成 AI 草稿"]
-  D --> E["人工修改与审核"]
-  E --> F["正式需求写入（未实现）"]
+  A["选择授权文件或上传临时附件"] --> B["重新校验 Active/Current/Stored/Succeeded/Effective Chunk"]
+  B --> C["AI Gateway 严格 JSON 与引用校验"]
+  C -->|"非法"| D["一次受控 Repair；仍失败即拒绝"]
+  C -->|"合法"| E["形成待审核草稿"]
+  D --> E
+  E --> F["当前页面编辑与整批批准/拒绝"]
+  F -->|"批准"| G["事务写入正式 Requirement + Version + Source"]
+  F --> H["选择保存资料/结果或退出临时索引"]
 ```
 
-B3-A 项目助手不等于需求提取。已有审核交互仍只产生 Mock 状态反馈，正式需求数据层和 AI 写入尚未实现。
+项目助手回答仍只写 AI Thread/Message/Execution/Citation，不等于 Requirement Extraction。需求提取在 Provider 返回后、草稿持久化前和人工审核写入时都重新校验项目/来源权限；AI 不能跳过人工批准直接写正式 Requirement。
 
 ## 会议到 Action Plan（目标流程，当前 Mock）
 

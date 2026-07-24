@@ -115,7 +115,7 @@ test("trusted reverse-proxy headers keep application redirects on HTTPS", async 
   assert.match(String(response.status), /^30[2378]$/);
   assert.equal(
     response.location,
-    `https://${trustedHost}${basePath}/dashboard`,
+    `https://${trustedHost}${basePath}/daily-report`,
   );
 });
 

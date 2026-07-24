@@ -82,6 +82,8 @@ export interface ProjectDocumentDto {
   knowledgeSpaceId: string;
   visibility: "private" | "organization_shared" | "department_shared" | "restricted";
   displayName: string;
+  workflowTemporary: boolean;
+  temporaryExpiresAt: string | null;
   status: ProjectDocumentStatus;
   createdBy: DocumentActorDto;
   createdAt: string;

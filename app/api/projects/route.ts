@@ -1,24 +1,23 @@
 import { z } from "zod";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
+import { jsonResponse, requireTrustedMutationRequest } from "@/lib/auth/http";
 import {
-  authorizationErrorResponse,
-  jsonResponse,
-  requireTrustedMutationRequest,
-} from "@/lib/auth/http";
-import {
-  AuthorizationError,
   requireApiPrincipal,
 } from "@/lib/auth/session";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { getDb } from "@/lib/db/client";
+import { eq } from "drizzle-orm";
+import { knowledgeSpace } from "@/lib/db/schema";
 import {
   createProjectWithManager,
   listAuthorizedProjects,
 } from "@/lib/db/repositories/project-repository";
+import { knowledgeManagementErrorResponse } from "@/lib/knowledge/http";
 import {
   serializeAuthorizedProject,
   serializeProject,
 } from "@/lib/projects/serialization";
+import { resolveProjectCreationScope } from "@/lib/knowledge/product-v2";
 
 const projectInputSchema = z
   .object({
@@ -47,6 +46,7 @@ const projectInputSchema = z
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
       .optional(),
+    departmentId: z.string().min(1).max(200).nullable().optional(),
   })
   .strict();
 
@@ -55,13 +55,13 @@ export async function GET(request: Request): Promise<Response> {
     const principal = await requireApiPrincipal(request.headers);
     const projects = await listAuthorizedProjects(
       principal.user.id,
-      principal.user.systemRole,
+      principal.user.productRole,
     );
     return jsonResponse({
       projects: projects.map(serializeAuthorizedProject),
     });
   } catch (error) {
-    return authorizationErrorResponse(error);
+    return knowledgeManagementErrorResponse(error);
   }
 }
 
@@ -69,9 +69,6 @@ export async function POST(request: Request): Promise<Response> {
   try {
     requireTrustedMutationRequest(request);
     const principal = await requireApiPrincipal(request.headers);
-    if (principal.user.systemRole !== "system_admin") {
-      throw new AuthorizationError(403, "FORBIDDEN", "无权创建项目");
-    }
     const parsed = projectInputSchema.safeParse(await request.json());
     if (!parsed.success) {
       return jsonResponse(
@@ -82,10 +79,17 @@ export async function POST(request: Request): Promise<Response> {
 
     const context = getRequestAuditContext(request.headers);
     const createdProject = await getDb().transaction(async (tx) => {
+      const scope = await resolveProjectCreationScope({
+        principal,
+        requestedDepartmentId: parsed.data.departmentId,
+        db: tx,
+      });
       const created = await createProjectWithManager(
         {
           id: `project-${crypto.randomUUID()}`,
           ...parsed.data,
+          organizationId: scope.organizationId,
+          departmentId: scope.departmentId,
           targetLaunchDate: parsed.data.targetLaunchDate ?? null,
           createdBy: principal.user.id,
         },
@@ -105,8 +109,14 @@ export async function POST(request: Request): Promise<Response> {
       );
       return created;
     });
+    const [createdSpace] = await getDb()
+      .select({ id: knowledgeSpace.id })
+      .from(knowledgeSpace)
+      .where(eq(knowledgeSpace.projectId, createdProject.id))
+      .limit(1);
+    if (!createdSpace) throw new Error("Created project is missing its knowledge space.");
     return jsonResponse(
-      { project: serializeProject(createdProject) },
+      { project: serializeProject(createdProject), knowledgeSpaceId: createdSpace.id },
       { status: 201 },
     );
   } catch (error) {
@@ -116,6 +126,6 @@ export async function POST(request: Request): Promise<Response> {
         { status: 400 },
       );
     }
-    return authorizationErrorResponse(error);
+    return knowledgeManagementErrorResponse(error);
   }
 }

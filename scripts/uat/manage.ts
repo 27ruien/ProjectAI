@@ -10,6 +10,7 @@ import {
   dailyTimesheetDraft,
   department,
   departmentMember,
+  knowledgeSpace,
   organization,
   organizationMember,
   project,
@@ -81,16 +82,15 @@ function validateSafety(command: Command): void {
   if (environment !== "local" && environment !== "staging") {
     throw new Error("PROJECTAI_UAT_ENVIRONMENT must be local or staging.");
   }
+  if (environment === "staging") {
+    throw new Error("LEGACY_CREDENTIAL_UAT_RETIRED_USE_PRODUCT_V2_MOCK_WECOM");
+  }
   if (command === "seed" && process.env.ALLOW_UAT_SEED !== "true") {
     throw new Error("ALLOW_UAT_SEED_REQUIRED");
   }
   if (command === "cleanup" && process.env.ALLOW_UAT_CLEANUP !== "true") {
     throw new Error("ALLOW_UAT_CLEANUP_REQUIRED");
   }
-  if (environment === "staging" && process.env.ALLOW_STAGING_UAT !== "true") {
-    throw new Error("ALLOW_STAGING_UAT_REQUIRED");
-  }
-
   const databaseUrl = new URL(required("DATABASE_URL"));
   const databaseName = databaseUrl.pathname.replace(/^\//, "").toLowerCase();
   const host = databaseUrl.hostname.toLowerCase();
@@ -102,9 +102,6 @@ function validateSafety(command: Command): void {
     (!new Set(["127.0.0.1", "localhost", "::1"]).has(host) || databaseName !== "projectai_uat")
   ) {
     throw new Error("UAT_LOCAL_DATABASE_TARGET_INVALID");
-  }
-  if (environment === "staging" && databaseName !== "projectai_staging") {
-    throw new Error("UAT_STAGING_DATABASE_TARGET_INVALID");
   }
 }
 
@@ -177,6 +174,7 @@ async function seedUser(tx: DatabaseTransaction, key: AccountKey, credentials: C
       displayName: expected.displayName,
       emailVerified: true,
       systemRole: "standard_user",
+      productRole: key === "admin" ? "super_admin" : "member",
       status: "active",
     });
   } else if (byId.systemRole !== "standard_user" || byId.status !== "active") {
@@ -314,8 +312,8 @@ async function verify(credentials: CredentialFile): Promise<void> {
     }
   }
   const schemaVersion = await db.execute<{ id: number }>(sql`select id from drizzle.__drizzle_migrations order by id desc limit 1`);
-  if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 20) throw new Error("UAT_MIGRATION_0019_REQUIRED");
-  process.stdout.write(`UAT verification passed: schema=0019; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
+  if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 24) throw new Error("UAT_MIGRATION_0023_REQUIRED");
+  process.stdout.write(`UAT verification passed: schema=0023; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
 }
 
 async function cleanup(): Promise<void> {
@@ -334,6 +332,7 @@ async function cleanup(): Promise<void> {
     await tx.delete(dailyTimesheetDraft).where(eq(dailyTimesheetDraft.organizationId, ORGANIZATION_ID));
     await tx.delete(workLogRecord).where(eq(workLogRecord.organizationId, ORGANIZATION_ID));
     await tx.delete(project).where(inArray(project.id, PROJECT_IDS));
+    await tx.delete(knowledgeSpace).where(eq(knowledgeSpace.organizationId, ORGANIZATION_ID));
     await tx.delete(department).where(eq(department.id, DEPARTMENT_ID));
     await tx.delete(organization).where(eq(organization.id, ORGANIZATION_ID));
     await tx.delete(session).where(inArray(session.userId, Object.values(USER_IDS)));

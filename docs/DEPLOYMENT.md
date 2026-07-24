@@ -77,6 +77,8 @@ published ports: none
 
 ## Staging 部署流程
 
+Product V2 使用专用 `scripts/deploy-product-v2-staging.sh`，只接受 `agent/projectai-product-architecture-v2` 的 clean、exact-origin Head。它在任何 release rsync 前先生成并验证 PostgreSQL custom dump并备份三个受保护配置文件，再应用 0020–0023、执行无密码的 Mock WeCom insert-only Seed、先关闭 AI 启动、运行真实 Qwen Probe、只重建 App 启用 AI，最后执行 Product V2 smoke。详细 UI 门禁见 `PRODUCT_V2_STAGING_UAT.md`。该脚本不替代下述历史全量 Staging 发布器，也不包含任何 Production 目标。
+
 使用 `scripts/deploy-staging.sh`。脚本要求：
 
 - 默认分支精确为 `agent/phase1-project-knowledge-management`；经当前 PR 明确授权时，可通过 `PROJECTAI_STAGING_DEPLOY_BRANCH` 绑定另一个精确 `agent/*` 分支。`main` 始终拒绝，工作区必须 clean，Commit 必须为完整 40 位 SHA。

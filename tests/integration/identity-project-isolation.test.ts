@@ -782,13 +782,15 @@ describe("database-backed authentication and API authorization", () => {
           origin: trustedAuthOrigin(),
         },
         body: JSON.stringify({
-          name: "不应创建",
+          name: "Product V2 成员创建验证",
           clientName: "测试客户",
           description: "权限测试",
         }),
       }),
     );
-    assert.equal(managerCreateResponse.status, 403);
+    assert.equal(managerCreateResponse.status, 201);
+    const managerCreatedProject = (await managerCreateResponse.json()) as { project: { id: string } };
+    await getDb().execute(sql`delete from projects where id = ${managerCreatedProject.project.id}`);
 
     const rejectedOrigin = await patchProject(
       new Request("http://local.test/api/projects/project-001", {

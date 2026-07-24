@@ -2,7 +2,9 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
+  integer,
   pgTable,
   text,
   timestamp,
@@ -10,7 +12,11 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
-import { departmentRoleEnum, organizationRoleEnum } from "./enums";
+import {
+  departmentRoleEnum,
+  departmentStatusEnum,
+  organizationRoleEnum,
+} from "./enums";
 import { user } from "./users";
 
 export const organization = pgTable(
@@ -85,6 +91,11 @@ export const department = pgTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 200 }).notNull(),
     code: varchar("code", { length: 80 }).notNull(),
+    parentDepartmentId: text("parent_department_id"),
+    level: integer("level").notNull().default(1),
+    status: departmentStatusEnum("status").notNull().default("active"),
+    headUserIds: text("head_user_ids").array().notNull().default(sql`'{}'::text[]`),
+    sortOrder: integer("sort_order").notNull().default(0),
     description: text("description").notNull().default(""),
     isActive: boolean("is_active").notNull().default(true),
     createdBy: text("created_by")
@@ -99,6 +110,11 @@ export const department = pgTable(
   },
   (table) => [
     unique("departments_id_org_unique").on(table.id, table.organizationId),
+    foreignKey({
+      columns: [table.parentDepartmentId, table.organizationId],
+      foreignColumns: [table.id, table.organizationId],
+      name: "departments_parent_org_fk",
+    }).onDelete("restrict"),
     uniqueIndex("departments_org_code_uidx").on(
       table.organizationId,
       table.code,
@@ -108,6 +124,11 @@ export const department = pgTable(
       table.isActive,
     ),
     check("departments_name_check", sql`length(btrim(${table.name})) > 0`),
+    check("departments_level_check", sql`${table.level} between 1 and 4`),
+    check(
+      "departments_parent_level_check",
+      sql`(${table.level} = 1 and ${table.parentDepartmentId} is null) or (${table.level} > 1 and ${table.parentDepartmentId} is not null)`,
+    ),
   ],
 );
 

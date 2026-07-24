@@ -30,33 +30,51 @@ test("server-renders the public Project AI OS login", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /Project AI OS/);
-  assert.match(html, /登录工作台/);
-  assert.match(html, /Project Files Foundation/);
+  assert.match(html, /企业微信登录/);
+  assert.match(html, /等待企业微信 OAuth 配置/);
+  assert.doesNotMatch(html, /type="password"|邮箱和密码|测试账号密码/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
-test("root and every protected product route redirect anonymous users to login", async () => {
+test("root and active product routes use the Product V2 entry and authentication boundary", async () => {
+  const root = await render("/");
+  assert.match(String(root.status), /^30[2378]$/);
+  assert.match(root.headers.get("location") ?? "", /\/daily-report$/);
+
   const routes = [
-    "/", "/dashboard", "/projects", "/projects/new", "/projects/project-001/overview",
-    "/projects/project-001/documents", "/projects/project-001/knowledge", "/projects/project-001/requirements",
-    "/projects/project-001/scope", "/projects/project-001/actions", "/projects/project-001/meetings", "/projects/project-001/risks",
-    "/workflows", "/workflows/requirement-extraction", "/reviews", "/skills", "/skills/project-document-summary", "/daily-report",
-    "/knowledge", "/analytics", "/settings", "/settings/ai-models", "/settings/ai-models/requirement-analysis",
+    "/workflows", "/workflows/requirement-extraction", "/daily-report",
+    "/knowledge", "/organization", "/settings", "/settings/ai-models",
   ];
   for (const route of routes) {
     const response = await render(route);
     assert.match(String(response.status), /^30[2378]$/, `${route} should redirect`);
-    assert.match(
-      response.headers.get("location") ?? "",
-      route === "/" ? /\/dashboard$/ : /\/login(?:\?|$)/,
-    );
+    assert.match(response.headers.get("location") ?? "", /\/login(?:\?|$)/);
+  }
+});
+
+test("legacy product routes redirect to the retained Product V2 destinations", async () => {
+  const redirects = new Map([
+    ["/dashboard", "/daily-report"],
+    ["/projects", "/knowledge"],
+    ["/projects/project-001/overview", "/knowledge?projectId=project-001"],
+    ["/reviews", "/workflows"],
+    ["/skills", "/workflows"],
+    ["/analytics", "/knowledge"],
+  ]);
+  for (const [route, target] of redirects) {
+    const response = await render(route);
+    assert.match(String(response.status), /^30[2378]$/, `${route} should redirect`);
+    const location = new URL(response.headers.get("location") ?? "", "http://localhost");
+    assert.equal(`${location.pathname}${location.search}`, `${basePath}${target}`);
   }
 });
 
 test("login is the only public application page", async () => {
   const response = await render("/login?returnTo=%2Fprojects");
   assert.equal(response.status, 200);
-  assert.match(await response.text(), /使用管理员为你预创建的企业账号/);
+  const html = await response.text();
+  assert.match(html, /企业微信登录/);
+  assert.doesNotMatch(html, /邮箱|密码/);
 });
 
 test("keeps AI infrastructure centralized and removes starter preview", async () => {

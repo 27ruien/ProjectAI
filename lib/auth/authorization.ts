@@ -9,7 +9,7 @@ import { getRequestAuditContext } from "./request-context";
 import {
   AuthorizationError,
   type AuthenticatedPrincipal,
-  isSystemAdmin,
+  isProductAdmin,
 } from "./session";
 
 const EDIT_ROLES: readonly ProjectRole[] = ["project_manager", "project_member"];
@@ -34,7 +34,7 @@ export function getProjectPermissions(
   principal: AuthenticatedPrincipal,
   projectRole: ProjectRole | null,
 ): ProjectPermissionSet {
-  const admin = isSystemAdmin(principal.user.systemRole);
+  const admin = isProductAdmin(principal.user.productRole);
   return {
     canRead: true,
     canEditProject: admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
@@ -57,7 +57,7 @@ export async function canReadProject(
   return Boolean(
     await findAuthorizedProject(
       principal.user.id,
-      principal.user.systemRole,
+      principal.user.productRole,
       projectId,
     ),
   );
@@ -72,7 +72,7 @@ export async function requireProjectAccess(
   const db = options.db ?? getDb();
   const authorizedProject = await findAuthorizedProject(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
     projectId,
     db,
     { lockForUpdate: options.lockForUpdate },
@@ -127,7 +127,7 @@ export async function requireProjectRole(
     options,
   );
   if (
-    !isSystemAdmin(principal.user.systemRole) &&
+    !isProductAdmin(principal.user.productRole) &&
     (!authorizedProject.projectRole ||
       !allowedRoles.includes(authorizedProject.projectRole))
   ) {
@@ -161,7 +161,7 @@ export async function canEditProject(
 ): Promise<boolean> {
   const authorizedProject = await findAuthorizedProject(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
     projectId,
   );
   if (!authorizedProject) return false;
@@ -175,7 +175,7 @@ export async function canManageProjectMembers(
 ): Promise<boolean> {
   const authorizedProject = await findAuthorizedProject(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
     projectId,
   );
   if (!authorizedProject) return false;

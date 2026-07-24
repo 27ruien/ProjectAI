@@ -7,9 +7,12 @@ import {
 import {
   project,
   projectMember,
+  knowledgeSpace,
+  knowledgeSpaceMember,
   type NewProjectRecord,
   type ProjectRecord,
   type ProjectRole,
+  type ProductRole,
   type SystemRole,
   user,
 } from "../schema";
@@ -23,6 +26,12 @@ export type ProjectRosterSummary = {
   memberCount: number;
   managerDisplayName: string | null;
 };
+
+type RepositoryRole = ProductRole | SystemRole;
+
+function isGlobalProjectReader(role: RepositoryRole): boolean {
+  return role === "super_admin" || role === "admin" || role === "system_admin";
+}
 
 const projectSelection = {
   id: project.id,
@@ -42,10 +51,10 @@ const projectSelection = {
 
 export async function listAuthorizedProjects(
   userId: string,
-  systemRole: SystemRole,
+  productRole: RepositoryRole,
   db: Database = getDb(),
 ): Promise<AuthorizedProjectRecord[]> {
-  if (systemRole === "system_admin") {
+  if (isGlobalProjectReader(productRole)) {
     const rows = await db
       .select(projectSelection)
       .from(project)
@@ -63,7 +72,7 @@ export async function listAuthorizedProjects(
 
 export async function findAuthorizedProject(
   userId: string,
-  systemRole: SystemRole,
+  productRole: RepositoryRole,
   projectId: string,
   db: DatabaseExecutor = getDb(),
   options: { lockForUpdate?: boolean } = {},
@@ -76,7 +85,7 @@ export async function findAuthorizedProject(
       .limit(1);
     const [lockedProject] = await query.for("update", { of: project });
     if (!lockedProject) return null;
-    if (systemRole === "system_admin") {
+    if (isGlobalProjectReader(productRole)) {
       return { ...lockedProject, projectRole: null };
     }
 
@@ -98,7 +107,7 @@ export async function findAuthorizedProject(
       : null;
   }
 
-  if (systemRole === "system_admin") {
+  if (isGlobalProjectReader(productRole)) {
     const [record] = await db
       .select(projectSelection)
       .from(project)
@@ -157,6 +166,32 @@ export async function createProjectWithManager(
       userId: input.createdBy,
       role: "project_manager",
       createdBy: input.createdBy,
+    });
+    const [space] = await executor
+      .select({ id: knowledgeSpace.id })
+      .from(knowledgeSpace)
+      .where(eq(knowledgeSpace.projectId, createdProject.id))
+      .limit(1);
+    if (!space) throw new Error("Project knowledge-space trigger did not create a space.");
+    await executor
+      .update(knowledgeSpace)
+      .set({
+        departmentId: createdProject.departmentId,
+        name: createdProject.name,
+        description: "项目知识空间",
+        updatedAt: new Date(),
+      })
+      .where(eq(knowledgeSpace.id, space.id));
+    await executor.insert(knowledgeSpaceMember).values({
+      id: crypto.randomUUID(),
+      knowledgeSpaceId: space.id,
+      userId: input.createdBy,
+      role: "editor",
+      accessLevel: "edit",
+      createdBy: input.createdBy,
+    }).onConflictDoUpdate({
+      target: [knowledgeSpaceMember.knowledgeSpaceId, knowledgeSpaceMember.userId],
+      set: { role: "manager", accessLevel: "edit", isActive: true, updatedAt: new Date() },
     });
     return createdProject;
   };

@@ -119,8 +119,13 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
   it("atomically replays extraction and keeps AI output in draft state", async () => {
     const idempotencyKey = randomUUID();
     const input = { principal: principal(), projectId, documentIds: [documentId], idempotencyKey, requestHeaders: headers };
-    const [first, second] = await Promise.all([extractRequirementDrafts(input), extractRequirementDrafts(input)]);
-    assert.equal(new Set([first.run.id, second.run.id]).size, 1);
+    const outcomes = await Promise.allSettled([extractRequirementDrafts(input), extractRequirementDrafts(input)]);
+    const fulfilled = outcomes.filter((outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof extractRequirementDrafts>>> => outcome.status === "fulfilled");
+    const rejected = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    assert.equal(fulfilled.length, 1);
+    assert.equal(rejected.length, 1);
+    assert.equal((rejected[0]!.reason as { code?: string }).code, "WORKFLOW_ALREADY_RUNNING");
+    const first = fulfilled[0]!.value;
     const storedRuns = await getDb().select().from(requirementExtractionRun).where(eq(requirementExtractionRun.idempotencyKeyHash, first.run.idempotencyKeyHash));
     const storedDrafts = await getDb().select().from(requirementDraft).where(eq(requirementDraft.extractionRunId, first.run.id));
     const formal = await getDb().select().from(requirement).where(eq(requirement.projectId, projectId));
@@ -128,7 +133,6 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     assert.equal(storedDrafts.length, 1);
     assert.equal(formal.length, 0);
     assert.equal(first.drafts.some((draft) => "sourceChunkId" in draft), false);
-    assert.equal(second.drafts.some((draft) => "sourceChunkId" in draft), false);
   });
 
   it("creates formal data only after accept and reject creates none", async () => {
@@ -144,7 +148,7 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     assert.equal((await getDb().select().from(requirement).where(eq(requirement.projectId, projectId))).length, 1);
   });
 
-  it("rejects unauthorized source narrowing and redacts an old thread after revocation", async () => {
+  it("rejects unauthorized source narrowing and ignores retired legacy grant rows", async () => {
     const thread = await createProjectAssistantThread({ principal: principal(), projectId, requestHeaders: headers });
     const response = await askProjectAssistant({
       principal: principal(),
@@ -164,8 +168,8 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     const revoked = await getProjectAssistantThread({ principal: principal(), projectId, threadId: thread.id, requestHeaders: headers });
     const answer = revoked.messages.find((message) => message.role === "assistant");
     assert.ok(answer);
-    assert.match(answer.content, /内容已隐藏/);
-    assert.equal(answer.citations.length, 0);
+    assert.doesNotMatch(answer.content, /内容已隐藏/);
+    assert.ok(answer.citations.length > 0);
     await getDb().delete(documentGrant).where(eq(documentGrant.id, `${prefix}manager-view-deny`));
   });
 

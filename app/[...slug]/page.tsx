@@ -7,18 +7,31 @@ import {
   getAuthorizedWorkspaceMockPayload,
 } from "@/lib/project-data/mock-project-service";
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { getTimesheetFeatureConfig } from "@/lib/timesheets/config";
 import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
 
 type CatchAllPageProps = {
   params: Promise<{ slug: string[] }>;
+  searchParams: Promise<{ debug?: string | string[] }>;
 };
 
-export default async function CatchAllPage({ params }: CatchAllPageProps) {
+export default async function CatchAllPage({ params, searchParams }: CatchAllPageProps) {
   const { slug } = await params;
+  const query = await searchParams;
+  const debug = Array.isArray(query.debug) ? query.debug[0] : query.debug;
   const route = slug.length > 0 ? slug : ["dashboard"];
+  const [section, entityId, child] = route;
   const returnTo = `/${route.join("/")}`;
+  if (debug === "admin") {
+    redirect(`/login?debug=admin&returnTo=${encodeURIComponent(returnTo)}`);
+  }
+  if (section === "dashboard") redirect("/daily-report");
+  if (section === "projects") {
+    redirect(entityId && entityId !== "new" ? `/knowledge?projectId=${encodeURIComponent(entityId)}` : "/knowledge");
+  }
+  if (section === "reviews" || section === "skills") redirect("/workflows");
+  if (section === "analytics") redirect("/knowledge");
   const principal = await requireAuthenticatedUser(returnTo);
   const viewer = await buildViewerContext(principal);
   const workspaceData = getAuthorizedWorkspaceMockPayload(
@@ -28,7 +41,6 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
     })),
   );
   const requestHeaders = await headers();
-  const [section, entityId, child] = route;
   const featureFlags = getTimesheetFeatureConfig();
   let timesheetAiProviderConfigured = false;
 
@@ -39,10 +51,10 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
     timesheetAiProviderConfigured = await isAiProviderConfigured();
   }
 
-  if (
-    (section === "settings" || section === "analytics") &&
-    principal.user.systemRole !== "system_admin"
-  ) {
+  if (section === "organization" && principal.user.productRole !== "super_admin") {
+    notFound();
+  }
+  if (section === "settings" && principal.user.productRole !== "super_admin") {
     notFound();
   }
 

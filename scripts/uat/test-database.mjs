@@ -73,7 +73,6 @@ try {
     "db:migrate",
     "db:seed",
     "test:integration",
-    "test:phase1-integration",
     "test:phase1-round2-integration",
     "test:phase1-round3-integration",
     "test:assistant-integration",
@@ -83,6 +82,16 @@ try {
   ]) {
     await run(script, env);
   }
+  await run("db:seed:product-v2", {
+    ...env,
+    AUTH_PROVIDER: "mock-wecom",
+    ALLOW_MOCK_WECOM_AUTH: "true",
+  });
+  await run("test:product-v2-integration", {
+    ...env,
+    AUTH_PROVIDER: "mock-wecom",
+    ALLOW_MOCK_WECOM_AUTH: "true",
+  });
   process.stdout.write("Isolated UAT database integration suite passed; the temporary database will be removed.\n");
 } finally {
   if (created) await admin.query(`drop database if exists "${databaseName}" with (force)`);

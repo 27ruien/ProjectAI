@@ -145,3 +145,14 @@
 | PMDR-004 | MV3 协议、Origin、权限最小化、重放/中断恢复和日志脱敏 | 单元/package 通过 | CI package + Mock E2E 全绿 |
 | PMDR-005 | iframe Adapter、精确字段匹配、分类不写、双工时、保存双证据、不触碰最终提交 | Mock E2E 通过；真实 WeCom BLOCKED/NOT RUN | 真实 DOM 审查、真实 Dry Run、一条虚构任务验收 |
 | PMDR-006 | Production 默认关闭且不变 | 通过 | 最终 diff 与只读基线确认无 Production rollout/启用 |
+
+## Product V2 企业身份与知识工作台门禁
+
+| ID | 验收项 | 当前状态 | 关闭条件 |
+| --- | --- | --- | --- |
+| PV2-001 | 无邮箱/密码 UI；Mock WeCom 三身份；`debug=admin` 非生产直达；Production 硬拒绝 | Local unit/integration PASS；Staging PENDING | exact-head Staging auth/navigation UI 与 Production 配置拒绝证据 |
+| PV2-002 | Kivisense Super Admin/Admin/Member、四级部门、负责人、循环/深度/停用保护 | Local integration PASS；Staging PENDING | Staging UI 创建/编辑/移动/非法操作拒绝与清理 |
+| PV2-003 | 部门/项目知识空间、view/edit、上传/预览、撤权与全局搜索 ACL | Local integration PASS；Staging PENDING | Staging UI 与跨身份 404/无泄漏证据 |
+| PV2-004 | Requirement Extraction 真实来源、一次 Repair、同页编辑/整批审核、临时附件保存生命周期 | Fake/local PASS；real Qwen Staging PENDING | 一条纯虚构附件的真实生成、HTTP 200、编辑、整批批准、新项目保存和知识库回读 |
+| PV2-005 | 0019 非空升级至 0023、旧数据保留、测试 credential/Session 退休 | Local migration rehearsal PASS；Staging PENDING | 备份后受控 Staging Migration 与不变量检查 |
+| PV2-006 | 当前 Head CI、九项 Staging UI、Reviewer、Production 不变 | PENDING | 全部动态证据写入 Draft PR；不得以本表替代实际 Run/Artifact/UAT |

@@ -141,6 +141,34 @@
       "when": 1784789001476,
       "tag": "0019_lame_dracula",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1784862837846,
+      "tag": "0020_natural_darkstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1784863684287,
+      "tag": "0021_married_kree",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1784864979189,
+      "tag": "0022_daily_piledriver",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1784871000000,
+      "tag": "0023_retire_test_credentials",
+      "breakpoints": true
     }
   ]
 }
