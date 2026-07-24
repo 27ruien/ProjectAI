@@ -120,8 +120,8 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.doesNotMatch(deploy, /docker compose down/);
   assert.match(deploy, /REMOTE_BACKUP/);
   assert.match(deploy, /pg_dump --format=custom/);
-  assert.match(deploy, /pg_restore --list/);
-  assert.match(deploy, /pg_restore --clean --if-exists/);
+  assert.match(deploy, /sudo cat -- "\$backup_path" \| sudo docker exec -i project-ai-os-staging-postgres pg_restore --list/);
+  assert.match(deploy, /sudo cat -- "\$backup_path" \| sudo docker exec -i project-ai-os-staging-postgres sh -ec 'pg_restore --clean --if-exists/);
   assert.ok(
     deploy.indexOf("REMOTE_BACKUP") < deploy.indexOf("rsync --archive"),
     "verified Staging backup must finish before the release tree is synchronized",

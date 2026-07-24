@@ -181,7 +181,7 @@ sudo docker inspect project-ai-os-staging-postgres >/dev/null
 sudo docker exec project-ai-os-staging-postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | sudo tee "$backup_path" >/dev/null
 sudo chmod 600 "$backup_path"
 sudo test -s "$backup_path"
-sudo docker exec -i project-ai-os-staging-postgres pg_restore --list < "$backup_path" >/dev/null
+sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres pg_restore --list >/dev/null
 sudo install -m 0600 -o root -g root "$env_file" "$env_backup"
 sudo install -m 0600 -o root -g root "$ai_env_file" "$ai_env_backup"
 sudo install -m 0600 -o root -g root "$embedding_env_file" "$embedding_env_backup"
@@ -264,7 +264,7 @@ rollback() {
   set +e
   printf 'Product V2 deployment failed; restoring the verified Staging database, environment, and prior images.\n' >&2
   "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker >/dev/null 2>&1
-  sudo docker exec -i project-ai-os-staging-postgres sh -ec 'pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$backup_path"
+  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec 'pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
   sudo install -m 0600 -o root -g root "$env_backup" "$env_file"
   sudo install -m 0600 -o deploy -g deploy "$ai_env_backup" "$ai_env_file"
   sudo install -m 0600 -o root -g root "$embedding_env_backup" "$embedding_env_file"
