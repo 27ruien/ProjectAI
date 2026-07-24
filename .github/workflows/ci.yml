@@ -33,6 +33,8 @@ jobs:
           --health-retries 12
     env:
       CI: "true"
+      NODE_ENV: test
+      AUTH_PROVIDER: legacy-credential-test
       DATABASE_URL: postgresql://projectai_ci:projectai_ci_database_only@127.0.0.1:5432/projectai_ci
       BETTER_AUTH_URL: http://127.0.0.1:3200/tool/projectai/api/auth
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
@@ -294,11 +296,27 @@ jobs:
           mkdir -p test-logs
           npm run timesheets:migration-upgrade 2>&1 | tee test-logs/timesheets-migration-upgrade.log
 
+      - name: Verify non-empty 0019 to 0023 Product V2 upgrade
+        shell: bash
+        env:
+          AUTH_PROVIDER: mock-wecom
+          ALLOW_MOCK_WECOM_AUTH: "true"
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run product-v2:migration-upgrade 2>&1 | tee test-logs/product-v2-migration-upgrade.log
+
       - name: Apply committed migrations
         run: npm run db:migrate
 
       - name: Apply idempotent CI seed
         run: npm run db:seed
+
+      - name: Apply passwordless Product V2 CI seed
+        env:
+          AUTH_PROVIDER: mock-wecom
+          ALLOW_MOCK_WECOM_AUTH: "true"
+        run: npm run db:seed:product-v2
 
       - name: TypeScript
         shell: bash
@@ -315,9 +333,21 @@ jobs:
 
       - name: SSR tests and production build
         shell: bash
+        env:
+          NODE_ENV: production
+          AUTH_PROVIDER: wecom
+          ALLOW_MOCK_WECOM_AUTH: "false"
         run: |
           set -o pipefail
           npm test 2>&1 | tee test-logs/build-and-ssr.log
+
+      - name: Product V2 authentication, architecture, and ACL tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:product-v2 2>&1 | tee test-logs/product-v2-contract.log
+          npm run test:product-v2-integration 2>&1 | tee test-logs/product-v2-integration.log
 
       - name: Document parser and chunker unit tests
         shell: bash
