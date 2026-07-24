@@ -22,15 +22,16 @@ function configuredBasePath(): string {
 }
 
 function debugIdentityRedirect(request: NextRequest): NextResponse | null {
+  const requestUrl = new URL(request.url);
   if (
     request.method !== "GET" ||
-    request.nextUrl.searchParams.get("debug") !== "admin"
+    requestUrl.searchParams.get("debug") !== "admin"
   ) {
     return null;
   }
 
   const basePath = configuredBasePath();
-  const pathname = request.nextUrl.pathname;
+  const pathname = requestUrl.pathname;
   const loginPath = `${basePath}/login`;
   if (pathname === loginPath) return null;
   if (basePath && pathname !== basePath && !pathname.startsWith(`${basePath}/`)) return null;
@@ -40,7 +41,7 @@ function debugIdentityRedirect(request: NextRequest): NextResponse | null {
     return null;
   }
 
-  const target = request.nextUrl.clone();
+  const target = new URL(requestUrl);
   target.pathname = loginPath;
   target.search = "";
   target.searchParams.set("debug", "admin");
@@ -49,8 +50,9 @@ function debugIdentityRedirect(request: NextRequest): NextResponse | null {
 }
 
 export function proxy(request: NextRequest) {
+  const debugRedirect = debugIdentityRedirect(request);
   const expectedHost = configuredHttpsHost();
-  if (!expectedHost) return NextResponse.next();
+  if (!expectedHost) return debugRedirect ?? NextResponse.next();
 
   const host = firstHeaderValue(request.headers.get("host"));
   const forwardedHost = firstHeaderValue(
@@ -68,7 +70,7 @@ export function proxy(request: NextRequest) {
     ) {
       return new NextResponse(null, { status: 404 });
     }
-    return debugIdentityRedirect(request) ?? NextResponse.next();
+    return debugRedirect ?? NextResponse.next();
   }
 
   const directHosts = new Set([
@@ -79,7 +81,7 @@ export function proxy(request: NextRequest) {
     "projectai-staging:3000",
   ]);
   if (!directHosts.has(host)) return new NextResponse(null, { status: 404 });
-  return debugIdentityRedirect(request) ?? NextResponse.next();
+  return debugRedirect ?? NextResponse.next();
 }
 
 export const config = {
