@@ -96,7 +96,10 @@ export class FakeProjectAssistantProvider
     }
 
     let text: string;
-    if (request.purpose === "requirement_extraction") {
+    if (
+      request.purpose === "requirement_extraction" ||
+      request.purpose === "requirement_repair"
+    ) {
       text = JSON.stringify({
         requirements: [
           {

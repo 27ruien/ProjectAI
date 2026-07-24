@@ -54,6 +54,8 @@ try {
     NEXT_PUBLIC_BASE_PATH: "/tool/projectai",
     BETTER_AUTH_URL: "http://127.0.0.1:3200/tool/projectai/api/auth",
     BETTER_AUTH_SECRET: randomBytes(48).toString("base64url"),
+    AUTH_PROVIDER: "legacy-credential-test",
+    ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true",
     PROJECTAI_SEED_ENVIRONMENT: "test",
     PM_DAILY_REPORT_ENABLED: "true",
     WECOM_TIMESHEET_SYNC_ENABLED: "true",
@@ -83,6 +85,16 @@ try {
   ]) {
     await run(script, env);
   }
+  await run("db:seed:product-v2", {
+    ...env,
+    AUTH_PROVIDER: "mock-wecom",
+    ALLOW_MOCK_WECOM_AUTH: "true",
+  });
+  await run("test:product-v2-integration", {
+    ...env,
+    AUTH_PROVIDER: "mock-wecom",
+    ALLOW_MOCK_WECOM_AUTH: "true",
+  });
   process.stdout.write("Isolated UAT database integration suite passed; the temporary database will be removed.\n");
 } finally {
   if (created) await admin.query(`drop database if exists "${databaseName}" with (force)`);

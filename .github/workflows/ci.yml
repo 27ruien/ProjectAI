@@ -33,6 +33,9 @@ jobs:
           --health-retries 12
     env:
       CI: "true"
+      NODE_ENV: test
+      AUTH_PROVIDER: legacy-credential-test
+      ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
       DATABASE_URL: postgresql://projectai_ci:projectai_ci_database_only@127.0.0.1:5432/projectai_ci
       BETTER_AUTH_URL: http://127.0.0.1:3200/tool/projectai/api/auth
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
@@ -294,6 +297,16 @@ jobs:
           mkdir -p test-logs
           npm run timesheets:migration-upgrade 2>&1 | tee test-logs/timesheets-migration-upgrade.log
 
+      - name: Verify non-empty 0019 to 0024 Product V2 upgrade
+        shell: bash
+        env:
+          AUTH_PROVIDER: mock-wecom
+          ALLOW_MOCK_WECOM_AUTH: "true"
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run product-v2:migration-upgrade 2>&1 | tee test-logs/product-v2-migration-upgrade.log
+
       - name: Apply committed migrations
         run: npm run db:migrate
 
@@ -315,6 +328,12 @@ jobs:
 
       - name: SSR tests and production build
         shell: bash
+        env:
+          NODE_ENV: production
+          AUTH_PROVIDER: wecom
+          ALLOW_MOCK_WECOM_AUTH: "false"
+          ALLOW_DEBUG_IDENTITY: "false"
+          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"
         run: |
           set -o pipefail
           npm test 2>&1 | tee test-logs/build-and-ssr.log
@@ -561,6 +580,18 @@ jobs:
           mkdir -p test-logs
           npm run production:rehearsal 2>&1 | tee test-logs/production-rollout-rehearsal.log
 
+      - name: Build isolated legacy credential E2E runtime
+        shell: bash
+        env:
+          NODE_ENV: test
+          NEXT_PUBLIC_APP_ENV: test
+          AUTH_PROVIDER: legacy-credential-test
+          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
+          ALLOW_MOCK_WECOM_AUTH: "false"
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee test-logs/legacy-credential-e2e-build.log
+
       - name: Playwright identity, isolation, and MVP flows
         shell: bash
         run: |
@@ -581,6 +612,20 @@ jobs:
             --expected-image="$RELEASE_CI_APP_DIGEST" \
             --session="$RELEASE_CI_SESSION" \
             --output-dir=review-artifacts
+
+      - name: Apply passwordless Product V2 CI seed
+        env:
+          AUTH_PROVIDER: mock-wecom
+          ALLOW_MOCK_WECOM_AUTH: "true"
+        run: npm run db:seed:product-v2
+
+      - name: Product V2 authentication, architecture, and ACL tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:product-v2 2>&1 | tee test-logs/product-v2-contract.log
+          npm run test:product-v2-integration 2>&1 | tee test-logs/product-v2-integration.log
 
       - name: Remove all CI Sessions, documents, indexes, objects, and temporary files
         if: always()

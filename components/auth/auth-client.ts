@@ -1,10 +1,10 @@
 import { APP_BASE_PATH, withBasePath } from "@/lib/base-path";
 
-const DEFAULT_RETURN_TO = "/dashboard";
+const DEFAULT_RETURN_TO = "/daily-report";
 
 function withoutBasePath(path: string): string {
   if (!APP_BASE_PATH) return path;
-  if (path === APP_BASE_PATH) return "/dashboard";
+  if (path === APP_BASE_PATH) return DEFAULT_RETURN_TO;
   return path.startsWith(`${APP_BASE_PATH}/`)
     ? path.slice(APP_BASE_PATH.length)
     : path;
@@ -28,23 +28,18 @@ export function safeReturnTo(value: string | null | undefined): string {
   }
 }
 
-export async function signInWithEmail(input: {
-  email: string;
-  password: string;
+export async function signInWithMockWeCom(input: {
+  identity: "super-admin" | "admin" | "member";
   returnTo: string;
 }): Promise<void> {
-  const response = await fetch(withBasePath("/api/auth/sign-in/email"), {
+  const response = await fetch(withBasePath("/api/auth/sign-in/mock-wecom"), {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      email: input.email.trim().toLocaleLowerCase("en-US"),
-      password: input.password,
-      callbackURL: safeReturnTo(input.returnTo),
-    }),
+    body: JSON.stringify({ identity: input.identity }),
   });
-
-  if (!response.ok) throw new Error("SIGN_IN_FAILED");
+  if (!response.ok) throw new Error("MOCK_WECOM_SIGN_IN_FAILED");
+  await response.text();
 }
 
 export async function signOut(): Promise<void> {

@@ -11,6 +11,7 @@ export type FileErrorCode =
   | "VERSION_NOT_FOUND"
   | "VERSION_NOT_AVAILABLE"
   | "DOCUMENT_ARCHIVED"
+  | "TEMPORARY_DOCUMENT_EXPIRED"
   | "STORAGE_UNAVAILABLE";
 
 export class FileOperationError extends Error {

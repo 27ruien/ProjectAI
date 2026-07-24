@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getAuth } from "./config";
 import { findUserById } from "@/lib/db/repositories/user-repository";
 import type { SystemRole, UserRecord } from "@/lib/db/schema";
+import type { ProductRole } from "./providers";
 
 export type AuthenticatedPrincipal = {
   sessionId: string;
@@ -11,7 +12,7 @@ export type AuthenticatedPrincipal = {
 
 export function safeReturnTo(value: string | null | undefined): string {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/dashboard";
+    return "/daily-report";
   }
   return value;
 }
@@ -45,7 +46,7 @@ export async function requireSystemAdmin(
   const principal = requestHeaders
     ? await getAuthenticatedPrincipal(requestHeaders)
     : await requireAuthenticatedUser();
-  if (!principal || principal.user.systemRole !== "system_admin") {
+  if (!principal || principal.user.productRole !== "super_admin") {
     throw new AuthorizationError(403, "FORBIDDEN", "无权执行此操作");
   }
   return principal;
@@ -74,4 +75,12 @@ export async function requireApiPrincipal(
 
 export function isSystemAdmin(role: SystemRole): boolean {
   return role === "system_admin";
+}
+
+export function isProductAdmin(role: ProductRole): boolean {
+  return role === "super_admin" || role === "admin";
+}
+
+export function isProductSuperAdmin(role: ProductRole): boolean {
+  return role === "super_admin";
 }

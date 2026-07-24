@@ -4,15 +4,19 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前开发版本 | `0.8.0-staging`（B3-C1 Production Release Readiness） |
-| `main` 基线 | 已合并 B3-A、B3-B1、B3-B2 |
-| 开发分支 | `agent/pm-daily-report-mvp` |
-| 当前功能 PR | Project Manager Daily Report + WeCom Connector；创建前本地验证中，不自动合并 |
+| 当前开发版本 | `0.8.0-staging`（Product V2 stacked Draft） |
+| `main` 基线 | 已合并 B3-A、B3-B1、B3-B2；当前分支堆叠在 PR #11 Head |
+| 开发分支 | `agent/projectai-product-architecture-v2` |
+| 当前功能 PR | Product V2 企业身份、角色/部门、知识空间与 Requirement Extraction；保持 Draft，不自动合并 |
 | 动态交付事实 | PR Head、CI Run、Artifact ID/Digest、Staging image 与 Build Time 只记录在 Draft PR、Provenance Manifest 和受控部署证据 |
-| Staging | https://gridworks.cn/tool/projectai-staging/；保持已验证 hybrid，不重复制造真实 Provider 费用 |
-| Production | https://gridworks.cn/tool/projectai/；B3-C1 只读审计，不部署、不迁移、不重启、不创建 Secret |
+| Staging | https://gridworks.cn/tool/projectai-staging/；Product V2 exact-head 部署与九项真实 UI 验收待执行 |
+| Production | https://gridworks.cn/tool/projectai/；本分支不部署、不迁移、不重启、不创建 Secret |
 
 ## 当前结论
+
+当前 Product V2 分支已在本地完成无密码 Mock WeCom 三身份、`debug=admin` 非生产直达、Product Role、Kivisense 四级部门、部门/项目知识空间 view/edit、全局授权搜索，以及真实 Requirement Extraction 的临时附件、一次 Repair、同页整批审核和保存生命周期。非空 Migration 0019→0024、显式 deny 优先级和完整隔离数据库回归、build/typecheck 和 Product V2 合约已通过；当前 Head CI、受控 Staging Migration、真实 Qwen UI 与 Reviewer 仍为待完成门禁，因此不得标记 Ready。
+
+正式企业微信 OAuth/扫码尚未实现。Production 配置对 Mock WeCom 和 debug identity 硬拒绝；本分支只允许 Staging，Production 必须保持不变。
 
 当前分支在已合并的第一阶段能力上新增 Feature-flagged 项目经理个人日报与独立 Chrome MV3 企业微信连接器。日报包含真实 PostgreSQL 随记/草稿/任务/AI execution/同步摘要、现有 Gateway 的结构化 AI 整理、人工审核确认、JSON 导出和同步中心；扩展包含严格协议、持久队列、Dry Run、iframe Adapter、精确目录匹配和逐条保存。两个 Flag 默认关闭，Production 未启用或变更。
 
@@ -80,7 +84,7 @@ B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 S
 - 用户知识搜索的语义/Hybrid Retrieval、HNSW/IVFFlat/其他 ANN 与 Vector RAG。
 - `qwen3-rerank`、Reranker 和 B3-B3。
 - Tool Calling、Function Calling、Web Search、Agent 自主执行。
-- 自动总结、需求提取、Scope/Action/风险生成和任何 AI 正式业务写入。
+- 自动会议总结、未经人工审核的 Requirement/Scope/Action/风险正式写入。
 - Production Qwen Secret、Production Worker 变更、Production Migration 或 Production 部署。
 
 ## 验证门禁

@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
   getDb,
   type Database,
@@ -7,9 +7,12 @@ import {
 import {
   project,
   projectMember,
+  knowledgeSpace,
+  knowledgeSpaceMember,
   type NewProjectRecord,
   type ProjectRecord,
   type ProjectRole,
+  type ProductRole,
   type SystemRole,
   user,
 } from "../schema";
@@ -23,6 +26,21 @@ export type ProjectRosterSummary = {
   memberCount: number;
   managerDisplayName: string | null;
 };
+
+type RepositoryRole = ProductRole | SystemRole;
+
+function isGlobalProjectReader(role: RepositoryRole): boolean {
+  return role === "super_admin" || role === "admin" || role === "system_admin";
+}
+
+function withEffectiveCreatorRole(
+  row: AuthorizedProjectRecord,
+  userId: string,
+): AuthorizedProjectRecord {
+  return row.createdBy === userId
+    ? { ...row, projectRole: "project_manager" }
+    : row;
+}
 
 const projectSelection = {
   id: project.id,
@@ -42,10 +60,10 @@ const projectSelection = {
 
 export async function listAuthorizedProjects(
   userId: string,
-  systemRole: SystemRole,
+  productRole: RepositoryRole,
   db: Database = getDb(),
 ): Promise<AuthorizedProjectRecord[]> {
-  if (systemRole === "system_admin") {
+  if (isGlobalProjectReader(productRole)) {
     const rows = await db
       .select(projectSelection)
       .from(project)
@@ -53,17 +71,24 @@ export async function listAuthorizedProjects(
     return rows.map((row) => ({ ...row, projectRole: null }));
   }
 
-  return db
+  const rows = await db
     .select({ ...projectSelection, projectRole: projectMember.role })
-    .from(projectMember)
-    .innerJoin(project, eq(project.id, projectMember.projectId))
-    .where(eq(projectMember.userId, userId))
+    .from(project)
+    .leftJoin(
+      projectMember,
+      and(
+        eq(projectMember.projectId, project.id),
+        eq(projectMember.userId, userId),
+      ),
+    )
+    .where(or(eq(project.createdBy, userId), isNotNull(projectMember.id)))
     .orderBy(desc(project.updatedAt));
+  return rows.map((row) => withEffectiveCreatorRole(row, userId));
 }
 
 export async function findAuthorizedProject(
   userId: string,
-  systemRole: SystemRole,
+  productRole: RepositoryRole,
   projectId: string,
   db: DatabaseExecutor = getDb(),
   options: { lockForUpdate?: boolean } = {},
@@ -76,7 +101,7 @@ export async function findAuthorizedProject(
       .limit(1);
     const [lockedProject] = await query.for("update", { of: project });
     if (!lockedProject) return null;
-    if (systemRole === "system_admin") {
+    if (isGlobalProjectReader(productRole)) {
       return { ...lockedProject, projectRole: null };
     }
 
@@ -93,12 +118,14 @@ export async function findAuthorizedProject(
         ),
       )
       .limit(1);
-    return membership
-      ? { ...lockedProject, projectRole: membership.role }
-      : null;
+    if (lockedProject.createdBy === userId) {
+      return { ...lockedProject, projectRole: "project_manager" };
+    }
+    if (membership) return { ...lockedProject, projectRole: membership.role };
+    return null;
   }
 
-  if (systemRole === "system_admin") {
+  if (isGlobalProjectReader(productRole)) {
     const [record] = await db
       .select(projectSelection)
       .from(project)
@@ -109,19 +136,23 @@ export async function findAuthorizedProject(
 
   const query = db
     .select({ ...projectSelection, projectRole: projectMember.role })
-    .from(projectMember)
-    .innerJoin(project, eq(project.id, projectMember.projectId))
+    .from(project)
+    .leftJoin(
+      projectMember,
+      and(
+        eq(projectMember.projectId, project.id),
+        eq(projectMember.userId, userId),
+      ),
+    )
     .where(
       and(
-        eq(projectMember.userId, userId),
-        eq(projectMember.projectId, projectId),
+        eq(project.id, projectId),
+        or(eq(project.createdBy, userId), isNotNull(projectMember.id)),
       ),
     )
     .limit(1);
-  const [record] = options.lockForUpdate
-    ? await query.for("update", { of: projectMember })
-    : await query;
-  return record ?? null;
+  const [record] = await query;
+  return record ? withEffectiveCreatorRole(record, userId) : null;
 }
 
 export async function listProjectRosterSummaries(
@@ -158,6 +189,32 @@ export async function createProjectWithManager(
       role: "project_manager",
       createdBy: input.createdBy,
     });
+    const [space] = await executor
+      .select({ id: knowledgeSpace.id })
+      .from(knowledgeSpace)
+      .where(eq(knowledgeSpace.projectId, createdProject.id))
+      .limit(1);
+    if (!space) throw new Error("Project knowledge-space trigger did not create a space.");
+    await executor
+      .update(knowledgeSpace)
+      .set({
+        departmentId: createdProject.departmentId,
+        name: createdProject.name,
+        description: "项目知识空间",
+        updatedAt: new Date(),
+      })
+      .where(eq(knowledgeSpace.id, space.id));
+    await executor.insert(knowledgeSpaceMember).values({
+      id: crypto.randomUUID(),
+      knowledgeSpaceId: space.id,
+      userId: input.createdBy,
+      role: "editor",
+      accessLevel: "edit",
+      createdBy: input.createdBy,
+    }).onConflictDoUpdate({
+      target: [knowledgeSpaceMember.knowledgeSpaceId, knowledgeSpaceMember.userId],
+      set: { role: "manager", accessLevel: "edit", isActive: true, updatedAt: new Date() },
+    });
     return createdProject;
   };
   return db ? create(db) : getDb().transaction(create);
@@ -185,5 +242,20 @@ export async function updateProject(
     .set({ ...changes, updatedAt: new Date() })
     .where(eq(project.id, projectId))
     .returning();
+  if (record && (
+    changes.name !== undefined ||
+    changes.description !== undefined ||
+    changes.departmentId !== undefined
+  )) {
+    await db
+      .update(knowledgeSpace)
+      .set({
+        name: record.name,
+        description: record.description || "项目知识空间",
+        departmentId: record.departmentId,
+        updatedAt: new Date(),
+      })
+      .where(eq(knowledgeSpace.projectId, projectId));
+  }
   return record ?? null;
 }

@@ -3,6 +3,7 @@ export type ProjectAssistantProviderPurpose =
   | "repair"
   | "probe"
   | "requirement_extraction"
+  | "requirement_repair"
   | "action_generation"
   | "risk_generation"
   | "weekly_report"

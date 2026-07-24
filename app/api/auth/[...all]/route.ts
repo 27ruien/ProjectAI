@@ -14,6 +14,10 @@ import {
   findUserById,
   updateLastLoginAt,
 } from "@/lib/db/repositories/user-repository";
+import {
+  isLegacyCredentialAuthEnabled,
+  isMockWeComAuthEnabled,
+} from "@/lib/auth/providers";
 
 function isRoute(request: Request, suffix: string): boolean {
   return new URL(request.url).pathname.endsWith(`/api/auth${suffix}`);
@@ -239,6 +243,7 @@ async function sanitizeSessionLookup(
         email: currentUser.email,
         displayName: currentUser.displayName,
         systemRole: currentUser.systemRole,
+        productRole: currentUser.productRole,
       },
     },
     response,
@@ -252,14 +257,22 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const isLogin = isRoute(request, "/sign-in/email");
+  const isCredentialLogin = isRoute(request, "/sign-in/email");
+  const isMockLogin = isRoute(request, "/sign-in/mock-wecom");
+  const isLogin = isCredentialLogin || isMockLogin;
   const isLogout = isRoute(request, "/sign-out");
 
-  // This release deliberately exposes only the credential login and logout
-  // endpoints. Better Auth also ships account/session-management endpoints
+  // Expose only the configured identity-provider login and logout endpoints.
+  // Better Auth also ships account/session-management endpoints
   // whose response contracts can contain raw Session tokens, so they stay
   // unreachable until each one has an explicit, sanitized product contract.
   if (!isLogin && !isLogout) return unsupportedAuthRoute();
+  if (isCredentialLogin && !isLegacyCredentialAuthEnabled()) {
+    return unsupportedAuthRoute();
+  }
+  if (isMockLogin && !isMockWeComAuthEnabled()) {
+    return unsupportedAuthRoute();
+  }
 
   try {
     requireTrustedMutationRequest(request);
@@ -306,11 +319,18 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse(
       {
         error: {
-          code: response.status === 429 ? "RATE_LIMITED" : "INVALID_CREDENTIALS",
+          code:
+            response.status === 429
+              ? "RATE_LIMITED"
+              : isMockLogin
+                ? "MOCK_WECOM_SIGN_IN_FAILED"
+                : "INVALID_CREDENTIALS",
           message:
             response.status === 429
               ? "登录尝试过多，请稍后再试"
-              : "邮箱或密码不正确",
+              : isMockLogin
+                ? "企业微信测试身份登录失败"
+                : "邮箱或密码不正确",
         },
       },
       { status: response.status === 429 ? 429 : 401, headers },

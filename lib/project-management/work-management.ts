@@ -512,7 +512,7 @@ export async function listActions(input: {
     ).map((row) => row.documentId),
   );
   const canReview =
-    input.principal.user.systemRole === "system_admin" ||
+    input.principal.user.productRole !== "member" ||
     access.projectRole === "project_manager";
   return {
     items,
@@ -918,7 +918,7 @@ export async function updateAction(input: {
         "Action 不存在",
       );
     if (
-      input.principal.user.systemRole !== "system_admin" &&
+      input.principal.user.productRole === "member" &&
       access.projectRole === "project_member" &&
       current.ownerUserId !== input.principal.user.id
     )
@@ -1010,7 +1010,7 @@ export async function bulkUpdateActionStatus(input: {
         "Action 不存在",
       );
     if (
-      input.principal.user.systemRole !== "system_admin" &&
+      input.principal.user.productRole === "member" &&
       access.projectRole === "project_member" &&
       rows.some((row) => row.ownerUserId !== input.principal.user.id)
     )
@@ -1178,7 +1178,7 @@ export async function listRisks(input: {
     ).map((row) => row.documentId),
   );
   const canReview =
-    input.principal.user.systemRole === "system_admin" ||
+    input.principal.user.productRole !== "member" ||
     access.projectRole === "project_manager";
   return {
     items,
@@ -1667,7 +1667,7 @@ export async function listWeeklyReports(input: {
       .orderBy(desc(weeklyReportVersion.versionNumber)),
   ]);
   const canReview =
-    input.principal.user.systemRole === "system_admin" ||
+    input.principal.user.productRole !== "member" ||
     access.projectRole === "project_manager";
   return { drafts: canReview ? drafts : [], versions };
 }

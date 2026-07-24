@@ -1408,7 +1408,7 @@ export async function generateDailyTimesheet(input: {
   const authorized = (
     await listAuthorizedProjects(
       input.principal.user.id,
-      input.principal.user.systemRole,
+      input.principal.user.productRole,
     )
   ).filter((project) => project.organizationId === input.organizationId);
   const projects = authorized.map((project) => ({

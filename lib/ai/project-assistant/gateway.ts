@@ -36,6 +36,7 @@ function responseFormatForPurpose(
 ): "text" | "json_object" {
   return [
     "requirement_extraction",
+    "requirement_repair",
     "action_generation",
     "risk_generation",
     "weekly_report",

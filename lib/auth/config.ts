@@ -3,6 +3,8 @@ import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { getDb } from "@/lib/db/client";
 import { betterAuthSchema } from "@/lib/db/schema";
 import { findUserById } from "@/lib/db/repositories/user-repository";
+import { mockWeComAuthPlugin } from "./mock-wecom-plugin";
+import { isLegacyCredentialAuthEnabled } from "./providers";
 
 const AUTH_PATH = "/api/auth";
 
@@ -47,11 +49,22 @@ function getTrustedOrigins(authBaseUrl: string): string[] {
 }
 
 function getLoginRateLimitMax(): number {
-  if (process.env.NEXT_PUBLIC_APP_ENV?.toLowerCase() !== "test") return 10;
-  const configured = Number(process.env.AUTH_TEST_LOGIN_RATE_LIMIT_MAX);
+  const environment = process.env.NEXT_PUBLIC_APP_ENV?.toLowerCase();
+  const stagingMock =
+    environment === "staging" &&
+    process.env.AUTH_PROVIDER?.trim().toLowerCase() === "mock-wecom" &&
+    process.env.ALLOW_MOCK_WECOM_AUTH === "true";
+  if (environment !== "test" && !stagingMock) return 10;
+  const configured = Number(
+    stagingMock
+      ? process.env.AUTH_MOCK_LOGIN_RATE_LIMIT_MAX
+      : process.env.AUTH_TEST_LOGIN_RATE_LIMIT_MAX,
+  );
   return Number.isInteger(configured) && configured >= 10 && configured <= 1_000
     ? configured
-    : 10;
+    : stagingMock
+      ? 60
+      : 10;
 }
 
 export function getTrustedAuthOrigins(): string[] {
@@ -83,12 +96,13 @@ function createAuth() {
       transaction: true,
     }),
     emailAndPassword: {
-      enabled: true,
+      enabled: isLegacyCredentialAuthEnabled(),
       disableSignUp: true,
       minPasswordLength: 12,
       maxPasswordLength: 128,
       autoSignIn: false,
     },
+    plugins: [mockWeComAuthPlugin()],
     user: {
       fields: { name: "displayName" },
       additionalFields: {
@@ -129,6 +143,7 @@ function createAuth() {
       max: 100,
       customRules: {
         "/sign-in/email": { window: 60, max: getLoginRateLimitMax() },
+        "/sign-in/mock-wecom": { window: 60, max: getLoginRateLimitMax() },
       },
     },
     advanced: {

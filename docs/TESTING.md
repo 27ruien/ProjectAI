@@ -1,5 +1,24 @@
 # Testing
 
+## Product V2
+
+Local/CI gates:
+
+```bash
+npm run product-v2:migration-upgrade
+npm run test:product-v2
+npm run test:product-v2-integration
+npm run test:uat:database
+npm test
+npm run typecheck
+npm run lint
+git diff --check
+```
+
+`test:product-v2` covers the Production hard rejection of Mock WeCom/debug identity, primary navigation, structured Requirement Extraction failures and one repair, temporary attachment lifecycle, knowledge membership, organization invariants, and the backup-first Staging deploy contract. The database-backed integration suite covers sanitized provider Sessions, Super Admin-only organization editing, member department-scoped project creation, department/project space grants, revoke, and last-Super-Admin serialization.
+
+The nine Staging browser commands and evidence restrictions are defined in [PRODUCT_V2_STAGING_UAT.md](./PRODUCT_V2_STAGING_UAT.md). They must be run against the exact deployed PR Head; API-only setup is not accepted as UI evidence.
+
 ## 项目经理日报与 WeCom Connector
 
 ```bash

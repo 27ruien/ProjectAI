@@ -60,7 +60,7 @@ test("local UAT refuses a non-UAT database name", () => {
   assert.doesNotMatch(result.stderr, /ECONNREFUSED|password|session|cookie/i);
 });
 
-test("Staging UAT refuses a non-Staging database name", () => {
+test("Staging refuses the retired legacy credential UAT before database access", () => {
   const result = invoke("seed", {
     PROJECTAI_UAT_ENVIRONMENT: "staging",
     ALLOW_UAT_SEED: "true",
@@ -68,7 +68,7 @@ test("Staging UAT refuses a non-Staging database name", () => {
     DATABASE_URL: "postgresql://127.0.0.1:1/projectai_uat",
   });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /UAT_STAGING_DATABASE_TARGET_INVALID/);
+  assert.match(result.stderr, /LEGACY_CREDENTIAL_UAT_RETIRED_USE_PRODUCT_V2_MOCK_WECOM/);
   assert.doesNotMatch(result.stderr, /ECONNREFUSED|password|session|cookie/i);
 });
 

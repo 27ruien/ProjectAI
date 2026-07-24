@@ -1,0 +1,1 @@
+ALTER TABLE "knowledge_space_members" ADD COLUMN "updated_at" timestamp with time zone DEFAULT now() NOT NULL;

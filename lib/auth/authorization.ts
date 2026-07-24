@@ -9,19 +9,18 @@ import { getRequestAuditContext } from "./request-context";
 import {
   AuthorizationError,
   type AuthenticatedPrincipal,
-  isSystemAdmin,
+  isProductAdmin,
 } from "./session";
 
-const EDIT_ROLES: readonly ProjectRole[] = ["project_manager", "project_member"];
-const MANAGE_MEMBER_ROLES: readonly ProjectRole[] = ["project_manager"];
-
 export type ProjectPermissionSet = {
-  canRead: true;
+  canViewProject: true;
+  canManageProject: boolean;
   canEditProject: boolean;
-  canManageProjectMembers: boolean;
+  canManageMembers: boolean;
+  canDeleteProject: boolean;
   canUploadDocuments: boolean;
+  canInviteMembers: boolean;
   canManageDocuments: boolean;
-  canCreateProject: boolean;
   canViewAudit: boolean;
 };
 
@@ -30,23 +29,26 @@ export type ProjectAuthorizationOptions = {
   lockForUpdate?: boolean;
 };
 
-export function getProjectPermissions(
+export function resolveProjectPermissions(
   principal: AuthenticatedPrincipal,
-  projectRole: ProjectRole | null,
+  project: Pick<AuthorizedProjectRecord, "createdBy" | "projectRole">,
 ): ProjectPermissionSet {
-  const admin = isSystemAdmin(principal.user.systemRole);
+  const admin = isProductAdmin(principal.user.productRole);
+  const creator = project.createdBy === principal.user.id;
+  const manager = project.projectRole === "project_manager";
+  const editor = project.projectRole === "project_member";
+  const canEditProject = admin || creator || manager || editor;
+  const canManageMembers = admin || creator || manager;
   return {
-    canRead: true,
-    canEditProject: admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
-    canManageProjectMembers:
-      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
-    canUploadDocuments:
-      admin || (projectRole ? EDIT_ROLES.includes(projectRole) : false),
-    canManageDocuments:
-      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
-    canCreateProject: admin,
-    canViewAudit:
-      admin || (projectRole ? MANAGE_MEMBER_ROLES.includes(projectRole) : false),
+    canViewProject: true,
+    canManageProject: canEditProject,
+    canEditProject,
+    canManageMembers,
+    canDeleteProject: canManageMembers,
+    canUploadDocuments: canEditProject,
+    canInviteMembers: canManageMembers,
+    canManageDocuments: canManageMembers,
+    canViewAudit: canManageMembers,
   };
 }
 
@@ -57,7 +59,7 @@ export async function canReadProject(
   return Boolean(
     await findAuthorizedProject(
       principal.user.id,
-      principal.user.systemRole,
+      principal.user.productRole,
       projectId,
     ),
   );
@@ -72,7 +74,7 @@ export async function requireProjectAccess(
   const db = options.db ?? getDb();
   const authorizedProject = await findAuthorizedProject(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
     projectId,
     db,
     { lockForUpdate: options.lockForUpdate },
@@ -127,9 +129,15 @@ export async function requireProjectRole(
     options,
   );
   if (
-    !isSystemAdmin(principal.user.systemRole) &&
-    (!authorizedProject.projectRole ||
-      !allowedRoles.includes(authorizedProject.projectRole))
+    !isProductAdmin(principal.user.productRole) &&
+    !(
+      authorizedProject.projectRole &&
+      allowedRoles.includes(authorizedProject.projectRole)
+    ) &&
+    !(
+      authorizedProject.createdBy === principal.user.id &&
+      allowedRoles.includes("project_manager")
+    )
   ) {
     const requestContext = requestHeaders
       ? getRequestAuditContext(requestHeaders)
@@ -161,11 +169,11 @@ export async function canEditProject(
 ): Promise<boolean> {
   const authorizedProject = await findAuthorizedProject(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
     projectId,
   );
   if (!authorizedProject) return false;
-  return getProjectPermissions(principal, authorizedProject.projectRole)
+  return resolveProjectPermissions(principal, authorizedProject)
     .canEditProject;
 }
 
@@ -175,10 +183,10 @@ export async function canManageProjectMembers(
 ): Promise<boolean> {
   const authorizedProject = await findAuthorizedProject(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
     projectId,
   );
   if (!authorizedProject) return false;
-  return getProjectPermissions(principal, authorizedProject.projectRole)
-    .canManageProjectMembers;
+  return resolveProjectPermissions(principal, authorizedProject)
+    .canManageMembers;
 }

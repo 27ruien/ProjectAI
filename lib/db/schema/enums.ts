@@ -5,6 +5,12 @@ export const systemRoleEnum = pgEnum("system_role", [
   "standard_user",
 ]);
 
+export const productRoleEnum = pgEnum("product_role", [
+  "super_admin",
+  "admin",
+  "member",
+]);
+
 export const userStatusEnum = pgEnum("user_status", ["active", "disabled"]);
 
 export const projectRoleEnum = pgEnum("project_role", [
@@ -158,6 +164,11 @@ export const departmentRoleEnum = pgEnum("department_role", [
   "department_member",
 ]);
 
+export const departmentStatusEnum = pgEnum("department_status", [
+  "active",
+  "inactive",
+]);
+
 export const knowledgeSpaceTypeEnum = pgEnum("knowledge_space_type", [
   "organization",
   "department",
@@ -176,6 +187,11 @@ export const knowledgeSpaceMemberRoleEnum = pgEnum(
   "knowledge_space_member_role",
   ["manager", "editor", "viewer"],
 );
+
+export const knowledgeAccessLevelEnum = pgEnum("knowledge_access_level", [
+  "view",
+  "edit",
+]);
 
 export const knowledgePermissionEnum = pgEnum("knowledge_permission", [
   "view",
@@ -299,6 +315,7 @@ export const weeklyReportDraftStatusEnum = pgEnum("weekly_report_draft_status", 
 ]);
 
 export type SystemRole = (typeof systemRoleEnum.enumValues)[number];
+export type ProductRole = (typeof productRoleEnum.enumValues)[number];
 export type UserStatus = (typeof userStatusEnum.enumValues)[number];
 export type ProjectRole = (typeof projectRoleEnum.enumValues)[number];
 export type ProjectStatus = (typeof projectStatusEnum.enumValues)[number];
@@ -334,12 +351,15 @@ export type AiRetrievalQueryEmbeddingCallStatus =
 export type OrganizationRole =
   (typeof organizationRoleEnum.enumValues)[number];
 export type DepartmentRole = (typeof departmentRoleEnum.enumValues)[number];
+export type DepartmentStatus = (typeof departmentStatusEnum.enumValues)[number];
 export type KnowledgeSpaceType =
   (typeof knowledgeSpaceTypeEnum.enumValues)[number];
 export type KnowledgeVisibility =
   (typeof knowledgeVisibilityEnum.enumValues)[number];
 export type KnowledgeSpaceMemberRole =
   (typeof knowledgeSpaceMemberRoleEnum.enumValues)[number];
+export type KnowledgeAccessLevel =
+  (typeof knowledgeAccessLevelEnum.enumValues)[number];
 export type KnowledgePermission =
   (typeof knowledgePermissionEnum.enumValues)[number];
 export type GrantEffect = (typeof grantEffectEnum.enumValues)[number];

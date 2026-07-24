@@ -17,9 +17,9 @@ flowchart LR
   E -->|"known project, insufficient role"| L["403 + sanitized audit"]
 ```
 
-身份、角色、`projectId`、`documentId` 和 `versionId` 均不可信。受保护页面和 Route Handler 从数据库 Session 恢复用户，再由集中授权层查询项目成员关系。文件服务继续验证 `project → document → version` 复合归属；不存在和跨项目资源统一 404，只有已经确认项目可见但写角色不足时返回 403。`system_admin` 绕过项目成员关系只存在于集中授权层。
+身份、角色、`projectId`、`documentId` 和 `versionId` 均不可信。受保护页面和 Route Handler 从 Provider 创建的数据库 Session 恢复用户，再由集中授权层查询产品角色、组织关系、知识空间权限与项目成员关系。文件服务继续验证 `project → document → version` 复合归属；不存在和跨项目资源统一 404。Product Admin 的跨项目能力只存在于集中授权层。
 
-项目资料、项目知识搜索和项目助手均不再走 `data/mock`：列表、版本、current、归档、下载、处理状态、词法命中、AI Thread/Message/Execution/Citation 来自 PostgreSQL 与私有对象存储边界。需求、Scope、Action、会议和风险仍是授权后按精确 `projectId` 过滤的 Mock。
+项目资料、项目知识搜索、项目助手和 Requirement Extraction 均不再走 `data/mock`：列表、版本、current、归档、下载、处理状态、词法命中、AI Thread/Message/Execution/Citation、Requirement Draft/Review/Version/Source 来自 PostgreSQL 与私有对象存储边界。Product V2 UI 不暴露遗留 Mock 管理模块。
 
 ## PostgreSQL 与对象存储职责
 
@@ -34,8 +34,8 @@ flowchart LR
 
 | 表 | 责任与关键约束 |
 | --- | --- |
-| `users` | 唯一规范化 email、系统角色、active/disabled；不保存密码 |
-| `accounts` | Better Auth credential；安全哈希只位于 `accounts.password_hash` |
+| `users` | 唯一身份、产品/系统角色、active/disabled；不保存密码 |
+| `accounts` | Better Auth Provider subject；Product V2 Mock WeCom/正式 WeCom 不使用密码，历史测试 credential 只存在于隔离测试链 |
 | `sessions` | 数据库 Session、到期/创建/last seen；token 唯一 |
 | `verifications` / `rate_limits` | Better Auth 兼容状态与数据库登录限流 |
 | `projects` | 项目基础信息及同项目成员/文件写操作的事务锁边界 |
