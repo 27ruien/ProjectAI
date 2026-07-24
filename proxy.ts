@@ -16,6 +16,42 @@ function configuredHttpsHost(): string | null {
   }
 }
 
+function configuredBasePath(): string {
+  const normalized = process.env.NEXT_PUBLIC_BASE_PATH?.trim().replace(/^\/+|\/+$/g, "") ?? "";
+  return normalized ? `/${normalized}` : "";
+}
+
+function debugIdentityRedirect(request: NextRequest): NextResponse | null {
+  if (
+    request.method !== "GET" ||
+    request.nextUrl.searchParams.get("debug") !== "admin" ||
+    process.env.ALLOW_DEBUG_IDENTITY !== "true" ||
+    process.env.ALLOW_MOCK_WECOM_AUTH !== "true" ||
+    process.env.AUTH_PROVIDER?.trim().toLowerCase() !== "mock-wecom" ||
+    process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase() === "production"
+  ) {
+    return null;
+  }
+
+  const basePath = configuredBasePath();
+  const pathname = request.nextUrl.pathname;
+  const loginPath = `${basePath}/login`;
+  if (pathname === loginPath) return null;
+  if (basePath && pathname !== basePath && !pathname.startsWith(`${basePath}/`)) return null;
+
+  const returnTo = pathname.slice(basePath.length) || "/daily-report";
+  if (returnTo.startsWith("/api/") || returnTo.startsWith("/_next/") || /\/[^/]+\.[^/]+$/u.test(returnTo)) {
+    return null;
+  }
+
+  const target = request.nextUrl.clone();
+  target.pathname = loginPath;
+  target.search = "";
+  target.searchParams.set("debug", "admin");
+  target.searchParams.set("returnTo", returnTo === "/" ? "/daily-report" : returnTo);
+  return NextResponse.redirect(target);
+}
+
 export function proxy(request: NextRequest) {
   const expectedHost = configuredHttpsHost();
   if (!expectedHost) return NextResponse.next();
@@ -36,7 +72,7 @@ export function proxy(request: NextRequest) {
     ) {
       return new NextResponse(null, { status: 404 });
     }
-    return NextResponse.next();
+    return debugIdentityRedirect(request) ?? NextResponse.next();
   }
 
   const directHosts = new Set([
@@ -46,9 +82,8 @@ export function proxy(request: NextRequest) {
     "localhost:3000",
     "projectai-staging:3000",
   ]);
-  return directHosts.has(host)
-    ? NextResponse.next()
-    : new NextResponse(null, { status: 404 });
+  if (!directHosts.has(host)) return new NextResponse(null, { status: 404 });
+  return debugIdentityRedirect(request) ?? NextResponse.next();
 }
 
 export const config = {

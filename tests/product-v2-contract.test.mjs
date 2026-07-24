@@ -12,10 +12,11 @@ test("Product V2 primary navigation contains only approved modules", async () =>
 });
 
 test("debug admin is a Mock WeCom POST flow and never a Production identity claim", async () => {
-  const [login, providers, client] = await Promise.all([
+  const [login, providers, client, requestProxy] = await Promise.all([
     read("components/auth/login-page.tsx"),
     read("lib/auth/providers.ts"),
     read("components/auth/auth-client.ts"),
+    read("proxy.ts"),
   ]);
   assert.match(login, /debugAdminRequested/);
   assert.match(login, /debugIdentityEnabled/);
@@ -25,6 +26,10 @@ test("debug admin is a Mock WeCom POST flow and never a Production identity clai
   assert.match(providers, /MOCK_WECOM_AUTH_PRODUCTION_FORBIDDEN/);
   assert.match(providers, /DEBUG_IDENTITY_PRODUCTION_FORBIDDEN/);
   assert.match(providers, /ALLOW_DEBUG_IDENTITY/);
+  assert.match(requestProxy, /debugIdentityRedirect/);
+  assert.match(requestProxy, /ALLOW_DEBUG_IDENTITY/);
+  assert.match(requestProxy, /NEXT_PUBLIC_APP_ENV.*production/s);
+  assert.match(requestProxy, /returnTo/);
 });
 
 test("Requirement Extraction exposes structured sources, one repair, and HTTP 200", async () => {

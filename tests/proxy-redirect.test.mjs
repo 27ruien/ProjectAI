@@ -76,6 +76,10 @@ before(async () => {
       BETTER_AUTH_URL: `https://${trustedHost}${basePath}/api/auth`,
       BETTER_AUTH_SECRET:
         process.env.BETTER_AUTH_SECRET || "proxy-redirect-test-secret-that-is-not-a-credential",
+      NEXT_PUBLIC_APP_ENV: "staging",
+      AUTH_PROVIDER: "mock-wecom",
+      ALLOW_MOCK_WECOM_AUTH: "true",
+      ALLOW_DEBUG_IDENTITY: "true",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -116,6 +120,15 @@ test("trusted reverse-proxy headers keep application redirects on HTTPS", async 
   assert.equal(
     response.location,
     `https://${trustedHost}${basePath}/daily-report`,
+  );
+});
+
+test("reviewed debug identity query is preserved before page routing", async () => {
+  const response = await proxyRequest(`${basePath}/?debug=admin`);
+  assert.match(String(response.status), /^30[2378]$/);
+  assert.equal(
+    response.location,
+    `https://${trustedHost}${basePath}/login?debug=admin&returnTo=%2Fdaily-report`,
   );
 });
 
