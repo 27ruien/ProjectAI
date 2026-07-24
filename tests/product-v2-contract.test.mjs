@@ -126,6 +126,10 @@ test("CI separates legacy regression, Mock WeCom, and production-build auth mode
   assert.match(workflow, /name: SSR tests and production build[\s\S]*NODE_ENV: production[\s\S]*AUTH_PROVIDER: wecom[\s\S]*ALLOW_MOCK_WECOM_AUTH: "false"/);
   assert.match(workflow, /npm run product-v2:migration-upgrade/);
   assert.match(workflow, /npm run test:product-v2-integration/);
+  assert.ok(
+    workflow.indexOf("npm run test:e2e") < workflow.indexOf("name: Apply passwordless Product V2 CI seed"),
+    "Product V2 fixtures must not change the legacy regression dataset before it finishes",
+  );
 });
 
 test("legacy password seeds cannot recreate retired credentials on Staging", async () => {
