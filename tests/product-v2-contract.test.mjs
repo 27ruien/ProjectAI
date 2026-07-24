@@ -102,6 +102,7 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.match(deploy, /EXPECTED_BRANCH="agent\/projectai-product-architecture-v2"/);
   assert.match(deploy, /REMOTE_DIR="\/srv\/projectai-staging"/);
   assert.match(deploy, /COMMIT_SHA.*origin\/\$\{EXPECTED_BRANCH\}/s);
+  assert.match(deploy, /pocket-charista\(\/\|\\\.zip\$\)/);
   assert.doesNotMatch(deploy, /REMOTE_DIR="\/srv\/projectai"/);
   assert.doesNotMatch(deploy, /docker compose down/);
   assert.match(deploy, /REMOTE_BACKUP/);
