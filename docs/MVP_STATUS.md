@@ -14,7 +14,7 @@
 
 ## 当前结论
 
-当前 Product V2 分支已在本地完成无密码 Mock WeCom 三身份、`debug=admin` 非生产直达、Product Role、Kivisense 四级部门、部门/项目知识空间 view/edit、全局授权搜索，以及真实 Requirement Extraction 的临时附件、一次 Repair、同页整批审核和保存生命周期。非空 Migration 0019→0023、完整隔离数据库回归、build/typecheck 和 Product V2 合约已通过；当前 Head CI、受控 Staging Migration、真实 Qwen UI 与 Reviewer 仍为待完成门禁，因此不得标记 Ready。
+当前 Product V2 分支已在本地完成无密码 Mock WeCom 三身份、`debug=admin` 非生产直达、Product Role、Kivisense 四级部门、部门/项目知识空间 view/edit、全局授权搜索，以及真实 Requirement Extraction 的临时附件、一次 Repair、同页整批审核和保存生命周期。非空 Migration 0019→0024、显式 deny 优先级和完整隔离数据库回归、build/typecheck 和 Product V2 合约已通过；当前 Head CI、受控 Staging Migration、真实 Qwen UI 与 Reviewer 仍为待完成门禁，因此不得标记 Ready。
 
 正式企业微信 OAuth/扫码尚未实现。Production 配置对 Mock WeCom 和 debug identity 硬拒绝；本分支只允许 Staging，Production 必须保持不变。
 

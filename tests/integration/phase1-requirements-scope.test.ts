@@ -148,7 +148,7 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     assert.equal((await getDb().select().from(requirement).where(eq(requirement.projectId, projectId))).length, 1);
   });
 
-  it("rejects unauthorized source narrowing and ignores retired legacy grant rows", async () => {
+  it("rejects unauthorized source narrowing and preserves explicit deny as a safety overlay", async () => {
     const thread = await createProjectAssistantThread({ principal: principal(), projectId, requestHeaders: headers });
     const response = await askProjectAssistant({
       principal: principal(),
@@ -168,8 +168,8 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     const revoked = await getProjectAssistantThread({ principal: principal(), projectId, threadId: thread.id, requestHeaders: headers });
     const answer = revoked.messages.find((message) => message.role === "assistant");
     assert.ok(answer);
-    assert.doesNotMatch(answer.content, /内容已隐藏/);
-    assert.ok(answer.citations.length > 0);
+    assert.match(answer.content, /内容已隐藏/);
+    assert.equal(answer.citations.length, 0);
     await getDb().delete(documentGrant).where(eq(documentGrant.id, `${prefix}manager-view-deny`));
   });
 

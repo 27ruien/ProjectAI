@@ -28,6 +28,7 @@ The primary navigation contains only Work Daily Report, AI Workflows, Knowledge 
 - Every department receives one default shared knowledge space. Every project receives one project knowledge space in the same transaction as project creation.
 - Project creation is available to organization members, but the service derives and validates the organization and allowed department. Caller-supplied organization IDs are not trusted.
 - Knowledge-space permissions are only `view` or `edit`. Project managers retain edit/member-management authority and cannot be downgraded or removed through the space-member endpoint.
+- Historical document/space allow and deny rows are no longer editable in the Product V2 UI, but remain a fail-closed safety overlay. A matching explicit deny wins for every identity, including Super Admin and Admin, until a separately reviewed data migration can retire those rows without widening access.
 - All file APIs, retrieval, AI generation, review, and formal writes continue to re-check the server Session, exact project, and current knowledge authorization. Missing and unauthorized resources keep the uniform 404 boundary.
 - Global search only indexes knowledge spaces returned by the authenticated server API. It never searches an unauthorized client-side catalog.
 
@@ -50,8 +51,9 @@ Temporary attachment discard removes it from the active index and archives its m
 - `0021_married_kree.sql`: temporary workflow attachment lifecycle and authorization expiry.
 - `0022_daily_piledriver.sql`: deterministic membership update timestamps.
 - `0023_retire_test_credentials.sql`: removes legacy test credential accounts and their Sessions without deleting user/audit history.
+- `0024_restore_authorization_deny_priority.sql`: combines Product V2 roles and view/edit membership with the historical default-deny overlay, restores view/download separation, and prevents any administrator or project/space manager from bypassing an explicit deny.
 
-The non-empty upgrade verifier applies the historical chain through 0019, inserts legacy data, migrates through 0023, and verifies preservation plus the new constraints. Staging/Production must use committed migrations; schema push/reset/drop are forbidden.
+The non-empty upgrade verifier applies the historical chain through 0019, inserts legacy data, migrates through 0024, and verifies preservation, temporary-document expiry, view/download separation, and administrator deny priority. Staging/Production must use committed migrations; schema push/reset/drop are forbidden.
 
 ## Mock and real capability line
 

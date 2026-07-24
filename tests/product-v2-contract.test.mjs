@@ -97,6 +97,19 @@ test("project managers cannot be downgraded or removed through knowledge-space m
   assert.match(service, /projectRole === "project_manager" \|\| projectRole === "project_member"/);
 });
 
+test("Product V2 document authorization keeps explicit deny ahead of every admin bypass", async () => {
+  const migration = await read("drizzle/0024_restore_authorization_deny_priority.sql");
+  assert.match(migration, /bool_or\(rule\.effect = 'deny'\)/);
+  assert.match(migration, /candidate\.project_role IN \('project_manager', 'project_member'\)/);
+  assert.match(migration, /candidate\.space_access_level = 'edit'/);
+  assert.match(migration, /candidate\.visibility <> 'restricted'/);
+  assert.ok(
+    migration.indexOf("coalesce(explicit.denied, false) = false") <
+      migration.lastIndexOf("candidate.product_role IN ('super_admin', 'admin')"),
+    "matching explicit deny must be evaluated before Product administrator access",
+  );
+});
+
 test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollback guarded", async () => {
   const deploy = await read("scripts/deploy-product-v2-staging.sh");
   assert.match(deploy, /EXPECTED_BRANCH="agent\/projectai-product-architecture-v2"/);

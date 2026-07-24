@@ -296,7 +296,7 @@ jobs:
           mkdir -p test-logs
           npm run timesheets:migration-upgrade 2>&1 | tee test-logs/timesheets-migration-upgrade.log
 
-      - name: Verify non-empty 0019 to 0023 Product V2 upgrade
+      - name: Verify non-empty 0019 to 0024 Product V2 upgrade
         shell: bash
         env:
           AUTH_PROVIDER: mock-wecom

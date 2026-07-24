@@ -169,6 +169,13 @@
       "when": 1784871000000,
       "tag": "0023_retire_test_credentials",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1784874000000,
+      "tag": "0024_restore_authorization_deny_priority",
+      "breakpoints": true
     }
   ]
 }

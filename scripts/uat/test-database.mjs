@@ -73,6 +73,7 @@ try {
     "db:migrate",
     "db:seed",
     "test:integration",
+    "test:phase1-integration",
     "test:phase1-round2-integration",
     "test:phase1-round3-integration",
     "test:assistant-integration",

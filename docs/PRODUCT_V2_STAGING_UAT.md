@@ -18,7 +18,7 @@ Run the dedicated deployer:
 ./scripts/deploy-product-v2-staging.sh
 ```
 
-The deployer creates and validates a PostgreSQL custom dump and protected configuration backups before synchronizing the release tree. It then applies committed migrations through 0023, runs insert-only Product V2 Seed, starts the immutable App/Worker image with AI disabled, executes the real Qwen provider probe, recreates only the Staging App with AI enabled, and runs the sanitized Product V2 smoke. Failure enters the Staging-only database/config/image recovery path. It never runs a Production command.
+The deployer creates and validates a PostgreSQL custom dump and protected configuration backups before synchronizing the release tree. It then applies committed migrations through 0024, runs insert-only Product V2 Seed, starts the immutable App/Worker image with AI disabled, executes the real Qwen provider probe, recreates only the Staging App with AI enabled, and runs the sanitized Product V2 smoke. Failure enters the Staging-only database/config/image recovery path. It never runs a Production command.
 
 ## Required browser gates
 

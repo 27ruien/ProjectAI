@@ -74,6 +74,7 @@ async function main(): Promise<void> {
     await apply(target, "0021_married_kree.sql");
     await apply(target, "0022_daily_piledriver.sql");
     await apply(target, "0023_retire_test_credentials.sql");
+    await apply(target, "0024_restore_authorization_deny_priority.sql");
     const result = await target.query<{
       mapped_roles: string;
       mapped_access: string;
@@ -157,6 +158,7 @@ async function main(): Promise<void> {
       admin_view: string;
       member_view: string;
       outsider_view: string;
+      outsider_download: string;
       outsider_upload: string;
       outsider_temp: string;
     }>(`
@@ -164,6 +166,7 @@ async function main(): Promise<void> {
         (select count(*)::text from projectai_authorized_documents('v2-legacy-admin', 'v2-project', 'view')) as admin_view,
         (select count(*)::text from projectai_authorized_documents('v2-legacy-member', 'v2-project', 'view')) as member_view,
         (select count(*)::text from projectai_authorized_documents('v2-outsider', 'v2-project', 'view')) as outsider_view,
+        (select count(*)::text from projectai_authorized_documents('v2-outsider', 'v2-project', 'download')) as outsider_download,
         (select count(*)::text from projectai_authorized_documents('v2-outsider', 'v2-project', 'upload')) as outsider_upload,
         (select count(*)::text from projectai_authorized_documents('v2-outsider', 'v2-project', 'view') where document_id = 'v2-temporary-document') as outsider_temp
     `);
@@ -172,10 +175,29 @@ async function main(): Promise<void> {
       authorizationRow.admin_view !== "3" ||
       authorizationRow.member_view !== "3" ||
       authorizationRow.outsider_view !== "1" ||
+      authorizationRow.outsider_download !== "0" ||
       authorizationRow.outsider_upload !== "0" ||
       authorizationRow.outsider_temp !== "0"
     ) {
       throw new Error(`Product V2 authorization contract failed: ${JSON.stringify(authorizationRow)}`);
+    }
+    await target.query(`
+      insert into document_grants (
+        id, organization_id, project_id, document_id, subject_type,
+        subject_id, permission, effect, created_by
+      ) values (
+        'v2-admin-document-deny', 'org-legacy-default', 'v2-project',
+        'v2-project-document', 'user', 'v2-legacy-admin', 'view', 'deny',
+        'v2-legacy-super'
+      );
+    `);
+    const deniedAdmin = await target.query<{ count: string }>(`
+      select count(*)::text
+      from projectai_authorized_documents('v2-legacy-admin', 'v2-project', 'view')
+      where document_id = 'v2-project-document'
+    `);
+    if (deniedAdmin.rows[0]?.count !== "0") {
+      throw new Error("Product administrator bypassed an explicit document deny");
     }
     await target.query(`update project_documents set temporary_expires_at = now() - interval '1 minute' where id = 'v2-temporary-document'`);
     const expired = await target.query<{ count: string }>(`
@@ -186,7 +208,7 @@ async function main(): Promise<void> {
     if (expired.rows[0]?.count !== "0") {
       throw new Error("Expired temporary document remained authorized");
     }
-    process.stdout.write("Non-empty 0019 to 0020 through 0023 Product V2 migration upgrade verified.\n");
+    process.stdout.write("Non-empty 0019 to 0020 through 0024 Product V2 migration upgrade verified.\n");
   } finally {
     if (target) await target.end();
     await admin.query(`drop database if exists "${databaseName}" with (force)`);
