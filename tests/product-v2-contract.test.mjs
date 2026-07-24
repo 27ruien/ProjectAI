@@ -134,9 +134,10 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
 
 test("CI separates legacy regression, Mock WeCom, and production-build auth modes", async () => {
   const workflow = await read(".github/workflows/ci.yml");
-  assert.match(workflow, /NODE_ENV: test\n\s+AUTH_PROVIDER: legacy-credential-test/);
+  assert.match(workflow, /NODE_ENV: test\n\s+AUTH_PROVIDER: legacy-credential-test\n\s+ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"/);
   assert.match(workflow, /name: Apply passwordless Product V2 CI seed[\s\S]*AUTH_PROVIDER: mock-wecom[\s\S]*ALLOW_MOCK_WECOM_AUTH: "true"/);
-  assert.match(workflow, /name: SSR tests and production build[\s\S]*NODE_ENV: production[\s\S]*AUTH_PROVIDER: wecom[\s\S]*ALLOW_MOCK_WECOM_AUTH: "false"/);
+  assert.match(workflow, /name: SSR tests and production build[\s\S]*NODE_ENV: production[\s\S]*AUTH_PROVIDER: wecom[\s\S]*ALLOW_MOCK_WECOM_AUTH: "false"[\s\S]*ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"/);
+  assert.match(workflow, /name: Build isolated legacy credential E2E runtime[\s\S]*NEXT_PUBLIC_APP_ENV: test[\s\S]*AUTH_PROVIDER: legacy-credential-test[\s\S]*ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"/);
   assert.match(workflow, /npm run product-v2:migration-upgrade/);
   assert.match(workflow, /npm run test:product-v2-integration/);
   assert.ok(

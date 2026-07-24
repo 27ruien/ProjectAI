@@ -7,6 +7,7 @@ Product V2 narrows the product shell to project-manager knowledge work while pre
 - Product pages never accept an email or password. The only visible providers are `wecom` and `mock-wecom`.
 - Formal environments are configured for WeCom OAuth/QR. The adapter intentionally remains disabled until the corporate WeCom application credentials and API contract are supplied.
 - Local and Staging may use `mock-wecom` only when `ALLOW_MOCK_WECOM_AUTH=true`. It provisions three fictional identities: Super Admin, Admin, and Member.
+- The retired credential flow exists only for the isolated legacy CI regression runtime. It requires both `NEXT_PUBLIC_APP_ENV=test` and `ALLOW_LEGACY_CREDENTIAL_TEST_AUTH=true`; Product V2 Local/Staging and every Production build keep it disabled.
 - `?debug=admin` is a convenience entry into the same Mock WeCom POST endpoint. It does not mint an identity in the browser or bypass the database. Production rejects Mock WeCom configuration at startup and cannot use this path.
 - Successful provider authentication creates a database-backed server Session and an `HttpOnly`, `Secure` (Staging/Production), scoped Cookie. Login, Session lookup, and logout responses never expose the raw Session token.
 - Migrations retire credential accounts and Sessions for legacy `@test.projectai.local` users. Historical user and audit rows are retained.

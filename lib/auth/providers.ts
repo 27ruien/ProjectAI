@@ -51,6 +51,8 @@ export function getAuthProviderConfig(): AuthProviderConfig {
     configured || (currentEnvironment === "test" ? "legacy-credential-test" : "wecom"),
   );
   const mockEnabled = process.env.ALLOW_MOCK_WECOM_AUTH === "true";
+  const legacyCredentialTestEnabled =
+    process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH === "true";
 
   if (currentEnvironment === "production" && (provider === "mock-wecom" || mockEnabled)) {
     throw new Error("MOCK_WECOM_AUTH_PRODUCTION_FORBIDDEN");
@@ -60,7 +62,7 @@ export function getAuthProviderConfig(): AuthProviderConfig {
   }
   if (
     provider === "legacy-credential-test" &&
-    (currentEnvironment !== "test" || process.env.NODE_ENV !== "test")
+    (currentEnvironment !== "test" || !legacyCredentialTestEnabled)
   ) {
     throw new Error("LEGACY_CREDENTIAL_AUTH_TEST_ONLY");
   }

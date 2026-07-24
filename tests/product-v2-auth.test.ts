@@ -10,6 +10,7 @@ const original = {
   nodeEnvironment: process.env.NODE_ENV,
   provider: process.env.AUTH_PROVIDER,
   allowMock: process.env.ALLOW_MOCK_WECOM_AUTH,
+  allowLegacyCredentialTest: process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH,
 };
 
 afterEach(() => {
@@ -21,6 +22,11 @@ afterEach(() => {
   else process.env.AUTH_PROVIDER = original.provider;
   if (original.allowMock === undefined) delete process.env.ALLOW_MOCK_WECOM_AUTH;
   else process.env.ALLOW_MOCK_WECOM_AUTH = original.allowMock;
+  if (original.allowLegacyCredentialTest === undefined) {
+    delete process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH;
+  } else {
+    process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH = original.allowLegacyCredentialTest;
+  }
 });
 
 describe("Product V2 auth provider guard", () => {
@@ -51,5 +57,23 @@ describe("Product V2 auth provider guard", () => {
     process.env.AUTH_PROVIDER = "mock-wecom";
     delete process.env.ALLOW_MOCK_WECOM_AUTH;
     assert.throws(() => getAuthProviderConfig(), /MOCK_WECOM_AUTH_NOT_ENABLED/);
+  });
+
+  it("allows legacy credential auth only in an explicitly enabled test runtime", () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "test";
+    process.env.AUTH_PROVIDER = "legacy-credential-test";
+    process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH = "true";
+    assert.equal(getAuthProviderConfig().provider, "legacy-credential-test");
+
+    delete process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH;
+    assert.throws(() => getAuthProviderConfig(), /LEGACY_CREDENTIAL_AUTH_TEST_ONLY/);
+  });
+
+  it("rejects legacy credential auth outside test even when its CI flag is set", () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "production";
+    process.env.AUTH_PROVIDER = "legacy-credential-test";
+    process.env.ALLOW_MOCK_WECOM_AUTH = "false";
+    process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH = "true";
+    assert.throws(() => getAuthProviderConfig(), /LEGACY_CREDENTIAL_AUTH_TEST_ONLY/);
   });
 });

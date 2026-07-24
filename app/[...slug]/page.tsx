@@ -10,6 +10,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { getTimesheetFeatureConfig } from "@/lib/timesheets/config";
 import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
+import { isLegacyCredentialAuthEnabled } from "@/lib/auth/providers";
 
 type CatchAllPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -23,15 +24,18 @@ export default async function CatchAllPage({ params, searchParams }: CatchAllPag
   const route = slug.length > 0 ? slug : ["dashboard"];
   const [section, entityId, child] = route;
   const returnTo = `/${route.join("/")}`;
+  const legacyRegression = isLegacyCredentialAuthEnabled();
   if (debug === "admin") {
     redirect(`/login?debug=admin&returnTo=${encodeURIComponent(returnTo)}`);
   }
-  if (section === "dashboard") redirect("/daily-report");
-  if (section === "projects") {
-    redirect(entityId && entityId !== "new" ? `/knowledge?projectId=${encodeURIComponent(entityId)}` : "/knowledge");
+  if (!legacyRegression) {
+    if (section === "dashboard") redirect("/daily-report");
+    if (section === "projects") {
+      redirect(entityId && entityId !== "new" ? `/knowledge?projectId=${encodeURIComponent(entityId)}` : "/knowledge");
+    }
+    if (section === "reviews" || section === "skills") redirect("/workflows");
+    if (section === "analytics") redirect("/knowledge");
   }
-  if (section === "reviews" || section === "skills") redirect("/workflows");
-  if (section === "analytics") redirect("/knowledge");
   const principal = await requireAuthenticatedUser(returnTo);
   const viewer = await buildViewerContext(principal);
   const workspaceData = getAuthorizedWorkspaceMockPayload(
@@ -51,10 +55,22 @@ export default async function CatchAllPage({ params, searchParams }: CatchAllPag
     timesheetAiProviderConfigured = await isAiProviderConfigured();
   }
 
-  if (section === "organization" && principal.user.productRole !== "super_admin") {
+  if (!legacyRegression && section === "organization" && principal.user.productRole !== "super_admin") {
     notFound();
   }
-  if (section === "settings" && principal.user.productRole !== "super_admin") {
+  if (
+    section === "settings" &&
+    (legacyRegression
+      ? principal.user.systemRole !== "system_admin"
+      : principal.user.productRole !== "super_admin")
+  ) {
+    notFound();
+  }
+  if (
+    legacyRegression &&
+    section === "analytics" &&
+    principal.user.systemRole !== "system_admin"
+  ) {
     notFound();
   }
 

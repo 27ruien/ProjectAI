@@ -35,6 +35,7 @@ jobs:
       CI: "true"
       NODE_ENV: test
       AUTH_PROVIDER: legacy-credential-test
+      ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
       DATABASE_URL: postgresql://projectai_ci:projectai_ci_database_only@127.0.0.1:5432/projectai_ci
       BETTER_AUTH_URL: http://127.0.0.1:3200/tool/projectai/api/auth
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
@@ -331,6 +332,7 @@ jobs:
           NODE_ENV: production
           AUTH_PROVIDER: wecom
           ALLOW_MOCK_WECOM_AUTH: "false"
+          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"
         run: |
           set -o pipefail
           npm test 2>&1 | tee test-logs/build-and-ssr.log
@@ -576,6 +578,18 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run production:rehearsal 2>&1 | tee test-logs/production-rollout-rehearsal.log
+
+      - name: Build isolated legacy credential E2E runtime
+        shell: bash
+        env:
+          NODE_ENV: test
+          NEXT_PUBLIC_APP_ENV: test
+          AUTH_PROVIDER: legacy-credential-test
+          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
+          ALLOW_MOCK_WECOM_AUTH: "false"
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee test-logs/legacy-credential-e2e-build.log
 
       - name: Playwright identity, isolation, and MVP flows
         shell: bash
