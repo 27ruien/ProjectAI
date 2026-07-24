@@ -175,7 +175,7 @@ async function main(): Promise<void> {
       authorizationRow.admin_view !== "3" ||
       authorizationRow.member_view !== "3" ||
       authorizationRow.outsider_view !== "1" ||
-      authorizationRow.outsider_download !== "0" ||
+      authorizationRow.outsider_download !== "1" ||
       authorizationRow.outsider_upload !== "0" ||
       authorizationRow.outsider_temp !== "0"
     ) {

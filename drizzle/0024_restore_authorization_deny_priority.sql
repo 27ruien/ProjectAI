@@ -210,8 +210,8 @@ WITH target_context AS (
           AND candidate.is_department_member
         )
       WHEN 'download' THEN
-        candidate.project_role IN ('project_manager', 'project_member')
-        OR candidate.space_access_level = 'edit'
+        candidate.project_role IS NOT NULL
+        OR candidate.space_access_level IN ('view', 'edit')
         OR (
           candidate.source_scope = 'department'
           AND candidate.visibility = 'department_shared'
