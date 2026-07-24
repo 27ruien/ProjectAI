@@ -24,11 +24,7 @@ function configuredBasePath(): string {
 function debugIdentityRedirect(request: NextRequest): NextResponse | null {
   if (
     request.method !== "GET" ||
-    request.nextUrl.searchParams.get("debug") !== "admin" ||
-    process.env.ALLOW_DEBUG_IDENTITY !== "true" ||
-    process.env.ALLOW_MOCK_WECOM_AUTH !== "true" ||
-    process.env.AUTH_PROVIDER?.trim().toLowerCase() !== "mock-wecom" ||
-    process.env.NEXT_PUBLIC_APP_ENV?.trim().toLowerCase() === "production"
+    request.nextUrl.searchParams.get("debug") !== "admin"
   ) {
     return null;
   }

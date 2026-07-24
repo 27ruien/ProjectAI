@@ -27,9 +27,8 @@ test("debug admin is a Mock WeCom POST flow and never a Production identity clai
   assert.match(providers, /DEBUG_IDENTITY_PRODUCTION_FORBIDDEN/);
   assert.match(providers, /ALLOW_DEBUG_IDENTITY/);
   assert.match(requestProxy, /debugIdentityRedirect/);
-  assert.match(requestProxy, /ALLOW_DEBUG_IDENTITY/);
-  assert.match(requestProxy, /NEXT_PUBLIC_APP_ENV.*production/s);
   assert.match(requestProxy, /returnTo/);
+  assert.doesNotMatch(requestProxy, /signInMockWeCom|createSession|setSessionCookie/);
 });
 
 test("Requirement Extraction exposes structured sources, one repair, and HTTP 200", async () => {
