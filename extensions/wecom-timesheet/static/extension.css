@@ -1,0 +1,20 @@
+:root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f6f7fb; }
+* { box-sizing: border-box; }
+body { margin: 0; font-size: 13px; }
+.popup { width: 390px; padding: 16px; }
+.options main { width: min(860px, calc(100% - 40px)); margin: 32px auto; }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+h1 { font-size: 22px; }
+label { display: block; margin: 12px 0; font-weight: 600; }
+textarea, input[type="url"] { width: 100%; margin-top: 6px; border: 1px solid #cbd2df; border-radius: 8px; padding: 9px 10px; background: white; color: inherit; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.check { display: flex; gap: 8px; align-items: center; font-weight: 500; }
+.buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+button { border: 1px solid #cbd2df; border-radius: 8px; background: white; color: #26334d; padding: 8px 11px; cursor: pointer; }
+button:hover { border-color: #7667e8; }
+.primary { border-color: #6757dd; background: #6757dd; color: white; }
+.boundary { border: 1px solid #f0c66b; border-radius: 8px; background: #fff8e8; color: #8b5a00; padding: 9px 10px; line-height: 1.5; }
+.message, section { border: 1px solid #dde1e9; border-radius: 8px; background: white; padding: 9px 10px; line-height: 1.5; }
+.message[data-state="error"] { border-color: #efb2b2; color: #a12727; }
+.message[data-state="success"] { border-color: #a9d8b8; color: #176b35; }
+.mono { overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: #667085; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

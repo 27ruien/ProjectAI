@@ -56,4 +56,14 @@ next-env.d.ts
 /dist/
 /.wrangler/
 /outputs/
+/extensions/wecom-timesheet/selector-config.local*
+selector-config.local.json
+wecom-selector.local.json
+/test-browser-profile/
+/playwright-auth/
+/screenshots/private/
+/artifacts/private/
+/.local/
+storage-state*.json
+/release/wecom-timesheet-extension-*.zip
 /work/

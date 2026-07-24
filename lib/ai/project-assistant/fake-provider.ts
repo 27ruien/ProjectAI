@@ -30,6 +30,18 @@ function taggedJsonString(prompt: string, tag: string): string {
   }
 }
 
+function taggedJsonValue(prompt: string, tag: string): unknown {
+  const match = prompt.match(
+    new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`),
+  );
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 export class FakeProjectAssistantProvider
   implements ProjectAssistantProvider
 {
@@ -106,6 +118,105 @@ export class FakeProjectAssistantProvider
       text = JSON.stringify({ risks: [{ title: "虚构交付延期风险", description: "若验收准备未按期完成，交付可能延期。", probability: 3, impact: 4, mitigation: "每周核对进度并升级阻塞。", trigger: "关键行动逾期", sourceIndex: 0 }] });
     } else if (request.purpose === "weekly_report") {
       text = JSON.stringify({ completed: ["完成虚构需求审核"], inProgress: ["推进虚构行动项"], nextWeek: ["完成虚构验收"], milestones: [], blockers: [], risks: ["持续监控已登记风险"], scopeChanges: [], requirementChanges: [], overdueActions: [], decisionsNeeded: [] });
+    } else if (
+      request.purpose === "timesheet_generation" ||
+      request.purpose === "timesheet_repair"
+    ) {
+      const input = taggedJsonValue(request.userPrompt, "timesheet_input_json") as {
+        today_records?: Array<{
+          id?: unknown;
+          raw_text?: unknown;
+          project_id?: unknown;
+          hours_hint?: unknown;
+          status_hint?: unknown;
+        }>;
+        available_projects?: Array<{ id?: unknown }>;
+      } | null;
+      const records = input?.today_records ?? [];
+      const fallbackProjectId =
+        typeof input?.available_projects?.[0]?.id === "string"
+          ? input.available_projects[0].id
+          : null;
+      const inferHours = (rawText: string): number | null => {
+        const hours = rawText.match(/(\d+(?:\.\d+)?)\s*(?:小时|h\b)/iu);
+        if (hours) {
+          const value = Number(hours[1]);
+          return Number.isFinite(value) && value >= 0 && value <= 24 ? value : null;
+        }
+        const minutes = rawText.match(/(\d+)\s*(?:分钟|min\b)/iu);
+        if (minutes) {
+          const value = Number(minutes[1]) / 60;
+          return Number.isInteger(value * 4) && value <= 24 ? value : null;
+        }
+        return null;
+      };
+      text = JSON.stringify({
+        tasks: records.map((record, index) => {
+          const rawText = typeof record.raw_text === "string" ? record.raw_text : "";
+          const projectId =
+            typeof record.project_id === "string"
+              ? record.project_id
+              : fallbackProjectId;
+          const hintedStatus = typeof record.status_hint === "string" ? record.status_hint : "";
+          const status = ["completed", "in_progress", "blocked", "pending"].includes(hintedStatus)
+            ? hintedStatus
+            : /尚未开始|未开始|待开始/u.test(rawText)
+              ? "pending"
+              : /阻塞|blocked/iu.test(rawText)
+                ? "blocked"
+                : /已完成|完成了|全部完成/u.test(rawText) && !/尚未|未完成|进行中/u.test(rawText)
+                  ? "completed"
+                  : "in_progress";
+          const hours =
+            typeof record.hours_hint === "number" &&
+            Number.isFinite(record.hours_hint) &&
+            record.hours_hint >= 0 &&
+            record.hours_hint <= 24
+              ? record.hours_hint
+              : inferHours(rawText);
+          const approximateHours = /约|大约|大概|左右|差不多/u.test(rawText);
+          const progress = status === "completed" ? 100 : status === "pending" ? 0 : null;
+          const reviewFields = ["overtimeHours"];
+          if (hours === null || approximateHours) reviewFields.push("hours");
+          const category = /沟通|会议|对齐|确认/u.test(rawText)
+            ? "communication"
+            : /文档|整理|记录|报告/u.test(rawText)
+              ? "documentation"
+              : /评审|验收|测试|复核/u.test(rawText)
+                ? "review"
+                : /方案|规划|计划/u.test(rawText)
+                  ? "planning"
+                  : "execution";
+          const description = rawText.trim().replace(/\s+/gu, " ").slice(0, 500);
+          return {
+            description: description.length >= 2 ? description : `Mock 记录 ${index + 1}`,
+            project_id: projectId,
+            hours,
+            overtime_hours: null,
+            category_id: category,
+            status,
+            urgency: null,
+            progress,
+            source_record_ids: [
+              typeof record.id === "string" ? record.id : `record-missing-${index}`,
+            ],
+            confidence: {
+              description: 0.94,
+              project: projectId ? 0.95 : 0.4,
+              hours: hours === null ? 0.2 : approximateHours ? 0.7 : 0.95,
+              overtimeHours: 0.2,
+              category: 0.9,
+              status: 0.95,
+              urgency: 0.2,
+              progress: progress === null ? 0.2 : 0.95,
+            },
+            needs_review: true,
+            review_fields: reviewFields,
+          };
+        }),
+        warnings: ["MOCK_AI：结果仅用于流程测试；未从输入推断出的字段保持待确认"],
+        unresolved_record_ids: [],
+      });
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

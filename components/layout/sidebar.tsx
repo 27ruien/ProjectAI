@@ -13,6 +13,7 @@ import {
   Settings,
   ShieldCheck,
   Workflow,
+  Clock3,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,6 +22,7 @@ import { systemRoleLabel, type ViewerContext } from "@/lib/auth/ui-types";
 const navigation = [
   { label: "工作台", href: "/dashboard", icon: LayoutDashboard },
   { label: "项目", href: "/projects", icon: FolderKanban },
+  { label: "工作日报", href: "/daily-report", icon: Clock3, feature: "pmDailyReport" },
   { label: "AI 工作流", href: "/workflows", icon: Workflow },
   { label: "审核中心", href: "/reviews", icon: ShieldCheck, badge: "8" },
   { label: "Skills", href: "/skills", icon: Blocks },
@@ -35,14 +37,16 @@ interface SidebarProps {
   onCollapsedChange: (value: boolean) => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
+  featureFlags: { pmDailyReport: boolean; wecomTimesheetSync: boolean };
 }
 
-export function Sidebar({ viewer, currentPath, collapsed, onCollapsedChange, mobileOpen, onMobileClose }: SidebarProps) {
+export function Sidebar({ viewer, currentPath, collapsed, onCollapsedChange, mobileOpen, onMobileClose, featureFlags }: SidebarProps) {
   const active = (href: string) => currentPath === href || (href !== "/dashboard" && currentPath.startsWith(`${href}/`));
   const canUseWriteWorkflows = viewer.projects.some((project) => project.permissions.canEditProject);
-  const visibleNavigation = navigation.filter((item) =>
-    canUseWriteWorkflows || !["/workflows", "/reviews"].includes(item.href),
-  );
+  const visibleNavigation = navigation.filter((item) => {
+    if (item.feature === "pmDailyReport" && !featureFlags.pmDailyReport) return false;
+    return canUseWriteWorkflows || !["/workflows", "/reviews"].includes(item.href);
+  });
   return <>
     {mobileOpen ? <button className="fixed inset-0 z-40 bg-[var(--overlay)] lg:hidden" aria-label="关闭导航" onClick={onMobileClose} /> : null}
     <aside className={cn("fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar text-sidebar-foreground transition-[width,transform] duration-200 lg:translate-x-0", collapsed ? "w-[72px]" : "w-[232px]", mobileOpen ? "translate-x-0" : "-translate-x-full")}>

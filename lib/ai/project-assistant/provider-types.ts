@@ -5,7 +5,9 @@ export type ProjectAssistantProviderPurpose =
   | "requirement_extraction"
   | "action_generation"
   | "risk_generation"
-  | "weekly_report";
+  | "weekly_report"
+  | "timesheet_generation"
+  | "timesheet_repair";
 
 export type ProjectAssistantProviderRequest = {
   model: string;

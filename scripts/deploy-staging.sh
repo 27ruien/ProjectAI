@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/phase1-project-knowledge-management"
+readonly DEFAULT_EXPECTED_BRANCH="agent/phase1-project-knowledge-management"
+readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
@@ -95,6 +96,7 @@ fi
 
 CURRENT_BRANCH="$(git branch --show-current)"
 [[ "$CURRENT_BRANCH" != "main" ]] || fail "Refusing to deploy main"
+[[ "$EXPECTED_BRANCH" == agent/* ]] || fail "PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch"
 [[ "$CURRENT_BRANCH" == "$EXPECTED_BRANCH" ]] || fail "Expected branch ${EXPECTED_BRANCH}, found ${CURRENT_BRANCH:-detached HEAD}"
 [[ -z "$(git status --porcelain)" ]] || fail "Refusing to deploy a dirty working tree"
 git diff --check --cached
@@ -108,7 +110,14 @@ export NEXT_PUBLIC_APP_VERSION="$APP_VERSION"
 export NEXT_PUBLIC_COMMIT_SHA="$COMMIT_SHA"
 export NEXT_PUBLIC_BUILD_TIME="$BUILD_TIME"
 
-SSH=(ssh -o BatchMode=yes "$REMOTE_HOST")
+SSH=(
+  ssh
+  -o BatchMode=yes
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=12
+  -o ConnectTimeout=10
+  "$REMOTE_HOST"
+)
 
 release_deploy_lock() {
   [[ "$LOCK_ACQUIRED" == "1" ]] || return 0
@@ -197,6 +206,7 @@ embedding_worker_container_name="${16}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
+command -v timeout >/dev/null 2>&1
 sudo -n true
 sudo docker compose version >/dev/null
 
@@ -1041,6 +1051,7 @@ log "Syncing tracked release ${SHORT_SHA} to ${REMOTE_HOST}:${REMOTE_DIR}"
 
 rsync --archive --compress --delete \
   --filter='protect /backups/***' \
+  --filter='protect /.local/***' \
   --filter='protect /.env.auth-staging' \
   --filter='protect /.env.ai' \
   --filter='protect /.env.embedding' \
@@ -1058,6 +1069,7 @@ rsync --archive --compress --delete \
   --exclude '/test-results/' \
   --exclude '/coverage/' \
   --exclude '/backups/' \
+  --exclude '/.local/' \
   --exclude '/.env' \
   --exclude '/.env.*' \
   --exclude '/.env.auth-staging' \
@@ -1065,7 +1077,7 @@ rsync --archive --compress --delete \
   --exclude '/.env.embedding' \
   --exclude '/secrets/' \
   --exclude '*.log' \
-  --rsh='ssh -o BatchMode=yes' \
+  --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 
 log "Transferring locally built Staging images without building on the shared host"
@@ -1217,7 +1229,12 @@ trap remote_deploy_error ERR
 trap cleanup_minio_backup_env EXIT
 
 compose_run=(
-  "${compose[@]}"
+  sudo
+  timeout
+  --signal=TERM
+  --kill-after=30s
+  45m
+  "${compose[@]:1}"
   run
   --rm
   --no-deps
@@ -2611,7 +2628,12 @@ embedding_env_file="${14}"
 cd "$remote_dir"
 sudo test -e "$deploy_marker"
 compose_run=(
-  sudo env
+  sudo
+  timeout
+  --signal=TERM
+  --kill-after=30s
+  45m
+  env
   "NEXT_PUBLIC_COMMIT_SHA=$commit_sha"
   "NEXT_PUBLIC_APP_VERSION=$app_version"
   "NEXT_PUBLIC_BUILD_TIME=$build_time"

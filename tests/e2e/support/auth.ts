@@ -1,7 +1,15 @@
 import { expect, request as createApiRequestContext, type Page } from "@playwright/test";
 import { appPath } from "./app-url";
 
-export type TestActor = "admin" | "managerA" | "managerB" | "memberA" | "viewerA";
+export type TestActor =
+  | "admin"
+  | "managerA"
+  | "managerB"
+  | "memberA"
+  | "viewerA"
+  | "uatAdmin"
+  | "uatManager"
+  | "uatRestricted";
 
 const actorEnvironment: Record<TestActor, { email: string; password: string }> = {
   admin: { email: "SEED_ADMIN_EMAIL", password: "SEED_ADMIN_PASSWORD" },
@@ -9,6 +17,9 @@ const actorEnvironment: Record<TestActor, { email: string; password: string }> =
   managerB: { email: "SEED_MANAGER_B_EMAIL", password: "SEED_MANAGER_B_PASSWORD" },
   memberA: { email: "SEED_MEMBER_A_EMAIL", password: "SEED_MEMBER_A_PASSWORD" },
   viewerA: { email: "SEED_VIEWER_A_EMAIL", password: "SEED_VIEWER_A_PASSWORD" },
+  uatAdmin: { email: "UAT_ADMIN_EMAIL", password: "UAT_ADMIN_PASSWORD" },
+  uatManager: { email: "UAT_MANAGER_EMAIL", password: "UAT_MANAGER_PASSWORD" },
+  uatRestricted: { email: "UAT_RESTRICTED_EMAIL", password: "UAT_RESTRICTED_PASSWORD" },
 };
 
 export function actorCredentials(actor: TestActor) {

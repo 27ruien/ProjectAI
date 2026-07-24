@@ -30,6 +30,7 @@ import { EnvironmentBadge } from "./environment-banner";
 
 const labels: Record<string, string> = {
   dashboard: "工作台",
+  "daily-report": "工作日报",
   projects: "项目",
   new: "创建项目",
   overview: "项目概览",
