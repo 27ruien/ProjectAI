@@ -359,12 +359,37 @@ export const timesheetAiExecution = pgTable(
     }),
     reportDate: date("report_date", { mode: "string" }).notNull(),
     executionId: text("execution_id").notNull(),
+    requestId: text("request_id").notNull(),
     skillId: varchar("skill_id", { length: 80 }).notNull(),
     modelProfileId: varchar("model_profile_id", { length: 120 }).notNull(),
     promptVersion: varchar("prompt_version", { length: 40 }).notNull(),
     provider: varchar("provider", { length: 40 }),
     actualModel: varchar("actual_model", { length: 120 }),
-    status: varchar("status", { length: 24 }).notNull().default("running"),
+    status: varchar("status", { length: 32 }).notNull().default("queued"),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    leasedBy: text("leased_by"),
+    leaseToken: text("lease_token"),
+    leaseExpiresAt: timestamp("lease_expires_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    heartbeatAt: timestamp("heartbeat_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" }),
+    currentStageStartedAt: timestamp("current_stage_started_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    cancellationRequestedAt: timestamp("cancellation_requested_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    providerDispatchedAt: timestamp("provider_dispatched_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
     sourceSelectionDigest: varchar("source_selection_digest", {
       length: 64,
     }).notNull(),
@@ -375,7 +400,14 @@ export const timesheetAiExecution = pgTable(
     totalTokens: integer("total_tokens"),
     costUsdMicros: integer("cost_usd_micros"),
     latencyMs: integer("latency_ms"),
+    queueDurationMs: integer("queue_duration_ms"),
+    retrievalDurationMs: integer("retrieval_duration_ms"),
+    providerDurationMs: integer("provider_duration_ms"),
+    parseDurationMs: integer("parse_duration_ms"),
+    persistenceDurationMs: integer("persistence_duration_ms"),
+    totalDurationMs: integer("total_duration_ms"),
     failureCode: varchar("failure_code", { length: 80 }),
+    failureStage: varchar("failure_stage", { length: 32 }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -386,6 +418,12 @@ export const timesheetAiExecution = pgTable(
   },
   (table) => [
     uniqueIndex("timesheet_ai_executions_execution_uidx").on(table.executionId),
+    uniqueIndex("timesheet_ai_executions_request_uidx").on(table.requestId),
+    uniqueIndex("timesheet_ai_executions_active_owner_date_uidx")
+      .on(table.organizationId, table.userId, table.reportDate)
+      .where(
+        sql`${table.status} in ('queued', 'reading_notes', 'matching_projects', 'merging_duplicates', 'generating_draft', 'validating_result')`,
+      ),
     index("timesheet_ai_executions_owner_created_idx").on(
       table.organizationId,
       table.userId,
@@ -393,7 +431,7 @@ export const timesheetAiExecution = pgTable(
     ),
     check(
       "timesheet_ai_executions_status_check",
-      sql`${table.status} in ('running', 'succeeded', 'failed')`,
+      sql`${table.status} in ('queued', 'reading_notes', 'matching_projects', 'merging_duplicates', 'generating_draft', 'validating_result', 'completed', 'failed', 'cancelled', 'running', 'succeeded')`,
     ),
     check(
       "timesheet_ai_executions_digest_check",
@@ -403,6 +441,18 @@ export const timesheetAiExecution = pgTable(
       "timesheet_ai_executions_counts_check",
       sql`${table.sourceCount} >= 0 and (${table.outputCount} is null or ${table.outputCount} >= 0)`,
     ),
+    check(
+      "timesheet_ai_executions_attempt_check",
+      sql`${table.attemptCount} between 1 and 20`,
+    ),
+    check(
+      "timesheet_ai_executions_lease_check",
+      sql`(${table.leasedBy} is null and ${table.leaseToken} is null and ${table.leaseExpiresAt} is null) or (${table.leasedBy} is not null and ${table.leaseToken} is not null and ${table.leaseExpiresAt} is not null)`,
+    ),
+    check(
+      "timesheet_ai_executions_duration_check",
+      sql`coalesce(${table.queueDurationMs}, 0) >= 0 and coalesce(${table.retrievalDurationMs}, 0) >= 0 and coalesce(${table.providerDurationMs}, 0) >= 0 and coalesce(${table.parseDurationMs}, 0) >= 0 and coalesce(${table.persistenceDurationMs}, 0) >= 0 and coalesce(${table.totalDurationMs}, 0) >= 0`,
+    ),
   ],
 );
 
@@ -411,3 +461,4 @@ export type DailyTimesheetDraft = typeof dailyTimesheetDraft.$inferSelect;
 export type TimesheetTaskRecord = typeof timesheetTask.$inferSelect;
 export type TimesheetSyncBatchRecord = typeof timesheetSyncBatch.$inferSelect;
 export type TimesheetSyncItemRecord = typeof timesheetSyncItem.$inferSelect;
+export type TimesheetAiExecutionRecord = typeof timesheetAiExecution.$inferSelect;

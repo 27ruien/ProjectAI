@@ -1,4 +1,4 @@
-import { and, count, desc, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, notExists, or, sql } from "drizzle-orm";
 import {
   getDb,
   type Database,
@@ -15,7 +15,9 @@ import {
   type ProductRole,
   type SystemRole,
   user,
+  testFixture,
 } from "../schema";
+import { includeTestFixturesInProductQueries } from "@/lib/test-fixtures/service";
 
 export type AuthorizedProjectRecord = ProjectRecord & {
   projectRole: ProjectRole | null;
@@ -63,10 +65,23 @@ export async function listAuthorizedProjects(
   productRole: RepositoryRole,
   db: Database = getDb(),
 ): Promise<AuthorizedProjectRecord[]> {
+  const notFixture = includeTestFixturesInProductQueries() ? sql`true` : notExists(
+    db
+      .select({ id: testFixture.id })
+      .from(testFixture)
+      .where(
+        and(
+          eq(testFixture.entityType, "project"),
+          eq(testFixture.entityId, project.id),
+          eq(testFixture.isTestFixture, true),
+        ),
+      ),
+  );
   if (isGlobalProjectReader(productRole)) {
     const rows = await db
       .select(projectSelection)
       .from(project)
+      .where(notFixture)
       .orderBy(desc(project.updatedAt));
     return rows.map((row) => ({ ...row, projectRole: null }));
   }
@@ -81,7 +96,12 @@ export async function listAuthorizedProjects(
         eq(projectMember.userId, userId),
       ),
     )
-    .where(or(eq(project.createdBy, userId), isNotNull(projectMember.id)))
+    .where(
+      and(
+        notFixture,
+        or(eq(project.createdBy, userId), isNotNull(projectMember.id)),
+      ),
+    )
     .orderBy(desc(project.updatedAt));
   return rows.map((row) => withEffectiveCreatorRole(row, userId));
 }

@@ -307,6 +307,13 @@ jobs:
           mkdir -p test-logs
           npm run product-v2:migration-upgrade 2>&1 | tee test-logs/product-v2-migration-upgrade.log
 
+      - name: Verify non-empty 0024 to 0025 V3 Round 1 upgrade
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run v3:migration-upgrade 2>&1 | tee test-logs/v3-round1-migration-upgrade.log
+
       - name: Apply committed migrations
         run: npm run db:migrate
 
@@ -446,6 +453,13 @@ jobs:
           mkdir -p test-logs
           npm run test:timesheets 2>&1 | tee test-logs/timesheets-unit.log
           npm run test:timesheets-integration 2>&1 | tee test-logs/timesheets-integration.log
+
+      - name: V3 Round 1 durable-job, fixture, navigation, and knowledge contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:v3-round1 2>&1 | tee test-logs/v3-round1-contract.log
 
       - name: Build, inspect, and exercise the MV3 extension in isolation
         shell: bash

@@ -61,6 +61,16 @@ const ACTIVE_BATCH_STATUSES = [
   "paused",
 ] as const;
 
+const ACTIVE_AI_EXECUTION_STATUSES = [
+  "queued",
+  "reading_notes",
+  "matching_projects",
+  "merging_duplicates",
+  "generating_draft",
+  "validating_result",
+  "running",
+] as const;
+
 const TERMINAL_BATCH_STATUSES = new Set([
   "partially_synced",
   "synced",
@@ -1222,7 +1232,7 @@ async function beginExecution(input: {
           eq(timesheetAiExecution.organizationId, input.organizationId),
           eq(timesheetAiExecution.userId, input.principal.user.id),
           eq(timesheetAiExecution.reportDate, input.reportDate),
-          eq(timesheetAiExecution.status, "running"),
+          inArray(timesheetAiExecution.status, [...ACTIVE_AI_EXECUTION_STATUSES]),
           sql`${timesheetAiExecution.createdAt} <= ${staleBefore}`,
         ),
       )
@@ -1253,7 +1263,7 @@ async function beginExecution(input: {
           eq(timesheetAiExecution.organizationId, input.organizationId),
           eq(timesheetAiExecution.userId, input.principal.user.id),
           eq(timesheetAiExecution.reportDate, input.reportDate),
-          eq(timesheetAiExecution.status, "running"),
+          inArray(timesheetAiExecution.status, [...ACTIVE_AI_EXECUTION_STATUSES]),
         ),
       )
       .limit(1);
@@ -1267,6 +1277,7 @@ async function beginExecution(input: {
     await tx.insert(timesheetAiExecution).values({
       id,
       executionId: id,
+      requestId: id,
       organizationId: input.organizationId,
       userId: input.principal.user.id,
       reportDate: input.reportDate,
@@ -1275,6 +1286,9 @@ async function beginExecution(input: {
       promptVersion: TIMESHEET_PROMPT_VERSION,
       sourceSelectionDigest: input.sourceSelectionDigest,
       sourceCount: input.sourceCount,
+      status: "reading_notes",
+      startedAt: new Date(),
+      currentStageStartedAt: new Date(),
     });
   });
   return id;
@@ -1284,7 +1298,20 @@ async function failExecution(
   executionId: string,
   error: unknown,
   result?: AiGatewayResult,
+  lease?: TimesheetExecutionLease,
 ) {
+  const predicate = lease
+    ? and(
+        eq(timesheetAiExecution.id, executionId),
+        eq(timesheetAiExecution.leasedBy, lease.workerId),
+        eq(timesheetAiExecution.leaseToken, lease.leaseToken),
+      )
+    : eq(timesheetAiExecution.id, executionId);
+  const [current] = await getDb()
+    .select({ status: timesheetAiExecution.status })
+    .from(timesheetAiExecution)
+    .where(predicate)
+    .limit(1);
   await getDb()
     .update(timesheetAiExecution)
     .set({
@@ -1296,9 +1323,145 @@ async function failExecution(
       totalTokens: result?.totalTokens,
       latencyMs: result?.latencyMs,
       failureCode: errorCode(error),
+      failureStage: current?.status ?? "unknown",
+      leasedBy: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
       completedAt: new Date(),
     })
-    .where(eq(timesheetAiExecution.id, executionId));
+    .where(predicate);
+}
+
+async function transitionExecution(
+  executionId: string,
+  status:
+    | "reading_notes"
+    | "matching_projects"
+    | "merging_duplicates"
+    | "generating_draft"
+    | "validating_result",
+  lease?: TimesheetExecutionLease,
+  changes: Partial<typeof timesheetAiExecution.$inferInsert> = {},
+): Promise<void> {
+  const predicate = lease
+    ? and(
+        eq(timesheetAiExecution.id, executionId),
+        eq(timesheetAiExecution.leasedBy, lease.workerId),
+        eq(timesheetAiExecution.leaseToken, lease.leaseToken),
+        sql`${timesheetAiExecution.leaseExpiresAt} > now()`,
+      )
+    : eq(timesheetAiExecution.id, executionId);
+  const updated = await getDb()
+    .update(timesheetAiExecution)
+    .set({
+      status,
+      currentStageStartedAt: new Date(),
+      heartbeatAt: lease ? new Date() : undefined,
+      ...changes,
+    })
+    .where(predicate)
+    .returning({ id: timesheetAiExecution.id });
+  if (lease && updated.length !== 1) {
+    throw new TimesheetError(
+      409,
+      "TIMESHEET_AI_LEASE_LOST",
+      "AI 整理任务所有权已失效",
+    );
+  }
+}
+
+async function assertExecutionNotCancelled(
+  executionId: string,
+  lease?: TimesheetExecutionLease,
+): Promise<void> {
+  if (!lease) return;
+  const [job] = await getDb()
+    .select({
+      cancellationRequestedAt: timesheetAiExecution.cancellationRequestedAt,
+      createdAt: timesheetAiExecution.createdAt,
+    })
+    .from(timesheetAiExecution)
+    .where(
+      and(
+        eq(timesheetAiExecution.id, executionId),
+        eq(timesheetAiExecution.leasedBy, lease.workerId),
+        eq(timesheetAiExecution.leaseToken, lease.leaseToken),
+      ),
+    )
+    .limit(1);
+  if (!job) {
+    throw new TimesheetError(
+      409,
+      "TIMESHEET_AI_LEASE_LOST",
+      "AI 整理任务所有权已失效",
+    );
+  }
+  if (!job.cancellationRequestedAt) return;
+  const now = new Date();
+  await getDb()
+    .update(timesheetAiExecution)
+    .set({
+      status: "cancelled",
+      failureCode: "TIMESHEET_GENERATION_CANCELLED",
+      failureStage: "cancelled",
+      leasedBy: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      completedAt: now,
+      totalDurationMs: Math.max(0, now.getTime() - job.createdAt.getTime()),
+    })
+    .where(
+      and(
+        eq(timesheetAiExecution.id, executionId),
+        eq(timesheetAiExecution.leasedBy, lease.workerId),
+        eq(timesheetAiExecution.leaseToken, lease.leaseToken),
+      ),
+    );
+  throw new TimesheetError(
+    409,
+    "TIMESHEET_GENERATION_CANCELLED",
+    "AI 整理任务已取消",
+  );
+}
+
+async function assertExecutionSourceMatches(
+  executionId: string,
+  sourceSelectionDigest: string,
+  sourceCount: number,
+  lease?: TimesheetExecutionLease,
+): Promise<void> {
+  if (!lease) return;
+  const [job] = await getDb()
+    .select({
+      sourceSelectionDigest: timesheetAiExecution.sourceSelectionDigest,
+      sourceCount: timesheetAiExecution.sourceCount,
+    })
+    .from(timesheetAiExecution)
+    .where(
+      and(
+        eq(timesheetAiExecution.id, executionId),
+        eq(timesheetAiExecution.leasedBy, lease.workerId),
+        eq(timesheetAiExecution.leaseToken, lease.leaseToken),
+      ),
+    )
+    .limit(1);
+  if (!job) {
+    throw new TimesheetError(
+      409,
+      "TIMESHEET_AI_LEASE_LOST",
+      "AI 整理任务所有权已失效",
+    );
+  }
+  if (
+    job.sourceSelectionDigest !== sourceSelectionDigest ||
+    job.sourceCount !== sourceCount
+  ) {
+    throw new TimesheetError(
+      409,
+      "TIMESHEET_SOURCE_CHANGED",
+      "随记在排队期间发生变化，请重试生成",
+    );
+  }
 }
 
 async function generationRecords(
@@ -1348,14 +1511,25 @@ async function generationRecords(
   return records.filter((record) => !submittedRecordIds.has(record.id));
 }
 
-export async function generateDailyTimesheet(input: {
+export type TimesheetGenerationInput = {
   principal: AuthenticatedPrincipal;
   organizationId: string;
   reportDate: string;
   timezone: "Asia/Shanghai";
   requestHeaders: Headers;
-}) {
+};
+
+export type TimesheetExecutionLease = {
+  executionId: string;
+  workerId: string;
+  leaseToken: string;
+};
+
+export async function prepareDailyTimesheetGeneration(
+  input: TimesheetGenerationInput,
+): Promise<{ records: WorkLogRecord[]; sourceSelectionDigest: string }> {
   const feature = requireDailyReportEnabled();
+  void feature;
   await requireTimesheetOrganization(
     input.principal,
     input.organizationId,
@@ -1404,28 +1578,69 @@ export async function generateDailyTimesheet(input: {
     });
     return selected;
   });
+  return {
+    records,
+    sourceSelectionDigest: sourceDigest(records),
+  };
+}
+
+export async function generateDailyTimesheet(
+  input: TimesheetGenerationInput & { executionLease?: TimesheetExecutionLease },
+) {
+  const totalStartedAt = performance.now();
+  const retrievalStartedAt = performance.now();
+  const feature = requireDailyReportEnabled();
+  const prepared = await prepareDailyTimesheetGeneration(input);
+  const records = prepared.records;
+  const db = getDb();
   const config = requireAiAssistantEnabled();
-  const authorized = (
-    await listAuthorizedProjects(
-      input.principal.user.id,
-      input.principal.user.productRole,
-    )
-  ).filter((project) => project.organizationId === input.organizationId);
-  const projects = authorized.map((project) => ({
-    id: project.id,
-    name: project.name,
-    stage: project.stage,
-    aliases: [...new Set([project.name, project.clientName])],
-  }));
-  const context: GeneratedContext = {
+  const selectionDigest = prepared.sourceSelectionDigest;
+  const executionId = input.executionLease?.executionId ?? await beginExecution({
+    principal: input.principal,
     organizationId: input.organizationId,
     reportDate: input.reportDate,
-    records,
-    projects,
-  };
-  const currentActionPlans = projects.length === 0
-    ? []
-    : await db
+    sourceSelectionDigest: selectionDigest,
+    sourceCount: records.length,
+    config,
+    requestHeaders: input.requestHeaders,
+  });
+  let gatewayResult: AiGatewayResult | undefined;
+  let providerDurationMs = 0;
+  let parseDurationMs = 0;
+  try {
+    await assertExecutionSourceMatches(
+    executionId,
+    selectionDigest,
+    records.length,
+    input.executionLease,
+    );
+    await assertExecutionNotCancelled(executionId, input.executionLease);
+    await transitionExecution(
+    executionId,
+    "matching_projects",
+    input.executionLease,
+    );
+    const authorized = (
+      await listAuthorizedProjects(
+        input.principal.user.id,
+        input.principal.user.productRole,
+      )
+    ).filter((project) => project.organizationId === input.organizationId);
+    const projects = authorized.map((project) => ({
+      id: project.id,
+      name: project.name,
+      stage: project.stage,
+      aliases: [...new Set([project.name, project.clientName])],
+    }));
+    const context: GeneratedContext = {
+      organizationId: input.organizationId,
+      reportDate: input.reportDate,
+      records,
+      projects,
+    };
+    const currentActionPlans = projects.length === 0
+      ? []
+      : await db
         .select({
           id: actionItem.id,
           projectId: actionItem.projectId,
@@ -1443,7 +1658,13 @@ export async function generateDailyTimesheet(input: {
         )
         .orderBy(asc(actionItem.dueDate), asc(actionItem.code))
         .limit(100);
-  const aiInput = {
+    await assertExecutionNotCancelled(executionId, input.executionLease);
+    await transitionExecution(
+      executionId,
+      "merging_duplicates",
+      input.executionLease,
+    );
+    const aiInput = {
     date: input.reportDate,
     user_timezone: input.timezone,
     current_project: null,
@@ -1468,26 +1689,41 @@ export async function generateDailyTimesheet(input: {
     available_projects: projects,
     available_categories: TIMESHEET_CATEGORIES,
     available_statuses: TIMESHEET_STATUSES,
-  };
-  const selectionDigest = sourceDigest(records);
-  const executionId = await beginExecution({
-    principal: input.principal,
-    organizationId: input.organizationId,
-    reportDate: input.reportDate,
-    sourceSelectionDigest: selectionDigest,
-    sourceCount: records.length,
-    config,
-    requestHeaders: input.requestHeaders,
-  });
-  const gateway = createProjectAssistantGateway(config);
-  let gatewayResult: AiGatewayResult | undefined;
-  try {
+    };
+    const gateway = createProjectAssistantGateway(config);
+    const retrievalDurationMs = Math.max(
+      0,
+      Math.round(performance.now() - retrievalStartedAt),
+    );
     const prompts = buildTimesheetPrompts(aiInput);
+    await assertExecutionNotCancelled(executionId, input.executionLease);
+    await transitionExecution(
+      executionId,
+      "generating_draft",
+      input.executionLease,
+      {
+        retrievalDurationMs,
+        providerDispatchedAt: new Date(),
+      },
+    );
+    const providerStartedAt = performance.now();
     gatewayResult = await gateway.generate({
       ...prompts,
       purpose: "timesheet_generation",
     });
+    providerDurationMs += Math.max(
+      0,
+      Math.round(performance.now() - providerStartedAt),
+    );
+    await assertExecutionNotCancelled(executionId, input.executionLease);
+    await transitionExecution(
+      executionId,
+      "validating_result",
+      input.executionLease,
+      { providerDurationMs },
+    );
     let output: GeneratedTimesheetOutput;
+    const parseAttemptStartedAt = performance.now();
     try {
       output = withTotalHoursWarning(
         normalizeGeneratedOutput(
@@ -1496,14 +1732,28 @@ export async function generateDailyTimesheet(input: {
           feature.confidenceThreshold,
         ),
       );
+      parseDurationMs += Math.max(
+        0,
+        Math.round(performance.now() - parseAttemptStartedAt),
+      );
     } catch (firstError) {
       if (!(firstError instanceof TimesheetError)) throw firstError;
+      parseDurationMs += Math.max(
+        0,
+        Math.round(performance.now() - parseAttemptStartedAt),
+      );
       const repair = buildRepairPrompts(aiInput, gatewayResult.text);
+      const repairProviderStartedAt = performance.now();
       const repaired = await gateway.generate({
         ...repair,
         purpose: "timesheet_repair",
       });
+      providerDurationMs += Math.max(
+        0,
+        Math.round(performance.now() - repairProviderStartedAt),
+      );
       gatewayResult = combineTimesheetGatewayResults(gatewayResult, repaired);
+      const repairParseStartedAt = performance.now();
       output = withTotalHoursWarning(
         normalizeGeneratedOutput(
           parseJson(gatewayResult.text),
@@ -1511,8 +1761,14 @@ export async function generateDailyTimesheet(input: {
           feature.confidenceThreshold,
         ),
       );
+      parseDurationMs += Math.max(
+        0,
+        Math.round(performance.now() - repairParseStartedAt),
+      );
     }
 
+    await assertExecutionNotCancelled(executionId, input.executionLease);
+    const persistenceStartedAt = performance.now();
     const saved = await db.transaction(async (tx) => {
       await tx.execute(
         sql`select pg_advisory_xact_lock(hashtextextended(${`${input.organizationId}:${input.principal.user.id}:${input.reportDate}:timesheet-save`}, 0))`,
@@ -1707,11 +1963,24 @@ export async function generateDailyTimesheet(input: {
           };
         }),
       );
-      await tx
+      const completedAt = new Date();
+      const persistenceDurationMs = Math.max(
+        0,
+        Math.round(performance.now() - persistenceStartedAt),
+      );
+      const executionPredicate = input.executionLease
+        ? and(
+            eq(timesheetAiExecution.id, executionId),
+            eq(timesheetAiExecution.leasedBy, input.executionLease.workerId),
+            eq(timesheetAiExecution.leaseToken, input.executionLease.leaseToken),
+            sql`${timesheetAiExecution.leaseExpiresAt} > now()`,
+          )
+        : eq(timesheetAiExecution.id, executionId);
+      const completedExecution = await tx
         .update(timesheetAiExecution)
         .set({
           draftId,
-          status: "succeeded",
+          status: "completed",
           provider: gatewayResult!.provider,
           actualModel: gatewayResult!.actualModel,
           outputCount: output.tasks.length,
@@ -1719,9 +1988,29 @@ export async function generateDailyTimesheet(input: {
           outputTokens: gatewayResult!.outputTokens,
           totalTokens: gatewayResult!.totalTokens,
           latencyMs: gatewayResult!.latencyMs,
-          completedAt: new Date(),
+          retrievalDurationMs,
+          providerDurationMs,
+          parseDurationMs,
+          persistenceDurationMs,
+          totalDurationMs: Math.max(
+            0,
+            Math.round(performance.now() - totalStartedAt),
+          ),
+          leasedBy: null,
+          leaseToken: null,
+          leaseExpiresAt: null,
+          heartbeatAt: completedAt,
+          completedAt,
         })
-        .where(eq(timesheetAiExecution.id, executionId));
+        .where(executionPredicate)
+        .returning({ id: timesheetAiExecution.id });
+      if (input.executionLease && completedExecution.length !== 1) {
+        throw new TimesheetError(
+          409,
+          "TIMESHEET_AI_LEASE_LOST",
+          "AI 整理任务所有权已失效",
+        );
+      }
       await writeAuditEvent(
         {
           actorUserId: input.principal.user.id,
@@ -1739,6 +2028,12 @@ export async function generateDailyTimesheet(input: {
             provider: gatewayResult!.provider,
             model: gatewayResult!.actualModel,
             mode: gatewayResult!.provider === "fake" ? "mock" : "real",
+            timings: {
+              retrievalDurationMs,
+              providerDurationMs,
+              parseDurationMs,
+              persistenceDurationMs,
+            },
           },
           ...getRequestAuditContext(input.requestHeaders),
         },
@@ -1752,7 +2047,17 @@ export async function generateDailyTimesheet(input: {
     });
     return saved;
   } catch (error) {
-    await failExecution(executionId, error, gatewayResult);
+    if (
+      !(error instanceof TimesheetError) ||
+      error.code !== "TIMESHEET_GENERATION_CANCELLED"
+    ) {
+      await failExecution(
+        executionId,
+        error,
+        gatewayResult,
+        input.executionLease,
+      );
+    }
     throw error;
   }
 }

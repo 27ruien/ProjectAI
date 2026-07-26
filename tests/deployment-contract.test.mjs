@@ -510,6 +510,33 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(dockerfile, /USER node/);
 });
 
+test("Staging timesheet AI Worker is immutable, least-privileged, and deployment-gated", async () => {
+  const [compose, script] = await Promise.all([
+    readFile(stagingCompose, "utf8"),
+    readFile(deployScript, "utf8"),
+  ]);
+  const workerMatch = compose.match(
+    /\n  projectai-timesheet-worker:\n([\s\S]*?)\nvolumes:/,
+  );
+  assert.ok(workerMatch, "missing Compose service projectai-timesheet-worker");
+  const worker = workerMatch[1];
+  assert.match(worker, /STAGING_TIMESHEET_WORKER_IMAGE/);
+  assert.match(worker, /worker:timesheets/);
+  assert.match(worker, /qwen_api_key/);
+  assert.match(worker, /projectai-staging-internal/);
+  assert.match(worker, /projectai-timesheet-ai-worker-heartbeat/);
+  assert.match(worker, /restart: unless-stopped/);
+  assert.doesNotMatch(worker, /^\s+ports:/m);
+  assert.doesNotMatch(worker, /OBJECT_STORAGE_|MINIO_ROOT_/);
+  assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
+  assert.match(script, /up --detach --no-build --pull never projectai-timesheet-worker/);
+  assert.match(script, /timesheet_worker_container_name="project-ai-os-staging-timesheet-worker"/);
+  assert.match(script, /eq \.Destination "\/run\/secrets\/qwen_api_key"/);
+  assert.match(script, /OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY/);
+  assert.match(script, /if printenv "\$key" >\/dev\/null 2>&1; then exit 1; fi/);
+  assert.match(script, /docker port "\$timesheet_worker_container_name"/);
+});
+
 test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
   const [script, compose, verifier] = await Promise.all([
     readFile(deployScript, "utf8"),

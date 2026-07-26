@@ -183,7 +183,7 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
       await reached;
       await expect(page.getByTestId("ai-generate")).toHaveAttribute("data-state", "submitting");
       releaseGenerate();
-      expect((await response).status()).toBe(201);
+      expect((await response).status()).toBe(202);
       await page.unroute("**/api/timesheets/drafts/generate", generateHandler);
       await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
       await expect(taskCards(page)).toHaveCount(1);

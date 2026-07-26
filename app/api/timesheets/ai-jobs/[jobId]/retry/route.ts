@@ -1,17 +1,24 @@
+import { z } from "zod";
 import { jsonResponse, requireTrustedMutationRequest } from "@/lib/auth/http";
 import { requireApiPrincipal } from "@/lib/auth/session";
-import { generateTimesheetSchema } from "@/lib/timesheets/contracts";
+import { retryTimesheetAiJob } from "@/lib/timesheets/ai-jobs";
 import { parseTimesheetRequest, timesheetErrorResponse } from "@/lib/timesheets/http";
-import { enqueueTimesheetAiJob } from "@/lib/timesheets/ai-jobs";
 
-export async function POST(request: Request) {
+const inputSchema = z.object({ organizationId: z.string().trim().min(1).max(200) }).strict();
+
+export async function POST(
+  request: Request,
+  context: { params: Promise<{ jobId: string }> },
+) {
   try {
     requireTrustedMutationRequest(request);
     const principal = await requireApiPrincipal(request.headers);
-    const body = await parseTimesheetRequest(request, generateTimesheetSchema);
-    const result = await enqueueTimesheetAiJob({
+    const body = await parseTimesheetRequest(request, inputSchema);
+    const { jobId } = await context.params;
+    const result = await retryTimesheetAiJob({
       principal,
-      ...body,
+      organizationId: body.organizationId,
+      jobId,
       requestHeaders: request.headers,
     });
     return jsonResponse(result, { status: result.created ? 202 : 200 });

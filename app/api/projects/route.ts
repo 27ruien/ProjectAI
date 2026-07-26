@@ -17,6 +17,10 @@ import {
   serializeAuthorizedProject,
 } from "@/lib/projects/serialization";
 import { resolveProjectCreationScope } from "@/lib/knowledge/product-v2";
+import {
+  fixtureContextFromHeaders,
+  registerTestFixture,
+} from "@/lib/test-fixtures/service";
 
 const projectInputSchema = z
   .object({
@@ -78,13 +82,14 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const context = getRequestAuditContext(request.headers);
-    const createdProject = await getDb().transaction(async (tx) => {
+    const fixture = fixtureContextFromHeaders(request.headers);
+    const created = await getDb().transaction(async (tx) => {
       const scope = await resolveProjectCreationScope({
         principal,
         requestedDepartmentId: parsed.data.departmentId,
         db: tx,
       });
-      const created = await createProjectWithManager(
+      const createdProject = await createProjectWithManager(
         {
           id: `project-${crypto.randomUUID()}`,
           ...parsed.data,
@@ -98,30 +103,40 @@ export async function POST(request: Request): Promise<Response> {
       await writeAuditEvent(
         {
           actorUserId: principal.user.id,
-          projectId: created.id,
+          projectId: createdProject.id,
           eventType: "project_created",
           entityType: "project",
-          entityId: created.id,
+          entityId: createdProject.id,
           result: "succeeded",
           ...context,
         },
         tx,
       );
-      return created;
+      const [createdSpace] = await tx
+        .select({ id: knowledgeSpace.id })
+        .from(knowledgeSpace)
+        .where(eq(knowledgeSpace.projectId, createdProject.id))
+        .limit(1);
+      if (!createdSpace) throw new Error("Created project is missing its knowledge space.");
+      if (fixture) {
+        await registerTestFixture(
+          { ...fixture, entityType: "project", entityId: createdProject.id },
+          tx,
+        );
+        await registerTestFixture(
+          { ...fixture, entityType: "knowledge_space", entityId: createdSpace.id },
+          tx,
+        );
+      }
+      return { project: createdProject, knowledgeSpaceId: createdSpace.id };
     });
-    const [createdSpace] = await getDb()
-      .select({ id: knowledgeSpace.id })
-      .from(knowledgeSpace)
-      .where(eq(knowledgeSpace.projectId, createdProject.id))
-      .limit(1);
-    if (!createdSpace) throw new Error("Created project is missing its knowledge space.");
     return jsonResponse(
       {
         project: serializeAuthorizedProject(
-          { ...createdProject, projectRole: "project_manager" },
+          { ...created.project, projectRole: "project_manager" },
           principal,
         ),
-        knowledgeSpaceId: createdSpace.id,
+        knowledgeSpaceId: created.knowledgeSpaceId,
       },
       { status: 201 },
     );
