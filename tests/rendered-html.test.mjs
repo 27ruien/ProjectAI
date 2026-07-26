@@ -44,7 +44,8 @@ test("root and active product routes use the Product V2 entry and authentication
 
   const routes = [
     "/workflows", "/workflows/requirement-extraction", "/daily-report",
-    "/knowledge", "/organization", "/settings", "/settings/ai-models",
+    "/projects", "/projects/project-001/overview", "/knowledge", "/organization",
+    "/settings", "/settings/ai-models",
   ];
   for (const route of routes) {
     const response = await render(route);
@@ -56,8 +57,6 @@ test("root and active product routes use the Product V2 entry and authentication
 test("legacy product routes redirect to the retained Product V2 destinations", async () => {
   const redirects = new Map([
     ["/dashboard", "/daily-report"],
-    ["/projects", "/knowledge"],
-    ["/projects/project-001/overview", "/knowledge?projectId=project-001"],
     ["/reviews", "/workflows"],
     ["/skills", "/workflows"],
     ["/analytics", "/knowledge"],
