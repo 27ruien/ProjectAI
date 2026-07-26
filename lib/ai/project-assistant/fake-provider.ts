@@ -253,15 +253,36 @@ export class FakeProjectAssistantProvider
           "隐私与数据合规", "数据统计与埋点需求", "验收标准", "依赖关系", "风险",
           "时间线和里程碑", "待确认事项", "附录和来源",
         ];
+        const requestedSections = taggedJsonValue(
+          request.userPrompt,
+          "requirement_section_numbers_json",
+        );
+        const sectionNumbers = Array.isArray(requestedSections)
+          ? requestedSections.filter((value): value is number => Number.isInteger(value) && value >= 1 && value <= 26)
+          : [];
         text = JSON.stringify({
-          sections: titles.map((title, index) => ({
+          sections: sectionNumbers.map((number) => ({
+            title: titles[number - 1],
+            number,
+            body: number === 25 ? "待确认事项：目标日期与验收责任人。" : "基于受控虚构来源形成的项目内容。",
+            classification: number === 25 ? "pending" : "fact",
+            citations: number === 25 ? [] : ["E1"],
+          })),
+          acceptanceCriteria: sectionNumbers.includes(26)
+            ? ["所有发布产物均经过人工审核", "无权用户访问统一返回 404"]
+            : [],
+        });
+        /* A non-batched response is intentionally invalid so integration tests
+         * prove the worker cannot regress to one oversized Provider response. */
+        if (sectionNumbers.length === 0) text = JSON.stringify({
+          sections: titles.slice(0, 1).map((title, index) => ({
             number: index + 1,
             title,
-            body: index === 24 ? "待确认事项：目标日期与验收责任人。" : "基于受控虚构来源形成的项目内容。",
-            classification: index === 24 ? "pending" : "fact",
-            citations: index === 24 ? [] : ["E1"],
+            body: "非批次输出应被工作流拒绝。",
+            classification: "pending",
+            citations: [],
           })),
-          acceptanceCriteria: ["所有发布产物均经过人工审核", "无权用户访问统一返回 404"],
+          acceptanceCriteria: [],
         });
       } else if (kind === "ga4_measurement_plan") {
         text = JSON.stringify({

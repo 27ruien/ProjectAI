@@ -57,14 +57,21 @@ export const overviewArtifactSchema = z.object({
   }
 });
 
+export const requirementsDocumentSectionSchema = z.object({
+  number: z.number().int().min(1).max(26),
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(12_000),
+  classification: classificationSchema,
+  citations: citationLabelsSchema,
+}).strict();
+
+export const requirementsDocumentBatchSchema = z.object({
+  sections: z.array(requirementsDocumentSectionSchema).min(1).max(5),
+  acceptanceCriteria: z.array(z.string().trim().min(1).max(1_000)).max(100),
+}).strict();
+
 export const requirementsDocumentSchema = z.object({
-  sections: z.array(z.object({
-    number: z.number().int().min(1).max(26),
-    title: z.string().trim().min(1).max(160),
-    body: z.string().trim().min(1).max(12_000),
-    classification: classificationSchema,
-    citations: citationLabelsSchema,
-  }).strict()).length(26),
+  sections: z.array(requirementsDocumentSectionSchema).length(26),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1_000)).min(1).max(100),
 }).strict().superRefine((value, context) => {
   for (let index = 0; index < REQUIREMENTS_SECTION_TITLES.length; index += 1) {

@@ -23,6 +23,7 @@ import {
   createAudioTranscriptionProvider,
 } from "../lib/workflows/audio-provider";
 import { buildAudioProviderUrl } from "../lib/workflows/audio-service";
+import { buildArtifactPrompt } from "../lib/workflows/prompt";
 import type { WorkflowArtifactPayload } from "../lib/workflows/service";
 
 let directory = "";
@@ -86,6 +87,19 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(requirementsDocumentSchema.safeParse(value).success, true);
     value.sections[2]!.title = "错误标题";
     assert.equal(requirementsDocumentSchema.safeParse(value).success, false);
+  });
+
+  it("binds requirement batches to the requested section numbers without contradictory full-document instructions", () => {
+    const prompt = buildArtifactPrompt({
+      kind: "requirements_document",
+      projectName: "虚构项目",
+      evidence: [],
+      requirementSectionNumbers: [6, 7, 8, 9, 10],
+    });
+    assert.match(prompt.userPrompt, /<requirement_section_numbers_json>\[6,7,8,9,10\]<\/requirement_section_numbers_json>/);
+    assert.match(prompt.systemPrompt, /本次 sections 必须逐一且只覆盖：6\./);
+    assert.doesNotMatch(prompt.systemPrompt, /必须正好 26 节/);
+    assert.match(prompt.systemPrompt, /本批 acceptanceCriteria 必须为空数组/);
   });
 
   it("enforces versioned GA4 naming and rejects fabricated measurement ids", () => {

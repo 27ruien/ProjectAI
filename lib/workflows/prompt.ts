@@ -20,12 +20,19 @@ const COMMON = `你是 ProjectAI 的受控项目经理文档助手。只允许�
 事实必须绑定本次 E 标签；推论标记 assumption，建议标记 advice，缺失标记 pending。
 只输出单个 JSON 对象，不输出 Markdown fence、解释或额外字段。`;
 
-function schemaInstruction(kind: RequirementArtifactKind): string {
+function schemaInstruction(
+  kind: RequirementArtifactKind,
+  requirementSectionNumbers?: number[],
+): string {
   if (kind === "project_overview") {
     return `输出 {sections:[{title,fields:[{name,value,classification,citations}]}],pendingQuestions:[]}。
 sections 必须为“项目背景”和“需求概览”；fields 必须逐一且只覆盖：${OVERVIEW_FIELDS.join("、")}。`;
   }
   if (kind === "requirements_document") {
+    if (requirementSectionNumbers?.length) {
+      return `输出 {sections:[{number,title,body,classification,citations}],acceptanceCriteria:[]}。
+本次 sections 必须逐一且只覆盖：${requirementSectionNumbers.map((number) => `${number}.${REQUIREMENTS_SECTION_TITLES[number - 1]}`).join("；")}。`;
+    }
     return `输出 {sections:[{number,title,body,classification,citations}],acceptanceCriteria:[]}。
 必须正好 26 节、顺序与标题完全一致：${REQUIREMENTS_SECTION_TITLES.map((title, index) => `${index + 1}.${title}`).join("；")}。验收标准必须可执行可测试。`;
   }
@@ -45,6 +52,7 @@ export function buildArtifactPrompt(input: {
   evidence: WorkflowEvidence[];
   previousOutput?: string;
   validationFailure?: string;
+  requirementSectionNumbers?: number[];
 }) {
   const evidence = input.evidence.map((item) => ({
     label: item.label,
@@ -53,8 +61,14 @@ export function buildArtifactPrompt(input: {
     locator: item.locator,
     content: item.content,
   }));
+  const sectionNumbers = input.kind === "requirements_document"
+    ? input.requirementSectionNumbers
+    : undefined;
+  const batchInstruction = sectionNumbers?.length
+    ? `\n本次只输出章节 ${sectionNumbers.join("、")}，不得输出其他章节；每节 body 应简洁、可审核，控制在 80–500 字。${sectionNumbers.includes(26) ? "本批必须提供至少一条可测试的 acceptanceCriteria。" : "本批 acceptanceCriteria 必须为空数组。"}`
+    : "";
   return {
-    systemPrompt: `${COMMON}\n${schemaInstruction(input.kind)}`,
-    userPrompt: `<artifact_kind_json>${JSON.stringify(input.kind)}</artifact_kind_json>\n<project_name_json>${JSON.stringify(input.projectName)}</project_name_json>\n<evidence_json>${JSON.stringify(evidence)}</evidence_json>${input.previousOutput ? `\n<invalid_output_json>${JSON.stringify(input.previousOutput.slice(0, 40_000))}</invalid_output_json>\n<validation_failure_json>${JSON.stringify(input.validationFailure ?? "SCHEMA_INVALID")}</validation_failure_json>\n请只修复结构和引用，不增加来源外事实。` : ""}`,
+    systemPrompt: `${COMMON}\n${schemaInstruction(input.kind, sectionNumbers)}${batchInstruction}`,
+    userPrompt: `<artifact_kind_json>${JSON.stringify(input.kind)}</artifact_kind_json>\n<project_name_json>${JSON.stringify(input.projectName)}</project_name_json>${sectionNumbers?.length ? `\n<requirement_section_numbers_json>${JSON.stringify(sectionNumbers)}</requirement_section_numbers_json>` : ""}\n<evidence_json>${JSON.stringify(evidence)}</evidence_json>${input.previousOutput ? `\n<invalid_output_json>${JSON.stringify(input.previousOutput.slice(0, 40_000))}</invalid_output_json>\n<validation_failure_json>${JSON.stringify(input.validationFailure ?? "SCHEMA_INVALID")}</validation_failure_json>\n请只修复结构和引用，不增加来源外事实。` : ""}`,
   };
 }

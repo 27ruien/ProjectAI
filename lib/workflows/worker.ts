@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { createProjectAssistantGateway } from "@/lib/ai/project-assistant/gateway";
+import {
+  createProjectAssistantGateway,
+  type AiGatewayResult,
+} from "@/lib/ai/project-assistant/gateway";
 import { requireAiAssistantEnabled } from "@/lib/ai/project-assistant/config";
 import { getDb } from "@/lib/db/client";
 import {
@@ -19,6 +22,8 @@ import {
 import {
   artifactSchemas,
   REQUIREMENT_ARTIFACT_KINDS,
+  REQUIREMENTS_SECTION_TITLES,
+  requirementsDocumentBatchSchema,
   validateCitationLabels,
   type RequirementArtifactKind,
 } from "./contracts";
@@ -202,7 +207,11 @@ async function evidenceForRun(run: typeof workflowRun.$inferSelect): Promise<Wor
 
 function parseJson(text: string): unknown {
   const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  try { return JSON.parse(trimmed); } catch { throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物不是有效 JSON"); }
+  try { return JSON.parse(trimmed); } catch { return null; }
+}
+
+function sumUsage(left: number | null, right: number | null): number | null {
+  return left === null || right === null ? null : left + right;
 }
 
 function collectLabels(value: unknown, output = new Set<string>()): Set<string> {
@@ -247,20 +256,90 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
   if (existing && !force) return;
   const executionId = await beginStep(run, step);
   const gateway = createProjectAssistantGateway(requireAiAssistantEnabled());
-  const prompts = buildArtifactPrompt({ kind, projectName, evidence });
-  let result = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
-  let parsed = artifactSchemas[kind].safeParse(parseJson(result.text));
-  if (!parsed.success || !validateCitationLabels(parsed.success ? parsed.data : {}, new Set(evidence.map((item) => item.label)))) {
-    const repair = buildArtifactPrompt({ kind, projectName, evidence, previousOutput: result.text, validationFailure: parsed.success ? "CITATION_INVALID" : "SCHEMA_INVALID" });
-    const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair" });
-    result = { ...repaired, inputTokens: (result.inputTokens ?? 0) + (repaired.inputTokens ?? 0), outputTokens: (result.outputTokens ?? 0) + (repaired.outputTokens ?? 0), latencyMs: result.latencyMs + repaired.latencyMs };
-    parsed = artifactSchemas[kind].safeParse(parseJson(result.text));
+  const allowedLabels = new Set(evidence.map((item) => item.label));
+  let result: AiGatewayResult;
+  let content: Record<string, unknown>;
+  if (kind === "requirements_document") {
+    const sections: Array<{ number: number; title: string; body: string; classification: "fact" | "assumption" | "advice" | "pending"; citations: string[] }> = [];
+    const acceptanceCriteria: string[] = [];
+    let aggregate: AiGatewayResult | null = null;
+    for (let offset = 0; offset < REQUIREMENTS_SECTION_TITLES.length; offset += 5) {
+      const sectionNumbers = REQUIREMENTS_SECTION_TITLES.slice(offset, offset + 5).map((_, index) => offset + index + 1);
+      const prompts = buildArtifactPrompt({ kind, projectName, evidence, requirementSectionNumbers: sectionNumbers });
+      let batchResult = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
+      let parsedBatch = requirementsDocumentBatchSchema.safeParse(parseJson(batchResult.text));
+      const validBatch = () => parsedBatch.success
+        && parsedBatch.data.sections.length === sectionNumbers.length
+        && parsedBatch.data.sections.every((section, index) => section.number === sectionNumbers[index] && section.title === REQUIREMENTS_SECTION_TITLES[section.number - 1])
+        && (sectionNumbers.includes(26) ? parsedBatch.data.acceptanceCriteria.length > 0 : parsedBatch.data.acceptanceCriteria.length === 0)
+        && validateCitationLabels(parsedBatch.data, allowedLabels);
+      if (!validBatch()) {
+        const repair = buildArtifactPrompt({
+          kind,
+          projectName,
+          evidence,
+          requirementSectionNumbers: sectionNumbers,
+          previousOutput: batchResult.text,
+          validationFailure: parsedBatch.success ? "BATCH_OR_CITATION_INVALID" : "SCHEMA_INVALID",
+        });
+        const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair" });
+        batchResult = {
+          ...repaired,
+          inputTokens: sumUsage(batchResult.inputTokens, repaired.inputTokens),
+          outputTokens: sumUsage(batchResult.outputTokens, repaired.outputTokens),
+          totalTokens: sumUsage(batchResult.totalTokens, repaired.totalTokens),
+          latencyMs: batchResult.latencyMs + repaired.latencyMs,
+        };
+        parsedBatch = requirementsDocumentBatchSchema.safeParse(parseJson(batchResult.text));
+      }
+      if (!validBatch()) {
+        await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
+        throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过分批结构或引用校验");
+      }
+      if (!parsedBatch.success) throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物批次状态无效");
+      sections.push(...parsedBatch.data.sections);
+      acceptanceCriteria.push(...parsedBatch.data.acceptanceCriteria);
+      aggregate = aggregate
+        ? {
+            ...batchResult,
+            fallbackUsed: aggregate.fallbackUsed || batchResult.fallbackUsed,
+            inputTokens: sumUsage(aggregate.inputTokens, batchResult.inputTokens),
+            outputTokens: sumUsage(aggregate.outputTokens, batchResult.outputTokens),
+            totalTokens: sumUsage(aggregate.totalTokens, batchResult.totalTokens),
+            latencyMs: aggregate.latencyMs + batchResult.latencyMs,
+          }
+        : batchResult;
+    }
+    const parsed = artifactSchemas[kind].safeParse({ sections, acceptanceCriteria });
+    if (!aggregate || !parsed.success || !validateCitationLabels(parsed.data, allowedLabels)) {
+      await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
+      throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 需求文档未通过最终结构或引用校验");
+    }
+    result = aggregate;
+    content = parsed.data as unknown as Record<string, unknown>;
+  } else {
+    const prompts = buildArtifactPrompt({ kind, projectName, evidence });
+    result = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
+    let parsed = artifactSchemas[kind].safeParse(parseJson(result.text));
+    if (!parsed.success || !validateCitationLabels(parsed.success ? parsed.data : {}, allowedLabels)) {
+      const repair = buildArtifactPrompt({ kind, projectName, evidence, previousOutput: result.text, validationFailure: parsed.success ? "CITATION_INVALID" : "SCHEMA_INVALID" });
+      const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair" });
+      result = {
+        ...repaired,
+        fallbackUsed: result.fallbackUsed || repaired.fallbackUsed,
+        inputTokens: sumUsage(result.inputTokens, repaired.inputTokens),
+        outputTokens: sumUsage(result.outputTokens, repaired.outputTokens),
+        totalTokens: sumUsage(result.totalTokens, repaired.totalTokens),
+        latencyMs: result.latencyMs + repaired.latencyMs,
+      };
+      parsed = artifactSchemas[kind].safeParse(parseJson(result.text));
+    }
+    if (!parsed.success || !validateCitationLabels(parsed.data, allowedLabels)) {
+      await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
+      throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过结构或引用校验");
+    }
+    content = parsed.data as unknown as Record<string, unknown>;
   }
-  if (!parsed.success || !validateCitationLabels(parsed.data, new Set(evidence.map((item) => item.label)))) {
-    await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
-    throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过结构或引用校验");
-  }
-  const content = parsed.data as unknown as Record<string, unknown>;
   const markdown = renderArtifactMarkdown(kind, content);
   const contentDigest = createHash("sha256").update(JSON.stringify({ content, markdown })).digest("hex");
   const usedLabels = collectLabels(content);
