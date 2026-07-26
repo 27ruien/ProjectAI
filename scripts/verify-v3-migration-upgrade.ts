@@ -60,8 +60,16 @@ async function main(): Promise<void> {
         'qwen-project-assistant-cn-v1', 'pm-daily-report-v1', 'succeeded',
         '${"0".repeat(64)}', 1
       );
+      insert into test_fixtures (
+        id, entity_type, entity_id, fixture_run_id, environment, expires_at
+      ) values (
+        'fixture-project-' || md5('v3-upgrade-fixture-project'),
+        'project', 'v3-upgrade-fixture-project', 'partial-v3-upgrade', 'staging',
+        now() + interval '1 day'
+      );
     `);
     for (const filename of files.slice(boundary)) await apply(target, filename);
+    await apply(target, "0025_marvelous_stephen_strange.sql");
     const result = await target.query<{
       request_id: string;
       status: string;

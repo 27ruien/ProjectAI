@@ -281,7 +281,7 @@ rollback() {
   "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker projectai-timesheet-worker >/dev/null 2>&1
   sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec '
     case "$POSTGRES_DB" in
-      ""|postgres|template0|template1|*[^A-Za-z0-9_]*)
+      ""|postgres|template0|template1|*[!A-Za-z0-9_]*)
         printf "Refusing to rebuild an invalid Staging database target.\n" >&2
         exit 1
         ;;
