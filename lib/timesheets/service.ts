@@ -551,9 +551,95 @@ export function buildTimesheetPrompts(input: unknown): {
   systemPrompt: string;
   userPrompt: string;
 } {
+  const reviewFields = [
+    "description",
+    "project",
+    "hours",
+    "overtimeHours",
+    "category",
+    "status",
+    "urgency",
+    "progress",
+  ];
+  const confidenceProperties = Object.fromEntries(
+    reviewFields.map((field) => [
+      field,
+      { type: "number", minimum: 0, maximum: 1 },
+    ]),
+  );
+  const outputSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["tasks", "warnings", "unresolved_record_ids"],
+    properties: {
+      tasks: {
+        type: "array",
+        minItems: 1,
+        maxItems: 50,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          required: [
+            "description",
+            "project_id",
+            "hours",
+            "overtime_hours",
+            "category_id",
+            "status",
+            "urgency",
+            "progress",
+            "source_record_ids",
+            "confidence",
+            "needs_review",
+            "review_fields",
+          ],
+          properties: {
+            description: { type: "string", minLength: 2, maxLength: 500 },
+            project_id: { type: ["string", "null"] },
+            hours: { type: ["number", "null"], minimum: 0, maximum: 24, multipleOf: 0.25 },
+            overtime_hours: { type: ["number", "null"], minimum: 0, maximum: 24, multipleOf: 0.25 },
+            category_id: { type: ["string", "null"] },
+            status: { type: ["string", "null"] },
+            urgency: { type: ["string", "null"] },
+            progress: { type: ["integer", "null"], minimum: 0, maximum: 100 },
+            source_record_ids: {
+              type: "array",
+              minItems: 1,
+              maxItems: 100,
+              items: { type: "string" },
+            },
+            confidence: {
+              type: "object",
+              additionalProperties: false,
+              required: reviewFields,
+              properties: confidenceProperties,
+            },
+            needs_review: { type: "boolean", const: true },
+            review_fields: {
+              type: "array",
+              maxItems: 8,
+              uniqueItems: true,
+              items: { type: "string", enum: reviewFields },
+            },
+          },
+        },
+      },
+      warnings: {
+        type: "array",
+        maxItems: 20,
+        items: { type: "string", minLength: 1, maxLength: 300 },
+      },
+      unresolved_record_ids: {
+        type: "array",
+        maxItems: 100,
+        items: { type: "string" },
+      },
+    },
+  };
   return {
     systemPrompt: [
       "你是 ProjectAI 的项目经理工时整理器。只输出一个 JSON 对象，不得输出 Markdown。",
+      `输出必须精确满足以下 JSON Schema，不得遗漏 required 字段或增加任何字段：${JSON.stringify(outputSchema)}`,
       "所有任务都必须引用本次输入中的 source_record_ids，且只能选择输入提供的项目、分类和状态。",
       "不得推测工时，不得为了凑满八小时补齐；没有依据时 hours 必须为 null。",
       "overtime_hours 只有在来源明确提到加班、晚间/周末额外工作及其工时时才能建议；未提到不等于 0，必须为 null。",
@@ -588,11 +674,15 @@ export function withTotalHoursWarning(
   };
 }
 
-function buildRepairPrompts(input: unknown, invalidOutput: string) {
+function buildRepairPrompts(
+  input: unknown,
+  invalidOutput: string,
+  failureCode: string,
+) {
   const base = buildTimesheetPrompts(input);
   return {
     systemPrompt: `${base.systemPrompt}\n上一次输出未通过严格 Schema 或事实校验。只修复格式和受控字段，不得添加新事实。`,
-    userPrompt: `${base.userPrompt}\n<invalid_output_json>\n${JSON.stringify(invalidOutput.slice(0, 12_000))}\n</invalid_output_json>`,
+    userPrompt: `${base.userPrompt}\n<validation_failure_code>${failureCode}</validation_failure_code>\n<invalid_output_json>\n${JSON.stringify(invalidOutput.slice(0, 12_000))}\n</invalid_output_json>`,
   };
 }
 
@@ -1742,7 +1832,11 @@ export async function generateDailyTimesheet(
         0,
         Math.round(performance.now() - parseAttemptStartedAt),
       );
-      const repair = buildRepairPrompts(aiInput, gatewayResult.text);
+      const repair = buildRepairPrompts(
+        aiInput,
+        gatewayResult.text,
+        firstError.code,
+      );
       const repairProviderStartedAt = performance.now();
       const repaired = await gateway.generate({
         ...repair,

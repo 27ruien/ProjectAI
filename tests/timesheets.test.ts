@@ -241,6 +241,17 @@ describe("daily timesheet AI trust boundary", () => {
     assert.match(prompts.systemPrompt, /不同项目、交付物或状态必须分开/);
   });
 
+  it("binds real-provider output to the complete strict JSON contract", () => {
+    const prompts = buildTimesheetPrompts({ today_records: [] });
+    assert.match(prompts.systemPrompt, /不得遗漏 required 字段或增加任何字段/);
+    assert.match(prompts.systemPrompt, /"additionalProperties":false/);
+    assert.match(
+      prompts.systemPrompt,
+      /"required":\["description","project_id","hours","overtime_hours","category_id","status","urgency","progress","source_record_ids","confidence","needs_review","review_fields"\]/,
+    );
+    assert.match(prompts.systemPrompt, /"needs_review":\{"type":"boolean","const":true\}/);
+  });
+
   it("conservatively rejects AI merging same-project records before human review", () => {
     const records = [
       record({ id: "record-001", rawText: "CHAGEE 确认跳转，1 小时", hoursHint: "1" }),
