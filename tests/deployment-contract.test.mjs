@@ -537,6 +537,24 @@ test("Staging timesheet AI Worker is immutable, least-privileged, and deployment
   assert.match(script, /docker port "\$timesheet_worker_container_name"/);
 });
 
+test("Product V2 Staging deploy accepts the reviewed agent branch and owns the daily-report Worker lifecycle", async () => {
+  const script = await readFile(
+    new URL("../scripts/deploy-product-v2-staging.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    script,
+    /PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH/,
+  );
+  assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
+  assert.match(
+    script,
+    /up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-staging/,
+  );
+  assert.match(script, /project-ai-os-staging-timesheet-worker/);
+  assert.match(script, /docker port project-ai-os-staging-timesheet-worker/);
+});
+
 test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
   const [script, compose, verifier] = await Promise.all([
     readFile(deployScript, "utf8"),
