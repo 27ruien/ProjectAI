@@ -99,7 +99,8 @@ describe("V3 workflow artifact contracts", () => {
     assert.match(prompt.userPrompt, /<requirement_section_numbers_json>\[6,7,8,9,10\]<\/requirement_section_numbers_json>/);
     assert.match(prompt.systemPrompt, /本次 sections 必须逐一且只覆盖：6\./);
     assert.doesNotMatch(prompt.systemPrompt, /必须正好 26 节/);
-    assert.match(prompt.systemPrompt, /本批 acceptanceCriteria 必须为空数组/);
+    assert.match(prompt.systemPrompt, /本批 acceptanceCriteria 可以为空/);
+    assert.match(prompt.systemPrompt, /fact 必须至少引用一个/);
   });
 
   it("enforces versioned GA4 naming and rejects fabricated measurement ids", () => {

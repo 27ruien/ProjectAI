@@ -268,19 +268,32 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
       const prompts = buildArtifactPrompt({ kind, projectName, evidence, requirementSectionNumbers: sectionNumbers });
       let batchResult = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
       let parsedBatch = requirementsDocumentBatchSchema.safeParse(parseJson(batchResult.text));
-      const validBatch = () => parsedBatch.success
-        && parsedBatch.data.sections.length === sectionNumbers.length
-        && parsedBatch.data.sections.every((section, index) => section.number === sectionNumbers[index] && section.title === REQUIREMENTS_SECTION_TITLES[section.number - 1])
-        && (sectionNumbers.includes(26) ? parsedBatch.data.acceptanceCriteria.length > 0 : parsedBatch.data.acceptanceCriteria.length === 0)
-        && validateCitationLabels(parsedBatch.data, allowedLabels);
-      if (!validBatch()) {
+      const batchFailureCode = () => {
+        if (!parsedBatch.success) return "WORKFLOW_REQUIREMENTS_BATCH_SCHEMA_INVALID";
+        if (parsedBatch.data.sections.length !== sectionNumbers.length
+          || !parsedBatch.data.sections.every((section, index) => section.number === sectionNumbers[index])) {
+          return "WORKFLOW_REQUIREMENTS_BATCH_ORDER_INVALID";
+        }
+        if (!validateCitationLabels(parsedBatch.data, allowedLabels)) {
+          return "WORKFLOW_REQUIREMENTS_BATCH_CITATION_SCOPE_INVALID";
+        }
+        if (parsedBatch.data.sections.some((section) => section.classification === "fact" && section.citations.length === 0)) {
+          return "WORKFLOW_REQUIREMENTS_BATCH_FACT_CITATION_INVALID";
+        }
+        if (sectionNumbers.includes(26) && parsedBatch.data.acceptanceCriteria.length === 0) {
+          return "WORKFLOW_REQUIREMENTS_BATCH_ACCEPTANCE_INVALID";
+        }
+        return null;
+      };
+      let failureCode = batchFailureCode();
+      if (failureCode) {
         const repair = buildArtifactPrompt({
           kind,
           projectName,
           evidence,
           requirementSectionNumbers: sectionNumbers,
           previousOutput: batchResult.text,
-          validationFailure: parsedBatch.success ? "BATCH_OR_CITATION_INVALID" : "SCHEMA_INVALID",
+          validationFailure: failureCode,
         });
         const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair" });
         batchResult = {
@@ -291,13 +304,17 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
           latencyMs: batchResult.latencyMs + repaired.latencyMs,
         };
         parsedBatch = requirementsDocumentBatchSchema.safeParse(parseJson(batchResult.text));
+        failureCode = batchFailureCode();
       }
-      if (!validBatch()) {
-        await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
+      if (failureCode) {
+        await getDb().update(workflowExecution).set({ status: "failed", failureCode, completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
         throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过分批结构或引用校验");
       }
       if (!parsedBatch.success) throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物批次状态无效");
-      sections.push(...parsedBatch.data.sections);
+      sections.push(...parsedBatch.data.sections.map((section) => ({
+        ...section,
+        title: REQUIREMENTS_SECTION_TITLES[section.number - 1],
+      })));
       acceptanceCriteria.push(...parsedBatch.data.acceptanceCriteria);
       aggregate = aggregate
         ? {
@@ -310,7 +327,10 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
           }
         : batchResult;
     }
-    const parsed = artifactSchemas[kind].safeParse({ sections, acceptanceCriteria });
+    const parsed = artifactSchemas[kind].safeParse({
+      sections,
+      acceptanceCriteria: [...new Set(acceptanceCriteria)].slice(0, 100),
+    });
     if (!aggregate || !parsed.success || !validateCitationLabels(parsed.data, allowedLabels)) {
       await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
       throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 需求文档未通过最终结构或引用校验");

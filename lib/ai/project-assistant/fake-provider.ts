@@ -260,17 +260,22 @@ export class FakeProjectAssistantProvider
         const sectionNumbers = Array.isArray(requestedSections)
           ? requestedSections.filter((value): value is number => Number.isInteger(value) && value >= 1 && value <= 26)
           : [];
+        const workflowRepair = request.purpose === "workflow_artifact_repair";
         text = JSON.stringify({
           sections: sectionNumbers.map((number) => ({
-            title: titles[number - 1],
+            // Deliberately vary presentation text: trusted workflow code must
+            // bind the canonical title to the validated section number.
+            title: `${titles[number - 1]}（模型格式）`,
             number,
             body: number === 25 ? "待确认事项：目标日期与验收责任人。" : "基于受控虚构来源形成的项目内容。",
             classification: number === 25 ? "pending" : "fact",
-            citations: number === 25 ? [] : ["E1"],
+            // Force one deterministic first-pass semantic failure so the
+            // integration test exercises the bounded repair path.
+            citations: number === 25 || (number === 1 && !workflowRepair) ? [] : ["E1"],
           })),
           acceptanceCriteria: sectionNumbers.includes(26)
             ? ["所有发布产物均经过人工审核", "无权用户访问统一返回 404"]
-            : [],
+            : ["批次内容通过服务端结构和引用校验"],
         });
         /* A non-batched response is intentionally invalid so integration tests
          * prove the worker cannot regress to one oversized Provider response. */
