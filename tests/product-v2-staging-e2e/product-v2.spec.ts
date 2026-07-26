@@ -118,13 +118,19 @@ test("@auth @navigation explicit Staging login, logout, and Mock roles stay insi
   await expect(page.getByText("仅用于 Staging 产品验收", { exact: true })).toBeVisible();
   const enterStaging = page.getByRole("button", { name: "进入测试环境" });
   await expect(enterStaging).toBeVisible();
+  await expect(enterStaging).toBeEnabled();
   for (const label of ["Kivisense Super Admin", "Kivisense Admin", "Kivisense Member"]) {
     await expect(page.getByRole("button", { name: new RegExp(label) })).toBeVisible();
   }
   const legacy = await page.request.post(appPath("/api/auth/sign-in/email"), { data: {}, headers: { origin } });
   expect(legacy.status()).toBe(404);
 
+  const stagingLoginResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/auth/sign-in/staging-test") &&
+    response.request().method() === "POST",
+  );
   await enterStaging.click();
+  expect((await stagingLoginResponse).status(), "explicit Staging login response").toBe(200);
   await expect(page).toHaveURL(/\/daily-report$/u);
   await expect(page.getByRole("heading", { name: "工作日报" })).toBeVisible();
   await page.getByRole("button", { name: "账户菜单" }).click();

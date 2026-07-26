@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import {
   Bot,
   Building2,
@@ -52,6 +52,14 @@ const identities: Array<{
   },
 ];
 
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
+}
+
 export function LoginPage({
   initialReturnTo,
   provider,
@@ -59,6 +67,7 @@ export function LoginPage({
   providerImplemented,
   stagingTestLoginEnabled,
 }: LoginPageProps) {
+  const hydrated = useHydrated();
   const returnTo = safeReturnTo(initialReturnTo);
   const [submitting, setSubmitting] = useState<MockIdentity | "staging" | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,7 +147,7 @@ export function LoginPage({
               </p>
               <button
                 type="button"
-                disabled={Boolean(submitting)}
+                disabled={!hydrated || Boolean(submitting)}
                 onClick={() => void enterStaging()}
                 className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-wait disabled:opacity-60"
               >
@@ -161,7 +170,7 @@ export function LoginPage({
                   <button
                     key={identity.key}
                     type="button"
-                    disabled={Boolean(submitting)}
+                    disabled={!hydrated || Boolean(submitting)}
                     onClick={() => void signIn(identity.key)}
                     className="flex w-full items-center gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/35 hover:bg-primary/[0.025] disabled:cursor-wait disabled:opacity-60"
                   >
