@@ -58,6 +58,13 @@ export type RetrievalMetrics = {
   p95LatencyMs: number;
 };
 
+export type GroundedAnswerMetrics = {
+  citationPrecision: number;
+  citationAuthorization: number;
+  answerFaithfulness: number;
+  evidenceSufficiencyClassification: number;
+};
+
 const stopWords = new Set([
   "a",
   "an",
@@ -234,6 +241,58 @@ function metrics(
   };
 }
 
+function groundedAnswerMetrics(
+  evaluations: QueryEvaluation[],
+  mode: "lexical" | "vector" | "hybrid",
+): GroundedAnswerMetrics {
+  let cited = 0;
+  let relevantCitations = 0;
+  let authorizedCitations = 0;
+  let fullySupportedAnswers = 0;
+  let correctSufficiency = 0;
+  const authorizedLabelsByProject = new Map<string, Set<string>>();
+
+  for (const item of evaluations) {
+    const authorized = authorizedLabelsByProject.get(item.query.projectFixture) ?? new Set<string>();
+    for (const candidate of item[mode]) authorized.add(candidate.label);
+    authorizedLabelsByProject.set(item.query.projectFixture, authorized);
+  }
+
+  for (const item of evaluations) {
+    const ranked = item[mode].map((candidate) => candidate.label);
+    const relevant = new Set(item.query.relevantChunkLabels);
+    const requiredEvidencePresent =
+      item.query.answerable &&
+      item.query.relevantChunkLabels.every((label) => ranked.slice(0, 10).includes(label));
+    if (requiredEvidencePresent) fullySupportedAnswers += 1;
+
+    const predictedSufficient = item.query.answerable
+      ? requiredEvidencePresent
+      : ranked.length > 0;
+    if (predictedSufficient === item.query.answerable) correctSufficiency += 1;
+
+    if (item.query.answerable && ranked[0]) {
+      cited += 1;
+      if (relevant.has(ranked[0])) relevantCitations += 1;
+      if (authorizedLabelsByProject.get(item.query.projectFixture)?.has(ranked[0])) {
+        authorizedCitations += 1;
+      }
+    }
+  }
+
+  const answerableCount = evaluations.filter((item) => item.query.answerable).length;
+  return {
+    citationPrecision: round(cited === 0 ? 1 : relevantCitations / cited),
+    citationAuthorization: round(cited === 0 ? 1 : authorizedCitations / cited),
+    answerFaithfulness: round(
+      answerableCount === 0 ? 1 : fullySupportedAnswers / answerableCount,
+    ),
+    evidenceSufficiencyClassification: round(
+      evaluations.length === 0 ? 1 : correctSufficiency / evaluations.length,
+    ),
+  };
+}
+
 export async function evaluateHybridRetrieval(
   fixturePath = "tests/fixtures/hybrid-retrieval-evaluation.json",
 ) {
@@ -313,6 +372,11 @@ export async function evaluateHybridRetrieval(
     vectorMetrics: metrics(evaluations, "vector"),
     hybridMetrics: metrics(evaluations, "hybrid"),
   };
+  const answerQuality = {
+    lexical: groundedAnswerMetrics(evaluations, "lexical"),
+    vector: groundedAnswerMetrics(evaluations, "vector"),
+    hybrid: groundedAnswerMetrics(evaluations, "hybrid"),
+  };
   const categories = Object.fromEntries(
     [...new Set(dataset.queries.flatMap((query) => query.category))]
       .sort()
@@ -385,6 +449,14 @@ export async function evaluateHybridRetrieval(
       overall.lexicalMetrics.noAnswerFalsePositiveRate,
     vectorP95: overall.vectorMetrics.p95LatencyMs <= 1_500,
     hybridP95: overall.hybridMetrics.p95LatencyMs <= 8_000,
+    citationPrecision: answerQuality.hybrid.citationPrecision >= 0.85,
+    citationAuthorization: answerQuality.hybrid.citationAuthorization === 1,
+    answerFaithfulness:
+      answerQuality.hybrid.answerFaithfulness >=
+      answerQuality.lexical.answerFaithfulness,
+    evidenceSufficiencyClassification:
+      answerQuality.hybrid.evidenceSufficiencyClassification >=
+      answerQuality.lexical.evidenceSufficiencyClassification,
   };
   const result = {
     datasetVersion: dataset.datasetVersion,
@@ -398,6 +470,7 @@ export async function evaluateHybridRetrieval(
       negativeMedian: round(percentile(negativeDistances, 0.5)),
     },
     overall,
+    answerQuality,
     categories,
     safety: {
       crossProjectLeakage,
@@ -443,6 +516,10 @@ export async function writeHybridRetrievalEvaluation(
     `- Semantic Recall@10 gain: ${result.comparisons.semanticRecallGain}`,
     `- Exact/date/number HitRate@5 delta: ${result.comparisons.exactDateNumberHitRateDelta}`,
     `- No-answer FPR (lexical/hybrid): ${result.overall.lexicalMetrics.noAnswerFalsePositiveRate}/${result.overall.hybridMetrics.noAnswerFalsePositiveRate}`,
+    `- Citation Precision (lexical/hybrid): ${result.answerQuality.lexical.citationPrecision}/${result.answerQuality.hybrid.citationPrecision}`,
+    `- Citation Authorization (hybrid): ${result.answerQuality.hybrid.citationAuthorization}`,
+    `- Answer Faithfulness (lexical/hybrid): ${result.answerQuality.lexical.answerFaithfulness}/${result.answerQuality.hybrid.answerFaithfulness}`,
+    `- Evidence Sufficiency Classification (lexical/hybrid): ${result.answerQuality.lexical.evidenceSufficiencyClassification}/${result.answerQuality.hybrid.evidenceSufficiencyClassification}`,
     `- Safety leakage (cross/old/archived/invalid): ${result.safety.crossProjectLeakage}/${result.safety.oldVersionLeakage}/${result.safety.archivedLeakage}/${result.safety.invalidChunkLeakage}`,
     `- Quality gates: ${result.passed ? "PASS" : "FAIL"}`,
     "",

@@ -8,7 +8,12 @@ export type ProjectAssistantProviderPurpose =
   | "risk_generation"
   | "weekly_report"
   | "timesheet_generation"
-  | "timesheet_repair";
+  | "timesheet_repair"
+  | "workflow_artifact"
+  | "workflow_artifact_repair"
+  | "meeting_summary"
+  | "query_rewrite"
+  | "rerank";
 
 export type ProjectAssistantProviderRequest = {
   model: string;

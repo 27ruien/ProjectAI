@@ -60,6 +60,8 @@ jobs:
       PM_DAILY_REPORT_ENABLED: "true"
       WECOM_TIMESHEET_SYNC_ENABLED: "true"
       PM_DAILY_REPORT_CONFIDENCE_THRESHOLD: "0.85"
+      AUDIO_TRANSCRIPTION_PROVIDER: fake
+      AUDIO_PROVIDER_PUBLIC_BASE_URL: https://example.invalid/tool/projectai
       AI_HYBRID_RETRIEVAL_PROFILE_ID: hybrid-rrf-v1
       AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS: "5000"
       AI_HYBRID_VECTOR_SQL_TIMEOUT_MS: "1500"
@@ -127,12 +129,18 @@ jobs:
           set -Eeuo pipefail
           password="$(openssl rand -base64 32 | tr -d '\n')Aa1!"
           auth_secret="$(openssl rand -hex 48)"
+          audio_signing_key="$(openssl rand -base64 48 | tr -d '\n')"
+          audio_signing_key_file="${RUNNER_TEMP}/projectai-audio-signing-key"
           echo "::add-mask::$password"
           echo "::add-mask::$auth_secret"
+          echo "::add-mask::$audio_signing_key"
+          umask 077
+          printf '%s\n' "$audio_signing_key" > "$audio_signing_key_file"
           {
             echo "NEXT_PUBLIC_APP_VERSION=$(node -p 'require("./package.json").version')"
             echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "BETTER_AUTH_SECRET=$auth_secret"
+            echo "AUDIO_DOWNLOAD_SIGNING_KEY_FILE=$audio_signing_key_file"
             echo "SEED_ADMIN_PASSWORD=$password"
             echo "SEED_ORG_ADMIN_PASSWORD=$password"
             echo "SEED_DEPT_ADMIN_PASSWORD=$password"
@@ -460,6 +468,21 @@ jobs:
           set -o pipefail
           mkdir -p test-logs
           npm run test:v3-round1 2>&1 | tee test-logs/v3-round1-contract.log
+
+      - name: V3 Round 2 workflow, artifact export, and audio provider contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:v3-round2 2>&1 | tee test-logs/v3-round2-contract.log
+          npm run test:v3-round2-integration 2>&1 | tee test-logs/v3-round2-integration.log
+
+      - name: V3 Round 3 structured chunk, query processing, rerank, and ACL contracts
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-logs
+          npm run test:v3-round3 2>&1 | tee test-logs/v3-round3.log
 
       - name: Build, inspect, and exercise the MV3 extension in isolation
         shell: bash

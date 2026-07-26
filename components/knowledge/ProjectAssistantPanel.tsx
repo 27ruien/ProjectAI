@@ -420,7 +420,7 @@ export function ProjectAssistantPanel({
                   }`}>
                     {message.status === "pending" ? (
                       <span className="inline-flex items-center gap-2 text-muted-foreground">
-                        <LoaderCircle className="size-4 animate-spin" />正在检索证据并生成回答
+                        <LoaderCircle className="size-4 animate-spin" />正在理解问题、检索授权资料并校验引用
                       </span>
                     ) : (
                       <p className="whitespace-pre-wrap">{message.content}</p>
@@ -482,7 +482,7 @@ export function ProjectAssistantPanel({
               <div className="max-w-3xl rounded-xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground" role="status">
                 <span className="inline-flex items-center gap-2">
                   <LoaderCircle className="size-4 animate-spin text-primary" />
-                  正在检索、生成并验证引用
+                  正在理解问题 → 检索授权资料 → 合并来源 → 生成回答 → 校验引用；可安全离开，对话会保留
                 </span>
               </div>
             ) : null}

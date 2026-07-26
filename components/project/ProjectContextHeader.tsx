@@ -83,7 +83,7 @@ export function ProjectContextHeader({ project, activeTab, onOpenAI }: ProjectCo
               </Link>
             )}
             {canWrite ? (
-              <Link href={`/workflows/requirement-extraction?project=${project.id}`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
+              <Link href={`/workflows/requirement-framework?projectId=${project.id}`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
                 <Sparkles className="size-4" /><span className="hidden sm:inline">创建 AI 工作流</span><Plus className="size-4 sm:hidden" />
               </Link>
             ) : null}

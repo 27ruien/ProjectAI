@@ -1,0 +1,2 @@
+ALTER TABLE "workflow_runs" ADD COLUMN "regeneration_artifact_kind" varchar(48);--> statement-breakpoint
+ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_regeneration_kind_check" CHECK ("workflow_runs"."regeneration_artifact_kind" is null or "workflow_runs"."regeneration_artifact_kind" in ('project_overview', 'requirements_document', 'ga4_measurement_plan', 'action_plan'));

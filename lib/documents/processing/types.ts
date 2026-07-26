@@ -45,5 +45,11 @@ export type DeterministicChunk = {
   characterCount: number;
   estimatedTokenCount: number;
   headingPath: string[];
+  chunkType: ParsedSectionType;
+  parentContent: string;
+  parentContentSha256: string;
+  parseQualityBps: number;
+  keywords: string[];
+  summary: string;
   sourceLocator: SourceLocator;
 };

@@ -142,7 +142,8 @@ test("Product V2 document authorization keeps explicit deny ahead of every admin
 
 test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollback guarded", async () => {
   const deploy = await read("scripts/deploy-product-v2-staging.sh");
-  assert.match(deploy, /EXPECTED_BRANCH="agent\/projectai-product-architecture-v2"/);
+  assert.match(deploy, /DEFAULT_EXPECTED_BRANCH="agent\/projectai-workflows-knowledge-v3"/);
+  assert.match(deploy, /EXPECTED_BRANCH="\$\{PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH\}"/);
   assert.match(deploy, /REMOTE_DIR="\/srv\/projectai-staging"/);
   assert.match(deploy, /COMMIT_SHA.*origin\/\$\{EXPECTED_BRANCH\}/s);
   assert.match(deploy, /pocket-charista\(\/\|\\\.zip\$\)/);

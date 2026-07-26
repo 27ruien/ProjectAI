@@ -8,12 +8,15 @@ import {
 } from "@/lib/ai/embeddings";
 import { controlledEmbeddingError } from "@/lib/ai/embeddings/errors";
 import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
+import { requireAiAssistantEnabled } from "@/lib/ai/project-assistant/config";
+import { createProjectAssistantGateway, type ProjectAssistantGateway } from "@/lib/ai/project-assistant/gateway";
 import { getDb } from "@/lib/db/client";
 import type { AiExecutionRecord } from "@/lib/db/schema";
 import {
   type ProjectKnowledgeEvidence,
   type RankedProjectKnowledgeEvidence,
   retrieveLexicalProjectCandidates,
+  expandAuthorizedEvidenceContext,
   selectBoundedProjectEvidence,
 } from "@/lib/documents/processing/search-service";
 import { validateSourceLocator } from "@/lib/documents/processing/source-locator";
@@ -38,6 +41,8 @@ import {
   type FusedRetrievalCandidate,
   type RankedRetrievalCandidate,
 } from "./rrf";
+import { processBoundedQuery } from "./query-processing";
+import { rerankAuthorizedCandidates } from "./rerank";
 
 export type RetrievalFallbackReason =
   | "RETRIEVAL_PROFILE_DISABLED"
@@ -68,6 +73,11 @@ export type RetrievalEvidenceResult = {
     queryEmbeddingLatencyMs: number;
     vectorLatencyMs: number;
     fusionLatencyMs: number;
+    queryProcessingLatencyMs: number;
+    rerankLatencyMs: number;
+    contextExpansionLatencyMs: number;
+    rewrittenQueryCount: number;
+    rerankFallbackReason: string | null;
     totalLatencyMs: number;
   };
 };
@@ -86,6 +96,10 @@ type VectorRow = {
   vector_distance: number | string;
   knowledge_space_id: string;
   source_scope: "organization" | "department" | "project" | "restricted";
+  section_id: string;
+  chunk_index: number;
+  chunk_type: string;
+  parent_content: string | null;
 };
 
 function elapsed(started: number): number {
@@ -304,6 +318,10 @@ async function exactVectorCandidates(input: {
         c.content_sha256,
         c.heading_path,
         c.source_locator,
+        c.section_id,
+        c.chunk_index,
+        c.chunk_type,
+        c.parent_content,
         authorized.knowledge_space_id,
         authorized.source_scope,
         (e.embedding <=> ${vectorLiteral}::vector) as vector_distance
@@ -370,6 +388,10 @@ async function exactVectorCandidates(input: {
       score: Math.max(0, 1 - Number(row.vector_distance)),
       knowledgeSpaceId: row.knowledge_space_id,
       sourceScope: row.source_scope,
+      sectionId: row.section_id,
+      chunkIndex: Number(row.chunk_index),
+      chunkType: row.chunk_type,
+      parentContent: row.parent_content,
     },
   }));
 }
@@ -397,22 +419,32 @@ export async function retrieveProjectEvidence(input: {
   if (input.mode !== runtime.mode || input.retrievalProfileId !== runtime.profileId) {
     throw new Error("Server retrieval configuration mismatch.");
   }
-  const query = input.query.trim().slice(0, 2_000);
   const totalStarted = performance.now();
+  let gateway: ProjectAssistantGateway | undefined;
+  if (await isAiProviderConfigured()) {
+    try { gateway = createProjectAssistantGateway(requireAiAssistantEnabled()); } catch { gateway = undefined; }
+  }
+  const processingStarted = performance.now();
+  const processed = await processBoundedQuery({ query: input.query, gateway });
+  const queryProcessingLatencyMs = elapsed(processingStarted);
+  const query = processed.normalizedQuery;
   const retrievalRunId = await createRetrievalRun({
     execution: input.execution,
-    querySha256: createHash("sha256").update(query).digest("hex"),
+    querySha256: createHash("sha256").update(processed.originalQuery).digest("hex"),
+    normalizedQuerySha256: createHash("sha256").update(query).digest("hex"),
+    rewrittenQueryCount: processed.rewrittenQueries.length,
+    queryProcessingLatencyMs,
     requestedMode: input.mode,
   });
 
   const lexicalStarted = performance.now();
-  const lexical = await retrieveLexicalProjectCandidates({
-    actorUserId: input.principal.user.id,
-    projectId: input.projectId,
-    query,
-    limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit,
-    documentIds: input.sourceDocumentIds,
-  });
+  const lexicalLists = await Promise.all(processed.rewrittenQueries.map((rewrittenQuery) => retrieveLexicalProjectCandidates({ actorUserId: input.principal.user.id, projectId: input.projectId, query: rewrittenQuery, limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit, documentIds: input.sourceDocumentIds })));
+  const lexicalByChunk = new Map<string, RankedProjectKnowledgeEvidence>();
+  for (const candidate of lexicalLists.flat()) {
+    const previous = lexicalByChunk.get(candidate.evidence.chunkId);
+    if (!previous || candidate.evidence.score > previous.evidence.score) lexicalByChunk.set(candidate.evidence.chunkId, candidate);
+  }
+  const lexical = [...lexicalByChunk.values()].sort((left, right) => right.evidence.score - left.evidence.score || left.evidence.chunkId.localeCompare(right.evidence.chunkId)).slice(0, HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit).map((candidate, index) => ({ ...candidate, rank: index + 1 }));
   const lexicalLatencyMs = elapsed(lexicalStarted);
   const lexicalEvidence = selectLexicalEvidence(lexical);
   let coverageBps = 0;
@@ -425,6 +457,9 @@ export async function retrieveProjectEvidence(input: {
   let evidence = lexicalEvidence;
   let effectiveMode: "lexical" | "hybrid" = "lexical";
   let fallbackReason: RetrievalFallbackReason | null = null;
+  let rerankLatencyMs = 0;
+  let contextExpansionLatencyMs = 0;
+  let rerankFallbackReason: string | null = null;
 
   if (input.mode !== "lexical") {
     const profile = await retrievalProfileState();
@@ -488,6 +523,11 @@ export async function retrieveProjectEvidence(input: {
                 candidate.finalRank !== null,
             );
             fusionLatencyMs = elapsed(fusionStarted);
+            const reranked = await rerankAuthorizedCandidates({ query, candidates: fused, gateway });
+            rerankLatencyMs = reranked.latencyMs;
+            rerankFallbackReason = reranked.fallbackReason;
+            fused = reranked.candidates.map((candidate, index) => ({ ...candidate, finalRank: index + 1 }));
+            auditCandidates = fused;
             const hybridEvidence = selectHybridEvidence(fused);
             if (hybridEvidence.length === 0) {
               fallbackReason = "HYBRID_CONFIDENCE_INSUFFICIENT";
@@ -503,6 +543,12 @@ export async function retrieveProjectEvidence(input: {
     }
   }
 
+  if (evidence.length) {
+    const expansionStarted = performance.now();
+    evidence = await expandAuthorizedEvidenceContext({ actorUserId: input.principal.user.id, projectId: input.projectId, evidence, adjacentWindow: 1, maxChars: HYBRID_RETRIEVAL_PROFILE.maxEvidenceCharacters });
+    contextExpansionLatencyMs = elapsed(expansionStarted);
+  }
+
   const selectedChunkIds = new Set(evidence.map((item) => item.chunkId));
   const totalLatencyMs = elapsed(totalStarted);
   await finalizeRetrievalRun({
@@ -516,6 +562,10 @@ export async function retrieveProjectEvidence(input: {
     queryEmbeddingLatencyMs,
     vectorLatencyMs,
     fusionLatencyMs,
+    queryProcessingLatencyMs,
+    rerankLatencyMs,
+    contextExpansionLatencyMs,
+    rerankFallbackReason,
     totalLatencyMs,
     lexicalCandidateCount: lexical.length,
     vectorCandidateCount: vector.length,
@@ -539,6 +589,11 @@ export async function retrieveProjectEvidence(input: {
       queryEmbeddingLatencyMs,
       vectorLatencyMs,
       fusionLatencyMs,
+      queryProcessingLatencyMs,
+      rerankLatencyMs,
+      contextExpansionLatencyMs,
+      rewrittenQueryCount: processed.rewrittenQueries.length,
+      rerankFallbackReason,
       totalLatencyMs,
     },
   };

@@ -144,7 +144,7 @@ flowchart LR
   G --> H["Thread / Message / Execution / Citation"]
 ```
 
-`ProjectKnowledgeService` 与 `AIGateway` 保持稳定边界，页面只能提交 `modelProfileId`。B3-A 复用 B2 `Active + Current + Stored + Succeeded + Effective` 词法检索，Evidence 与 System Prompt 分区；模型标记由服务端验证并映射为公开 Citation。没有 Evidence 时不调用模型。
+`ProjectKnowledgeService` 与 `AIGateway` 保持稳定边界，页面只能提交 `modelProfileId`。V3 在服务端完成 ACL 前置的 Query Processing、Lexical/Exact Vector、Weighted RRF、候选集合封闭的 Rerank，以及再次授权的 Parent/Adjacent Context Expansion；Evidence 与 System Prompt 分区，模型标记由服务端验证并映射为公开 Citation。没有足够 Evidence 时不调用回答模型。
 
 Qwen Chat Adapter 只在 Node 服务端使用 `/chat/completions`。B3-B1 另有 Provider-neutral Embedding Gateway，固定调用 `/embeddings`、`text-embedding-v4` 和 1024 维；返回数量、顺序、维度及有限数值均失败关闭。两条链路都使用 Secret File，不向浏览器暴露 Base URL、Authorization、Provider Payload、Prompt、正文或向量。
 

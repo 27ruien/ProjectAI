@@ -220,6 +220,79 @@ export class FakeProjectAssistantProvider
         warnings: ["MOCK_AI：结果仅用于流程测试；未从输入推断出的字段保持待确认"],
         unresolved_record_ids: [],
       });
+    } else if (
+      request.purpose === "workflow_artifact" ||
+      request.purpose === "workflow_artifact_repair"
+    ) {
+      const kind = taggedJsonString(request.userPrompt, "artifact_kind_json");
+      if (kind === "project_overview") {
+        const fields = [
+          "核心时间", "平台类型", "适配类型", "交互类型", "投放渠道", "项目地区",
+          "项目整体架构与各方责任", "特殊支持", "项目维护类型", "线下活动支持",
+          "搭建支持", "上线类型", "隐私政策与数据合规", "流量与访问情况",
+          "项目特殊支持", "项目核心指标", "研发资源", "三方资源", "运营资源",
+          "项目业务运维", "服务器或云开发", "可行性分析", "MVP 需求",
+          "整体交互流程概览", "可用物料",
+        ];
+        text = JSON.stringify({
+          sections: [
+            {
+              title: "项目背景",
+              fields: fields.slice(0, 16).map((name) => ({ name, value: name === "平台类型" ? "Web" : "待确认", classification: name === "平台类型" ? "fact" : "pending", citations: name === "平台类型" ? ["E1"] : [] })),
+            },
+            { title: "需求概览", fields: fields.slice(16).map((name) => ({ name, value: name === "MVP 需求" ? "完成虚构受控流程" : "待确认", classification: name === "MVP 需求" ? "fact" : "pending", citations: name === "MVP 需求" ? ["E1"] : [] })) },
+          ],
+          pendingQuestions: ["目标上线日期和最终验收负责人是什么？"],
+        });
+      } else if (kind === "requirements_document") {
+        const titles = [
+          "文档信息与版本记录", "项目背景", "业务目标", "用户和角色", "使用场景",
+          "产品范围", "Out of Scope", "用户旅程", "信息架构", "功能需求",
+          "页面和交互要求", "平台与兼容性要求", "权限要求", "数据模型和业务状态",
+          "外部系统和 API 依赖", "异常、降级和兜底", "非功能需求", "性能和并发",
+          "隐私与数据合规", "数据统计与埋点需求", "验收标准", "依赖关系", "风险",
+          "时间线和里程碑", "待确认事项", "附录和来源",
+        ];
+        text = JSON.stringify({
+          sections: titles.map((title, index) => ({
+            number: index + 1,
+            title,
+            body: index === 24 ? "待确认事项：目标日期与验收责任人。" : "基于受控虚构来源形成的项目内容。",
+            classification: index === 24 ? "pending" : "fact",
+            citations: index === 24 ? [] : ["E1"],
+          })),
+          acceptanceCriteria: ["所有发布产物均经过人工审核", "无权用户访问统一返回 404"],
+        });
+      } else if (kind === "ga4_measurement_plan") {
+        text = JSON.stringify({
+          overview: { platform: "GA4", measurementId: "TBD", validationStatus: "待验证", projectName: "虚构验收项目", projectLink: "TBD", citations: ["E1"] },
+          publicParameters: [{ name: "项目 ID", description: "当前授权项目", key: "project_id", valueRule: "服务端授权项目 ID", valueType: "string", note: "不得由客户端越权覆盖", citations: ["E1"] }],
+          events: [{ eventName: "workflow_result_view", coreEvent: true, eventType: "result", description: "查看工作流结果", eventId: "workflow_result_view", parameterName: "工作流类型", parameterDescription: "受控工作流类型", parameterKey: "workflow_type", parameterValueRule: "requirement_framework", parameterValueType: "string", note: "E1", developerFeedback: "待接入", citations: ["E1"] }],
+          requirementEventCoverage: [{ requirement: "查看工作流结果", eventId: "workflow_result_view", status: "covered" }],
+          pageEventMatrix: [{ page: "AI 工作流", eventId: "workflow_result_view", status: "covered" }],
+        });
+      } else {
+        text = JSON.stringify({
+          tasks: [{ taskCn: "完成虚构验收", taskEn: "Complete synthetic acceptance", owner: "项目经理", stakeholder: "内部", startDate: "TBD", endDate: "TBD", progress: 0, milestone: true, meeting: "TBD", parentTask: null, dependency: [], confirmationOwner: "客户", latestConfirmationDate: "TBD", delayImpact: "可能影响下游验收与上线里程碑", criticalPath: true, sourceCitation: "E1", assumption: "日期待人工确认", status: "pending_confirmation" }],
+          warnings: ["源材料未提供确定日期，计划日期保持 TBD。"],
+        });
+      }
+    } else if (request.purpose === "meeting_summary") {
+      text = JSON.stringify({
+        background: "基于受控虚构转写生成。",
+        topics: ["虚构项目验收"],
+        keyPoints: [{ text: "讨论了验收准备。", segmentIds: ["S1"] }],
+        decisions: [],
+        proposals: [{ text: "建议下周完成验收。", segmentIds: ["S1"] }],
+        openQuestions: ["最终验收日期是什么？"],
+        risks: [],
+        actions: [{ text: "准备验收记录", owner: "Speaker 1", deadline: "TBD", dependencies: [], segmentIds: ["S1"] }],
+      });
+    } else if (request.purpose === "query_rewrite") {
+      text = JSON.stringify({ normalizedQuery: currentQuestion, rewrittenQueries: [currentQuestion], intent: "knowledge_question", keywords: [] });
+    } else if (request.purpose === "rerank") {
+      const ranking = [...request.userPrompt.matchAll(/"chunkId":"([^"]+)"/g)].map((match) => match[1]);
+      text = JSON.stringify({ ranking });
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

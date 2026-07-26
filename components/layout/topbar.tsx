@@ -43,9 +43,8 @@ const labels: Record<string, string> = {
   meetings: "会议与决策",
   risks: "风险与状态",
   workflows: "AI 工作流",
-  "requirement-extraction": "需求提取",
-  reviews: "审核中心",
-  skills: "Skills",
+  "requirement-framework": "搭建需求框架",
+  "meeting-minutes": "提取会议纪要",
   analytics: "数据看板",
   settings: "系统设置",
   organization: "组织架构",
@@ -141,7 +140,10 @@ export function Topbar({ viewer, currentProject, currentPath, onMenuOpen, onFeed
       icon: Library,
     }));
     const workflowItems = viewer.projects.some((project) => project.permissions.canEditProject)
-      ? [{ label: "AI 提取需求", detail: "工作流 · 业务内容仍为 Mock", href: "/workflows/requirement-extraction", icon: Sparkles }]
+      ? [
+          { label: "搭建需求框架", detail: "AI 工作流 · 四类可审核产物", href: "/workflows/requirement-framework", icon: Sparkles },
+          { label: "提取会议纪要", detail: "AI 工作流 · 转写与说话人分离", href: "/workflows/meeting-minutes", icon: Sparkles },
+        ]
       : [];
     const spaceItems = knowledgeSpaces
       .filter((space) => !space.projectId || !viewer.projects.some((project) => project.id === space.projectId))

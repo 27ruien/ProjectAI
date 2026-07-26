@@ -46,6 +46,12 @@ export const aiRetrievalRun = pgTable(
     effectiveMode: aiRetrievalModeEnum("effective_mode"),
     status: aiRetrievalRunStatusEnum("status").notNull().default("running"),
     querySha256: varchar("query_sha256", { length: 64 }).notNull(),
+    normalizedQuerySha256: varchar("normalized_query_sha256", { length: 64 }),
+    rewrittenQueryCount: integer("rewritten_query_count").notNull().default(0),
+    queryProcessingLatencyMs: integer("query_processing_latency_ms").notNull().default(0),
+    rerankLatencyMs: integer("rerank_latency_ms").notNull().default(0),
+    contextExpansionLatencyMs: integer("context_expansion_latency_ms").notNull().default(0),
+    rerankFallbackReason: varchar("rerank_fallback_reason", { length: 80 }),
     lexicalCandidateCount: integer("lexical_candidate_count").notNull().default(0),
     vectorCandidateCount: integer("vector_candidate_count").notNull().default(0),
     fusedCandidateCount: integer("fused_candidate_count").notNull().default(0),
@@ -108,8 +114,13 @@ export const aiRetrievalRun = pgTable(
       and ${table.queryEmbeddingLatencyMs} >= 0
       and ${table.vectorLatencyMs} >= 0
       and ${table.fusionLatencyMs} >= 0
+      and ${table.queryProcessingLatencyMs} >= 0
+      and ${table.rerankLatencyMs} >= 0
+      and ${table.contextExpansionLatencyMs} >= 0
+      and ${table.rewrittenQueryCount} between 0 and 4
       and ${table.totalLatencyMs} >= 0
     `),
+    check("ai_retrieval_runs_normalized_query_hash_check", sql`${table.normalizedQuerySha256} is null or ${table.normalizedQuerySha256} ~ '^[0-9a-f]{64}$'`),
     check("ai_retrieval_runs_status_check", sql`
       (
         ${table.status} = 'running'

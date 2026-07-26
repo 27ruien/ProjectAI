@@ -1,0 +1,1 @@
+ALTER TABLE "workflow_audio_jobs" ADD COLUMN "provider_task_id" text;

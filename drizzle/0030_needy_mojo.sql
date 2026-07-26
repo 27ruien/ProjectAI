@@ -1,0 +1,1 @@
+ALTER TABLE "workflow_runs" ADD COLUMN "next_attempt_at" timestamp with time zone DEFAULT now() NOT NULL;

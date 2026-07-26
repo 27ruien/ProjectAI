@@ -11,6 +11,24 @@ describe("fictional hybrid retrieval evaluation gate", () => {
     assert.equal(result.safety.oldVersionLeakage, 0);
     assert.equal(result.safety.archivedLeakage, 0);
     assert.equal(result.safety.invalidChunkLeakage, 0);
+    assert.equal(result.answerQuality.hybrid.citationAuthorization, 1);
+    assert.ok(result.answerQuality.hybrid.citationPrecision >= 0.85);
+    assert.ok(
+      result.answerQuality.hybrid.answerFaithfulness >=
+        result.answerQuality.lexical.answerFaithfulness,
+    );
+    for (const category of [
+      "table",
+      "cross-document",
+      "department-shared",
+      "unauthorized",
+      "current-version",
+      "old-version",
+      "archived",
+      "permission-revoked",
+    ]) {
+      assert.ok(result.categories[category], `${category} scenario is missing`);
+    }
     assert.equal(result.passed, true, JSON.stringify(result.gates));
   });
 });

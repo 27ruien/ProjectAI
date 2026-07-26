@@ -54,6 +54,9 @@ export async function retrievalProfileState(): Promise<{
 export async function createRetrievalRun(input: {
   execution: AiExecutionRecord;
   querySha256: string;
+  normalizedQuerySha256: string;
+  rewrittenQueryCount: number;
+  queryProcessingLatencyMs: number;
   requestedMode: AiRetrievalMode;
 }): Promise<string> {
   const id = crypto.randomUUID();
@@ -68,6 +71,9 @@ export async function createRetrievalRun(input: {
     requestedMode: input.requestedMode,
     status: "running",
     querySha256: input.querySha256,
+    normalizedQuerySha256: input.normalizedQuerySha256,
+    rewrittenQueryCount: input.rewrittenQueryCount,
+    queryProcessingLatencyMs: input.queryProcessingLatencyMs,
     retrievalVersion: HYBRID_RETRIEVAL_VERSION,
   });
   return id;
@@ -232,6 +238,10 @@ export async function finalizeRetrievalRun(input: {
   queryEmbeddingLatencyMs: number;
   vectorLatencyMs: number;
   fusionLatencyMs: number;
+  queryProcessingLatencyMs: number;
+  rerankLatencyMs: number;
+  contextExpansionLatencyMs: number;
+  rerankFallbackReason: string | null;
   totalLatencyMs: number;
   lexicalCandidateCount: number;
   vectorCandidateCount: number;
@@ -287,6 +297,10 @@ export async function finalizeRetrievalRun(input: {
         queryEmbeddingLatencyMs: input.queryEmbeddingLatencyMs,
         vectorLatencyMs: input.vectorLatencyMs,
         fusionLatencyMs: input.fusionLatencyMs,
+        queryProcessingLatencyMs: input.queryProcessingLatencyMs,
+        rerankLatencyMs: input.rerankLatencyMs,
+        contextExpansionLatencyMs: input.contextExpansionLatencyMs,
+        rerankFallbackReason: input.rerankFallbackReason,
         totalLatencyMs: input.totalLatencyMs,
         fallbackReason: input.fallbackReason,
         completedAt,

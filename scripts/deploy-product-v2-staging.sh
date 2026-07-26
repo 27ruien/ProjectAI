@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly DEFAULT_EXPECTED_BRANCH="agent/projectai-product-architecture-v2"
+readonly DEFAULT_EXPECTED_BRANCH="agent/projectai-workflows-knowledge-v3"
 readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
 readonly REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 readonly REMOTE_DIR="/srv/projectai-staging"
@@ -13,6 +13,7 @@ readonly ENV_FILE="${REMOTE_DIR}/.env.auth-staging"
 readonly AI_ENV_FILE="${REMOTE_DIR}/.env.ai"
 readonly EMBEDDING_ENV_FILE="${REMOTE_DIR}/.env.embedding"
 readonly QWEN_SECRET_FILE="${REMOTE_DIR}/secrets/qwen_api_key"
+readonly AUDIO_SIGNING_SECRET_FILE="${REMOTE_DIR}/secrets/audio_download_signing_key"
 readonly LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
 readonly MARKER="${REMOTE_DIR}/.product-v2-deploy-in-progress"
 readonly POSTGRES_IMAGE_REF="pgvector/pgvector:0.8.1-pg17@sha256:3e8b3adfd27b5707128f60956f62a793c3c9326ea8cfaf0eab7adccb5d700b21"
@@ -101,7 +102,7 @@ REMOTE_LOCK
 LOCK_ACQUIRED=1
 
 log "Checking Staging-only prerequisites without reading credential values"
-REMOTE_ARCH="$("${SSH[@]}" bash -s -- "$ENV_FILE" "$AI_ENV_FILE" "$EMBEDDING_ENV_FILE" "$QWEN_SECRET_FILE" "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_PREFLIGHT'
+REMOTE_ARCH="$("${SSH[@]}" bash -s -- "$ENV_FILE" "$AI_ENV_FILE" "$EMBEDDING_ENV_FILE" "$QWEN_SECRET_FILE" "$LOCK_DIR" "$DEPLOY_ID" "$AUDIO_SIGNING_SECRET_FILE" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 env_file="$1"
 ai_env_file="$2"
@@ -109,10 +110,12 @@ embedding_env_file="$3"
 qwen_secret_file="$4"
 lock_dir="$5"
 deploy_id="$6"
+audio_signing_secret_file="$7"
 command -v docker >/dev/null
 command -v curl >/dev/null
 command -v rsync >/dev/null
 sudo docker compose version >/dev/null
+command -v openssl >/dev/null
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
 minimum_available_bytes=$((12 * 1024 * 1024 * 1024))
 docker_root="$(sudo docker info --format '{{.DockerRootDir}}')"
@@ -125,7 +128,20 @@ for capacity_path in "$docker_root" /srv/projectai-staging; do
     exit 1
   fi
 done
-for protected in "$env_file" "$ai_env_file" "$embedding_env_file" "$qwen_secret_file"; do
+secret_dir="$(dirname "$audio_signing_secret_file")"
+sudo install -d -m 0700 -o root -g root "$secret_dir"
+sudo test ! -L "$secret_dir"
+[[ "$(sudo stat -c '%U:%G:%a' "$secret_dir")" == "root:root:700" ]]
+if ! sudo test -e "$audio_signing_secret_file"; then
+  secret_temp="$(mktemp)"
+  trap 'rm -f -- "$secret_temp"' EXIT
+  umask 077
+  openssl rand -base64 48 > "$secret_temp"
+  sudo install -m 0600 -o root -g root "$secret_temp" "$audio_signing_secret_file"
+  rm -f -- "$secret_temp"
+  trap - EXIT
+fi
+for protected in "$env_file" "$ai_env_file" "$embedding_env_file" "$qwen_secret_file" "$audio_signing_secret_file"; do
   sudo test -f "$protected"
   sudo test ! -L "$protected"
   sudo test -s "$protected"
@@ -251,6 +267,7 @@ previous_app_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-
 previous_worker_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-worker 2>/dev/null || true)"
 previous_embedding_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-embedding-worker 2>/dev/null || true)"
 previous_timesheet_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)"
+previous_workflow_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-workflow-worker 2>/dev/null || true)"
 backup_path="$remote_dir/backups/projectai-product-v2-${deploy_id}.dump"
 env_backup="$remote_dir/backups/product-v2-auth-env-${deploy_id}.bak"
 ai_env_backup="$remote_dir/backups/product-v2-ai-env-${deploy_id}.bak"
@@ -266,7 +283,7 @@ compose_base=(
   sudo env "NEXT_PUBLIC_COMMIT_SHA=$commit_sha" "NEXT_PUBLIC_APP_VERSION=$app_version"
   "NEXT_PUBLIC_BUILD_TIME=$build_time" "STAGING_APP_IMAGE=$app_image_ref"
   "STAGING_WORKER_IMAGE=$app_image_ref" "STAGING_EMBEDDING_WORKER_IMAGE=$app_image_ref"
-  "STAGING_TIMESHEET_WORKER_IMAGE=$app_image_ref"
+  "STAGING_TIMESHEET_WORKER_IMAGE=$app_image_ref" "STAGING_WORKFLOW_WORKER_IMAGE=$app_image_ref"
   "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref"
   "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref"
   docker compose --env-file "$env_file" --env-file "$embedding_env_file"
@@ -278,7 +295,7 @@ rollback() {
   trap - ERR
   set -Eeuo pipefail
   printf 'Product V2 deployment failed; restoring the verified Staging database, environment, and prior images.\n' >&2
-  "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker projectai-timesheet-worker >/dev/null 2>&1
+  "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-workflow-worker >/dev/null 2>&1
   sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec '
     case "$POSTGRES_DB" in
       ""|postgres|template0|template1|*[!A-Za-z0-9_]*)
@@ -297,6 +314,7 @@ rollback() {
   sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
     "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
     "STAGING_TIMESHEET_WORKER_IMAGE=${previous_timesheet_ref:-$previous_app_ref}" \
+    "STAGING_WORKFLOW_WORKER_IMAGE=${previous_workflow_ref:-$previous_app_ref}" \
     "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
     "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
     docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
@@ -312,6 +330,16 @@ rollback() {
       projectai-timesheet-worker >/dev/null
   else
     "${compose_base[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$previous_workflow_ref" ]]; then
+    sudo env "STAGING_WORKFLOW_WORKER_IMAGE=$previous_workflow_ref" \
+      "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
+      "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
+      docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
+      --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
+      projectai-workflow-worker >/dev/null
+  else
+    "${compose_base[@]}" rm --stop --force projectai-workflow-worker >/dev/null 2>&1 || true
   fi
   sudo rm -f -- "$marker"
   exit "$status"
@@ -390,7 +418,7 @@ sudo awk -F= '
 sudo install -m 0600 -o deploy -g deploy "$ai_temp" "$ai_env_file"
 sudo rm -f -- "$ai_temp"
 "${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never \
-  projectai-timesheet-worker projectai-staging
+  projectai-timesheet-worker projectai-workflow-worker projectai-staging
 
 enabled=0
 for _ in $(seq 1 90); do
@@ -399,7 +427,8 @@ for _ in $(seq 1 90); do
     && grep -q '"status":"ok"' /tmp/projectai-product-v2-health \
     && grep -q '"aiAssistantEnabled":true' /tmp/projectai-product-v2-health \
     && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health \
-    && [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)" == "healthy" ]]; then
+    && [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)" == "healthy" ]] \
+    && [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-workflow-worker 2>/dev/null || true)" == "healthy" ]]; then
     enabled=1
     break
   fi
@@ -433,9 +462,12 @@ sudo rm -f /tmp/projectai-product-v2-health
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging)" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-worker)" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-timesheet-worker)" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-workflow-worker)" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker)" == "healthy" ]]
+[[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-workflow-worker)" == "healthy" ]]
 [[ -z "$(sudo docker port project-ai-os-staging-worker)" ]]
 [[ -z "$(sudo docker port project-ai-os-staging-timesheet-worker)" ]]
+[[ -z "$(sudo docker port project-ai-os-staging-workflow-worker)" ]]
 sudo rm -f -- "$marker"
 trap - ERR
 printf 'PRODUCT_V2_STAGING_DEPLOYED head=%s backup=%s\n' "$commit_sha" "$(basename "$backup_path")"

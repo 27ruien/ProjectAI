@@ -515,11 +515,11 @@ test("Staging timesheet AI Worker is immutable, least-privileged, and deployment
     readFile(stagingCompose, "utf8"),
     readFile(deployScript, "utf8"),
   ]);
-  const workerMatch = compose.match(
-    /\n  projectai-timesheet-worker:\n([\s\S]*?)\nvolumes:/,
+  const worker = serviceBlock(
+    compose,
+    "projectai-timesheet-worker",
+    "projectai-workflow-worker",
   );
-  assert.ok(workerMatch, "missing Compose service projectai-timesheet-worker");
-  const worker = workerMatch[1];
   assert.match(worker, /STAGING_TIMESHEET_WORKER_IMAGE/);
   assert.match(worker, /worker:timesheets/);
   assert.match(worker, /qwen_api_key/);
@@ -553,7 +553,7 @@ test("Product V2 Staging deploy accepts the reviewed agent branch and owns the d
   );
   assert.match(
     script,
-    /up --detach --no-deps --force-recreate --no-build --pull never \\\n\s+projectai-timesheet-worker projectai-staging/,
+    /up --detach --no-deps --force-recreate --no-build --pull never \\\n\s+projectai-timesheet-worker projectai-workflow-worker projectai-staging/,
   );
   assert.match(
     script,
@@ -603,9 +603,11 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
     "projectai-document-worker",
     "projectai-embedding-worker",
   );
-  const embeddingWorker = compose.match(
-    /\n  projectai-embedding-worker:\n([\s\S]*?)\nvolumes:/,
-  )?.[1];
+  const embeddingWorker = serviceBlock(
+    compose,
+    "projectai-embedding-worker",
+    "projectai-timesheet-worker",
+  );
   assert.ok(embeddingWorker);
   assert.match(app, /env_file:\n\s+- \/srv\/projectai-staging\/\.env\.ai/);
   assert.match(app, /secrets:\n\s+- qwen_api_key/);

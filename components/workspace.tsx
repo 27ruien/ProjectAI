@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { DashboardPage } from "@/components/dashboard/DashboardPage";
 import { AppShell } from "@/components/layout";
 import { CreateProjectPage } from "@/components/project/CreateProjectPage";
@@ -10,7 +9,7 @@ import { ProjectOverviewPage } from "@/components/project/ProjectOverviewPage";
 import { ProjectsPage } from "@/components/project/ProjectsPage";
 import { ProjectKnowledgePage } from "@/components/knowledge/ProjectKnowledgePage";
 import { RequirementsPage } from "@/components/requirement";
-import { WorkflowsPage, RequirementExtractionPage } from "@/components/workflow";
+import { MeetingMinutesPage, RequirementFrameworkPage, WorkflowsPage } from "@/components/workflow";
 import { ScopePage } from "@/components/scope";
 import { ActionsPage } from "@/components/action-plan";
 import { MeetingsPage } from "@/components/meeting";
@@ -55,7 +54,6 @@ export interface WorkspaceProps {
 }
 
 export function Workspace({ route, viewer, currentProject, projectData, workspaceData, featureFlags }: WorkspaceProps) {
-  const router = useRouter();
   const [section = "dashboard", entityId, child] = route;
   const path = `/${route.join("/")}`;
   const isProjectDetail = section === "projects" && Boolean(entityId) && entityId !== "new";
@@ -82,8 +80,9 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   else if (exactProject && exactProjectData && child === "audit" && exactProject.permissions.canViewAudit) page = <ProjectSection project={exactProject} tab="audit"><ProjectAuditPage project={exactProject} /></ProjectSection>;
   else if (exactProject && exactProjectData && child === "audit") page = <AccessDeniedPage obscureResource />;
   else if (section === "workflows" && !canUseWriteWorkflows) page = <StandardPage><AccessDeniedPage /></StandardPage>;
-  else if (section === "workflows" && entityId === "requirement-extraction" && editableProject) page = <StandardPage><RequirementExtractionPage editableProject={editableProject} onBack={() => router.push("/workflows")} onOpenReviews={() => router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
-  else if (section === "workflows") page = <StandardPage><WorkflowsPage data={workspaceData} editableProject={editableProject} onOpenReviews={() => editableProject && router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
+  else if (section === "workflows" && entityId === "requirement-framework") page = <StandardPage><RequirementFrameworkPage projects={viewer.projects} initialRunId={child} /></StandardPage>;
+  else if (section === "workflows" && entityId === "meeting-minutes") page = <StandardPage><MeetingMinutesPage projects={viewer.projects} initialRunId={child} /></StandardPage>;
+  else if (section === "workflows") page = <StandardPage><WorkflowsPage projects={viewer.projects} /></StandardPage>;
   else if (section === "reviews" || section === "skills") page = <StandardPage><NotFoundPage path={path} /></StandardPage>;
   else if (section === "knowledge") page = <StandardPage><GlobalKnowledgePage viewer={viewer} /></StandardPage>;
   else if (section === "search") page = <StandardPage><GlobalSearchPage viewer={viewer} /></StandardPage>;

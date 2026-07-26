@@ -60,6 +60,14 @@ async function main(): Promise<void> {
         'qwen-project-assistant-cn-v1', 'pm-daily-report-v1', 'succeeded',
         '${"0".repeat(64)}', 1
       );
+      insert into requirement_extraction_runs (
+        id, project_id, actor_user_id, idempotency_key_hash,
+        source_selection_digest, status, model_profile_id, completed_at
+      ) values (
+        'v3-upgrade-legacy-requirement', 'v3-upgrade-fixture-project',
+        'v3-upgrade-user', '${"1".repeat(64)}', '${"2".repeat(64)}',
+        'awaiting_review', 'qwen-project-assistant-cn-v1', now()
+      );
       insert into test_fixtures (
         id, entity_type, entity_id, fixture_run_id, environment, expires_at
       ) values (
@@ -75,24 +83,45 @@ async function main(): Promise<void> {
       status: string;
       fixture_count: string;
       fixture_columns: string;
+      workflow_definitions: string;
+      legacy_workflow: string;
+      source_project_column: string;
+      composite_guards: string;
+      publication_columns: string;
+      structured_chunk_columns: string;
+      retrieval_v3_columns: string;
     }>(`
       select
         (select request_id from timesheet_ai_executions where id = 'v3-upgrade-ai') as request_id,
         (select status from timesheet_ai_executions where id = 'v3-upgrade-ai') as status,
         (select count(*)::text from test_fixtures where entity_type = 'project' and entity_id = 'v3-upgrade-fixture-project') as fixture_count,
-        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'test_fixtures' and column_name in ('is_test_fixture', 'fixture_run_id', 'environment', 'expires_at')) as fixture_columns
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'test_fixtures' and column_name in ('is_test_fixture', 'fixture_run_id', 'environment', 'expires_at')) as fixture_columns,
+        (select count(*)::text from workflow_definitions where workflow_type in ('requirement_framework', 'meeting_minutes') and is_active) as workflow_definitions,
+        (select count(*)::text from workflow_runs where legacy_requirement_run_id = 'v3-upgrade-legacy-requirement' and workflow_type = 'requirement_framework' and status = 'legacy_read_only') as legacy_workflow,
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'workflow_run_sources' and column_name = 'source_project_id' and is_nullable = 'NO') as source_project_column,
+        (select count(*)::text from pg_constraint where conname in ('workflow_runs_project_organization_fk', 'workflow_runs_project_department_fk', 'workflow_runs_department_organization_fk', 'workflow_run_sources_document_project_fk', 'workflow_run_sources_version_document_project_fk')) as composite_guards,
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'workflow_artifacts' and column_name in ('published_document_id', 'published_document_version_id', 'published_at')) as publication_columns,
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'document_chunks' and column_name in ('chunk_type', 'parent_content', 'parent_content_sha256', 'parse_quality_bps', 'keywords', 'summary', 'embedding_status')) as structured_chunk_columns,
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'ai_retrieval_runs' and column_name in ('normalized_query_sha256', 'rewritten_query_count', 'query_processing_latency_ms', 'rerank_latency_ms', 'context_expansion_latency_ms', 'rerank_fallback_reason')) as retrieval_v3_columns
     `);
     const row = result.rows[0];
     if (
       row.request_id !== "v3-upgrade-ai" ||
       row.status !== "completed" ||
       row.fixture_count !== "1" ||
-      row.fixture_columns !== "4"
+      row.fixture_columns !== "4" ||
+      row.workflow_definitions !== "2" ||
+      row.legacy_workflow !== "1" ||
+      row.source_project_column !== "1" ||
+      row.composite_guards !== "5" ||
+      row.publication_columns !== "3" ||
+      row.structured_chunk_columns !== "7" ||
+      row.retrieval_v3_columns !== "6"
     ) {
       throw new Error("V3_MIGRATION_UPGRADE_ASSERTION_FAILED");
     }
     process.stdout.write(
-      `V3 migration upgrade passed through ${files.at(-1)}; legacy execution and fixture registry preserved.\n`,
+      `V3 migration upgrade passed through ${files.at(-1)}; legacy data, workflows, structured chunks, privacy-safe retrieval metrics, publication recovery, and composite isolation guards preserved.\n`,
     );
   } finally {
     await target?.end().catch(() => undefined);

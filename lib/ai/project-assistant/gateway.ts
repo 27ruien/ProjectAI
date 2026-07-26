@@ -42,6 +42,11 @@ function responseFormatForPurpose(
     "weekly_report",
     "timesheet_generation",
     "timesheet_repair",
+    "workflow_artifact",
+    "workflow_artifact_repair",
+    "meeting_summary",
+    "query_rewrite",
+    "rerank",
   ].includes(purpose)
     ? "json_object"
     : "text";

@@ -10,6 +10,7 @@ process.stdout.write(
     lexicalMetrics: result.overall.lexicalMetrics,
     vectorMetrics: result.overall.vectorMetrics,
     hybridMetrics: result.overall.hybridMetrics,
+    answerQuality: result.answerQuality,
     comparisons: result.comparisons,
     safety: result.safety,
     gates: result.gates,

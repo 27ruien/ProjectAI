@@ -16,10 +16,10 @@
 - Product V2 工作台：日报、AI 工作流、部门/项目知识空间、全局授权搜索，以及 Super Admin 管理的四级 Kivisense 组织架构。
 - 项目知识：读取当前项目 Active/Current/Stored/Succeeded/Effective 索引，支持 FTS、contains、`pg_trgm` 模糊匹配与 PDF Page、DOCX Section、XLSX Range、PPTX Slide、文本行来源。
 - 项目 AI 助手：私人 Thread、有限多轮、Qwen 主/备用模型、服务端 Evidence/Citation 校验、资料不足、失败重试、Token Usage、限流与审计；回答不直接写入正式业务数据。
-- Assistant Evidence Retrieval：服务端 lexical/shadow/hybrid Mode、冻结 `hybrid-rrf-v1`、Query Embedding 成本账本、exact pgvector、RRF、Coverage Gate、Lexical Fallback 与 60 条虚构 Query 质量门禁。
+- Assistant Evidence Retrieval：ACL 前置的有界 Query Rewrite、服务端 lexical/shadow/hybrid Mode、exact pgvector、Weighted RRF、受控 Rerank、Parent/Adjacent Context、Citation 二次校验、Lexical Fallback 与 68 条虚构 Query 质量门禁。
 - 向量基础：固定 `qwen-text-embedding-cn-v1` Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、dry-run Backfill、Probe 与 Usage；不接入浏览器检索或回答 Evidence。
 - 需求中心：TanStack Table、批量操作、CSV 导出和可编辑 Requirement Drawer。
-- AI 工作流：需求提取使用当前有效且已授权的 Chunk、真实 AI Gateway、严格 JSON/引用校验与一次 Repair；结果在当前页面编辑并整批审核后才写入正式需求。
+- AI 工作流：仅保留“搭建需求框架”和“提取会议纪要”。前者生成四类版本化产物，后者使用私有音频、异步 ASR、说话人分离与人工命名；全部经过严格 Schema、引用校验、人工审核后才能发布到知识库。
 - 审核中心：三栏审核、差异、证据、执行信息、通过/修改后通过/驳回/草稿/重新生成。
 - 系统治理：Skills 只读详情、Provider/Model/Profile/关系/调用/成本视图。
 - 项目经理日报（Feature Flag）：个人工作随记、ACL 过滤的 AI 工时草稿、人工审核/确认、JSON 导出，以及与独立 MV3 企业微信连接器的逐条同步协议；AI 不确认工时，扩展不点击最终提交。
@@ -358,7 +358,7 @@ npm run retrieval:shadow-report
 npm run retrieval:status
 ```
 
-评测集是 60 条纯虚构 Query，报告 HitRate/Recall/MRR/nDCG、无答案误报、安全泄漏和延迟门禁。Query Vector 不持久化、不进入浏览器或 Evidence；Query Embedding 使用独立不可变成本账本。本轮没有 ANN/HNSW/IVFFlat、Rerank 或 `qwen3-rerank`，用户知识搜索仍为词法检索，Production 未上线 B3-B2。
+评测集是 68 条纯虚构 Query，报告 HitRate/Recall/MRR/nDCG、Citation Precision/Authorization、Answer Faithfulness、Evidence Sufficiency、安全泄漏和延迟门禁。Query Vector、原问题和改写不持久化；只保存 hash 与聚合时间。项目助手可在授权候选上使用 Query Rewrite、Weighted RRF、Provider-neutral Rerank 与 Parent/Adjacent Context；用户原始知识搜索仍为词法检索。本轮没有 ANN/HNSW/IVFFlat 或 `qwen3-rerank`，Production 未部署 V3。
 
 ## B3-C1：Production Release Readiness
 

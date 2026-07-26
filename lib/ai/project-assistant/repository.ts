@@ -928,7 +928,7 @@ export async function finalizeInsufficientEvidence(input: {
       .update(aiMessage)
       .set({
         status: "insufficient_evidence",
-        content: "现有项目资料中没有足够信息支持明确结论。",
+        content: "当前授权范围内未检索到足以支持结论的有效资料。\n\n已检查：当前项目及本次选择的有效索引。\n缺少：能直接回答该问题的事实或上下文。\n下一步：补充相关需求、会议纪要、计划或表格后重试。",
       })
       .where(eq(aiMessage.id, locked.assistantMessageId));
     await tx
