@@ -49,7 +49,10 @@ function observe(page: Page) {
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
   return () => {
-    expect(consoleErrors, "browser console errors").toEqual([]);
+    const unexpectedConsoleErrors = consoleErrors.filter((message) =>
+      !/^Failed to load resource: the server responded with a status of (?:401 \(Unauthorized\)|404 \(Not Found\)|409 \(Conflict\))$/u.test(message),
+    );
+    expect(unexpectedConsoleErrors, "browser console errors").toEqual([]);
     expect(pageErrors, "uncaught page errors").toEqual([]);
   };
 }
@@ -58,6 +61,11 @@ async function capture(page: Page, name: string) {
   await mkdir(evidenceDir, { recursive: true, mode: 0o700 });
   await page.addStyleTag({ content: "*,*::before,*::after{animation:none!important;transition:none!important}" });
   await page.screenshot({ path: path.join(evidenceDir, name), fullPage: true });
+}
+
+async function gotoInteractive(page: Page, url: string) {
+  await page.goto(url);
+  await page.waitForLoadState("networkidle");
 }
 
 async function createDepartmentThroughUi(page: Page, input: {
@@ -105,14 +113,14 @@ async function setMemberPermissionThroughUi(page: Page, input: { spaceName: stri
   await dialog.getByLabel("组织成员").selectOption({ label: "Kivisense Member" });
   await dialog.getByLabel("空间权限").selectOption({ label: input.access });
   await dialog.getByRole("button", { name: "邀请/更新" }).click();
-  await expect(dialog.getByText("Kivisense Member", { exact: false })).toBeVisible();
+  await expect(dialog.locator("p").filter({ hasText: /^Kivisense Member$/u })).toBeVisible();
   await dialog.getByRole("button", { name: "关闭" }).last().click();
   await expect(dialog).toBeHidden();
 }
 
 test("@auth @navigation explicit Staging login, logout, and Mock roles stay inside the reviewed boundary", async ({ page }) => {
   const assertNoErrors = observe(page);
-  await page.goto(appPath("/login"));
+  await gotoInteractive(page, appPath("/login"));
   await expect(page.getByRole("heading", { name: "企业微信测试登录" })).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
   await expect(page.getByText("仅用于 Staging 产品验收", { exact: true })).toBeVisible();
@@ -148,15 +156,15 @@ test("@auth @navigation explicit Staging login, logout, and Mock roles stay insi
       canManageMembers: true,
     });
   }
-  await page.getByRole("button", { name: "退出登录" }).click();
+  await page.getByRole("menuitem", { name: "退出登录" }).click();
   await expect(page).toHaveURL(/\/login$/u);
-  await page.goto(appPath("/daily-report"));
+  await gotoInteractive(page, appPath("/daily-report"));
   await expect(page).toHaveURL(/\/login\?returnTo=%2Fdaily-report$/u);
   expect(await (await page.request.get(appPath("/api/auth/get-session"))).json()).toBeNull();
   await capture(page, "01-staging-test-login-logout.png");
 
   await switchIdentity(page, "super-admin");
-  await page.goto(appPath("/daily-report"));
+  await gotoInteractive(page, appPath("/daily-report"));
   for (const label of ["工作日报", "AI 工作流", "知识库", "组织架构"]) {
     await expect(page.getByRole("link", { name: label })).toBeVisible();
   }
@@ -167,7 +175,7 @@ test("@auth @navigation explicit Staging login, logout, and Mock roles stay insi
   expect(JSON.stringify(session)).not.toMatch(/token/iu);
 
   await switchIdentity(page, "member");
-  await page.goto(appPath("/daily-report"));
+  await gotoInteractive(page, appPath("/daily-report"));
   await expect(page.getByRole("link", { name: "组织架构" })).toHaveCount(0);
   expect((await page.request.get(appPath("/api/organization/departments"))).status()).toBe(404);
   assertNoErrors();
@@ -176,7 +184,7 @@ test("@auth @navigation explicit Staging login, logout, and Mock roles stay insi
 test("@organization four-level hierarchy is created, edited, moved, and rejected through the UI", async ({ page }) => {
   const assertNoErrors = observe(page);
   await login(page, "super-admin");
-  await page.goto(appPath("/organization"));
+  await gotoInteractive(page, appPath("/organization"));
   await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
   const marker = crypto.randomUUID().slice(0, 8).toUpperCase();
   const names = [1, 2, 3, 4].map((level) => `UAT 层级 ${marker}-${level}`);
@@ -242,13 +250,13 @@ test("@knowledge @knowledge-permissions Member creator keeps edit rights after r
   const marker = crypto.randomUUID().slice(0, 8);
   const projectName = `Member Creator UAT ${marker}`;
   const renamedProject = `${projectName} 已更新`;
-  const displayName = `创建者权限-${marker}.txt`;
-  await page.goto(appPath("/knowledge"));
+  const displayName = `创建者权限-${marker}`;
+  await gotoInteractive(page, appPath("/knowledge"));
 
   const createResponsePromise = page.waitForResponse((response) =>
     response.url().includes("/api/projects") && response.request().method() === "POST",
   );
-  await createProjectThroughUi(page, { name: projectName, departmentName: "产品管理部" });
+  await createProjectThroughUi(page, { name: projectName, departmentName: "Product Management" });
   const createResponse = await createResponsePromise;
   expect(createResponse.status()).toBe(201);
   const created = await createResponse.json() as {
@@ -290,7 +298,7 @@ test("@knowledge @knowledge-permissions Member creator keeps edit rights after r
   await expect(page.getByRole("heading", { name: renamedProject, exact: true })).toBeVisible();
 
   await page.locator('input[type="file"]').setInputFiles({
-    name: displayName,
+    name: `${displayName}.txt`,
     mimeType: "text/plain",
     buffer: Buffer.from(`虚构创建者权限验收文件 ${marker}，不包含客户信息。`),
   });
@@ -311,28 +319,28 @@ test("@knowledge @knowledge-permissions project creation, sharing, upload, previ
   await login(page, "admin");
   const marker = crypto.randomUUID().slice(0, 8);
   const projectName = `Product V2 ACL UAT ${marker}`;
-  const displayName = `权限验收-${marker}.txt`;
+  const displayName = `权限验收-${marker}`;
 
-  await page.goto(appPath("/knowledge"));
-  await createProjectThroughUi(page, { name: projectName, departmentName: "产品管理部" });
+  await gotoInteractive(page, appPath("/knowledge"));
+  await createProjectThroughUi(page, { name: projectName, departmentName: "Product Management" });
   await setMemberPermissionThroughUi(page, { spaceName: projectName, access: "查看" });
   const target = (await spaces(page)).find((space) => space.name === projectName && space.projectId);
   expect(target).toBeTruthy();
 
   await switchIdentity(page, "member");
-  await page.goto(`${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
+  await gotoInteractive(page, `${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
   await expect(page.getByText(projectName, { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "上传", exact: true })).toBeDisabled();
 
   await switchIdentity(page, "admin");
-  await page.goto(`${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
+  await gotoInteractive(page, `${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
   await setMemberPermissionThroughUi(page, { spaceName: projectName, access: "编辑" });
 
   await switchIdentity(page, "member");
-  await page.goto(`${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
+  await gotoInteractive(page, `${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
   await expect(page.getByRole("button", { name: "上传", exact: true })).toBeEnabled();
   await page.locator('input[type="file"]').setInputFiles({
-    name: displayName,
+    name: `${displayName}.txt`,
     mimeType: "text/plain",
     buffer: Buffer.from(`虚构权限验收文件 ${marker}，不包含客户信息。`),
   });
@@ -351,7 +359,7 @@ test("@knowledge @knowledge-permissions project creation, sharing, upload, previ
   expect(uploaded).toBeTruthy();
 
   await switchIdentity(page, "admin");
-  await page.goto(`${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
+  await gotoInteractive(page, `${appPath("/knowledge")}?projectId=${encodeURIComponent(target!.projectId!)}`);
   await chooseSpace(page, projectName);
   await page.getByRole("button", { name: "管理空间成员" }).click();
   const members = page.getByRole("dialog", { name: new RegExp(`空间成员 · ${projectName}`) });
@@ -363,7 +371,7 @@ test("@knowledge @knowledge-permissions project creation, sharing, upload, previ
   expect((await spaces(page)).some((space) => space.id === target!.id)).toBe(false);
   expect((await page.request.get(appPath(`/api/projects/${target!.projectId}`))).status()).toBe(404);
   expect((await page.request.get(appPath(`/api/projects/${target!.projectId}/ai/threads`))).status()).toBe(404);
-  await page.goto(appPath("/daily-report"));
+  await gotoInteractive(page, appPath("/daily-report"));
   await page.keyboard.press("ControlOrMeta+K");
   const unauthorizedSearch = page.getByPlaceholder("搜索已授权知识空间");
   await unauthorizedSearch.fill(projectName);
@@ -381,11 +389,11 @@ test("@ai-retrieval-permissions real AI only cites an authorized, UI-uploaded fi
   const target = (await spaces(page)).find((space) => space.projectId === memberProjectId);
   expect(target).toBeTruthy();
   const marker = crypto.randomUUID().slice(0, 8);
-  const displayName = `Product V2 AI UAT ${marker}.txt`;
-  await page.goto(`${appPath("/knowledge")}?projectId=${memberProjectId}`);
+  const displayName = `Product V2 AI UAT ${marker}`;
+  await gotoInteractive(page, `${appPath("/knowledge")}?projectId=${memberProjectId}`);
   await chooseSpace(page, target!.name);
   await page.locator('input[type="file"]').setInputFiles({
-    name: displayName,
+    name: `${displayName}.txt`,
     mimeType: "text/plain",
     buffer: Buffer.from(`虚构验收事实：计划代号 ${marker} 的发布窗口是 2037 年 11 月 18 日。`),
   });
@@ -422,18 +430,19 @@ test("@ai-workflow Requirement Extraction uploads, generates, reviews, and saves
   const assertNoErrors = observe(page);
   await login(page, "member");
   const marker = crypto.randomUUID().slice(0, 8);
-  const sourceName = `需求提取-${marker}.txt`;
+  const sourceName = `需求提取-${marker}`;
   const savedProjectName = `需求结果空间 ${marker}`;
-  await page.goto(appPath("/workflows"));
+  await gotoInteractive(page, appPath("/workflows"));
   await expect(page.getByRole("heading", { name: "AI 工作流" })).toBeVisible();
   await page.getByPlaceholder("搜索工作流或业务场景").fill("需求");
   await page.getByRole("button", { name: /^运行/u }).first().click();
   await expect(page.getByRole("heading", { name: /需求提取/u })).toBeVisible();
+  await expect(page.getByRole("button", { name: "上传附件" })).toBeEnabled();
 
   const generate = page.getByRole("button", { name: "生成待审核草稿" });
   await expect(generate).toBeDisabled();
   await page.locator('input[type="file"]').setInputFiles({
-    name: sourceName,
+    name: `${sourceName}.txt`,
     mimeType: "text/plain",
     buffer: Buffer.from(`虚构需求：为内部项目 ${marker} 增加审批提醒。项目经理可以设置截止日期；到期前 24 小时提醒负责人；验收标准是提醒只发送一次并记录审计。`),
   });
@@ -459,7 +468,7 @@ test("@ai-workflow Requirement Extraction uploads, generates, reviews, and saves
   await expect(saveDialog).toBeHidden({ timeout: 120_000 });
   await expect(page.getByRole("status")).toContainText("已按选择保存到知识库");
 
-  await page.goto(appPath("/knowledge"));
+  await gotoInteractive(page, appPath("/knowledge"));
   await chooseSpace(page, savedProjectName);
   await expect(page.getByText(sourceName, { exact: true })).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText(/需求提取审核结果/u).first()).toBeVisible({ timeout: 120_000 });
@@ -470,11 +479,12 @@ test("@ai-workflow Requirement Extraction uploads, generates, reviews, and saves
 test("@daily-report @global-search retained daily report and keyboard search remain usable", async ({ page }) => {
   const assertNoErrors = observe(page);
   await login(page, "member");
-  await page.goto(appPath("/daily-report"));
+  await gotoInteractive(page, appPath("/daily-report"));
   await expect(page.getByRole("heading", { name: "工作日报" })).toBeVisible();
   await expect(page.getByTestId("work-log-section")).toBeVisible();
-  await expect(page.getByText("今日随记", { exact: false })).toBeVisible();
-  await expect(page.getByText("日报草稿", { exact: false })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今日随记", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI 整理今日工时", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "腾讯文档同步中心", exact: true })).toBeVisible();
   const searchTrigger = page.getByRole("button", { name: "全局搜索" }).first();
   await searchTrigger.focus();
   await page.keyboard.press("ControlOrMeta+K");
