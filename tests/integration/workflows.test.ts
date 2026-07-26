@@ -73,8 +73,27 @@ function principal(): AuthenticatedPrincipal {
 }
 
 async function clearFixtures() {
+  const publishedDocuments = await getDb().execute<{ document_id: string }>(sql`
+    select distinct wa.published_document_id as document_id
+    from workflow_artifacts wa
+    join workflow_runs wr on wr.id = wa.run_id
+    where (
+      wr.id like ${`${prefix}%`}
+      or wr.id in (select run_id from workflow_run_sources where document_id = ${documentId})
+    ) and wa.published_document_id is not null
+  `);
+  const publishedDocumentIds = publishedDocuments.rows.map((row) => row.document_id);
   await getDb().transaction(async (tx) => {
     await tx.execute(sql`delete from workflow_runs where id like ${`${prefix}%`} or id in (select run_id from workflow_run_sources where document_id = ${documentId})`);
+    if (publishedDocumentIds.length > 0) {
+      const ids = sql.join(publishedDocumentIds.map((id) => sql`${id}`), sql`, `);
+      await tx.execute(sql`delete from document_embedding_jobs where document_id in (${ids})`);
+      await tx.execute(sql`delete from document_chunks where document_id in (${ids})`);
+      await tx.execute(sql`delete from document_sections where document_id in (${ids})`);
+      await tx.execute(sql`delete from document_ingestion_jobs where document_id in (${ids})`);
+      await tx.execute(sql`delete from project_document_versions where document_id in (${ids})`);
+      await tx.execute(sql`delete from project_documents where id in (${ids})`);
+    }
     await tx.delete(documentChunk).where(like(documentChunk.id, `${prefix}%`));
     await tx.delete(documentSection).where(like(documentSection.id, `${prefix}%`));
     await tx.delete(documentIngestionJob).where(like(documentIngestionJob.id, `${prefix}%`));

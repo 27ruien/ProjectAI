@@ -79,6 +79,7 @@ try {
     await tx.execute(sql`delete from ai_executions`);
     await tx.execute(sql`delete from ai_messages`);
     await tx.execute(sql`delete from ai_threads`);
+    await tx.execute(sql`delete from workflow_runs`);
     await tx.execute(sql`delete from document_chunk_embeddings`);
     await tx.execute(sql`delete from document_embedding_provider_calls`);
     await tx.execute(sql`delete from document_embedding_batches`);
