@@ -95,6 +95,12 @@ try {
     AUTH_PROVIDER: "mock-wecom",
     ALLOW_MOCK_WECOM_AUTH: "true",
   });
+  await run("test:staging-test-login-integration", {
+    ...env,
+    AUTH_PROVIDER: "mock-wecom",
+    ALLOW_MOCK_WECOM_AUTH: "true",
+    ALLOW_STAGING_TEST_LOGIN: "true",
+  });
   process.stdout.write("Isolated UAT database integration suite passed; the temporary database will be removed.\n");
 } finally {
   if (created) await admin.query(`drop database if exists "${databaseName}" with (force)`);

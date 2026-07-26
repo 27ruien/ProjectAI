@@ -332,7 +332,7 @@ jobs:
           NODE_ENV: production
           AUTH_PROVIDER: wecom
           ALLOW_MOCK_WECOM_AUTH: "false"
-          ALLOW_DEBUG_IDENTITY: "false"
+          ALLOW_STAGING_TEST_LOGIN: "false"
           ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"
         run: |
           set -o pipefail
@@ -626,6 +626,7 @@ jobs:
           mkdir -p test-logs
           npm run test:product-v2 2>&1 | tee test-logs/product-v2-contract.log
           npm run test:product-v2-integration 2>&1 | tee test-logs/product-v2-integration.log
+          npm run test:staging-test-login-integration 2>&1 | tee test-logs/staging-test-login-integration.log
 
       - name: Remove all CI Sessions, documents, indexes, objects, and temporary files
         if: always()

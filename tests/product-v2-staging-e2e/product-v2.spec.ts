@@ -110,19 +110,47 @@ async function setMemberPermissionThroughUi(page: Page, input: { spaceName: stri
   await expect(dialog).toBeHidden();
 }
 
-test("@auth @navigation Mock WeCom roles and debug admin stay inside the reviewed boundary", async ({ page }) => {
+test("@auth @navigation explicit Staging login, logout, and Mock roles stay inside the reviewed boundary", async ({ page }) => {
   const assertNoErrors = observe(page);
   await page.goto(appPath("/login"));
   await expect(page.getByRole("heading", { name: "企业微信测试登录" })).toBeVisible();
   await expect(page.locator('input[type="password"]')).toHaveCount(0);
+  await expect(page.getByText("仅用于 Staging 产品验收", { exact: true })).toBeVisible();
+  const enterStaging = page.getByRole("button", { name: "进入测试环境" });
+  await expect(enterStaging).toBeVisible();
   for (const label of ["Kivisense Super Admin", "Kivisense Admin", "Kivisense Member"]) {
     await expect(page.getByRole("button", { name: new RegExp(label) })).toBeVisible();
   }
   const legacy = await page.request.post(appPath("/api/auth/sign-in/email"), { data: {}, headers: { origin } });
   expect(legacy.status()).toBe(404);
 
-  await page.getByRole("button", { name: /Kivisense Super Admin/ }).click();
+  await enterStaging.click();
   await expect(page).toHaveURL(/\/daily-report$/u);
+  await expect(page.getByRole("heading", { name: "工作日报" })).toBeVisible();
+  await page.getByRole("button", { name: "账户菜单" }).click();
+  await expect(page.getByText("Kivisense Admin", { exact: true }).first()).toBeVisible();
+  const projectsResponse = await page.request.get(appPath("/api/projects"));
+  expect(projectsResponse.status()).toBe(200);
+  const projectList = await projectsResponse.json() as {
+    projects: Array<{ permissions?: { canViewProject?: boolean; canEditProject?: boolean; canManageMembers?: boolean } }>;
+  };
+  expect(projectList.projects.length).toBeGreaterThan(0);
+  for (const project of projectList.projects) {
+    expect(project.permissions).toMatchObject({
+      canViewProject: true,
+      canEditProject: true,
+      canManageMembers: true,
+    });
+  }
+  await page.getByRole("button", { name: "退出登录" }).click();
+  await expect(page).toHaveURL(/\/login$/u);
+  await page.goto(appPath("/daily-report"));
+  await expect(page).toHaveURL(/\/login\?returnTo=%2Fdaily-report$/u);
+  expect(await (await page.request.get(appPath("/api/auth/get-session"))).json()).toBeNull();
+  await capture(page, "01-staging-test-login-logout.png");
+
+  await switchIdentity(page, "super-admin");
+  await page.goto(appPath("/daily-report"));
   for (const label of ["工作日报", "AI 工作流", "知识库", "组织架构"]) {
     await expect(page.getByRole("link", { name: label })).toBeVisible();
   }
@@ -131,18 +159,6 @@ test("@auth @navigation Mock WeCom roles and debug admin stay inside the reviewe
   }
   const session = await (await page.request.get(appPath("/api/auth/get-session"))).json() as Record<string, unknown>;
   expect(JSON.stringify(session)).not.toMatch(/token/iu);
-
-  await page.context().clearCookies();
-  await page.goto(`${appPath("/")}?debug=admin`);
-  await expect(page).toHaveURL(/\/daily-report$/u);
-  await page.getByRole("button", { name: "账户菜单" }).click();
-  await expect(page.getByText("Kivisense Admin", { exact: true }).first()).toBeVisible();
-  for (const label of ["工作日报", "AI 工作流", "知识库"]) {
-    await expect(page.getByRole("link", { name: label })).toBeVisible();
-  }
-  await expect(page.getByRole("link", { name: "组织架构" })).toHaveCount(0);
-  expect((await page.request.get(appPath("/api/organization/departments"))).status()).toBe(404);
-  await capture(page, "01-debug-admin-navigation.png");
 
   await switchIdentity(page, "member");
   await page.goto(appPath("/daily-report"));

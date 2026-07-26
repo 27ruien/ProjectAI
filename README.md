@@ -2,11 +2,11 @@
 
 面向项目经理的 AI 项目交付工作台 MVP。它以项目为核心容器，将项目资料、知识、结构化需求、AI 工作流、人工审核、Scope 变更、Action Plan 与风险管理串联起来。
 
-> **安全提示：当前 Product V2 分支只允许本地/CI 与受控 Staging 验收，不执行 Production 部署、迁移、重启或 AI 启用。正式企业微信 OAuth/扫码仍等待企业 API 配置；Mock WeCom 与 `debug=admin` 在 Production 硬拒绝。**
+> **安全提示：当前 Product V2 分支只允许本地/CI 与受控 Staging 验收，不执行 Production 部署、迁移、重启或 AI 启用。正式企业微信 OAuth/扫码仍等待企业 API 配置；Mock WeCom 与 Staging 测试登录在 Production 硬拒绝。**
 
 ## 已实现能力
 
-- 企业身份登录：产品 UI 不再接受邮箱/密码；Local/Staging 可显式启用三个 Mock WeCom 虚构身份，正式环境预留企业微信 OAuth/扫码 Provider。认证后仍使用数据库 Session 与 HttpOnly Cookie，响应不暴露 token；`?debug=admin` 只复用非生产 Mock POST 流程，Production 配置会硬拒绝。
+- 企业身份登录：产品 UI 不再接受邮箱/密码；Local/Staging 可显式启用三个 Mock WeCom 虚构身份，正式环境预留企业微信 OAuth/扫码 Provider。受控 Staging 还可显示“进入测试环境”按钮，它只向固定 Admin Seed 发起空参数 POST，并同时校验 Staging 环境、精确 Host、Base Path 与 Origin；认证后仍使用数据库 Session 与 HttpOnly Cookie，响应不暴露 token。旧 `debug=admin` query 已退役，Production 配置和端点均失败关闭。
 - 项目隔离：`super_admin` / `admin` / `member` 产品角色，`project_manager` / `project_member` / `viewer` 项目角色，以及统一服务端 404 防枚举授权。
 - PostgreSQL 基础：Drizzle Schema、已提交 Migration、insert-only 幂等环境变量 Seed、受保护的测试库 Reset、数据库项目列表/创建/基础信息/成员关系和审计事件。
 - 项目资料：真实上传与持久化、PDF/OOXML/TXT/Markdown 校验、50 MiB 上限、S3-compatible 私有对象存储、幂等重试、版本/current、归档/恢复、权限下载、SHA-256/ETag 完整性和文件审计。

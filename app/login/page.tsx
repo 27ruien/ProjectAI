@@ -10,14 +10,12 @@ export const metadata: Metadata = {
 type LoginRouteProps = {
   searchParams: Promise<{
     returnTo?: string | string[];
-    debug?: string | string[];
   }>;
 };
 
 export default async function LoginRoute({ searchParams }: LoginRouteProps) {
   const params = await searchParams;
   const initialReturnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
-  const debug = Array.isArray(params.debug) ? params.debug[0] : params.debug;
   const authProvider = publicAuthProvider();
   return (
     <LoginPage
@@ -25,8 +23,7 @@ export default async function LoginRoute({ searchParams }: LoginRouteProps) {
       provider={authProvider.provider}
       providerConfigured={authProvider.configured}
       providerImplemented={authProvider.implemented}
-      debugIdentityEnabled={authProvider.debugIdentityEnabled}
-      debugAdminRequested={debug === "admin"}
+      stagingTestLoginEnabled={authProvider.stagingTestLoginEnabled}
     />
   );
 }

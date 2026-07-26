@@ -14,20 +14,14 @@ import { isLegacyCredentialAuthEnabled } from "@/lib/auth/providers";
 
 type CatchAllPageProps = {
   params: Promise<{ slug: string[] }>;
-  searchParams: Promise<{ debug?: string | string[] }>;
 };
 
-export default async function CatchAllPage({ params, searchParams }: CatchAllPageProps) {
+export default async function CatchAllPage({ params }: CatchAllPageProps) {
   const { slug } = await params;
-  const query = await searchParams;
-  const debug = Array.isArray(query.debug) ? query.debug[0] : query.debug;
   const route = slug.length > 0 ? slug : ["dashboard"];
   const [section, entityId, child] = route;
   const returnTo = `/${route.join("/")}`;
   const legacyRegression = isLegacyCredentialAuthEnabled();
-  if (debug === "admin") {
-    redirect(`/login?debug=admin&returnTo=${encodeURIComponent(returnTo)}`);
-  }
   if (!legacyRegression) {
     if (section === "dashboard") redirect("/daily-report");
     if (section === "projects") {

@@ -18,6 +18,14 @@ export function safeReturnTo(value: string | null | undefined): string {
   try {
     const parsed = new URL(value, "https://project-ai-os.local");
     if (parsed.origin !== "https://project-ai-os.local") return DEFAULT_RETURN_TO;
+    if (
+      parsed.pathname.startsWith("/tool/") &&
+      (!APP_BASE_PATH ||
+        (parsed.pathname !== APP_BASE_PATH &&
+          !parsed.pathname.startsWith(`${APP_BASE_PATH}/`)))
+    ) {
+      return DEFAULT_RETURN_TO;
+    }
     const normalized = withoutBasePath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
     if (!normalized.startsWith("/") || normalized.startsWith("//") || normalized.startsWith("/login")) {
       return DEFAULT_RETURN_TO;
@@ -39,6 +47,20 @@ export async function signInWithMockWeCom(input: {
     body: JSON.stringify({ identity: input.identity }),
   });
   if (!response.ok) throw new Error("MOCK_WECOM_SIGN_IN_FAILED");
+  await response.text();
+}
+
+export async function signInToStagingTestEnvironment(): Promise<void> {
+  const response = await fetch(
+    withBasePath("/api/auth/sign-in/staging-test"),
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    },
+  );
+  if (!response.ok) throw new Error("STAGING_TEST_SIGN_IN_FAILED");
   await response.text();
 }
 

@@ -14,9 +14,9 @@
 
 ## 当前结论
 
-当前 Product V2 分支已在本地完成无密码 Mock WeCom 三身份、`debug=admin` 非生产直达、Product Role、Kivisense 四级部门、部门/项目知识空间 view/edit、全局授权搜索，以及真实 Requirement Extraction 的临时附件、一次 Repair、同页整批审核和保存生命周期。非空 Migration 0019→0024、显式 deny 优先级和完整隔离数据库回归、build/typecheck 和 Product V2 合约已通过；当前 Head CI、受控 Staging Migration、真实 Qwen UI 与 Reviewer 仍为待完成门禁，因此不得标记 Ready。
+当前 Product V2 分支已在本地完成无密码 Mock WeCom 三身份，以及只在精确 Staging 配置下显示的“进入测试环境”按钮。该按钮不接受 caller 身份/角色参数，只绑定既有 Admin Seed，并通过正常数据库 Session、HttpOnly Cookie、集中授权、审计和退出链路；旧 `debug=admin` query 已退役。Product Role、Kivisense 四级部门、部门/项目知识空间 view/edit、全局授权搜索，以及真实 Requirement Extraction 的临时附件、一次 Repair、同页整批审核和保存生命周期保持不变。非空 Migration 0019→0024、显式 deny 优先级和完整隔离数据库回归、build/typecheck 和 Product V2 合约已通过；当前 Head CI、受控 Staging Migration、真实 Qwen UI 与 Reviewer 仍为待完成门禁，因此不得标记 Ready。
 
-正式企业微信 OAuth/扫码尚未实现。Production 配置对 Mock WeCom 和 debug identity 硬拒绝；本分支只允许 Staging，Production 必须保持不变。
+正式企业微信 OAuth/扫码尚未实现。Production 配置对 Mock WeCom 和 Staging 测试登录硬拒绝，Production 渲染不包含测试按钮；本分支只允许 Staging，Production 必须保持不变。
 
 当前分支在已合并的第一阶段能力上新增 Feature-flagged 项目经理个人日报与独立 Chrome MV3 企业微信连接器。日报包含真实 PostgreSQL 随记/草稿/任务/AI execution/同步摘要、现有 Gateway 的结构化 AI 整理、人工审核确认、JSON 导出和同步中心；扩展包含严格协议、持久队列、Dry Run、iframe Adapter、精确目录匹配和逐条保存。两个 Flag 默认关闭，Production 未启用或变更。
 

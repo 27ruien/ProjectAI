@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Bot,
   Building2,
@@ -12,6 +12,7 @@ import { APP_RUNTIME } from "@/config/app-runtime";
 import {
   navigateToAppPath,
   safeReturnTo,
+  signInToStagingTestEnvironment,
   signInWithMockWeCom,
 } from "./auth-client";
 
@@ -22,8 +23,7 @@ type LoginPageProps = {
   provider: "wecom" | "mock-wecom";
   providerConfigured: boolean;
   providerImplemented: boolean;
-  debugIdentityEnabled: boolean;
-  debugAdminRequested?: boolean;
+  stagingTestLoginEnabled: boolean;
 };
 
 const identities: Array<{
@@ -57,13 +57,11 @@ export function LoginPage({
   provider,
   providerConfigured,
   providerImplemented,
-  debugIdentityEnabled,
-  debugAdminRequested = false,
+  stagingTestLoginEnabled,
 }: LoginPageProps) {
   const returnTo = safeReturnTo(initialReturnTo);
-  const [submitting, setSubmitting] = useState<MockIdentity | null>(null);
+  const [submitting, setSubmitting] = useState<MockIdentity | "staging" | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const debugAttempted = useRef(false);
 
   const signIn = useCallback(async (identity: MockIdentity) => {
     if (submitting) return;
@@ -78,17 +76,18 @@ export function LoginPage({
     }
   }, [returnTo, submitting]);
 
-  useEffect(() => {
-    if (
-      debugAdminRequested &&
-      debugIdentityEnabled &&
-      provider === "mock-wecom" &&
-      !debugAttempted.current
-    ) {
-      debugAttempted.current = true;
-      void signIn("admin");
+  const enterStaging = useCallback(async () => {
+    if (submitting) return;
+    setSubmitting("staging");
+    setError(null);
+    try {
+      await signInToStagingTestEnvironment();
+      navigateToAppPath(returnTo);
+    } catch {
+      setSubmitting(null);
+      setError("Staging 测试登录失败，请确认受控测试身份与环境配置可用。");
     }
-  }, [debugAdminRequested, debugIdentityEnabled, provider, signIn]);
+  }, [returnTo, submitting]);
 
   return (
     <main className="grid min-h-screen bg-background lg:grid-cols-[minmax(0,1.06fr)_minmax(460px,0.94fr)]">
@@ -132,6 +131,27 @@ export function LoginPage({
             </p>
           </div>
 
+          {stagingTestLoginEnabled ? (
+            <div className="mb-5 rounded-xl border border-primary/20 bg-primary/[0.035] p-4">
+              <p className="text-xs font-medium text-muted-foreground">
+                仅用于 Staging 产品验收
+              </p>
+              <button
+                type="button"
+                disabled={Boolean(submitting)}
+                onClick={() => void enterStaging()}
+                className="mt-2 inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-wait disabled:opacity-60"
+              >
+                {submitting === "staging" ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <ShieldCheck className="size-4" />
+                )}
+                进入测试环境
+              </button>
+            </div>
+          ) : null}
+
           {provider === "mock-wecom" ? (
             <div className="space-y-3" aria-label="企业微信测试身份">
               {identities.map((identity) => {
@@ -168,11 +188,6 @@ export function LoginPage({
             </button>
           )}
 
-          {debugAdminRequested && !debugIdentityEnabled ? (
-            <p role="alert" className="mt-4 rounded-lg border border-destructive/20 bg-destructive-soft px-3.5 py-3 text-sm text-destructive">
-              debug=admin 只允许在显式启用测试身份的 Local / Staging 环境使用。
-            </p>
-          ) : null}
           {error ? (
             <p role="alert" className="mt-4 rounded-lg border border-destructive/20 bg-destructive-soft px-3.5 py-3 text-sm text-destructive">
               {error}

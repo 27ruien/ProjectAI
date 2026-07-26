@@ -11,24 +11,29 @@ test("Product V2 primary navigation contains only approved modules", async () =>
   assert.match(sidebar, /productRole !== item\.role/);
 });
 
-test("debug admin is a Mock WeCom POST flow and never a Production identity claim", async () => {
-  const [login, providers, client, requestProxy] = await Promise.all([
+test("Staging test login is an explicit fixed-identity POST flow with Production guards", async () => {
+  const [login, providers, client, stagingLogin, authRoute] = await Promise.all([
     read("components/auth/login-page.tsx"),
     read("lib/auth/providers.ts"),
     read("components/auth/auth-client.ts"),
-    read("proxy.ts"),
+    read("lib/auth/staging-test-login.ts"),
+    read("app/api/auth/[...all]/route.ts"),
   ]);
-  assert.match(login, /debugAdminRequested/);
-  assert.match(login, /debugIdentityEnabled/);
-  assert.match(login, /provider === "mock-wecom"/);
+  assert.match(login, /stagingTestLoginEnabled/);
+  assert.match(login, /进入测试环境/);
+  assert.match(login, /仅用于 Staging 产品验收/);
   assert.doesNotMatch(login, /type="password"|邮箱或密码/);
-  assert.match(client, /method: "POST"/);
+  assert.match(client, /signInToStagingTestEnvironment/);
+  assert.match(client, /\/api\/auth\/sign-in\/staging-test/);
+  assert.match(client, /body: JSON\.stringify\(\{\}\)/);
   assert.match(providers, /MOCK_WECOM_AUTH_PRODUCTION_FORBIDDEN/);
-  assert.match(providers, /DEBUG_IDENTITY_PRODUCTION_FORBIDDEN/);
-  assert.match(providers, /ALLOW_DEBUG_IDENTITY/);
-  assert.match(requestProxy, /debugIdentityRedirect/);
-  assert.match(requestProxy, /returnTo/);
-  assert.doesNotMatch(requestProxy, /signInMockWeCom|createSession|setSessionCookie/);
+  assert.match(stagingLogin, /STAGING_TEST_LOGIN_PRODUCTION_FORBIDDEN/);
+  assert.match(stagingLogin, /ALLOW_STAGING_TEST_LOGIN/);
+  assert.match(stagingLogin, /STAGING_TEST_LOGIN_IDENTITY = "admin"/);
+  assert.match(stagingLogin, /requestUrl\.pathname !== STAGING_TEST_LOGIN_PATH/);
+  assert.match(stagingLogin, /forwardedProto !== "https"/);
+  assert.match(authRoute, /STAGING_TEST_LOGIN_PAYLOAD_INVALID/);
+  assert.doesNotMatch(login + providers + client, /debug=admin|debugIdentity/);
 });
 
 test("Requirement Extraction exposes structured sources, one repair, and HTTP 200", async () => {
@@ -147,7 +152,8 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
     "verified Staging backup must finish before the release tree is synchronized",
   );
   assert.match(deploy, /AUTH_PROVIDER=mock-wecom/);
-  assert.match(deploy, /ALLOW_DEBUG_IDENTITY=true/);
+  assert.match(deploy, /ALLOW_STAGING_TEST_LOGIN=true/);
+  assert.match(deploy, /ALLOW_DEBUG_IDENTITY" \{ next \}/);
   assert.match(deploy, /WECOM_TIMESHEET_SYNC_ENABLED=false/);
   assert.match(deploy, /ai:probe:qwen/);
   assert.match(deploy, /x-projectai-commit-sha/);

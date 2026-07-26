@@ -150,7 +150,7 @@
 
 | ID | 验收项 | 当前状态 | 关闭条件 |
 | --- | --- | --- | --- |
-| PV2-001 | 无邮箱/密码 UI；Mock WeCom 三身份；`debug=admin` 非生产直达；Production 硬拒绝 | Local unit/integration PASS；Staging PENDING | exact-head Staging auth/navigation UI 与 Production 配置拒绝证据 |
+| PV2-001 | 无邮箱/密码 UI；Mock WeCom 三身份；显式 Staging 测试登录按钮；固定 Seed 身份；Production 硬拒绝 | Local unit/integration PASS；Staging PENDING | exact-head Staging 按钮登录、正常 Session/权限/退出 UI 与 Production 配置和端点拒绝证据 |
 | PV2-002 | Kivisense Super Admin/Admin/Member、四级部门、负责人、循环/深度/停用保护 | Local integration PASS；Staging PENDING | Staging UI 创建/编辑/移动/非法操作拒绝与清理 |
 | PV2-003 | 部门/项目知识空间、view/edit、上传/预览、撤权与全局搜索 ACL | Local integration PASS；Staging PENDING | Staging UI 与跨身份 404/无泄漏证据 |
 | PV2-004 | Requirement Extraction 真实来源、一次 Repair、同页编辑/整批审核、临时附件保存生命周期 | Fake/local PASS；real Qwen Staging PENDING | 一条纯虚构附件的真实生成、HTTP 200、编辑、整批批准、新项目保存和知识库回读 |

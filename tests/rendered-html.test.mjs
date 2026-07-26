@@ -32,6 +32,7 @@ test("server-renders the public Project AI OS login", async () => {
   assert.match(html, /Project AI OS/);
   assert.match(html, /企业微信登录/);
   assert.match(html, /等待企业微信 OAuth 配置/);
+  assert.doesNotMatch(html, /进入测试环境|仅用于 Staging 产品验收/);
   assert.doesNotMatch(html, /type="password"|邮箱和密码|测试账号密码/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });

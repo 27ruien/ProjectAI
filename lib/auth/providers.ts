@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isStagingTestLoginEnabled } from "./staging-test-login";
 
 export const productRoleSchema = z.enum(["super_admin", "admin", "member"]);
 export type ProductRole = z.infer<typeof productRoleSchema>;
@@ -83,20 +84,6 @@ export function isLegacyCredentialAuthEnabled(): boolean {
   return getAuthProviderConfig().provider === "legacy-credential-test";
 }
 
-export function isDebugIdentityEnabled(): boolean {
-  const config = getAuthProviderConfig();
-  const explicitlyEnabled = process.env.ALLOW_DEBUG_IDENTITY === "true";
-  if (config.environment === "production" && explicitlyEnabled) {
-    throw new Error("DEBUG_IDENTITY_PRODUCTION_FORBIDDEN");
-  }
-  return (
-    explicitlyEnabled &&
-    config.environment !== "production" &&
-    config.provider === "mock-wecom" &&
-    config.mockEnabled
-  );
-}
-
 export const MOCK_WECOM_IDENTITIES: Readonly<
   Record<MockWeComIdentityKey, {
     userId: string;
@@ -174,16 +161,16 @@ export function publicAuthProvider(): {
   provider: "wecom" | "mock-wecom";
   configured: boolean;
   implemented: boolean;
-  debugIdentityEnabled: boolean;
+  stagingTestLoginEnabled: boolean;
 } {
   const config = getAuthProviderConfig();
-  const debugIdentityEnabled = isDebugIdentityEnabled();
+  const stagingTestLoginEnabled = isStagingTestLoginEnabled();
   if (config.provider === "mock-wecom") {
     return {
       provider: "mock-wecom",
       configured: true,
       implemented: true,
-      debugIdentityEnabled,
+      stagingTestLoginEnabled,
     };
   }
   if (config.provider === "legacy-credential-test") {
@@ -191,7 +178,7 @@ export function publicAuthProvider(): {
       provider: "wecom",
       configured: false,
       implemented: false,
-      debugIdentityEnabled,
+      stagingTestLoginEnabled,
     };
   }
   return {
@@ -203,6 +190,6 @@ export function publicAuthProvider(): {
       secretFile: process.env.WECOM_AUTH_SECRET_FILE,
     }).success,
     implemented: false,
-    debugIdentityEnabled,
+    stagingTestLoginEnabled,
   };
 }

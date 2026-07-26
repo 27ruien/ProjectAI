@@ -144,6 +144,7 @@ function createAuth() {
       customRules: {
         "/sign-in/email": { window: 60, max: getLoginRateLimitMax() },
         "/sign-in/mock-wecom": { window: 60, max: getLoginRateLimitMax() },
+        "/sign-in/staging-test": { window: 60, max: getLoginRateLimitMax() },
       },
     },
     advanced: {
