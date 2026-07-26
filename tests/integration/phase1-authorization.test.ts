@@ -16,6 +16,7 @@ import {
   projectDocument,
   projectKnowledgeSource,
   projectMember,
+  testFixture,
   type KnowledgePermission,
   type UserRecord,
 } from "../../lib/db/schema";
@@ -30,6 +31,7 @@ import {
   upsertOrganizationMember,
 } from "../../lib/knowledge/management";
 import { KnowledgeManagementError } from "../../lib/knowledge/errors";
+import { listAuthorizedDocumentScope } from "../../lib/knowledge/authorization";
 
 const prefix = "phase1-acl-test-";
 const secondaryOrganizationId = `${prefix}organization`;
@@ -224,6 +226,28 @@ describe("Phase 1 default-deny authorization matrix", () => {
     assert.equal((await scope(managerB, "project-002", "view")).has(sharedDocumentId), true);
     assert.equal((await scope(outsider, "project-004", "view")).has(sharedDocumentId), false);
     assert.equal((await scope(managerB, "project-002", "view")).has(privateDocumentId), false);
+  });
+
+  it("filters registered fixture sources from product document scope", async () => {
+    await getDb().insert(testFixture).values({
+      id: `${prefix}shared-space-fixture`,
+      entityType: "knowledge_space",
+      entityId: "ks-department-shared-test",
+      fixtureRunId: "uat-phase1-fixture-filter",
+      environment: "test",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    try {
+      assert.equal((await scope(managerB, "project-002", "view")).has(sharedDocumentId), true);
+      const filtered = await listAuthorizedDocumentScope({
+        principal: principal(managerB),
+        projectId: "project-002",
+        permission: "view",
+      });
+      assert.equal(filtered.some((item) => item.documentId === sharedDocumentId), false);
+    } finally {
+      await getDb().delete(testFixture).where(eq(testFixture.id, `${prefix}shared-space-fixture`));
+    }
   });
 
   it("requires an explicit grant for restricted documents and gives deny priority", async () => {
