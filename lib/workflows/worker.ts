@@ -22,6 +22,7 @@ import {
 import {
   artifactSchemas,
   normalizeRequirementsDocumentBatch,
+  describeRequirementsBatchSchemaFailure,
   REQUIREMENT_ARTIFACT_KINDS,
   REQUIREMENTS_SECTION_TITLES,
   requirementsDocumentBatchSchema,
@@ -272,7 +273,11 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
         normalizeRequirementsDocumentBatch(parseJson(batchResult.text)),
       );
       const batchFailureCode = () => {
-        if (!parsedBatch.success) return "WORKFLOW_REQUIREMENTS_BATCH_SCHEMA_INVALID";
+        if (!parsedBatch.success) {
+          return describeRequirementsBatchSchemaFailure(
+            normalizeRequirementsDocumentBatch(parseJson(batchResult.text)),
+          );
+        }
         if (parsedBatch.data.sections.length !== sectionNumbers.length
           || !parsedBatch.data.sections.every((section, index) => section.number === sectionNumbers[index])) {
           return "WORKFLOW_REQUIREMENTS_BATCH_ORDER_INVALID";

@@ -70,6 +70,35 @@ export const requirementsDocumentBatchSchema = z.object({
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1_000)).max(100),
 }).strict();
 
+function normalizeCitationLabels(value: unknown): unknown {
+  const values = typeof value === "string" ? [value] : value;
+  if (values === null || values === undefined) return [];
+  if (!Array.isArray(values) || !values.every((item) => typeof item === "string")) return value;
+  const normalized = values.flatMap((item) => {
+    const parts = item.split(/[\s,，、;；]+/).filter(Boolean);
+    return parts.length > 1 && parts.every((part) => /^E[1-9][0-9]?$/.test(part)) ? parts : [item];
+  });
+  return [...new Set(normalized)];
+}
+
+function normalizeRequirementClassification(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  const aliases: Record<string, "fact" | "assumption" | "advice" | "pending"> = {
+    fact: "fact",
+    "事实": "fact",
+    assumption: "assumption",
+    "假设": "assumption",
+    advice: "advice",
+    suggestion: "advice",
+    "建议": "advice",
+    pending: "pending",
+    tbd: "pending",
+    "待确认": "pending",
+  };
+  return aliases[normalized] ?? value;
+}
+
 export function normalizeRequirementsDocumentBatch(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
@@ -86,15 +115,27 @@ export function normalizeRequirementsDocumentBatch(value: unknown): unknown {
         title: typeof number === "number" && Number.isInteger(number) && number >= 1 && number <= 26
           ? REQUIREMENTS_SECTION_TITLES[number - 1]
           : item.title,
-        body: item.body,
-        classification: item.classification,
-        citations: typeof item.citations === "string" ? [item.citations] : item.citations,
+        body: Array.isArray(item.body) && item.body.every((part) => typeof part === "string")
+          ? item.body.join("\n")
+          : item.body,
+        classification: normalizeRequirementClassification(item.classification),
+        citations: normalizeCitationLabels(item.citations),
       };
     }),
-    acceptanceCriteria: Array.isArray(record.acceptanceCriteria)
-      ? record.acceptanceCriteria
-      : [],
+    acceptanceCriteria: typeof record.acceptanceCriteria === "string"
+      ? [record.acceptanceCriteria]
+      : Array.isArray(record.acceptanceCriteria)
+        ? record.acceptanceCriteria
+        : [],
   };
+}
+
+export function describeRequirementsBatchSchemaFailure(value: unknown): string {
+  const parsed = requirementsDocumentBatchSchema.safeParse(value);
+  if (parsed.success) return "WORKFLOW_REQUIREMENTS_BATCH_SCHEMA_INVALID";
+  const issue = parsed.error.issues[0];
+  const path = issue?.path.map((part) => String(part).replace(/[^a-zA-Z0-9_-]/g, "_")).join("_") || "root";
+  return `WORKFLOW_REQ_SCHEMA_${path}`.slice(0, 80);
 }
 
 export const requirementsDocumentSchema = z.object({

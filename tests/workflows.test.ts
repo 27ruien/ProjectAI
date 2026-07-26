@@ -13,6 +13,7 @@ import {
   ga4MeasurementPlanSchema,
   meetingSummarySchema,
   normalizeRequirementsDocumentBatch,
+  describeRequirementsBatchSchemaFailure,
   overviewArtifactSchema,
   requirementsDocumentBatchSchema,
   requirementsDocumentSchema,
@@ -124,6 +125,35 @@ describe("V3 workflow artifact contracts", () => {
     assert.deepEqual(parsed.data.sections[0]!.citations, ["E1"]);
     assert.deepEqual(parsed.data.acceptanceCriteria, []);
     assert.equal("ignoredPresentationField" in parsed.data.sections[0]!, false);
+  });
+
+  it("normalizes bounded requirement batch aliases without weakening citation scope", () => {
+    const criterion = "由项目经理确认范围。";
+    const normalized = normalizeRequirementsDocumentBatch({
+      sections: [{
+        number: "06",
+        title: "任意展示标题",
+        body: ["范围仅限虚构单店。", "公开上线日期待确认。"],
+        classification: "事实",
+        citations: ["E1、E2", "E2"],
+      }],
+      acceptanceCriteria: criterion,
+    });
+    const parsed = requirementsDocumentBatchSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.equal(parsed.data.sections[0]!.classification, "fact");
+    assert.equal(parsed.data.sections[0]!.body, "范围仅限虚构单店。\n公开上线日期待确认。");
+    assert.deepEqual(parsed.data.sections[0]!.citations, ["E1", "E2"]);
+    assert.deepEqual(parsed.data.acceptanceCriteria, [criterion]);
+  });
+
+  it("persists a bounded schema path instead of provider output", () => {
+    const failure = describeRequirementsBatchSchemaFailure(normalizeRequirementsDocumentBatch({
+      sections: [{ number: 1, title: "x", body: null, classification: "pending", citations: [] }],
+    }));
+    assert.equal(failure, "WORKFLOW_REQ_SCHEMA_sections_0_body");
+    assert.ok(failure.length <= 80);
   });
 
   it("enforces versioned GA4 naming and rejects fabricated measurement ids", () => {
