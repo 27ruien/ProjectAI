@@ -12,7 +12,9 @@ import {
   actionPlanSchema,
   ga4MeasurementPlanSchema,
   meetingSummarySchema,
+  normalizeRequirementsDocumentBatch,
   overviewArtifactSchema,
+  requirementsDocumentBatchSchema,
   requirementsDocumentSchema,
   validateCitationLabels,
 } from "../lib/workflows/contracts";
@@ -101,6 +103,27 @@ describe("V3 workflow artifact contracts", () => {
     assert.doesNotMatch(prompt.systemPrompt, /必须正好 26 节/);
     assert.match(prompt.systemPrompt, /本批 acceptanceCriteria 可以为空/);
     assert.match(prompt.systemPrompt, /fact 必须至少引用一个/);
+  });
+
+  it("normalizes only safe requirement batch presentation differences", () => {
+    const normalized = normalizeRequirementsDocumentBatch({
+      sections: [{
+        number: "6",
+        title: "模型自带标题格式",
+        body: "只使用虚构来源形成的范围说明。",
+        classification: "fact",
+        citations: "E1",
+        ignoredPresentationField: "discarded",
+      }],
+    });
+    const parsed = requirementsDocumentBatchSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.equal(parsed.data.sections[0]!.number, 6);
+    assert.equal(parsed.data.sections[0]!.title, REQUIREMENTS_SECTION_TITLES[5]);
+    assert.deepEqual(parsed.data.sections[0]!.citations, ["E1"]);
+    assert.deepEqual(parsed.data.acceptanceCriteria, []);
+    assert.equal("ignoredPresentationField" in parsed.data.sections[0]!, false);
   });
 
   it("enforces versioned GA4 naming and rejects fabricated measurement ids", () => {

@@ -21,6 +21,7 @@ import {
 } from "@/lib/db/schema";
 import {
   artifactSchemas,
+  normalizeRequirementsDocumentBatch,
   REQUIREMENT_ARTIFACT_KINDS,
   REQUIREMENTS_SECTION_TITLES,
   requirementsDocumentBatchSchema,
@@ -267,7 +268,9 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
       const sectionNumbers = REQUIREMENTS_SECTION_TITLES.slice(offset, offset + 5).map((_, index) => offset + index + 1);
       const prompts = buildArtifactPrompt({ kind, projectName, evidence, requirementSectionNumbers: sectionNumbers });
       let batchResult = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
-      let parsedBatch = requirementsDocumentBatchSchema.safeParse(parseJson(batchResult.text));
+      let parsedBatch = requirementsDocumentBatchSchema.safeParse(
+        normalizeRequirementsDocumentBatch(parseJson(batchResult.text)),
+      );
       const batchFailureCode = () => {
         if (!parsedBatch.success) return "WORKFLOW_REQUIREMENTS_BATCH_SCHEMA_INVALID";
         if (parsedBatch.data.sections.length !== sectionNumbers.length
@@ -303,7 +306,9 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
           totalTokens: sumUsage(batchResult.totalTokens, repaired.totalTokens),
           latencyMs: batchResult.latencyMs + repaired.latencyMs,
         };
-        parsedBatch = requirementsDocumentBatchSchema.safeParse(parseJson(batchResult.text));
+        parsedBatch = requirementsDocumentBatchSchema.safeParse(
+          normalizeRequirementsDocumentBatch(parseJson(batchResult.text)),
+        );
         failureCode = batchFailureCode();
       }
       if (failureCode) {

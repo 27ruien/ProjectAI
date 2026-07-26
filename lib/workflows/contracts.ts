@@ -70,6 +70,33 @@ export const requirementsDocumentBatchSchema = z.object({
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1_000)).max(100),
 }).strict();
 
+export function normalizeRequirementsDocumentBatch(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.sections)) return value;
+  return {
+    sections: record.sections.map((section) => {
+      if (!section || typeof section !== "object" || Array.isArray(section)) return section;
+      const item = section as Record<string, unknown>;
+      const number = typeof item.number === "string" && /^\d{1,2}$/.test(item.number)
+        ? Number(item.number)
+        : item.number;
+      return {
+        number,
+        title: typeof number === "number" && Number.isInteger(number) && number >= 1 && number <= 26
+          ? REQUIREMENTS_SECTION_TITLES[number - 1]
+          : item.title,
+        body: item.body,
+        classification: item.classification,
+        citations: typeof item.citations === "string" ? [item.citations] : item.citations,
+      };
+    }),
+    acceptanceCriteria: Array.isArray(record.acceptanceCriteria)
+      ? record.acceptanceCriteria
+      : [],
+  };
+}
+
 export const requirementsDocumentSchema = z.object({
   sections: z.array(requirementsDocumentSectionSchema).length(26),
   acceptanceCriteria: z.array(z.string().trim().min(1).max(1_000)).min(1).max(100),

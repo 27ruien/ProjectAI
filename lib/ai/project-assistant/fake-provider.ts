@@ -266,12 +266,13 @@ export class FakeProjectAssistantProvider
             // Deliberately vary presentation text: trusted workflow code must
             // bind the canonical title to the validated section number.
             title: `${titles[number - 1]}（模型格式）`,
-            number,
+            number: String(number),
             body: number === 25 ? "待确认事项：目标日期与验收责任人。" : "基于受控虚构来源形成的项目内容。",
             classification: number === 25 ? "pending" : "fact",
             // Force one deterministic first-pass semantic failure so the
             // integration test exercises the bounded repair path.
-            citations: number === 25 || (number === 1 && !workflowRepair) ? [] : ["E1"],
+            citations: number === 25 || (number === 1 && !workflowRepair) ? [] : "E1",
+            ignoredPresentationField: "must-not-cross-contract-boundary",
           })),
           acceptanceCriteria: sectionNumbers.includes(26)
             ? ["所有发布产物均经过人工审核", "无权用户访问统一返回 404"]
