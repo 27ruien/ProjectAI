@@ -114,6 +114,17 @@ command -v curl >/dev/null
 command -v rsync >/dev/null
 sudo docker compose version >/dev/null
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+minimum_available_bytes=$((12 * 1024 * 1024 * 1024))
+docker_root="$(sudo docker info --format '{{.DockerRootDir}}')"
+[[ "$docker_root" == /* ]]
+for capacity_path in "$docker_root" /srv/projectai-staging; do
+  available_bytes="$(df --output=avail -B1 "$capacity_path" | awk 'NR == 2 { print $1 }')"
+  [[ "$available_bytes" =~ ^[0-9]+$ ]]
+  if (( available_bytes < minimum_available_bytes )); then
+    printf 'Staging deployment requires at least 12 GiB free before backup, image transfer, or migration.\n' >&2
+    exit 1
+  fi
+done
 for protected in "$env_file" "$ai_env_file" "$embedding_env_file" "$qwen_secret_file"; do
   sudo test -f "$protected"
   sudo test ! -L "$protected"

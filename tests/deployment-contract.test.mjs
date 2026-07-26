@@ -553,6 +553,10 @@ test("Product V2 Staging deploy accepts the reviewed agent branch and owns the d
   );
   assert.match(script, /project-ai-os-staging-timesheet-worker/);
   assert.match(script, /docker port project-ai-os-staging-timesheet-worker/);
+  assert.match(script, /minimum_available_bytes=\$\(\(12 \* 1024 \* 1024 \* 1024\)\)/);
+  assert.match(script, /docker info --format '\{\{\.DockerRootDir\}\}'/);
+  assert.match(script, /df --output=avail -B1 "\$capacity_path"/);
+  assert.match(script, /before backup, image transfer, or migration/);
 });
 
 test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
