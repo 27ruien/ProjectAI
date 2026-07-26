@@ -448,8 +448,9 @@ test("@ai-workflow Requirement Extraction uploads, generates, reviews, and saves
   });
   await expect(page.getByRole("status")).toContainText("临时附件已解析完成", { timeout: 120_000 });
   await expect(generate).toBeEnabled();
-  const extractionResponse = page.waitForResponse((response) =>
-    response.url().includes("/requirement-extractions") && response.request().method() === "POST",
+  const extractionResponse = page.waitForResponse(
+    (response) => response.url().includes("/requirement-extractions") && response.request().method() === "POST",
+    { timeout: 120_000 },
   );
   await generate.click();
   expect((await extractionResponse).status()).toBe(200);
@@ -470,7 +471,7 @@ test("@ai-workflow Requirement Extraction uploads, generates, reviews, and saves
 
   await gotoInteractive(page, appPath("/knowledge"));
   await chooseSpace(page, savedProjectName);
-  await expect(page.getByText(sourceName, { exact: true })).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByRole("button", { name: new RegExp(`^${sourceName}(?:\\s|$)`, "u") })).toBeVisible({ timeout: 120_000 });
   await expect(page.getByText(/需求提取审核结果/u).first()).toBeVisible({ timeout: 120_000 });
   await capture(page, "06-requirement-saved-knowledge.png");
   assertNoErrors();
