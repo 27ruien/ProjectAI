@@ -108,11 +108,16 @@ test("Staging smoke distinguishes a missing permission contract from a denial", 
 });
 
 test("organization service protects depth, cycles, default spaces, and last super admin", async () => {
-  const service = await read("lib/organization/service.ts");
+  const [service, page] = await Promise.all([
+    read("lib/organization/service.ts"),
+    read("components/organization/OrganizationPage.tsx"),
+  ]);
   for (const marker of ["DEPARTMENT_DEPTH_EXCEEDED", "DEPARTMENT_CYCLE", "DEPARTMENT_NOT_EMPTY", "LAST_ADMIN_PROTECTED", "ks-department-"]) {
     assert.match(service, new RegExp(marker));
   }
   assert.match(service, /\.for\("update", \{ of: user \}\)/);
+  assert.match(page, /pattern="\(\?:\[A-Z0-9\]\|-\)\+"/);
+  assert.doesNotThrow(() => new RegExp("^(?:[A-Z0-9]|-)+$", "v"));
 });
 
 test("project managers cannot be downgraded or removed through knowledge-space membership", async () => {
