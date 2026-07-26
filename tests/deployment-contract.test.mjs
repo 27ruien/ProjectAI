@@ -551,6 +551,14 @@ test("Product V2 Staging deploy accepts the reviewed agent branch and owns the d
     script,
     /up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-staging/,
   );
+  assert.match(
+    script,
+    /up --detach --no-deps --force-recreate --no-build --pull never \\\n\s+projectai-timesheet-worker projectai-staging/,
+  );
+  assert.match(
+    script,
+    /docker inspect --format '\{\{if \.State\.Health\}\}\{\{\.State\.Health\.Status\}\}\{\{else\}\}\{\{\.State\.Status\}\}\{\{end\}\}' project-ai-os-staging-timesheet-worker/,
+  );
   assert.match(script, /project-ai-os-staging-timesheet-worker/);
   assert.match(script, /docker port project-ai-os-staging-timesheet-worker/);
   assert.match(script, /minimum_available_bytes=\$\(\(12 \* 1024 \* 1024 \* 1024\)\)/);

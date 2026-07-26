@@ -389,7 +389,8 @@ sudo awk -F= '
 ' "$ai_env_file" | sudo tee "$ai_temp" >/dev/null
 sudo install -m 0600 -o deploy -g deploy "$ai_temp" "$ai_env_file"
 sudo rm -f -- "$ai_temp"
-"${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+"${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never \
+  projectai-timesheet-worker projectai-staging
 
 enabled=0
 for _ in $(seq 1 90); do
@@ -397,7 +398,11 @@ for _ in $(seq 1 90); do
   if grep -qi "^x-projectai-commit-sha: ${commit_sha}$" <<<"$headers" \
     && grep -q '"status":"ok"' /tmp/projectai-product-v2-health \
     && grep -q '"aiAssistantEnabled":true' /tmp/projectai-product-v2-health \
-    && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health; then enabled=1; break; fi
+    && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health \
+    && [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)" == "healthy" ]]; then
+    enabled=1
+    break
+  fi
   sleep 2
 done
 sudo rm -f /tmp/projectai-product-v2-health
