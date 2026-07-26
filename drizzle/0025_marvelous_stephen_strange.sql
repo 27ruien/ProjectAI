@@ -1,4 +1,4 @@
-CREATE TABLE "test_fixtures" (
+CREATE TABLE IF NOT EXISTS "test_fixtures" (
 	"id" text PRIMARY KEY NOT NULL,
 	"entity_type" varchar(80) NOT NULL,
 	"entity_id" text NOT NULL,

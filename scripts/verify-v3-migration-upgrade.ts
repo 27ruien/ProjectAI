@@ -33,6 +33,13 @@ async function main(): Promise<void> {
     const boundary = files.indexOf("0025_marvelous_stephen_strange.sql");
     if (boundary < 0) throw new Error("V3_MIGRATION_0025_MISSING");
     for (const filename of files.slice(0, boundary)) await apply(target, filename);
+    const v3Migration = await readFile(
+      path.resolve("drizzle", "0025_marvelous_stephen_strange.sql"),
+      "utf8",
+    );
+    const partialFirstStatement = v3Migration.split("--> statement-breakpoint")[0];
+    if (!partialFirstStatement.trim()) throw new Error("V3_MIGRATION_0025_EMPTY");
+    await target.query(partialFirstStatement);
     await target.query(`
       insert into users (id, email, display_name)
       values ('v3-upgrade-user', 'v3-upgrade@projectai.invalid', 'V3 Upgrade User');

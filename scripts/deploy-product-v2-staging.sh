@@ -276,33 +276,42 @@ compose_base=(
 rollback() {
   local status=$?
   trap - ERR
-  set +e
+  set -Eeuo pipefail
   printf 'Product V2 deployment failed; restoring the verified Staging database, environment, and prior images.\n' >&2
   "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker projectai-timesheet-worker >/dev/null 2>&1
-  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec 'pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec '
+    case "$POSTGRES_DB" in
+      ""|postgres|template0|template1|*[^A-Za-z0-9_]*)
+        printf "Refusing to rebuild an invalid Staging database target.\n" >&2
+        exit 1
+        ;;
+    esac
+    dropdb --if-exists --force --maintenance-db=postgres -U "$POSTGRES_USER" "$POSTGRES_DB"
+    createdb --maintenance-db=postgres -U "$POSTGRES_USER" --owner="$POSTGRES_USER" "$POSTGRES_DB"
+    pg_restore --exit-on-error --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+  '
   sudo install -m 0600 -o root -g root "$env_backup" "$env_file"
   sudo install -m 0600 -o deploy -g deploy "$ai_env_backup" "$ai_env_file"
   sudo install -m 0600 -o root -g root "$embedding_env_backup" "$embedding_env_file"
-  if [[ -n "$previous_app_ref" && -n "$previous_worker_ref" ]]; then
-    sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
-      "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
-      "STAGING_TIMESHEET_WORKER_IMAGE=${previous_timesheet_ref:-$previous_app_ref}" \
+  [[ -n "$previous_app_ref" && -n "$previous_worker_ref" ]]
+  sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
+    "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
+    "STAGING_TIMESHEET_WORKER_IMAGE=${previous_timesheet_ref:-$previous_app_ref}" \
+    "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
+    "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
+    docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
+    --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
+    projectai-document-worker projectai-embedding-worker projectai-staging >/dev/null
+  if [[ -n "$previous_timesheet_ref" ]]; then
+    sudo env "STAGING_APP_IMAGE=$previous_app_ref" \
+      "STAGING_TIMESHEET_WORKER_IMAGE=$previous_timesheet_ref" \
       "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
       "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
       docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
       --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
-      projectai-document-worker projectai-embedding-worker projectai-staging >/dev/null
-    if [[ -n "$previous_timesheet_ref" ]]; then
-      sudo env "STAGING_APP_IMAGE=$previous_app_ref" \
-        "STAGING_TIMESHEET_WORKER_IMAGE=$previous_timesheet_ref" \
-        "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
-        "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
-        docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
-        --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
-        projectai-timesheet-worker >/dev/null
-    else
-      "${compose_base[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
-    fi
+      projectai-timesheet-worker >/dev/null
+  else
+    "${compose_base[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
   fi
   sudo rm -f -- "$marker"
   exit "$status"

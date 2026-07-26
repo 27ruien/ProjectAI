@@ -74,6 +74,7 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(knowledge, /notExists/);
   assert.match(knowledge, /eq\(testFixture\.entityType, "knowledge_space"\)/);
   assert.match(migration, /uat-legacy-import-0025/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS "test_fixtures"/);
   assert.doesNotMatch(productSeed, /kivisense-project-product-management-uat/);
   assert.match(productSeed, /kivisense-project-projectai-product/);
 });
