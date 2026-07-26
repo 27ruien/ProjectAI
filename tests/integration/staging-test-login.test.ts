@@ -41,7 +41,7 @@ describe("Staging-only test login", () => {
       { role: "super_admin" },
       { identity: "super-admin" },
       { organizationId: "org-legacy-default" },
-      { projectId: "kivisense-project-product-management-uat" },
+      { projectId: "kivisense-project-projectai-product" },
     ]) {
       const response = await authPost(
         authRequest("/api/auth/sign-in/staging-test", {

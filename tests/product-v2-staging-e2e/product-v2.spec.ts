@@ -14,7 +14,7 @@ type Space = {
 
 const origin = "https://gridworks.cn";
 const evidenceDir = path.resolve("test-results/product-v2-staging/evidence");
-const memberProjectId = "kivisense-project-product-management-uat";
+const memberProjectId = "kivisense-project-projectai-product";
 
 async function login(page: Page, identity: Identity) {
   const response = await page.request.post(appPath("/api/auth/sign-in/mock-wecom"), {
@@ -497,11 +497,11 @@ test("@daily-report @global-search retained daily report and keyboard search rem
 
   await page.keyboard.press("ControlOrMeta+K");
   search = page.getByPlaceholder("搜索已授权知识空间");
-  await search.fill("Product Management UAT");
-  await expect(page.getByRole("dialog", { name: "全局搜索" })).toContainText("Product Management UAT");
+  await search.fill("ProjectAI 产品重构");
+  await expect(page.getByRole("dialog", { name: "全局搜索" })).toContainText("ProjectAI 产品重构");
   await search.press("Enter");
   await expect(page).toHaveURL(new RegExp(`/knowledge\\?projectId=${memberProjectId}$`, "u"));
-  await expect(page.getByText("Product Management UAT", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("ProjectAI 产品重构", { exact: true }).first()).toBeVisible();
   await capture(page, "07-global-search-result.png");
   assertNoErrors();
 });

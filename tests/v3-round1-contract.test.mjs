@@ -55,12 +55,13 @@ test("Round 1 daily-report generation is a durable leased job", async () => {
 });
 
 test("Round 1 fixture registry keeps synthetic UAT records out of product lists", async () => {
-  const [fixtureSchema, fixtureService, projects, knowledge, migration] = await Promise.all([
+  const [fixtureSchema, fixtureService, projects, knowledge, migration, productSeed] = await Promise.all([
     read("lib/db/schema/test-fixtures.ts"),
     read("lib/test-fixtures/service.ts"),
     read("lib/db/repositories/project-repository.ts"),
     read("lib/knowledge/product-v2.ts"),
     read("drizzle/0025_marvelous_stephen_strange.sql"),
+    read("scripts/db/seed-product-v2.ts"),
   ]);
   assert.match(fixtureSchema, /uniqueIndex\("test_fixtures_entity_uidx"\)/);
   assert.match(fixtureSchema, /expiresAt/);
@@ -73,6 +74,8 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(knowledge, /notExists/);
   assert.match(knowledge, /eq\(testFixture\.entityType, "knowledge_space"\)/);
   assert.match(migration, /uat-legacy-import-0025/);
+  assert.doesNotMatch(productSeed, /kivisense-project-product-management-uat/);
+  assert.match(productSeed, /kivisense-project-projectai-product/);
 });
 
 test("Round 1 knowledge requests isolate stale responses and visible errors", async () => {
