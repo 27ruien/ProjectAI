@@ -7,7 +7,10 @@ import {
   getAuthorizedWorkspaceMockPayload,
 } from "@/lib/project-data/mock-project-service";
 import { headers } from "next/headers";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { getTimesheetFeatureConfig } from "@/lib/timesheets/config";
+import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
+import { isLegacyCredentialAuthEnabled } from "@/lib/auth/providers";
 
 type CatchAllPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -16,7 +19,17 @@ type CatchAllPageProps = {
 export default async function CatchAllPage({ params }: CatchAllPageProps) {
   const { slug } = await params;
   const route = slug.length > 0 ? slug : ["dashboard"];
+  const [section, entityId, child] = route;
   const returnTo = `/${route.join("/")}`;
+  const legacyRegression = isLegacyCredentialAuthEnabled();
+  if (!legacyRegression) {
+    if (section === "dashboard") redirect("/daily-report");
+    if (section === "projects") {
+      redirect(entityId && entityId !== "new" ? `/knowledge?projectId=${encodeURIComponent(entityId)}` : "/knowledge");
+    }
+    if (section === "reviews" || section === "skills") redirect("/workflows");
+    if (section === "analytics") redirect("/knowledge");
+  }
   const principal = await requireAuthenticatedUser(returnTo);
   const viewer = await buildViewerContext(principal);
   const workspaceData = getAuthorizedWorkspaceMockPayload(
@@ -26,10 +39,30 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
     })),
   );
   const requestHeaders = await headers();
-  const [section, entityId, child] = route;
+  const featureFlags = getTimesheetFeatureConfig();
+  let timesheetAiProviderConfigured = false;
 
+  if (section === "daily-report" && !featureFlags.dailyReportEnabled) {
+    notFound();
+  }
+  if (section === "daily-report") {
+    timesheetAiProviderConfigured = await isAiProviderConfigured();
+  }
+
+  if (!legacyRegression && section === "organization" && principal.user.productRole !== "super_admin") {
+    notFound();
+  }
   if (
-    (section === "settings" || section === "analytics") &&
+    section === "settings" &&
+    (legacyRegression
+      ? principal.user.systemRole !== "system_admin"
+      : principal.user.productRole !== "super_admin")
+  ) {
+    notFound();
+  }
+  if (
+    legacyRegression &&
+    section === "analytics" &&
     principal.user.systemRole !== "system_admin"
   ) {
     notFound();
@@ -75,6 +108,15 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
       currentProject={currentProject}
       projectData={projectData}
       workspaceData={workspaceData}
+      featureFlags={{
+        pmDailyReport: featureFlags.dailyReportEnabled,
+        wecomTimesheetSync: featureFlags.wecomSyncEnabled,
+        timesheetAiMode: featureFlags.aiMode,
+        timesheetAiProvider: featureFlags.aiProvider,
+        timesheetAiProviderConfigured,
+        timesheetAiModelProfileId: featureFlags.aiModelProfileId,
+        timesheetSyncProvider: featureFlags.syncProvider,
+      }}
     />
   );
 }

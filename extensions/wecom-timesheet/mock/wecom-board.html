@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN" data-projectai-worksheet="UAT Timesheet" data-projectai-view="UAT Daily Tasks">
+  <head><meta charset="utf-8" /><title>Mock WeCom Board</title></head>
+  <body>
+    <main data-testid="mock-board-ready">
+      <h1>Mock 企业微信任务看板</h1>
+      <p data-testid="mock-login-required" hidden>请扫码登录</p>
+      <div data-testid="mock-overlay" hidden>突发弹窗</div>
+      <button data-testid="mock-create-task">创建任务</button>
+      <iframe data-testid="mock-task-frame" src="wecom-form.html" hidden></iframe>
+      <section data-testid="mock-records" aria-label="已保存任务"></section>
+      <button data-testid="mock-clear-e2e" type="button">清理 ProjectAI E2E 记录</button>
+      <button data-testid="mock-final-submit">最终提交日报</button>
+      <output id="final-submit-count">0</output>
+    </main>
+    <script>
+      const query = new URLSearchParams(location.search);
+      document.querySelector("[data-testid='mock-login-required']").hidden = query.get("login") !== "0";
+      document.querySelector("[data-testid='mock-overlay']").hidden = query.get("overlay") !== "1";
+      const frame = document.querySelector("iframe");
+      const storageKey = "projectai.mock.wecom.records.v1";
+      const recordsRoot = document.querySelector("[data-testid='mock-records']");
+      const original = {
+        description: "原有虚构任务（不可修改）",
+        project: "Fictional Existing Project",
+        submitter: "原有虚构用户",
+        "regular-hours": "0.5",
+        "overtime-hours": "0",
+        status: "进行中",
+        urgency: "",
+        progress: "10",
+      };
+      function appendRecord(values, persisted = true) {
+        const row = document.createElement("article");
+        row.dataset.testid = "mock-record-row";
+        row.dataset.recordId = values.recordId;
+        row.dataset.projectaiE2e = values.projectaiE2e ? "true" : "false";
+        for (const [field, value] of Object.entries(values.fields)) {
+          const cell = document.createElement("span");
+          cell.dataset.field = field;
+          cell.textContent = value;
+          row.append(cell);
+        }
+        recordsRoot.append(row);
+        if (persisted && values.projectaiE2e) {
+          const stored = JSON.parse(localStorage.getItem(storageKey) || "[]");
+          stored.push(values);
+          localStorage.setItem(storageKey, JSON.stringify(stored));
+        }
+      }
+      appendRecord({ recordId: "original-record", projectaiE2e: false, fields: original }, false);
+      for (const stored of JSON.parse(localStorage.getItem(storageKey) || "[]")) appendRecord(stored, false);
+      window.__addProjectAiMockRecord = (fields) => {
+        const existing = JSON.parse(localStorage.getItem(storageKey) || "[]");
+        const value = {
+          recordId: `projectai-e2e-${existing.length + 1}`,
+          projectaiE2e: true,
+          fields,
+        };
+        appendRecord(value, true);
+        return value.recordId;
+      };
+      frame.src = `wecom-form.html?${query.toString()}`;
+      document.querySelector("[data-testid='mock-create-task']").addEventListener("click", () => { frame.hidden = false; });
+      document.querySelector("[data-testid='mock-final-submit']").addEventListener("click", () => {
+        const output = document.querySelector("#final-submit-count");
+        output.value = String(Number(output.value) + 1);
+      });
+      document.querySelector("[data-testid='mock-clear-e2e']").addEventListener("click", () => {
+        localStorage.removeItem(storageKey);
+        for (const row of document.querySelectorAll("[data-projectai-e2e='true']")) row.remove();
+      });
+    </script>
+  </body>
+</html>

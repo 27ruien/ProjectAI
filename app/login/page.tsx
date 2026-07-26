@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { LoginPage } from "@/components/auth";
+import { publicAuthProvider } from "@/lib/auth/providers";
 
 export const metadata: Metadata = {
   title: "登录",
@@ -7,11 +8,22 @@ export const metadata: Metadata = {
 };
 
 type LoginRouteProps = {
-  searchParams: Promise<{ returnTo?: string | string[] }>;
+  searchParams: Promise<{
+    returnTo?: string | string[];
+  }>;
 };
 
 export default async function LoginRoute({ searchParams }: LoginRouteProps) {
   const params = await searchParams;
   const initialReturnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
-  return <LoginPage initialReturnTo={initialReturnTo} />;
+  const authProvider = publicAuthProvider();
+  return (
+    <LoginPage
+      initialReturnTo={initialReturnTo}
+      provider={authProvider.provider}
+      providerConfigured={authProvider.configured}
+      providerImplemented={authProvider.implemented}
+      stagingTestLoginEnabled={authProvider.stagingTestLoginEnabled}
+    />
+  );
 }

@@ -7,7 +7,13 @@ export class KnowledgeManagementError extends Error {
       | "FORBIDDEN"
       | "LAST_ADMIN_PROTECTED"
       | "SOURCE_CONFLICT"
-      | "DUPLICATE_RESOURCE",
+      | "DUPLICATE_RESOURCE"
+      | "DEPARTMENT_DEPTH_EXCEEDED"
+      | "DEPARTMENT_CYCLE"
+      | "DEPARTMENT_NOT_EMPTY"
+      | "DEPARTMENT_REQUIRED"
+      | "CREATOR_ACCESS_REQUIRED"
+      | "PROJECT_MANAGER_EDIT_REQUIRED",
     message: string,
   ) {
     super(message);

@@ -2,34 +2,35 @@
 
 面向项目经理的 AI 项目交付工作台 MVP。它以项目为核心容器，将项目资料、知识、结构化需求、AI 工作流、人工审核、Scope 变更、Action Plan 与风险管理串联起来。
 
-> **安全提示：B3-C1 只增加 Production Release Readiness、隔离演练、回滚和脱敏证据工具，不执行 Production 部署、迁移、重启或 AI 启用。所有 Production `--apply` 均被代码硬拒绝；正式上线属于后续 B3-C2。ANN、Rerank、Tool Calling 和正式业务写入仍未开始。**
+> **安全提示：当前 Product V2 分支只允许本地/CI 与受控 Staging 验收，不执行 Production 部署、迁移、重启或 AI 启用。正式企业微信 OAuth/扫码仍等待企业 API 配置；Mock WeCom 与 Staging 测试登录在 Production 硬拒绝。**
 
 ## 已实现能力
 
-- 企业账号登录：Better Auth 邮箱/密码认证、数据库 Session、HttpOnly Cookie、token 最小化/no-store 响应、停用撤销、退出、基础登录限流和写请求的精确 Origin/JSON 边界；只开放登录、Session 查询和退出端点，不开放公共注册或账户管理端点。
-- 项目隔离：`system_admin` / `standard_user` 系统角色，`project_manager` / `project_member` / `viewer` 项目角色，以及统一服务端 404 防枚举授权。
+- 企业身份登录：产品 UI 不再接受邮箱/密码；Local/Staging 可显式启用三个 Mock WeCom 虚构身份，正式环境预留企业微信 OAuth/扫码 Provider。受控 Staging 还可显示“进入测试环境”按钮，它只向固定 Admin Seed 发起空参数 POST，并同时校验 Staging 环境、精确 Host、Base Path 与 Origin；认证后仍使用数据库 Session 与 HttpOnly Cookie，响应不暴露 token。旧 `debug=admin` query 已退役，Production 配置和端点均失败关闭。
+- 项目隔离：`super_admin` / `admin` / `member` 产品角色，`project_manager` / `project_member` / `viewer` 项目角色，以及统一服务端 404 防枚举授权。
 - PostgreSQL 基础：Drizzle Schema、已提交 Migration、insert-only 幂等环境变量 Seed、受保护的测试库 Reset、数据库项目列表/创建/基础信息/成员关系和审计事件。
 - 项目资料：真实上传与持久化、PDF/OOXML/TXT/Markdown 校验、50 MiB 上限、S3-compatible 私有对象存储、幂等重试、版本/current、归档/恢复、权限下载、SHA-256/ETag 完整性和文件审计。
 - 文档处理：PostgreSQL 持久化 Job、独立 Worker、Lease/Heartbeat、六格式有界解析、needs_ocr、Section/Chunk、来源定位、版本/归档有效性和 reindex。
 - 工作台：项目进度、AI 审核、风险、待办、AI 活动和状态演示。
 - 项目管理：搜索、组合筛选、排序、分页、列控制和项目创建。
-- 项目空间：概览、真实资料、真实项目知识搜索、真实 Grounded 项目助手，以及仍为 Mock 的需求、Scope、Action、会议和风险模块。
+- Product V2 工作台：日报、AI 工作流、部门/项目知识空间、全局授权搜索，以及 Super Admin 管理的四级 Kivisense 组织架构。
 - 项目知识：读取当前项目 Active/Current/Stored/Succeeded/Effective 索引，支持 FTS、contains、`pg_trgm` 模糊匹配与 PDF Page、DOCX Section、XLSX Range、PPTX Slide、文本行来源。
 - 项目 AI 助手：私人 Thread、有限多轮、Qwen 主/备用模型、服务端 Evidence/Citation 校验、资料不足、失败重试、Token Usage、限流与审计；回答不直接写入正式业务数据。
 - Assistant Evidence Retrieval：服务端 lexical/shadow/hybrid Mode、冻结 `hybrid-rrf-v1`、Query Embedding 成本账本、exact pgvector、RRF、Coverage Gate、Lexical Fallback 与 60 条虚构 Query 质量门禁。
 - 向量基础：固定 `qwen-text-embedding-cn-v1` Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、dry-run Backfill、Probe 与 Usage；不接入浏览器检索或回答 Evidence。
 - 需求中心：TanStack Table、批量操作、CSV 导出和可编辑 Requirement Drawer。
-- AI 工作流：项目助手使用真实 AI Gateway；其他需求提取、Scope、Action 和风险工作流仍为 Mock。
+- AI 工作流：需求提取使用当前有效且已授权的 Chunk、真实 AI Gateway、严格 JSON/引用校验与一次 Repair；结果在当前页面编辑并整批审核后才写入正式需求。
 - 审核中心：三栏审核、差异、证据、执行信息、通过/修改后通过/驳回/草稿/重新生成。
 - 系统治理：Skills 只读详情、Provider/Model/Profile/关系/调用/成本视图。
+- 项目经理日报（Feature Flag）：个人工作随记、ACL 过滤的 AI 工时草稿、人工审核/确认、JSON 导出，以及与独立 MV3 企业微信连接器的逐条同步协议；AI 不确认工时，扩展不点击最终提交。
 
-AI 产出始终以草稿或待审核状态存在；当前人工审核只产生 Mock 状态反馈，正式业务写入尚未实现。
+AI 产出始终先以草稿或待审核状态存在。Requirement Extraction 只有人工批准事务可写正式需求；项目助手回答不能写正式业务数据。
 
 ## 技术栈
 
 - Next.js App Router（vinext / Cloudflare Worker 兼容构建）
 - React 19、TypeScript strict、Tailwind CSS 4
-- Better Auth `1.6.23`、Drizzle ORM、PostgreSQL 17 + pgvector 0.8.1（CI/Staging）
+- Better Auth `1.6.25`、Drizzle ORM、PostgreSQL 17 + pgvector 0.8.1（CI/Staging）
 - AWS SDK for JavaScript v3、S3-compatible Object Storage、Staging/CI MinIO
 - TanStack Table、React Hook Form、Zod、Lucide Icons
 - 仅剩余 Mock 交互状态使用按环境隔离的 localStorage；身份和 Session 不使用浏览器存储
@@ -55,6 +56,7 @@ AI 产出始终以草稿或待审核状态存在；当前人工审核只产生 M
 /skills
 /skills/[skillId]
 /knowledge
+/daily-report
 /analytics
 /settings
 /settings/ai-models
@@ -94,6 +96,8 @@ lib/documents/          资料客户端、Parser、Chunker、Job、Worker 与 Se
 lib/project-data/       授权后的服务端 Mock 映射
 lib/ai/                 Gateway、Provider、Registry、Router、fixtures、日志、成本
 lib/knowledge/          浏览器知识搜索客户端
+lib/timesheets/         日报 Schema、服务、ACL、AI 合同和同步协议
+extensions/             独立 Chrome MV3 企业微信连接器、Adapter 与 Mock 页面
 scripts/db/             Migration、幂等 Seed 与测试库 Reset
 scripts/release/        Inventory、Manifest、Preflight、Rehearsal、Smoke 与 Rollback 工具
 release/                Release Schema、Checklist、Compatibility Matrix 与虚构 fixture
@@ -105,12 +109,13 @@ docs/                   MVP 规格、验收、流程、架构、测试与部署�
 
 ## 数据边界
 
-- 真实 PostgreSQL：用户、credential、Session、项目/成员、逻辑资料、文件版本、解析 Job、Section、Chunk、generated `tsvector`、有效性和审计事件。
+- 真实 PostgreSQL：用户、Provider account、Session、Product role、四级部门、项目/成员、知识空间 view/edit、逻辑资料、文件版本、解析 Job、Section、Chunk、generated `tsvector`、有效性和审计事件。
 - 真实对象存储：不可变文件正文；数据库只保存服务端生成的 Object Key，不保存正文，客户端不返回 Key/Endpoint/Bucket。
-- CI/本地 Seed：缺失时创建 5 个预创建用户、3 个项目及成员关系；重跑不会重新激活账号、重置角色、覆盖项目编辑或替换 credential hash。
+- Product V2 Local/Staging Seed：仅在显式 Mock WeCom 环境 insert-only 创建 Kivisense 三个虚构身份、七个部门和虚构 UAT 项目；不创建密码，也不覆盖既有身份状态。历史测试 Seed 仅供隔离测试链使用。
 - 真实 PostgreSQL AI 状态：模型 Profile、私人 Thread、Message、Execution、Citation、Token Usage、限流和 Audit；Embedding Profile/Job/Batch/Provider Call/Chunk Vector 只供 Worker 与受保护运维使用。
-- 仍为 Mock：需求、Scope、Action、会议、风险、审核任务和相关生成工作流。
-- 未实现：OCR、用户知识搜索的向量检索、ANN、Rerank、Tool Calling 和正式业务写入。
+- Feature Flag 开启后，真实 PostgreSQL 还保存当前用户自己的工作随记、日报草稿、任务、AI execution 与脱敏同步摘要；管理员不会因此获得查看下属日报的新权限。
+- Product V2 真实工作流：Requirement Draft/Run/Review/Version/Source、临时附件及审核后的正式 Requirement 写入。
+- 未实现：正式企业微信 OAuth、OCR、用户知识搜索的向量检索、ANN、Rerank、Tool Calling，以及未经人工审核的正式业务写入。
 
 ## 本地运行
 
@@ -135,6 +140,9 @@ npm run test:embeddings
 npm run test:embedding-integration
 npm test
 npm run test:e2e
+npm run test:timesheets
+npm run test:timesheets-integration
+npm run test:extension-e2e
 npm run qa:mvp
 ```
 
@@ -156,6 +164,44 @@ npm run embeddings:probe
 
 `storage:verify` 只读核对数据库与对象存储；`storage:reconcile` 默认也是 dry-run。`--apply` 需要非 Production、显式开关、精确 Bucket 确认和最小对象年龄，删除前仍会二次检查数据库引用。
 
+## 项目经理日报与企业微信连接器
+
+该 MVP 默认关闭。依次完成 Migration `0016_tricky_revanche.sql` 与 `0017_nosy_boomer.sql` 后，在 Local 或经授权的 Staging 显式设置：
+
+```env
+PM_DAILY_REPORT_ENABLED=true
+WECOM_TIMESHEET_SYNC_ENABLED=true
+PM_DAILY_REPORT_CONFIDENCE_THRESHOLD=0.85
+```
+
+日报模型调用继续复用服务端 Project Assistant Gateway；浏览器和扩展不会获得 Provider、模型密钥或完整 Provider Response。页面只允许当前 Session 用户读写自己的日报，项目候选项和正式任务项目都重新经过服务端 ACL 校验。确认状态使用版本号，未确认或失去项目权限的草稿不能创建同步批次。
+
+本地启动与扩展构建：
+
+```bash
+npm ci
+npm run db:migrate
+npm run db:seed
+npm run dev
+npm run extension:build
+npm run extension:package
+```
+
+在 Chrome 的 `chrome://extensions` 开启开发者模式，选择“加载已解压的扩展程序”，目录为 `dist/wecom-timesheet-extension`。默认 Review 构建不申请真实企业微信 Host Permission。真实构建必须同时提供精确 `PROJECTAI_ALLOWED_ORIGIN`、`WECOM_ALLOWED_ORIGIN`、无用户名/密码的 `WECOM_TASK_BOARD_URL` 和本地 `WECOM_SELECTOR_CONFIG_PATH`；构建只用完整 URL 校验 Origin 后立即丢弃，产物只显示允许 Origin，不嵌入文档路径或访问参数。若授权页面必须使用访问参数，完整 URL 只能进入被忽略的本地环境和扩展本机存储。不要提交本地 Selector Config。
+
+Dry Run 会打开显式保存表单，分别填写并回读任务描述、项目、正常/加班工时、状态及有证据的进度，验证页面自动提交人，但不会写 ProjectAI 分类、点击单条保存或最终提交。正常模式只允许点击表单内的单条保存，并要求“保存反馈 + 任务列表行回读”双证据。自动保存页面在字段 mutation 前停止。
+
+扩展本地状态与脱敏故障日志可在 Popup 中导出，并通过“清除本地记录”二次确认后删除。升级扩展时重新构建、在扩展管理页点击“重新加载”，随后重新执行 Dry Run。完整范围、协议、安装、已知限制与测试命令见：
+
+- [日报架构](./docs/pm-daily-report-architecture.md)
+- [数据模型](./docs/pm-daily-report-data-model.md)
+- [AI 合同](./docs/pm-daily-report-ai-contract.md)
+- [同步协议](./docs/wecom-sync-protocol.md)
+- [Dry Run](./docs/wecom-dry-run.md)
+- [人工验收](./docs/manual-acceptance-checklist.md)
+- [故障排查](./docs/troubleshooting.md)
+- [扩展发布清单](./docs/wecom-extension-release-checklist.md)
+
 Playwright report、test results、trace/video 和运行时上传原件只保留在 CI 工作区，不进入产品 Evidence。发布 Payload 采用强 allowlist，只包含索引/脱敏报告、30 张约定 PNG 和固定名称的 UTF-8 日志，并扫描 Session、MinIO/S3/Qwen 凭据、Base URL、Bucket/Endpoint/Object Key、System Prompt、Provider Request/Response 与编码变体；Manifest 读取每张 PNG 的实际尺寸。完整策略见 [docs/TESTING.md](./docs/TESTING.md)。
 
 ## 权威文档
@@ -163,6 +209,8 @@ Playwright report、test results、trace/video 和运行时上传原件只保留
 - [AGENTS.md](./AGENTS.md)：产品、AI、安全与 Review 强制规则。
 - [MVP_SPEC](./docs/MVP_SPEC.md) 与 [MVP_ACCEPTANCE](./docs/MVP_ACCEPTANCE.md)：第一阶段范围和可验证清单。
 - [MVP_STATUS](./docs/MVP_STATUS.md)：版本、环境、风险、阻塞和最近验证。
+- [Product V2 Architecture](./docs/PRODUCT_V2_ARCHITECTURE.md)：企业身份、角色/部门、知识空间与需求提取边界。
+- [Product V2 Staging UAT](./docs/PRODUCT_V2_STAGING_UAT.md)：专用 Staging 部署与九项真实 UI 门禁。
 - [USER_FLOWS](./docs/USER_FLOWS.md) 与 [UI_GUIDELINES](./docs/UI_GUIDELINES.md)：流程和界面规范。
 - [ARCHITECTURE](./docs/ARCHITECTURE.md) 与 [DECISIONS](./docs/DECISIONS.md)：当前/未来架构和决策记录。
 - [TESTING](./docs/TESTING.md) 与 [DEPLOYMENT](./docs/DEPLOYMENT.md)：验证、Staging、生产保护和回滚。

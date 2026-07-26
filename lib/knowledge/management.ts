@@ -227,8 +227,8 @@ async function canMountKnowledgeSpace(input: {
         return roles.has(grant.subjectId);
     }
   });
+  if (input.principal.user.productRole !== "member") return true;
   if (matching.some((grant) => grant.effect === "deny")) return false;
-  if (input.principal.user.systemRole === "system_admin") return true;
   if (!orgMembership) return false;
   if (
     orgMembership.role === "organization_admin" ||
@@ -296,7 +296,7 @@ async function listMountableKnowledgeSpaceIds(input: {
           )
       )
       and (
-        ${input.principal.user.systemRole} = 'system_admin'
+        ${input.principal.user.productRole} in ('super_admin', 'admin')
         or space.project_id = ${input.target.id}
         or exists (
           select 1 from organization_members mount_org_admin
@@ -408,7 +408,7 @@ async function findOrganizationAccess(
     .limit(1);
   if (
     !record ||
-    (principal.user.systemRole !== "system_admin" && !record.role)
+    (principal.user.productRole === "member" && !record.role)
   ) {
     throw new KnowledgeManagementError(
       404,
@@ -426,7 +426,7 @@ async function requireOrganizationAdmin(
 ) {
   const access = await findOrganizationAccess(principal, organizationId, db);
   if (
-    principal.user.systemRole !== "system_admin" &&
+    principal.user.productRole === "member" &&
     access.role !== "organization_admin"
   ) {
     throw new KnowledgeManagementError(403, "FORBIDDEN", "无权管理组织");
@@ -466,7 +466,7 @@ async function findDepartmentAccess(
     .limit(1);
   if (
     !record ||
-    (principal.user.systemRole !== "system_admin" &&
+    (principal.user.productRole === "member" &&
       !record.organizationRole &&
       !record.departmentRole)
   ) {
@@ -486,7 +486,7 @@ async function requireDepartmentAdmin(
 ) {
   const access = await findDepartmentAccess(principal, departmentId, db);
   const allowed =
-    principal.user.systemRole === "system_admin" ||
+    principal.user.productRole !== "member" ||
     access.organizationRole === "organization_admin" ||
     access.departmentRole === "department_admin";
   if (!allowed) {
@@ -500,7 +500,7 @@ export async function listKnowledgeAdministration(
 ) {
   const db = getDb();
   const organizations =
-    principal.user.systemRole === "system_admin"
+    principal.user.productRole !== "member"
       ? await db.select().from(organization).orderBy(asc(organization.name))
       : await db
           .select({
@@ -534,7 +534,7 @@ export async function listKnowledgeAdministration(
       permissionAudits: [],
     };
   }
-  if (principal.user.systemRole === "system_admin") {
+  if (principal.user.productRole !== "member") {
     const [departments, spaces, grants, permissionAudits] = await Promise.all([
       db
         .select()
@@ -738,49 +738,6 @@ export async function listUploadableKnowledgeSpaces(input: {
     input.requestHeaders,
     { db },
   );
-  const matchingGrant = (effect: GrantEffect) => sql`
-    exists (
-      select 1
-      from knowledge_space_grants upload_grant
-      where upload_grant.knowledge_space_id = ${knowledgeSpace.id}
-        and upload_grant.permission = 'upload'
-        and upload_grant.effect = ${effect}::grant_effect
-        and (
-          (upload_grant.subject_type = 'organization' and upload_grant.subject_id = ${target.organizationId})
-          or (upload_grant.subject_type = 'project' and upload_grant.subject_id = ${target.id})
-          or (upload_grant.subject_type = 'user' and upload_grant.subject_id = ${input.principal.user.id})
-          or (
-            upload_grant.subject_type = 'department'
-            and upload_grant.subject_id = ${target.departmentId}
-          )
-          or (
-            upload_grant.subject_type = 'role'
-            and (
-              ${knowledgeSpace.departmentId} is null
-              or ${knowledgeSpace.departmentId} = ${target.departmentId}
-            )
-            and (
-              upload_grant.subject_id = ${target.projectRole}
-              or exists (
-                select 1 from organization_members upload_organization_member
-                where upload_organization_member.organization_id = ${target.organizationId}
-                  and upload_organization_member.user_id = ${input.principal.user.id}
-                  and upload_organization_member.is_active
-                  and upload_organization_member.role::text = upload_grant.subject_id
-              )
-              or exists (
-                select 1 from department_members upload_department_role
-                where upload_department_role.organization_id = ${target.organizationId}
-                  and upload_department_role.department_id = ${target.departmentId}
-                  and upload_department_role.user_id = ${input.principal.user.id}
-                  and upload_department_role.is_active
-                  and upload_department_role.role::text = upload_grant.subject_id
-              )
-            )
-          )
-        )
-    )
-  `;
   return db
     .select({
       id: knowledgeSpace.id,
@@ -795,21 +752,23 @@ export async function listUploadableKnowledgeSpaces(input: {
       and(
         eq(knowledgeSpace.organizationId, target.organizationId),
         eq(knowledgeSpace.isActive, true),
+        inArray(knowledgeSpace.type, ["department", "project"]),
+        or(
+          eq(knowledgeSpace.type, "department"),
+          eq(knowledgeSpace.projectId, target.id),
+        ),
         sql`(
           ${knowledgeSpace.departmentId} is null
           or ${knowledgeSpace.departmentId} = ${target.departmentId}
         )`,
-        sql`not (${matchingGrant("deny")})`,
         or(
-          eq(knowledgeSpace.projectId, target.id),
-          input.principal.user.systemRole === "system_admin" ? sql`true` : sql`false`,
-          sql`exists (
-            select 1 from organization_members upload_org_admin
-            where upload_org_admin.organization_id = ${target.organizationId}
-              and upload_org_admin.user_id = ${input.principal.user.id}
-              and upload_org_admin.role = 'organization_admin'
-              and upload_org_admin.is_active
-          )`,
+          input.principal.user.productRole !== "member" ? sql`true` : sql`false`,
+          and(
+            eq(knowledgeSpace.projectId, target.id),
+            target.projectRole && ["project_manager", "project_member"].includes(target.projectRole)
+              ? sql`true`
+              : sql`false`,
+          ),
           sql`exists (
             select 1 from department_members upload_dept_admin
             where upload_dept_admin.department_id = ${knowledgeSpace.departmentId}
@@ -818,13 +777,19 @@ export async function listUploadableKnowledgeSpaces(input: {
               and upload_dept_admin.is_active
           )`,
           sql`exists (
+            select 1 from departments upload_department_head
+            where upload_department_head.id = ${knowledgeSpace.departmentId}
+              and upload_department_head.organization_id = ${target.organizationId}
+              and upload_department_head.is_active
+              and ${input.principal.user.id} = any(upload_department_head.head_user_ids)
+          )`,
+          sql`exists (
             select 1 from knowledge_space_members upload_space_member
             where upload_space_member.knowledge_space_id = ${knowledgeSpace.id}
               and upload_space_member.user_id = ${input.principal.user.id}
-              and upload_space_member.role in ('manager', 'editor')
+              and upload_space_member.access_level = 'edit'
               and upload_space_member.is_active
           )`,
-          matchingGrant("allow"),
         ),
       ),
     )
@@ -858,7 +823,7 @@ export async function createOrganization(input: {
   slug: string;
   requestHeaders: Headers;
 }) {
-  if (input.principal.user.systemRole !== "system_admin") {
+  if (input.principal.user.productRole !== "super_admin") {
     throw new KnowledgeManagementError(403, "FORBIDDEN", "无权创建组织");
   }
   return getDb().transaction(async (tx) => {

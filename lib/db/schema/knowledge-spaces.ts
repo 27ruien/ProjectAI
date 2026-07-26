@@ -11,6 +11,7 @@ import {
 } from "drizzle-orm/pg-core";
 import {
   knowledgeSpaceMemberRoleEnum,
+  knowledgeAccessLevelEnum,
   knowledgeSpaceTypeEnum,
   knowledgeVisibilityEnum,
 } from "./enums";
@@ -82,11 +83,15 @@ export const knowledgeSpaceMember = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     role: knowledgeSpaceMemberRoleEnum("role").notNull(),
+    accessLevel: knowledgeAccessLevelEnum("access_level").notNull().default("view"),
     isActive: boolean("is_active").notNull().default(true),
     createdBy: text("created_by")
       .notNull()
       .references(() => user.id, { onDelete: "restrict" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
   },

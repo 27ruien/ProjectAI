@@ -11,6 +11,7 @@ export async function readUploadForm(request: Request): Promise<{
   file: File;
   displayName: string | null;
   knowledgeSpaceId: string | null;
+  temporaryWorkflowId: string | null;
 }> {
   const contentLength = Number(request.headers.get("content-length") || 0);
   if (
@@ -28,6 +29,7 @@ export async function readUploadForm(request: Request): Promise<{
   const file = form.get("file");
   const displayName = form.get("displayName");
   const knowledgeSpaceId = form.get("knowledgeSpaceId");
+  const temporaryWorkflowId = form.get("temporaryWorkflowId");
   if (!(file instanceof File)) {
     throw new FileOperationError(400, "INVALID_REQUEST", "请选择一个文件");
   }
@@ -42,7 +44,14 @@ export async function readUploadForm(request: Request): Promise<{
   ) {
     throw new FileOperationError(400, "INVALID_REQUEST", "知识空间无效");
   }
-  return { file, displayName, knowledgeSpaceId };
+  if (
+    temporaryWorkflowId !== null &&
+    (typeof temporaryWorkflowId !== "string" ||
+      !/^[0-9a-f-]{16,80}$/i.test(temporaryWorkflowId))
+  ) {
+    throw new FileOperationError(400, "INVALID_REQUEST", "临时工作流标识无效");
+  }
+  return { file, displayName, knowledgeSpaceId, temporaryWorkflowId };
 }
 
 export function idempotencyKeyFrom(request: Request): string {

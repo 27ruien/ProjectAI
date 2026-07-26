@@ -5,7 +5,7 @@ import type {
   ProjectUiPermissions,
   ViewerContext,
 } from "./ui-types";
-import { getProjectPermissions } from "./authorization";
+import { resolveProjectPermissions } from "./authorization";
 import type { AuthenticatedPrincipal } from "./session";
 import {
   listAuthorizedProjects,
@@ -14,15 +14,18 @@ import {
 
 function toUiPermissions(
   principal: AuthenticatedPrincipal,
-  projectRole: "project_manager" | "project_member" | "viewer" | null,
+  project: Parameters<typeof resolveProjectPermissions>[1],
 ): ProjectUiPermissions {
-  const permissions = getProjectPermissions(principal, projectRole);
+  const permissions = resolveProjectPermissions(principal, project);
   return {
-    canManageProject: permissions.canEditProject,
+    canViewProject: permissions.canViewProject,
+    canManageProject: permissions.canManageProject,
     canEditProject: permissions.canEditProject,
-    canManageMembers: permissions.canManageProjectMembers,
+    canManageMembers: permissions.canManageMembers,
+    canDeleteProject: permissions.canDeleteProject,
     canViewAudit: permissions.canViewAudit,
     canUploadDocuments: permissions.canUploadDocuments,
+    canInviteMembers: permissions.canInviteMembers,
     canManageDocuments: permissions.canManageDocuments,
   };
 }
@@ -32,7 +35,7 @@ export async function buildViewerContext(
 ): Promise<ViewerContext> {
   const projects = await listAuthorizedProjects(
     principal.user.id,
-    principal.user.systemRole,
+    principal.user.productRole,
   );
   const rosters = await listProjectRosterSummaries(
     projects.map((project) => project.id),
@@ -58,19 +61,20 @@ export async function buildViewerContext(
       projectRole: project.projectRole,
       managerDisplayName: roster?.managerDisplayName ?? null,
       memberCount: roster?.memberCount ?? 0,
-      permissions: toUiPermissions(principal, project.projectRole),
+      permissions: toUiPermissions(principal, project),
     };
   });
-  const admin = principal.user.systemRole === "system_admin";
+  const superAdmin = principal.user.productRole === "super_admin";
   return {
     user: {
       id: principal.user.id,
       email: principal.user.email,
       displayName: principal.user.displayName,
       systemRole: principal.user.systemRole,
+      productRole: principal.user.productRole,
     },
     projects: projectSummaries,
-    canCreateProject: admin,
-    canViewAudit: admin,
+    canCreateProject: true,
+    canViewAudit: superAdmin,
   };
 }

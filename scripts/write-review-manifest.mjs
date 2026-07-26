@@ -156,6 +156,7 @@ const requiredScreenshots = [
   "screenshots/ai-assistant-provider-error.png",
   "screenshots/ai-assistant-viewer.png",
   "screenshots/ai-assistant-thread-history.png",
+  "screenshots/daily-report-confirmed.png",
 ];
 
 const routes = {
@@ -167,6 +168,7 @@ const routes = {
   viewerReadonly: "/projects/project-001/overview",
   documents: "/projects/project-001/documents",
   projectAssistant: "/projects/project-001/knowledge",
+  dailyReport: "/daily-report",
 };
 
 const missingScreenshots = requiredScreenshots.filter(

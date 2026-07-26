@@ -46,9 +46,8 @@ export function proxy(request: NextRequest) {
     "localhost:3000",
     "projectai-staging:3000",
   ]);
-  return directHosts.has(host)
-    ? NextResponse.next()
-    : new NextResponse(null, { status: 404 });
+  if (!directHosts.has(host)) return new NextResponse(null, { status: 404 });
+  return NextResponse.next();
 }
 
 export const config = {

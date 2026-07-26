@@ -221,6 +221,10 @@ test("operations use scoped Compose services and storage verification stays read
   assert.ok(composeRun);
   assert.match(composeRun, /--interactive=false/);
   assert.match(composeRun, /--no-TTY/);
+  assert.match(composeRun, /timeout/);
+  assert.match(composeRun, /--signal=TERM/);
+  assert.match(composeRun, /--kill-after=30s/);
+  assert.match(composeRun, /45m/);
   assert.match(script, /compose_run=\(/);
   assert.match(script, /--no-deps/);
   assert.match(script, /--pull never/);
@@ -326,6 +330,22 @@ test("operations use scoped Compose services and storage verification stays read
   assert.match(script, /client_max_body_size 52m/);
 });
 
+test("Staging deployment bounds remote operations and keeps SSH sessions alive", async () => {
+  const script = await readFile(deployScript, "utf8");
+  assert.match(script, /command -v timeout >\/dev\/null 2>&1/);
+  assert.match(script, /ServerAliveInterval=15/);
+  assert.match(script, /ServerAliveCountMax=12/);
+  assert.match(script, /ConnectTimeout=10/);
+  assert.match(
+    script,
+    /--rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10'/,
+  );
+  assert.equal(
+    [...script.matchAll(/--kill-after=30s\n\s+45m/g)].length,
+    2,
+  );
+});
+
 test("rollback preserves the previous application health contract", async () => {
   const script = await readFile(deployScript, "utf8");
   const captureBlock = script.match(
@@ -376,7 +396,14 @@ test("Staging deployment retains Production and named-volume safety boundaries",
     readFile(deployScript, "utf8"),
     readFile(productionCompose, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(script, /DEFAULT_EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(
+    script,
+    /EXPECTED_BRANCH="\$\{PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH\}"/,
+  );
+  assert.match(script, /PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch/);
+  assert.ok(script.includes("--filter='protect /.local/***'"));
+  assert.ok(script.includes("--exclude '/.local/'"));
   assert.match(script, /REMOTE_DIR must remain isolated at \/srv\/projectai-staging/);
   assert.match(script, /PRODUCTION_STATE_BEFORE/);
   assert.match(script, /production_state_after.*PRODUCTION_STATE_BEFORE/s);
@@ -389,7 +416,10 @@ test("Staging deployment retains Production and named-volume safety boundaries",
 
 test("CI MinIO uses random masked credentials, a private tmpfs, and always cleans up", async () => {
   const workflow = await readFile(ciWorkflow, "utf8");
-  assert.match(workflow, /uses: actions\/checkout@v4\n\s+with:\n\s+fetch-depth: 0/);
+  assert.match(workflow, /uses: actions\/checkout@v7\n\s+with:\n\s+fetch-depth: 0/);
+  assert.match(workflow, /uses: actions\/setup-node@v7/);
+  assert.match(workflow, /uses: actions\/upload-artifact@v7/);
+  assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node|upload-artifact)@v4/);
   assert.match(workflow, /Start isolated MinIO with ephemeral credentials/);
   assert.match(workflow, /openssl rand -hex 32/);
   assert.match(workflow, /::add-mask::\$secret/);
@@ -655,7 +685,11 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
     readFile(productionCompose, "utf8"),
     readFile(groundedAiVerifier, "utf8"),
   ]);
-  assert.match(script, /EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(script, /DEFAULT_EXPECTED_BRANCH="agent\/phase1-project-knowledge-management"/);
+  assert.match(
+    script,
+    /EXPECTED_BRANCH="\$\{PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH\}"/,
+  );
   const lexical = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"');
   const evaluation = script.indexOf("npm run retrieval:evaluate");
   const shadow = script.indexOf('print "AI_ASSISTANT_RETRIEVAL_MODE=shadow"');

@@ -1,5 +1,40 @@
 # Testing
 
+## Product V2
+
+Local/CI gates:
+
+```bash
+npm run product-v2:migration-upgrade
+npm run test:product-v2
+npm run test:product-v2-integration
+npm run test:uat:database
+npm test
+npm run typecheck
+npm run lint
+git diff --check
+```
+
+`test:product-v2` covers the Production hard rejection of Mock WeCom and the fixed Staging test-login endpoint, exact Staging Host/Base Path/Origin checks, caller identity/role injection rejection, safe return targets, primary navigation, structured Requirement Extraction failures and one repair, temporary attachment lifecycle, knowledge membership, organization invariants, and the backup-first Staging deploy contract. `test:staging-test-login-integration` proves the explicit entry creates a sanitized database Session for the fixed Admin Seed, returns server-computed project permissions, writes login audit, supports normal logout, and rejects reuse of the ended Session. The broader database-backed integration suite covers Super Admin-only organization editing, member department-scoped project creation, department/project space grants, revoke, and last-Super-Admin serialization.
+
+The nine Staging browser commands and evidence restrictions are defined in [PRODUCT_V2_STAGING_UAT.md](./PRODUCT_V2_STAGING_UAT.md). They must be run against the exact deployed PR Head; API-only setup is not accepted as UI evidence.
+
+## 项目经理日报与 WeCom Connector
+
+```bash
+npm run timesheets:migration-upgrade
+npm run test:timesheets
+npm run test:timesheets-integration
+npm run extension:package
+npm run test:extension-package
+npm run test:extension-e2e
+npm run test:e2e -- --grep "项目经理从随记"
+```
+
+`test:timesheets` 使用 Fake Provider，覆盖 API 鉴权/同源合同、事实/Schema/项目/工时/完成状态/来源完整性/低置信度/总工时、消息 Origin、精确 replay、终态不可逆、状态机、restart unknown、日志脱敏和 Selector 禁止项。`test:timesheets-integration` 需要隔离 PostgreSQL 17/pgvector 与 Seed，覆盖 owner 隔离、无记录不调用、stale AI recovery、乐观锁、确认、来源项目冲突、失权、批次 replay、活动批次、伪造终态和 Flag。
+
+扩展 E2E 使用独立本机 HTTP Mock 和 mock-only bundle，不连接 Staging/Production/WeCom。它验证 ProjectAI 消息桥接、Popup JSON 预览、Service Worker 中断恢复、iframe 跨 realm 字段、正常/加班工时、当前提交人、分类不写、Dry Run、单条保存反馈与列表回读、auto-save 前置停止、登录/遮罩、重复项目、失败、unknown、DOM 变化、误配最终提交语义和最终提交计数。真实 DOM/Selector 未完成时，不得把 Mock 通过解释为真实 WeCom 验收通过。
+
 ## v0.8 B3-B2 测试分层
 
 1. TypeScript：`npm run typecheck`。

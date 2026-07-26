@@ -14,6 +14,11 @@ import {
   findUserById,
   updateLastLoginAt,
 } from "@/lib/db/repositories/user-repository";
+import {
+  isLegacyCredentialAuthEnabled,
+  isMockWeComAuthEnabled,
+} from "@/lib/auth/providers";
+import { validateStagingTestLoginRequest } from "@/lib/auth/staging-test-login";
 
 function isRoute(request: Request, suffix: string): boolean {
   return new URL(request.url).pathname.endsWith(`/api/auth${suffix}`);
@@ -128,6 +133,7 @@ async function auditFailedLogin(request: Request, response: Response): Promise<v
 async function finalizeSuccessfulLogin(
   request: Request,
   response: Response,
+  loginMethod: "credential" | "mock_wecom" | "staging_test",
 ): Promise<Response> {
   const payload = (await response.clone().json()) as {
     token?: string;
@@ -161,6 +167,7 @@ async function finalizeSuccessfulLogin(
           entityType: "session",
           entityId: createdSession.id,
           result: "succeeded",
+          metadata: { loginMethod },
           ...requestContext,
         },
         tx,
@@ -239,6 +246,7 @@ async function sanitizeSessionLookup(
         email: currentUser.email,
         displayName: currentUser.displayName,
         systemRole: currentUser.systemRole,
+        productRole: currentUser.productRole,
       },
     },
     response,
@@ -252,19 +260,70 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const isLogin = isRoute(request, "/sign-in/email");
+  const isCredentialLogin = isRoute(request, "/sign-in/email");
+  const isMockLogin = isRoute(request, "/sign-in/mock-wecom");
+  const isStagingTestLogin = isRoute(request, "/sign-in/staging-test");
+  const isLogin = isCredentialLogin || isMockLogin || isStagingTestLogin;
   const isLogout = isRoute(request, "/sign-out");
 
-  // This release deliberately exposes only the credential login and logout
-  // endpoints. Better Auth also ships account/session-management endpoints
+  // Expose only the configured identity-provider login and logout endpoints.
+  // Better Auth also ships account/session-management endpoints
   // whose response contracts can contain raw Session tokens, so they stay
   // unreachable until each one has an explicit, sanitized product contract.
   if (!isLogin && !isLogout) return unsupportedAuthRoute();
+  if (isCredentialLogin && !isLegacyCredentialAuthEnabled()) {
+    return unsupportedAuthRoute();
+  }
+  if (isMockLogin && !isMockWeComAuthEnabled()) {
+    return unsupportedAuthRoute();
+  }
+  if (isStagingTestLogin) {
+    const decision = validateStagingTestLoginRequest(request);
+    if (!decision.allowed) {
+      return jsonResponse(
+        {
+          error: {
+            code: decision.code,
+            message:
+              decision.code === "STAGING_TEST_LOGIN_DISABLED"
+                ? "Staging 测试登录未启用"
+                : "Staging 测试登录请求无效",
+          },
+        },
+        { status: 403 },
+      );
+    }
+  }
 
   try {
     requireTrustedMutationRequest(request);
   } catch (error) {
     return authorizationErrorResponse(error);
+  }
+
+  if (isStagingTestLogin) {
+    let payload: unknown;
+    try {
+      payload = await request.clone().json();
+    } catch {
+      payload = null;
+    }
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      Object.keys(payload).length !== 0
+    ) {
+      return jsonResponse(
+        {
+          error: {
+            code: "STAGING_TEST_LOGIN_PAYLOAD_INVALID",
+            message: "Staging 测试登录不接受身份或权限参数",
+          },
+        },
+        { status: 400 },
+      );
+    }
   }
 
   if (isLogout) {
@@ -306,16 +365,37 @@ export async function POST(request: Request): Promise<Response> {
     return jsonResponse(
       {
         error: {
-          code: response.status === 429 ? "RATE_LIMITED" : "INVALID_CREDENTIALS",
+          code:
+            response.status === 429
+              ? "RATE_LIMITED"
+              : isMockLogin
+                ? "MOCK_WECOM_SIGN_IN_FAILED"
+                : isStagingTestLogin
+                  ? "STAGING_TEST_LOGIN_FAILED"
+                : "INVALID_CREDENTIALS",
           message:
             response.status === 429
               ? "登录尝试过多，请稍后再试"
-              : "邮箱或密码不正确",
+              : isMockLogin
+                ? "企业微信测试身份登录失败"
+                : isStagingTestLogin
+                  ? "Staging 测试登录失败"
+                : "邮箱或密码不正确",
         },
       },
       { status: response.status === 429 ? 429 : 401, headers },
     );
   }
-  if (isLogin) return finalizeSuccessfulLogin(request, response);
+  if (isLogin) {
+    return finalizeSuccessfulLogin(
+      request,
+      response,
+      isStagingTestLogin
+        ? "staging_test"
+        : isMockLogin
+          ? "mock_wecom"
+          : "credential",
+    );
+  }
   return unsupportedAuthRoute();
 }

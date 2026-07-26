@@ -12,7 +12,7 @@ import { AuthorizationError, requireApiPrincipal } from "@/lib/auth/session";
 import { getDb } from "@/lib/db/client";
 import { getPostgresErrorCode } from "@/lib/db/errors";
 import { updateProject } from "@/lib/db/repositories/project-repository";
-import { serializeAuthorizedProject, serializeProject } from "@/lib/projects/serialization";
+import { serializeAuthorizedProject } from "@/lib/projects/serialization";
 import { department } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 
@@ -61,7 +61,7 @@ export async function GET(
       request.headers,
     );
     return jsonResponse({
-      project: serializeAuthorizedProject(authorizedProject),
+      project: serializeAuthorizedProject(authorizedProject, principal),
     });
   } catch (error) {
     return authorizationErrorResponse(error);
@@ -123,7 +123,13 @@ export async function PATCH(
 
       const updated = await updateProject(projectId, parsed.data, tx);
       return updated
-        ? ({ kind: "updated", project: updated } as const)
+        ? ({
+            kind: "updated",
+            project: {
+              ...updated,
+              projectRole: authorizedProject.projectRole,
+            },
+          } as const)
         : ({ kind: "not_found" } as const);
     });
 
@@ -140,7 +146,9 @@ export async function PATCH(
         { status: 404 },
       );
     }
-    return jsonResponse({ project: serializeProject(result.project) });
+    return jsonResponse({
+      project: serializeAuthorizedProject(result.project, principal),
+    });
   } catch (error) {
     if (getPostgresErrorCode(error) === "23514") {
       return jsonResponse(

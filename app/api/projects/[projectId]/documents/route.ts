@@ -90,7 +90,7 @@ export async function GET(
     const permissionIds = new Set(
       permissionScope.map((item) => item.documentId),
     );
-    const admin = principal.user.systemRole === "system_admin";
+    const admin = principal.user.productRole !== "member";
     const canUpload =
       admin ||
       authorizedProject.projectRole === "project_manager" ||
@@ -152,7 +152,7 @@ export async function POST(
       documentRoles.upload,
       request.headers,
     );
-    const { file, displayName, knowledgeSpaceId } = await readUploadForm(request);
+    const { file, displayName, knowledgeSpaceId, temporaryWorkflowId } = await readUploadForm(request);
     const result = await uploadDocument({
       principal,
       projectId,
@@ -161,6 +161,7 @@ export async function POST(
       file,
       displayName,
       knowledgeSpaceId,
+      temporaryWorkflowId: temporaryWorkflowId ?? undefined,
     });
     const versions = await listProjectDocumentVersions(projectId, result.document.id);
     const current = versions.find((version) => version.isCurrent) ?? null;

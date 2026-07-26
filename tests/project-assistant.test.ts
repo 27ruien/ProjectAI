@@ -167,6 +167,37 @@ describe("AI configuration and Secret boundaries", () => {
 });
 
 describe("Qwen adapter and Gateway", () => {
+  it("keeps completed, in-progress, and not-started timesheet states distinct in the fake provider", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const input = {
+      today_records: [
+        { id: "record-1", raw_text: "[UAT] 已完成验收，1 小时", project_id: "project-1", hours_hint: 1, status_hint: "completed" },
+        { id: "record-2", raw_text: "[UAT] 约 30 分钟，进行中", project_id: "project-1", hours_hint: 0.5, status_hint: "in_progress" },
+        { id: "record-3", raw_text: "[UAT] 尚未开始", project_id: "project-1", hours_hint: null, status_hint: "not_started" },
+      ],
+      available_projects: [{ id: "project-1" }],
+    };
+    const result = await provider.generate({
+      model: "qwen3.7-plus",
+      systemPrompt: "system",
+      userPrompt: `<timesheet_input_json>${JSON.stringify(input)}</timesheet_input_json>`,
+      purpose: "timesheet_generation",
+      responseFormat: "json_object",
+      timeoutMs: 1_000,
+      temperature: 0.2,
+      maxOutputTokens: 1_800,
+    });
+    const output = JSON.parse(result.text) as {
+      tasks: Array<{ status: string; hours: number | null; progress: number | null; review_fields: string[] }>;
+    };
+    assert.deepEqual(output.tasks.map((task) => task.status), ["completed", "in_progress", "pending"]);
+    assert.deepEqual(output.tasks.map((task) => task.hours), [1, 0.5, null]);
+    assert.deepEqual(output.tasks.map((task) => task.progress), [100, null, 0]);
+    assert.equal(output.tasks[0].review_fields.includes("hours"), false);
+    assert.equal(output.tasks[1].review_fields.includes("hours"), true);
+    assert.equal(output.tasks[2].review_fields.includes("hours"), true);
+  });
+
   it("uses the compatible chat endpoint and server Authorization without returning it", async () => {
     process.env.NEXT_PUBLIC_APP_ENV = "development";
     process.env.QWEN_API_KEY = "unit-test-qwen-secret";

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>ProjectAI 企业微信连接器配置</title>
+    <link rel="stylesheet" href="extension.css" />
+  </head>
+  <body class="options">
+    <main>
+      <h1>企业微信任务看板连接器</h1>
+      <p class="boundary">首次真实配置必须由用户手动登录并演示流程。不要在此输入账号、密码、Cookie、Token 或二维码。</p>
+      <label>企业微信任务看板 URL<input id="board-url" type="url" placeholder="由用户提供 WECOM_TASK_BOARD_URL" /></label>
+      <label>类型化 Selector Config<textarea id="selectors" rows="24" spellcheck="false"></textarea></label>
+      <button id="save" class="primary">校验权限并保存</button>
+      <p id="status" class="message">加载中</p>
+      <p>配置仅保存在 <code>chrome.storage.local</code>。真实选择器配置文件不会进入 Git。</p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

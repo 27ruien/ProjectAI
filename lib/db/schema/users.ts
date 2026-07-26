@@ -9,7 +9,7 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
-import { systemRoleEnum, userStatusEnum } from "./enums";
+import { productRoleEnum, systemRoleEnum, userStatusEnum } from "./enums";
 
 export const user = pgTable(
   "users",
@@ -22,6 +22,7 @@ export const user = pgTable(
     systemRole: systemRoleEnum("system_role")
       .notNull()
       .default("standard_user"),
+    productRole: productRoleEnum("product_role").notNull().default("member"),
     status: userStatusEnum("status").notNull().default("active"),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()

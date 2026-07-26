@@ -195,6 +195,24 @@ export function archiveProjectDocument(
   );
 }
 
+export function finalizeTemporaryWorkflowDocument(input: {
+  projectId: string;
+  documentId: string;
+  workflowId: string;
+  action: "promote" | "discard";
+  targetKnowledgeSpaceId?: string;
+}): Promise<{ documentId: string; action: "promote" | "discard" }> {
+  return jsonMutation(
+    documentPath(input.projectId, input.documentId, "/temporary"),
+    "POST",
+    {
+      workflowId: input.workflowId,
+      action: input.action,
+      targetKnowledgeSpaceId: input.targetKnowledgeSpaceId,
+    },
+  );
+}
+
 export function restoreProjectDocument(
   projectId: string,
   documentId: string,
@@ -257,6 +275,7 @@ export type UploadProjectDocumentInput = {
   file: File;
   displayName?: string;
   knowledgeSpaceId?: string;
+  temporaryWorkflowId?: string;
   idempotencyKey: string;
   signal?: AbortSignal;
   onProgress?: (progress: DocumentUploadProgress) => void;
@@ -333,6 +352,9 @@ export function uploadProjectDocument(
     if (!input.documentId && input.knowledgeSpaceId) {
       form.set("knowledgeSpaceId", input.knowledgeSpaceId);
     }
+    if (!input.documentId && input.temporaryWorkflowId) {
+      form.set("temporaryWorkflowId", input.temporaryWorkflowId);
+    }
     xhr.send(form);
   });
 }
@@ -386,6 +408,27 @@ export async function downloadProjectDocumentVersion(
   anchor.click();
   anchor.remove();
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+export async function readProjectDocumentVersionFile(
+  projectId: string,
+  documentId: string,
+  versionId: string,
+  fallbackFilename: string,
+): Promise<File> {
+  const response = await fetch(
+    documentPath(
+      projectId,
+      documentId,
+      `/versions/${encodeURIComponent(versionId)}/download`,
+    ),
+    { credentials: "include", cache: "no-store" },
+  );
+  if (!response.ok) throw await errorFromResponse(response);
+  const blob = await response.blob();
+  return new File([blob], responseFilename(response, fallbackFilename), {
+    type: blob.type || "application/octet-stream",
+  });
 }
 
 export function documentErrorMessage(error: unknown): string {

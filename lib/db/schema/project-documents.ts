@@ -38,6 +38,10 @@ export const projectDocument = pgTable(
       .notNull()
       .default("private"),
     displayName: varchar("display_name", { length: 240 }).notNull(),
+    workflowTemporary: boolean("workflow_temporary").notNull().default(false),
+    temporaryWorkflowId: text("temporary_workflow_id"),
+    temporaryExpiresAt: timestamp("temporary_expires_at", { withTimezone: true, mode: "date" }),
+    temporaryPromotedAt: timestamp("temporary_promoted_at", { withTimezone: true, mode: "date" }),
     status: documentStatusEnum("document_status").notNull().default("pending"),
     createdBy: text("created_by")
       .notNull()
@@ -80,6 +84,19 @@ export const projectDocument = pgTable(
         ${table.status} <> 'archived'
         and ${table.archivedBy} is null
         and ${table.archivedAt} is null
+      )`,
+    ),
+    check(
+      "project_documents_temporary_state_check",
+      sql`(
+        ${table.workflowTemporary}
+        and ${table.temporaryWorkflowId} is not null
+        and ${table.temporaryExpiresAt} is not null
+        and ${table.temporaryPromotedAt} is null
+      ) or (
+        not ${table.workflowTemporary}
+        and ${table.temporaryWorkflowId} is null
+        and ${table.temporaryExpiresAt} is null
       )`,
     ),
   ],

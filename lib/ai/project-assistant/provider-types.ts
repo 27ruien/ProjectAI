@@ -3,9 +3,12 @@ export type ProjectAssistantProviderPurpose =
   | "repair"
   | "probe"
   | "requirement_extraction"
+  | "requirement_repair"
   | "action_generation"
   | "risk_generation"
-  | "weekly_report";
+  | "weekly_report"
+  | "timesheet_generation"
+  | "timesheet_repair";
 
 export type ProjectAssistantProviderRequest = {
   model: string;

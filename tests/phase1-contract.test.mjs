@@ -74,14 +74,15 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
     assert.match(compose, /PROJECTAI_SEED_ENVIRONMENT/);
   });
 
-  it("exposes real management routes and UI instead of a static knowledge catalog", async () => {
+  it("exposes the Product V2 knowledge workspace instead of a static catalog", async () => {
     const [page, projectPanel, unmountRoute] = await Promise.all([
       source("components/system/global-knowledge-page.tsx"),
       source("components/knowledge/ProjectKnowledgeSourcesPanel.tsx"),
       source("app/api/projects/[projectId]/knowledge-sources/[sourceId]/route.ts"),
     ]);
-    assert.match(page, /\/api\/organizations/);
-    assert.match(page, /新增授权规则/);
+    assert.match(page, /\/api\/knowledge-spaces/);
+    assert.match(page, /新建项目空间/);
+    assert.match(page, /管理空间成员/);
     assert.doesNotMatch(page, /const assets =/);
     assert.match(projectPanel, /knowledge-sources/);
     assert.match(projectPanel, /保存部门/);
@@ -104,8 +105,7 @@ describe("Phase 1 organization and knowledge authorization contract", () => {
       management,
       /input\.type === "department" \|\| input\.type === "restricted"/,
     );
-    assert.match(management, /upload_grant\.permission = 'upload'/);
-    assert.match(management, /matchingGrant\("deny"\)/);
+    assert.match(management, /upload_space_member\.access_level = 'edit'/);
     assert.match(management, /noMatchingSpaceViewDeny/);
     assert.match(
       management,

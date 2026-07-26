@@ -34,20 +34,19 @@ test.describe("未认证访问与 Session 生命周期", () => {
   test("未认证访问工作台和项目深层路由都会回到登录页", async ({ page }) => {
     await page.goto(appPath("/dashboard"));
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
-    await expect(page.getByRole("heading", { name: "登录工作台" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "企业微信登录" })).toBeVisible();
     await reviewScreenshot(page, "login.png");
 
     await page.goto(appPath(`/projects/${projectA.id}/overview`));
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
   });
 
-  test("登录页支持可访问表单和密码显示切换", async ({ page }) => {
+  test("登录页不再暴露邮箱、密码或用户可见 Session 管理", async ({ page }) => {
     await page.goto(appPath("/login"));
-    await expect(page.getByLabel("邮箱")).toBeVisible();
-    await expect(page.getByLabel("密码", { exact: true })).toHaveAttribute("type", "password");
-    await page.getByRole("button", { name: "显示密码" }).click();
-    await expect(page.getByLabel("密码", { exact: true })).toHaveAttribute("type", "text");
-    await expect(page.getByRole("button", { name: "登录", exact: true })).toBeDisabled();
+    await expect(page.getByRole("heading", { name: "企业微信登录" })).toBeVisible();
+    await expect(page.getByLabel("邮箱")).toHaveCount(0);
+    await expect(page.getByLabel("密码", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/Session 管理/)).toHaveCount(0);
   });
 
   test("登录后刷新保持 Session，退出后旧 Session 不再访问受保护页面", async ({ page }) => {
@@ -67,7 +66,7 @@ test.describe("未认证访问与 Session 生命周期", () => {
 
     await page.goto(appPath("/dashboard"));
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
-    await expect(page.getByRole("heading", { name: "登录工作台" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "企业微信登录" })).toBeVisible();
     await page.waitForLoadState("networkidle");
   });
 });

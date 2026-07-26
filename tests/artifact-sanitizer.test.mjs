@@ -46,6 +46,7 @@ const requiredScreenshots = [
   "screenshots/ai-assistant-provider-error.png",
   "screenshots/ai-assistant-viewer.png",
   "screenshots/ai-assistant-thread-history.png",
+  "screenshots/daily-report-confirmed.png",
 ];
 const headSha = "a".repeat(40);
 const testedMergeSha = "b".repeat(40);

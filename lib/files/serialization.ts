@@ -102,7 +102,7 @@ export function documentPermissions(
     managePermissions?: boolean;
   },
 ): ProjectDocumentPermissionsDto {
-  const admin = principal.user.systemRole === "system_admin";
+  const admin = principal.user.productRole !== "member";
   const writer = admin || projectRole === "project_manager" || projectRole === "project_member";
   const manager = admin || projectRole === "project_manager";
   return {
@@ -142,6 +142,8 @@ export async function serializeProjectDocument(
     knowledgeSpaceId: document.knowledgeSpaceId,
     visibility: document.visibility,
     displayName: document.displayName,
+    workflowTemporary: document.workflowTemporary,
+    temporaryExpiresAt: document.temporaryExpiresAt?.toISOString() ?? null,
     status: document.status,
     createdBy: { displayName: creator?.displayName ?? "项目成员" },
     createdAt: document.createdAt.toISOString(),
@@ -189,6 +191,8 @@ export async function serializeDocumentList(
         knowledgeSpaceId: document.knowledgeSpaceId,
         visibility: document.visibility,
         displayName: document.displayName,
+        workflowTemporary: document.workflowTemporary,
+        temporaryExpiresAt: document.temporaryExpiresAt?.toISOString() ?? null,
         status: document.status,
         createdBy: { displayName: creator?.displayName ?? "项目成员" },
         createdAt: document.createdAt.toISOString(),

@@ -17,6 +17,7 @@ import {
   type ProjectRole,
   type ProjectStage,
   type ProjectStatus,
+  type ProductRole,
   type SystemRole,
 } from "../../lib/db/schema";
 import { normalizeEmail } from "../../lib/db/repositories/user-repository";
@@ -37,18 +38,19 @@ type SeedUserSpec = {
   id: string;
   displayName: string;
   systemRole: SystemRole;
+  productRole: ProductRole;
 };
 
 const seedUsers: SeedUserSpec[] = [
-  { key: "ADMIN", id: "seed-admin", displayName: "[TEST] 系统管理员", systemRole: "system_admin" },
-  { key: "ORG_ADMIN", id: "seed-org-admin", displayName: "[TEST] 组织管理员", systemRole: "standard_user" },
-  { key: "DEPT_ADMIN", id: "seed-dept-admin", displayName: "[TEST] 部门管理员", systemRole: "standard_user" },
-  { key: "MANAGER_A", id: "seed-manager-a", displayName: "[TEST] 项目经理 A", systemRole: "standard_user" },
-  { key: "MANAGER_B", id: "seed-manager-b", displayName: "[TEST] 项目经理 B", systemRole: "standard_user" },
-  { key: "MEMBER_A", id: "seed-member-a", displayName: "[TEST] 项目成员 A", systemRole: "standard_user" },
-  { key: "VIEWER_A", id: "seed-viewer-a", displayName: "[TEST] 只读成员 A", systemRole: "standard_user" },
-  { key: "OTHER_DEPT", id: "seed-other-dept", displayName: "[TEST] 其他部门用户", systemRole: "standard_user" },
-  { key: "OUTSIDER", id: "seed-outsider", displayName: "[TEST] 组织外用户", systemRole: "standard_user" },
+  { key: "ADMIN", id: "seed-admin", displayName: "[TEST] 系统管理员", systemRole: "system_admin", productRole: "super_admin" },
+  { key: "ORG_ADMIN", id: "seed-org-admin", displayName: "[TEST] 组织管理员", systemRole: "standard_user", productRole: "admin" },
+  { key: "DEPT_ADMIN", id: "seed-dept-admin", displayName: "[TEST] 部门管理员", systemRole: "standard_user", productRole: "member" },
+  { key: "MANAGER_A", id: "seed-manager-a", displayName: "[TEST] 项目经理 A", systemRole: "standard_user", productRole: "member" },
+  { key: "MANAGER_B", id: "seed-manager-b", displayName: "[TEST] 项目经理 B", systemRole: "standard_user", productRole: "member" },
+  { key: "MEMBER_A", id: "seed-member-a", displayName: "[TEST] 项目成员 A", systemRole: "standard_user", productRole: "member" },
+  { key: "VIEWER_A", id: "seed-viewer-a", displayName: "[TEST] 只读成员 A", systemRole: "standard_user", productRole: "member" },
+  { key: "OTHER_DEPT", id: "seed-other-dept", displayName: "[TEST] 其他部门用户", systemRole: "standard_user", productRole: "member" },
+  { key: "OUTSIDER", id: "seed-outsider", displayName: "[TEST] 组织外用户", systemRole: "standard_user", productRole: "member" },
 ];
 
 type SeedProject = {
@@ -168,6 +170,7 @@ async function seedIdentity(spec: SeedUserSpec): Promise<string> {
       displayName: credentials.displayName,
       emailVerified: true,
       systemRole: spec.systemRole,
+      productRole: spec.productRole,
       status: "active",
     });
   }
@@ -194,7 +197,7 @@ async function seedIdentity(spec: SeedUserSpec): Promise<string> {
 async function main(): Promise<void> {
   const seedEnvironment = requiredEnvironment("PROJECTAI_SEED_ENVIRONMENT");
   if (
-    !["test", "staging"].includes(seedEnvironment) ||
+    seedEnvironment !== "test" ||
     process.env.NEXT_PUBLIC_APP_ENV === "production"
   ) {
     throw new Error("SEED_PRODUCTION_FORBIDDEN");
@@ -244,8 +247,8 @@ async function main(): Promise<void> {
     .insert(organization)
     .values({
       id: organizationId,
-      name: "ProjectAI Test Organization",
-      slug: "projectai-test-organization",
+      name: "Kivisense",
+      slug: "kivisense",
       createdBy: organizationCreator,
     })
     .onConflictDoNothing({ target: organization.id });

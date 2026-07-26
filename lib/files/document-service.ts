@@ -269,6 +269,7 @@ async function reserveUpload(input: {
   detectedMimeType: string;
   sizeBytes: number;
   sha256: string;
+  temporaryWorkflowId?: string | null;
   requestHeaders: Headers;
 }): Promise<UploadReservation> {
   const existing = await replayForUpload(
@@ -345,6 +346,11 @@ async function reserveUpload(input: {
             knowledgeSpaceId: destination.id,
             visibility: destination.visibility,
             displayName: input.displayName,
+            workflowTemporary: Boolean(input.temporaryWorkflowId),
+            temporaryWorkflowId: input.temporaryWorkflowId ?? null,
+            temporaryExpiresAt: input.temporaryWorkflowId
+              ? new Date(Date.now() + 24 * 60 * 60 * 1_000)
+              : null,
             status: "pending",
             createdBy: input.principal.user.id,
           })
@@ -652,6 +658,7 @@ export async function uploadDocument(input: {
   file: File;
   displayName: string | null;
   knowledgeSpaceId?: string | null;
+  temporaryWorkflowId?: string;
   documentId?: string;
   storage?: ObjectStorage;
 }): Promise<{
@@ -721,6 +728,7 @@ export async function uploadDocument(input: {
         detectedMimeType: validated.detectedMimeType,
         sizeBytes: validated.sizeBytes,
         sha256: validated.sha256,
+        temporaryWorkflowId: input.temporaryWorkflowId ?? null,
         requestHeaders: input.requestHeaders,
       });
   if (reservation.replayed) {
@@ -867,6 +875,114 @@ export async function setCurrentDocumentVersion(input: {
       tx,
     );
     return updated;
+    },
+  });
+}
+
+export async function finalizeTemporaryWorkflowDocument(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  documentId: string;
+  workflowId: string;
+  action: "promote" | "discard";
+  targetKnowledgeSpaceId?: string;
+  requestHeaders: Headers;
+}): Promise<ProjectDocumentRecord> {
+  return authorizedDocumentTransaction({
+    principal: input.principal,
+    projectId: input.projectId,
+    allowedRoles: documentRoles.upload,
+    requestHeaders: input.requestHeaders,
+    operation: async (tx) => {
+      const document = await findProjectDocument(input.projectId, input.documentId, tx, {
+        lockForUpdate: true,
+      });
+      if (!document || !document.workflowTemporary || document.temporaryWorkflowId !== input.workflowId) {
+        throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "临时附件不存在");
+      }
+      if (
+        document.createdBy !== input.principal.user.id &&
+        input.principal.user.productRole === "member"
+      ) {
+        throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "临时附件不存在");
+      }
+      const now = new Date();
+      if (
+        input.action === "promote" &&
+        document.temporaryExpiresAt &&
+        document.temporaryExpiresAt.getTime() <= now.getTime()
+      ) {
+        throw new FileOperationError(
+          409,
+          "TEMPORARY_DOCUMENT_EXPIRED",
+          "临时附件已过期，只能退出活动索引后重新上传",
+        );
+      }
+      const target =
+        input.action === "promote" && input.targetKnowledgeSpaceId
+          ? await requireUploadableKnowledgeSpace({
+              principal: input.principal,
+              projectId: input.projectId,
+              knowledgeSpaceId: input.targetKnowledgeSpaceId,
+              requestHeaders: input.requestHeaders,
+              db: tx,
+            })
+          : null;
+      const [updated] = await tx
+        .update(projectDocument)
+        .set(
+          input.action === "promote"
+            ? {
+                workflowTemporary: false,
+                temporaryWorkflowId: null,
+                temporaryExpiresAt: null,
+                temporaryPromotedAt: now,
+                ...(target
+                  ? {
+                      knowledgeSpaceId: target.id,
+                      visibility: target.visibility,
+                    }
+                  : {}),
+                updatedAt: now,
+              }
+            : {
+                status: "archived",
+                archivedBy: input.principal.user.id,
+                archivedAt: now,
+                updatedAt: now,
+              },
+        )
+        .where(eq(projectDocument.id, document.id))
+        .returning();
+      if (input.action === "discard") {
+        await deactivateDocumentIndex(
+          input.projectId,
+          input.documentId,
+          input.principal.user.id,
+          "temporary_workflow_discarded",
+          tx,
+        );
+      }
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          projectId: input.projectId,
+          eventType:
+            input.action === "promote"
+              ? "temporary_workflow_document_promoted"
+              : "temporary_workflow_document_discarded",
+          entityType: "project_document",
+          entityId: input.documentId,
+          result: "succeeded",
+          metadata: {
+            workflowIdHash: createHash("sha256").update(input.workflowId).digest("hex"),
+            targetKnowledgeSpaceId: target?.id ?? null,
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+      return updated;
     },
   });
 }
