@@ -5,7 +5,9 @@ import { workflowErrorResponse } from "@/lib/workflows/http";
 
 export async function POST(request: Request, context: { params: Promise<{ projectId: string }> }) {
   try {
-    requireTrustedMutationRequest(request);
+    requireTrustedMutationRequest(request, {
+      allowedMediaTypes: ["multipart/form-data"],
+    });
     const principal = await requireApiPrincipal(request.headers);
     const { projectId } = await context.params;
     const form = await request.formData();

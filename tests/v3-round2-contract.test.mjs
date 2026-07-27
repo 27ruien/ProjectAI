@@ -43,9 +43,10 @@ test("workflow persistence uses compound isolation, leases, provenance, and huma
 });
 
 test("Staging gives Qwen and audio capability only to the app and workflow worker", async () => {
-  const [compose, deploy] = await Promise.all([
+  const [compose, deploy, audioUploadRoute] = await Promise.all([
     read("docker-compose.staging.yml"),
     read("scripts/deploy-product-v2-staging.sh"),
+    read("app/api/projects/[projectId]/workflows/meeting-minutes/route.ts"),
   ]);
   assert.match(compose, /projectai-workflow-worker:/);
   assert.match(compose, /AUDIO_DOWNLOAD_SIGNING_KEY_FILE: \/run\/secrets\/audio_download_signing_key/);
@@ -53,5 +54,6 @@ test("Staging gives Qwen and audio capability only to the app and workflow worke
   assert.match(deploy, /STAGING_WORKFLOW_WORKER_IMAGE/);
   assert.match(deploy, /openssl rand -base64 48/);
   assert.match(deploy, /project-ai-os-staging-workflow-worker/);
+  assert.match(audioUploadRoute, /allowedMediaTypes: \["multipart\/form-data"\]/);
   assert.doesNotMatch(compose.match(/\n  projectai-document-worker:\n[\s\S]*?\n  projectai-embedding-worker:\n/)?.[0] ?? "", /qwen_api_key|audio_download_signing_key/);
 });
