@@ -224,8 +224,8 @@ describe("V3 workflow artifact contracts", () => {
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
       publicParameters: [],
       events: [
-        { eventName: `${sharedPrefix}_one`, coreEvent: true, eventType: "result", description: "结果一", eventId: `${sharedPrefix}_one`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_one`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
-        { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: "推荐结果", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+        { eventName: `${sharedPrefix}_one`, coreEvent: true, eventType: "result", description: "结果一", eventId: `${sharedPrefix}_one`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_one`, parameterValueRule: "stable", parameterValueType: [{ type: "枚举" }], note: "", developerFeedback: "pending", citations: ["E1"] },
+        { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: "推荐结果", parameterValueRule: "stable", parameterValueType: ["string"], note: "", developerFeedback: "pending", citations: ["E1"] },
       ],
       requirementEventCoverage: [{ requirement: { id: "REQ-001", title: "生成推荐" }, eventId: { eventName: `${sharedPrefix}_one` }, status: "covered" }],
       pageEventMatrix: [{ page: 12, eventId: { id: `${sharedPrefix}_two` }, status: "covered" }],
@@ -235,6 +235,7 @@ describe("V3 workflow artifact contracts", () => {
     if (!parsed.success) return;
     assert.match(parsed.data.events[0]!.parameterKey, /^[a-z][a-z0-9_]{0,39}$/);
     assert.match(parsed.data.events[1]!.parameterKey, /^x_[a-f0-9]{8}$/);
+    assert.equal(parsed.data.events[0]!.parameterValueType, "string");
     assert.notEqual(parsed.data.events[0]!.parameterKey, parsed.data.events[1]!.parameterKey);
     assert.notEqual(parsed.data.events[0]!.eventId, parsed.data.events[1]!.eventId);
     assert.equal(parsed.data.requirementEventCoverage[0]!.requirement, "REQ-001");

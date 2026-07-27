@@ -242,13 +242,21 @@ function normalizeGa4Boolean(value: unknown): unknown {
 }
 
 function normalizeGa4ValueType(value: unknown): unknown {
+  if (Array.isArray(value)) return value.length === 1 ? normalizeGa4ValueType(value[0]) : value;
+  if (value && typeof value === "object") {
+    const item = value as Record<string, unknown>;
+    for (const key of ["valueType", "type", "name"] as const) {
+      if (item[key] !== undefined) return normalizeGa4ValueType(item[key]);
+    }
+    return value;
+  }
   if (typeof value !== "string") return value;
   const normalized = value.trim().toLowerCase();
-  if (["string", "text", "enum", "字符串", "文本"].includes(normalized)) return "string";
-  if (["number", "integer", "float", "数字", "整数", "浮点数"].includes(normalized)) return "number";
+  if (["string", "text", "enum", "enumeration", "string(enum)", "enum(string)", "string/enum", "enum/string", "字符串", "文本", "枚举"].includes(normalized)) return "string";
+  if (["number", "integer", "float", "double", "decimal", "numeric", "数字", "数值", "整数", "浮点数"].includes(normalized)) return "number";
   if (["boolean", "bool", "布尔"].includes(normalized)) return "boolean";
-  if (["date", "datetime", "timestamp", "日期", "时间"].includes(normalized)) return "date";
-  if (["array", "list", "数组", "列表"].includes(normalized)) return "array";
+  if (["date", "datetime", "timestamp", "iso_date", "iso8601", "日期", "时间"].includes(normalized)) return "date";
+  if (["array", "list", "string[]", "string array", "数组", "列表"].includes(normalized)) return "array";
   return value;
 }
 
