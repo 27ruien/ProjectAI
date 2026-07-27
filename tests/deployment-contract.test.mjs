@@ -778,9 +778,10 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
 test("Staging banner states the B3-B2 retrieval boundary accurately", async () => {
   const banner = await readFile(environmentBanner, "utf8");
   assert.match(banner, /v0\.8 评测驱动的 Hybrid Retrieval/);
-  assert.match(banner, /Query Embedding、精确向量检索与 RRF/);
+  assert.match(banner, /Query Embedding、精确向量检索、RRF 与受控 Rerank/);
   assert.match(banner, /知识搜索仍为词法检索/);
-  assert.match(banner, /ANN 与 Rerank 尚未启用/);
+  assert.match(banner, /OCR 与 ANN 尚未启用/);
+  assert.doesNotMatch(banner, /Rerank 尚未启用/);
   assert.doesNotMatch(banner, /AI 综合回答尚未启用/);
 });
 
