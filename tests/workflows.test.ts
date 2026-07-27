@@ -33,6 +33,7 @@ import {
 import { buildAudioProviderUrl } from "../lib/workflows/audio-service";
 import { WorkflowError } from "../lib/workflows/errors";
 import { GatewayMeetingSummaryProvider } from "../lib/workflows/meeting-summary-provider";
+import { requireWorkflowModelProfile } from "../lib/workflows/model-profiles";
 import { canonicalJsonDigest } from "../lib/workflows/digest";
 import { buildArtifactPrompt } from "../lib/workflows/prompt";
 import type { WorkflowArtifactPayload } from "../lib/workflows/service";
@@ -509,6 +510,24 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(result.latencyMs, 40);
   });
 
+  it("allows an explicitly unknown action owner without inventing a speaker", async () => {
+    const content = {
+      background: "虚构会议",
+      topics: ["验收"],
+      keyPoints: [{ text: "需要后续确认负责人。", segmentIds: ["S1"] }],
+      decisions: [],
+      proposals: [],
+      openQuestions: ["负责人待确认"],
+      risks: [],
+      actions: [{ text: "确认负责人", owner: "TBD", deadline: "TBD", dependencies: [], segmentIds: ["S1"] }],
+    };
+    const provider = new GatewayMeetingSummaryProvider(() => ({
+      generate: async () => ({ provider: "fake" as const, requestedModel: "primary", actualModel: "primary", fallbackUsed: false, text: JSON.stringify(content), inputTokens: 1, outputTokens: 1, totalTokens: 2, providerRequestId: null, latencyMs: 1 }),
+    }));
+    const result = await provider.summarize([{ id: "S1", startMs: 0, endMs: 1_000, speaker: "Speaker 1", text: "负责人稍后确认。" }]);
+    assert.equal(result.content.actions[0]!.owner, "TBD");
+  });
+
   it("rejects a meeting summary after one bounded repair attempt", async () => {
     let calls = 0;
     const provider = new GatewayMeetingSummaryProvider(() => ({
@@ -522,6 +541,69 @@ describe("V3 workflow artifact contracts", () => {
       (error: unknown) => error instanceof WorkflowError && error.code === "MEETING_SUMMARY_INVALID",
     );
     assert.equal(calls, 2);
+  });
+
+  it("chunks a bounded long transcript, reauthorizes every call, and merges original segment labels", async () => {
+    const generated = ["S1", "S2", "merge"];
+    let authorizations = 0;
+    const provider = new GatewayMeetingSummaryProvider(
+      () => ({
+        generate: async () => {
+          const current = generated.shift();
+          const segmentIds = current === "merge" ? ["S1", "S2"] : [current!];
+          const content = {
+            background: "虚构长会议",
+            topics: ["验收"],
+            keyPoints: [{ text: "已分段核对。", segmentIds }],
+            decisions: [],
+            proposals: [],
+            openQuestions: [],
+            risks: [],
+            actions: [{ text: "继续核对", owner: "Speaker 1", deadline: "TBD", dependencies: [], segmentIds }],
+          };
+          return { provider: "fake" as const, requestedModel: "primary", actualModel: "primary", fallbackUsed: false, text: JSON.stringify(content), inputTokens: 1, outputTokens: 1, totalTokens: 2, providerRequestId: null, latencyMs: 1 };
+        },
+      }),
+      async () => { authorizations += 1; },
+    );
+    const result = await provider.summarize([
+      { id: "S1", startMs: 0, endMs: 1_000, speaker: "Speaker 1", text: "甲".repeat(13_000) },
+      { id: "S2", startMs: 1_000, endMs: 2_000, speaker: "Speaker 1", text: "乙".repeat(13_000) },
+    ]);
+    assert.equal(authorizations, 3);
+    assert.deepEqual(result.content.keyPoints[0]!.segmentIds, ["S1", "S2"]);
+    assert.equal(result.inputTokens, 3);
+    assert.equal(result.outputTokens, 3);
+  });
+
+  it("rejects transcript input beyond the controlled total character bound before a Provider call", async () => {
+    let calls = 0;
+    const provider = new GatewayMeetingSummaryProvider(() => ({
+      generate: async () => {
+        calls += 1;
+        throw new Error("must not be called");
+      },
+    }));
+    await assert.rejects(
+      provider.summarize(Array.from({ length: 13 }, (_, index) => ({
+        id: `S${index + 1}`,
+        startMs: index * 1_000,
+        endMs: (index + 1) * 1_000,
+        speaker: "Speaker 1",
+        text: "甲".repeat(20_000),
+      }))),
+      (error: unknown) => error instanceof WorkflowError && error.code === "MEETING_TRANSCRIPT_TOO_LARGE",
+    );
+    assert.equal(calls, 0);
+  });
+
+  it("binds each workflow alias to the trusted AI Gateway profile", () => {
+    assert.equal(requireWorkflowModelProfile("requirement_framework", "qwen-requirement-framework-cn-v1").profileId, "qwen-project-assistant-cn-v1");
+    assert.equal(requireWorkflowModelProfile("meeting_minutes", "qwen-meeting-minutes-cn-v1").profileId, "qwen-project-assistant-cn-v1");
+    assert.throws(
+      () => requireWorkflowModelProfile("meeting_minutes", "qwen-requirement-framework-cn-v1"),
+      /工作流模型配置无效/,
+    );
   });
 });
 
@@ -575,6 +657,35 @@ describe("V3 artifact exports and audio provider boundary", () => {
     assert.equal(body.model, "paraformer-v2");
     assert.equal(body.parameters.diarization_enabled, true);
     assert.equal(requests.some((item) => item.url.includes("/api/v1/tasks/")), true);
+  });
+
+  it("rejects an oversized ASR result stream even without Content-Length", async () => {
+    process.env.QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    const provider = new AlibabaParaformerProvider(async (input) => {
+      const url = String(input);
+      if (url.includes("/tasks/")) {
+        return new Response(JSON.stringify({
+          output: {
+            task_status: "SUCCEEDED",
+            results: [{
+              subtask_status: "SUCCEEDED",
+              transcription_url: "https://dashscope-result.oss-cn-beijing.aliyuncs.com/oversized.json",
+            }],
+          },
+        }), { status: 200 });
+      }
+      const chunk = new Uint8Array(1024 * 1024);
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let index = 0; index < 21; index += 1) controller.enqueue(chunk);
+          controller.close();
+        },
+      }), { status: 200 });
+    });
+    await assert.rejects(
+      provider.poll("12345678-1234-1234-1234-123456789012"),
+      (error: unknown) => error instanceof WorkflowError && error.code === "AUDIO_RESULT_TOO_LARGE",
+    );
   });
 
   it("creates a one-hour HTTPS audio capability bound to run and source", async () => {

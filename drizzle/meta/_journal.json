@@ -246,6 +246,13 @@
       "when": 1785099182792,
       "tag": "0034_lonely_dreaming_celestial",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1785169748652,
+      "tag": "0035_slow_big_bertha",
+      "breakpoints": true
     }
   ]
 }

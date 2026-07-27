@@ -26,7 +26,7 @@
     "db:seed:product-v2": "tsx scripts/db/seed-product-v2.ts",
     "workflows:temporary-cleanup": "tsx scripts/cleanup-temporary-workflow-documents.ts",
     "product-v2:migration-upgrade": "tsx scripts/verify-product-v2-migration-upgrade.ts",
-    "test:product-v2": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AUTH_PROVIDER=mock-wecom ALLOW_MOCK_WECOM_AUTH=true node --import tsx --test --test-concurrency=1 tests/project-permissions.test.ts tests/product-v2-auth.test.ts tests/product-v2-contract.test.mjs",
+    "test:product-v2": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AUTH_PROVIDER=mock-wecom ALLOW_MOCK_WECOM_AUTH=true node --import tsx --test --test-concurrency=1 tests/project-permissions.test.ts tests/product-v2-auth.test.ts tests/test-fixtures.test.ts tests/product-v2-contract.test.mjs",
     "test:v3-round1": "node --test --test-concurrency=1 tests/v3-round1-contract.test.mjs",
     "test:v3-round2": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 AUDIO_TRANSCRIPTION_PROVIDER=fake node --import tsx --test --test-concurrency=1 tests/workflows.test.ts tests/v3-round2-contract.test.mjs",
     "test:v3-round2-integration": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AUTH_LOCAL_ORIGIN=http://127.0.0.1:3200 AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v1 AUDIO_TRANSCRIPTION_PROVIDER=fake node --import tsx --test --test-concurrency=1 tests/integration/workflows.test.ts",

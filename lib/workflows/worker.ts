@@ -4,13 +4,15 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import {
   createProjectAssistantGateway,
   type AiGatewayResult,
+  type ProjectAssistantGatewayInput,
 } from "@/lib/ai/project-assistant/gateway";
-import { requireAiAssistantEnabled } from "@/lib/ai/project-assistant/config";
 import { ProjectAssistantError } from "@/lib/ai/project-assistant/errors";
 import { getDb } from "@/lib/db/client";
 import {
   documentChunk,
+  documentIngestionJob,
   projectDocument,
+  projectDocumentVersion,
   transcriptSegment,
   transcriptSpeaker,
   workflowArtifact,
@@ -38,11 +40,17 @@ import {
 import { renderArtifactMarkdown } from "./render";
 import { createMeetingSummaryProvider } from "./meeting-summary-provider";
 import { buildAudioProviderUrl } from "./audio-service";
-import { createAudioTranscriptionProvider } from "./audio-provider";
+import {
+  createAudioTranscriptionProvider,
+  type AudioTranscriptionProvider,
+  type SpeakerDiarizationProvider,
+} from "./audio-provider";
 import { WorkflowError } from "./errors";
 import { canonicalJsonDigest } from "./digest";
 import { buildArtifactPrompt, type WorkflowEvidence } from "./prompt";
 import { artifactTitle } from "./service";
+import { requireWorkflowModelProfile } from "./model-profiles";
+import { assertWorkflowProviderAuthorization } from "./authorization";
 
 const ACTIVE = [
   "queued", "validating_sources", "parsing_sources", "extracting_facts",
@@ -178,6 +186,15 @@ async function assertOwned(run: typeof workflowRun.$inferSelect) {
   }
 }
 
+async function authorizedGenerate(
+  run: typeof workflowRun.$inferSelect,
+  gateway: ReturnType<typeof createProjectAssistantGateway>,
+  input: ProjectAssistantGatewayInput,
+) {
+  await assertWorkflowProviderAuthorization(run);
+  return gateway.generate(input);
+}
+
 async function evidenceForRun(run: typeof workflowRun.$inferSelect): Promise<WorkflowEvidence[]> {
   const rows = await getDb().select({
     source: workflowRunSource,
@@ -190,6 +207,19 @@ async function evidenceForRun(run: typeof workflowRun.$inferSelect): Promise<Wor
     locator: documentChunk.sourceLocator,
   }).from(workflowRunSource)
     .innerJoin(projectDocument, and(eq(projectDocument.id, workflowRunSource.documentId), eq(projectDocument.projectId, workflowRunSource.sourceProjectId)))
+    .innerJoin(projectDocumentVersion, and(
+      eq(projectDocumentVersion.id, workflowRunSource.documentVersionId),
+      eq(projectDocumentVersion.documentId, workflowRunSource.documentId),
+      eq(projectDocumentVersion.projectId, workflowRunSource.sourceProjectId),
+      eq(projectDocumentVersion.isCurrent, true),
+      eq(projectDocumentVersion.storageStatus, "stored"),
+    ))
+    .innerJoin(documentIngestionJob, and(
+      eq(documentIngestionJob.projectId, workflowRunSource.sourceProjectId),
+      eq(documentIngestionJob.documentId, workflowRunSource.documentId),
+      eq(documentIngestionJob.versionId, workflowRunSource.documentVersionId),
+      eq(documentIngestionJob.status, "succeeded"),
+    ))
     .innerJoin(documentChunk, and(
       eq(documentChunk.projectId, workflowRunSource.sourceProjectId),
       eq(documentChunk.documentId, workflowRunSource.documentId!),
@@ -199,6 +229,7 @@ async function evidenceForRun(run: typeof workflowRun.$inferSelect): Promise<Wor
     .where(and(
       eq(workflowRunSource.runId, run.id), eq(workflowRunSource.projectId, run.projectId),
       eq(workflowRunSource.status, "ready"),
+      eq(projectDocument.status, "active"),
       sql`${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now()`,
     )).orderBy(asc(workflowRunSource.createdAt), asc(documentChunk.chunkIndex)).limit(20);
   if (!rows.length) throw new WorkflowError(422, "WORKFLOW_EVIDENCE_EMPTY", "授权资料没有可用的当前有效内容");
@@ -264,7 +295,9 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
   const [existing] = await getDb().select().from(workflowArtifact).where(and(eq(workflowArtifact.runId, run.id), eq(workflowArtifact.projectId, run.projectId), eq(workflowArtifact.artifactKind, kind))).limit(1);
   if (existing && !force) return;
   const executionId = await beginStep(run, step);
-  const gateway = createProjectAssistantGateway(requireAiAssistantEnabled());
+  const gateway = createProjectAssistantGateway(
+    requireWorkflowModelProfile(run.workflowType, run.modelProfileId),
+  );
   const allowedLabels = new Set(evidence.map((item) => item.label));
   let result: AiGatewayResult;
   let content: Record<string, unknown>;
@@ -275,7 +308,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
     for (let offset = 0; offset < REQUIREMENTS_SECTION_TITLES.length; offset += 5) {
       const sectionNumbers = REQUIREMENTS_SECTION_TITLES.slice(offset, offset + 5).map((_, index) => offset + index + 1);
       const prompts = buildArtifactPrompt({ kind, projectName, evidence, requirementSectionNumbers: sectionNumbers });
-      let batchResult = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
+      let batchResult = await authorizedGenerate(run, gateway, { ...prompts, purpose: "workflow_artifact" });
       let parsedBatch = requirementsDocumentBatchSchema.safeParse(
         normalizeRequirementsDocumentBatch(parseJson(batchResult.text)),
       );
@@ -310,7 +343,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
           previousOutput: batchResult.text,
           validationFailure: failureCode,
         });
-        const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair" });
+        const repaired = await authorizedGenerate(run, gateway, { ...repair, purpose: "workflow_artifact_repair" });
         batchResult = {
           ...repaired,
           inputTokens: sumUsage(batchResult.inputTokens, repaired.inputTokens),
@@ -357,7 +390,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
   } else {
     const prompts = buildArtifactPrompt({ kind, projectName, evidence });
     const maxOutputTokens = ["ga4_measurement_plan", "action_plan"].includes(kind) ? 4_096 : undefined;
-    result = await gateway.generate({ ...prompts, purpose: "workflow_artifact", maxOutputTokens });
+    result = await authorizedGenerate(run, gateway, { ...prompts, purpose: "workflow_artifact", maxOutputTokens });
     let normalized = kind === "ga4_measurement_plan"
       ? normalizeGa4MeasurementPlan(parseJson(result.text))
       : kind === "action_plan"
@@ -378,7 +411,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
     let failureCode = validationFailure();
     if (failureCode) {
       const repair = buildArtifactPrompt({ kind, projectName, evidence, previousOutput: result.text, validationFailure: failureCode });
-      const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair", maxOutputTokens });
+      const repaired = await authorizedGenerate(run, gateway, { ...repair, purpose: "workflow_artifact_repair", maxOutputTokens });
       result = {
         ...repaired,
         fallbackUsed: result.fallbackUsed || repaired.fallbackUsed,
@@ -436,38 +469,163 @@ async function insertMeetingArtifact(input: {
   });
 }
 
-async function processMeetingRun(run: typeof workflowRun.$inferSelect) {
+async function beginOrResumeTranscriptionStep(
+  run: typeof workflowRun.$inferSelect,
+): Promise<string> {
+  await assertOwned(run);
+  const [running] = await getDb().select({ id: workflowExecution.id })
+    .from(workflowExecution)
+    .where(and(
+      eq(workflowExecution.runId, run.id),
+      eq(workflowExecution.projectId, run.projectId),
+      eq(workflowExecution.step, 2),
+      eq(workflowExecution.status, "running"),
+    ))
+    .orderBy(sql`${workflowExecution.attempt} desc`)
+    .limit(1);
+  if (running) {
+    const updated = await getDb().update(workflowRun).set({
+      status: "transcribing",
+      currentStep: 2,
+      updatedAt: new Date(),
+      heartbeatAt: new Date(),
+    }).where(and(
+      eq(workflowRun.id, run.id),
+      eq(workflowRun.projectId, run.projectId),
+      eq(workflowRun.leaseToken, run.leaseToken!),
+      sql`${workflowRun.leaseExpiresAt} > now()`,
+    )).returning({ id: workflowRun.id });
+    if (updated.length !== 1) throw new WorkflowError(409, "WORKFLOW_LEASE_LOST", "工作流执行租约已失效");
+    return running.id;
+  }
+  return beginStep(run, 2, "transcribing");
+}
+
+type WorkflowWorkerDependencies = {
+  audioProviderFactory?: () => AudioTranscriptionProvider & SpeakerDiarizationProvider;
+};
+
+const PROVIDER_DISPATCHING = "WORKFLOW_PROVIDER_DISPATCHING";
+const PROVIDER_RESULT_UNKNOWN = "WORKFLOW_PROVIDER_RESULT_UNKNOWN";
+
+async function markProviderResultUnknown(
+  run: typeof workflowRun.$inferSelect,
+  jobId: string,
+  executionId: string,
+): Promise<void> {
+  try {
+    await getDb().transaction(async (tx) => {
+      const now = new Date();
+      await tx.update(workflowExecution).set({
+        status: "failed",
+        failureCode: PROVIDER_RESULT_UNKNOWN,
+        completedAt: now,
+      }).where(and(
+        eq(workflowExecution.id, executionId),
+        eq(workflowExecution.projectId, run.projectId),
+        eq(workflowExecution.status, "running"),
+      ));
+      await tx.update(workflowAudioJob).set({
+        status: "failed",
+        failureCode: PROVIDER_RESULT_UNKNOWN,
+        completedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(workflowAudioJob.id, jobId),
+        eq(workflowAudioJob.projectId, run.projectId),
+      ));
+      await tx.update(workflowRun).set({
+        status: "failed",
+        failureCode: PROVIDER_RESULT_UNKNOWN,
+        failureStep: 2,
+        leasedBy: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        heartbeatAt: null,
+        completedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(workflowRun.id, run.id),
+        eq(workflowRun.projectId, run.projectId),
+      ));
+    });
+  } catch {
+    // The outer worker failure handler retries this state transition if the
+    // database was temporarily unavailable after the external dispatch.
+  }
+}
+
+async function processMeetingRun(
+  run: typeof workflowRun.$inferSelect,
+  dependencies: WorkflowWorkerDependencies = {},
+) {
   const [job] = await getDb().select().from(workflowAudioJob).where(and(eq(workflowAudioJob.runId, run.id), eq(workflowAudioJob.projectId, run.projectId))).limit(1);
   const [source] = await getDb().select().from(workflowRunSource).where(and(eq(workflowRunSource.runId, run.id), eq(workflowRunSource.projectId, run.projectId), eq(workflowRunSource.sourceType, "audio"), eq(workflowRunSource.status, "ready"))).limit(1);
   if (!job || !source) throw new WorkflowError(422, "AUDIO_SOURCE_NOT_READY", "会议音视频尚未就绪");
-  const provider = createAudioTranscriptionProvider();
+  const provider = dependencies.audioProviderFactory?.() ?? createAudioTranscriptionProvider();
+  if (
+    job.transcriptionProvider !== provider.provider ||
+    job.transcriptionModel !== provider.model ||
+    job.diarizationProvider !== provider.diarizationProvider ||
+    job.diarizationModel !== provider.diarizationModel ||
+    provider.providesSpeakerIds !== true
+  ) {
+    throw new WorkflowError(503, "WORKFLOW_MODEL_PROFILE_INVALID", "会议转写配置与受信 Provider 不一致");
+  }
   let taskId = job.providerTaskId;
-  const transcriptionExecution = await beginStep(run, 2, "transcribing");
+  const transcriptionExecution = await beginOrResumeTranscriptionStep(run);
   if (!taskId) {
+    if (job.failureCode === PROVIDER_DISPATCHING) {
+      await markProviderResultUnknown(run, job.id, transcriptionExecution);
+      throw new WorkflowError(409, PROVIDER_RESULT_UNKNOWN, "语音 Provider 提交结果未知，必须人工核对");
+    }
+    const providerUrl = await buildAudioProviderUrl(run.id, source.id);
+    await assertWorkflowProviderAuthorization(run);
     await getDb().transaction(async (tx) => {
       await tx.update(workflowRun).set({ status: "transcribing", currentStep: 2, updatedAt: new Date() }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
-      await tx.update(workflowAudioJob).set({ status: "transcribing", updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
+      const marked = await tx.update(workflowAudioJob).set({
+        status: "transcribing",
+        failureCode: PROVIDER_DISPATCHING,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(workflowAudioJob.id, job.id),
+        eq(workflowAudioJob.projectId, run.projectId),
+        sql`${workflowAudioJob.providerTaskId} is null`,
+      )).returning({ id: workflowAudioJob.id });
+      if (marked.length !== 1) throw new WorkflowError(409, PROVIDER_RESULT_UNKNOWN, "语音 Provider 提交状态已变化");
     });
-    const submitted = await provider.submit(await buildAudioProviderUrl(run.id, source.id));
-    taskId = submitted.taskId;
-    await getDb().update(workflowAudioJob).set({ providerTaskId: taskId, providerTaskIdHash: createHash("sha256").update(taskId).digest("hex"), updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
+    try {
+      const submitted = await provider.submit(providerUrl);
+      taskId = submitted.taskId;
+      const persisted = await getDb().update(workflowAudioJob).set({
+        providerTaskId: taskId,
+        providerTaskIdHash: createHash("sha256").update(taskId).digest("hex"),
+        failureCode: null,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(workflowAudioJob.id, job.id),
+        eq(workflowAudioJob.projectId, run.projectId),
+        eq(workflowAudioJob.failureCode, PROVIDER_DISPATCHING),
+        sql`${workflowAudioJob.providerTaskId} is null`,
+      )).returning({ id: workflowAudioJob.id });
+      if (persisted.length !== 1) throw new Error("AUDIO_PROVIDER_TASK_PERSISTENCE_FAILED");
+    } catch {
+      await markProviderResultUnknown(run, job.id, transcriptionExecution);
+      throw new WorkflowError(409, PROVIDER_RESULT_UNKNOWN, "语音 Provider 提交结果未知，必须人工核对");
+    }
   }
   const started = Date.now();
+  await assertWorkflowProviderAuthorization(run);
   const result = await provider.poll(taskId);
   if (result.status === "pending" || result.status === "running") {
-    await finishStep(run, transcriptionExecution, {
-      provider: provider.provider,
-      actualModel: provider.model,
-      latencyMs: Date.now() - started,
-      resultDigest: createHash("sha256").update(`audio-poll:${result.status}`).digest("hex"),
-    });
     await getDb().transaction(async (tx) => {
       await tx.update(workflowAudioJob).set({ status: "transcribing", updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
-      await tx.update(workflowRun).set({
+      const released = await tx.update(workflowRun).set({
         status: "transcribing", currentStep: 2, leasedBy: null, leaseToken: null,
         leaseExpiresAt: null, heartbeatAt: null,
         nextAttemptAt: sql`now() + interval '10 seconds'`, updatedAt: new Date(),
-      }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
+      }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!))).returning({ id: workflowRun.id });
+      if (released.length !== 1) throw new WorkflowError(409, "WORKFLOW_LEASE_LOST", "工作流执行租约已失效");
     });
     return;
   }
@@ -507,7 +665,10 @@ async function processMeetingRun(run: typeof workflowRun.$inferSelect) {
   await getDb().update(workflowRun).set({ status: "summarizing", currentStep: 5, updatedAt: new Date() }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
   await getDb().update(workflowAudioJob).set({ status: "summarizing", updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
   const summaryExecution = await beginStep(run, 5, "summarizing");
-  const summaryResult = await createMeetingSummaryProvider().summarize(segments.map((segment) => ({ id: segment.label, startMs: segment.startMs, endMs: segment.endMs, speaker: segment.speakerName, text: segment.text })));
+  const summaryResult = await createMeetingSummaryProvider(
+    requireWorkflowModelProfile(run.workflowType, run.modelProfileId),
+    () => assertWorkflowProviderAuthorization(run),
+  ).summarize(segments.map((segment) => ({ id: segment.label, startMs: segment.startMs, endMs: segment.endMs, speaker: segment.speakerName, text: segment.text })));
   const summary = summaryResult.content;
   const meetingContent = summary as unknown as Record<string, unknown>;
   const actionsContent = { actions: summary.actions };
@@ -520,9 +681,13 @@ async function processMeetingRun(run: typeof workflowRun.$inferSelect) {
   });
 }
 
-export async function processWorkflowRun(run: typeof workflowRun.$inferSelect) {
-  if (run.workflowType === "meeting_minutes") return processMeetingRun(run);
+export async function processWorkflowRun(
+  run: typeof workflowRun.$inferSelect,
+  dependencies: WorkflowWorkerDependencies = {},
+) {
+  if (run.workflowType === "meeting_minutes") return processMeetingRun(run, dependencies);
   if (run.workflowType !== "requirement_framework") throw new WorkflowError(422, "WORKFLOW_TYPE_NOT_SUPPORTED", "该工作流类型尚未接入当前执行器");
+  await assertWorkflowProviderAuthorization(run);
   const evidence = await evidenceForRun(run);
   if (run.regenerationArtifactKind) {
     const kind = run.regenerationArtifactKind as RequirementArtifactKind;

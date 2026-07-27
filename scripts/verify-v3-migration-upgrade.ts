@@ -51,6 +51,12 @@ async function main(): Promise<void> {
         'Product V2 ACL UAT migration', '[TEST] Client', '[UAT] migration fixture',
         'v3-upgrade-user'
       );
+      insert into projects (id, organization_id, name, client_name, description, created_by)
+      values (
+        'v3-upgrade-normal-uat-project', 'v3-upgrade-org',
+        'Client UAT Roadmap', 'Normal Client', 'Normal project whose name contains UAT',
+        'v3-upgrade-user'
+      );
       insert into timesheet_ai_executions (
         id, organization_id, user_id, report_date, execution_id, skill_id,
         model_profile_id, prompt_version, status, source_selection_digest, source_count
@@ -78,6 +84,7 @@ async function main(): Promise<void> {
     `);
     for (const filename of files.slice(boundary)) await apply(target, filename);
     await apply(target, "0025_marvelous_stephen_strange.sql");
+    await apply(target, "0035_slow_big_bertha.sql");
     const result = await target.query<{
       request_id: string;
       status: string;
@@ -90,6 +97,8 @@ async function main(): Promise<void> {
       publication_columns: string;
       structured_chunk_columns: string;
       retrieval_v3_columns: string;
+      legacy_misclassification_count: string;
+      source_deleting_status: string;
     }>(`
       select
         (select request_id from timesheet_ai_executions where id = 'v3-upgrade-ai') as request_id,
@@ -102,7 +111,9 @@ async function main(): Promise<void> {
         (select count(*)::text from pg_constraint where conname in ('workflow_runs_project_organization_fk', 'workflow_runs_project_department_fk', 'workflow_runs_department_organization_fk', 'workflow_run_sources_document_project_fk', 'workflow_run_sources_version_document_project_fk')) as composite_guards,
         (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'workflow_artifacts' and column_name in ('published_document_id', 'published_document_version_id', 'published_at')) as publication_columns,
         (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'document_chunks' and column_name in ('chunk_type', 'parent_content', 'parent_content_sha256', 'parse_quality_bps', 'keywords', 'summary', 'embedding_status')) as structured_chunk_columns,
-        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'ai_retrieval_runs' and column_name in ('normalized_query_sha256', 'rewritten_query_count', 'query_processing_latency_ms', 'rerank_latency_ms', 'context_expansion_latency_ms', 'rerank_fallback_reason')) as retrieval_v3_columns
+        (select count(*)::text from information_schema.columns where table_schema = 'public' and table_name = 'ai_retrieval_runs' and column_name in ('normalized_query_sha256', 'rewritten_query_count', 'query_processing_latency_ms', 'rerank_latency_ms', 'context_expansion_latency_ms', 'rerank_fallback_reason')) as retrieval_v3_columns,
+        (select count(*)::text from test_fixtures where fixture_run_id = 'uat-legacy-import-0025' and entity_type = 'project' and entity_id = 'v3-upgrade-normal-uat-project') as legacy_misclassification_count,
+        (select count(*)::text from pg_constraint where conname = 'workflow_run_sources_status_check' and pg_get_constraintdef(oid) like '%deleting%') as source_deleting_status
     `);
     const row = result.rows[0];
     if (
@@ -116,12 +127,14 @@ async function main(): Promise<void> {
       row.composite_guards !== "5" ||
       row.publication_columns !== "3" ||
       row.structured_chunk_columns !== "7" ||
-      row.retrieval_v3_columns !== "6"
+      row.retrieval_v3_columns !== "6" ||
+      row.legacy_misclassification_count !== "0" ||
+      row.source_deleting_status !== "1"
     ) {
       throw new Error("V3_MIGRATION_UPGRADE_ASSERTION_FAILED");
     }
     process.stdout.write(
-      `V3 migration upgrade passed through ${files.at(-1)}; legacy data, workflows, structured chunks, privacy-safe retrieval metrics, publication recovery, and composite isolation guards preserved.\n`,
+      `V3 migration upgrade passed through ${files.at(-1)}; legacy data, workflows, structured chunks, privacy-safe retrieval metrics, publication recovery, fixture correction, and composite isolation guards preserved.\n`,
     );
   } finally {
     await target?.end().catch(() => undefined);

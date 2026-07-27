@@ -39,6 +39,7 @@ import { WorkflowError } from "./errors";
 import { canonicalJsonDigest } from "./digest";
 import { getObjectStorage } from "@/lib/files/object-storage";
 import { renderArtifactMarkdown } from "./render";
+import { isTrustedWorkflowModelProfile } from "./model-profiles";
 
 const EDIT_ROLES = ["project_manager", "project_member"] as const;
 
@@ -380,6 +381,9 @@ export async function createRequirementFrameworkRun(input: {
       eq(workflowDefinition.isActive, true),
     )).orderBy(desc(workflowDefinition.version)).limit(1);
     if (!definition) throw new WorkflowError(503, "WORKFLOW_DEFINITION_MISSING", "工作流定义尚未就绪");
+    if (!isTrustedWorkflowModelProfile("requirement_framework", definition.modelProfileId)) {
+      throw new WorkflowError(503, "WORKFLOW_MODEL_PROFILE_INVALID", "工作流模型配置无效");
+    }
     const scope = {
       documentIds: sources.map((item) => item.document.id),
       knowledgeSpaceIds: [...new Set(sources.map((item) => item.spaceId))],
@@ -486,17 +490,32 @@ export async function cancelWorkflowRun(input: {
   requestHeaders: Headers;
 }): Promise<void> {
   await requireProjectRole(input.principal, input.projectId, EDIT_ROLES, input.requestHeaders);
-  const [run] = await getDb().select().from(workflowRun).where(and(eq(workflowRun.id, input.runId), eq(workflowRun.projectId, input.projectId))).limit(1);
-  if (!run) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
-  if (["published", "cancelled", "legacy_read_only"].includes(run.status)) return;
   const now = new Date();
   await getDb().transaction(async (tx) => {
+    const [run] = await tx.select().from(workflowRun).where(and(
+      eq(workflowRun.id, input.runId),
+      eq(workflowRun.projectId, input.projectId),
+    )).limit(1).for("update", { of: workflowRun });
+    if (!run) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
+    if (["published", "cancelled", "legacy_read_only"].includes(run.status)) return;
+    const cancelsImmediately = run.status === "queued" || !run.leaseToken;
     await tx.update(workflowRun).set(
-      run.status === "queued" || !run.leaseToken
+      cancelsImmediately
       ? { status: "cancelled", cancellationRequestedAt: now, completedAt: now, updatedAt: now }
       : { cancellationRequestedAt: now, updatedAt: now },
     ).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId)));
-    if (run.workflowType === "meeting_minutes" && (run.status === "queued" || !run.leaseToken)) {
+    if (cancelsImmediately) {
+      await tx.update(workflowExecution).set({
+        status: "cancelled",
+        failureCode: "WORKFLOW_CANCELLED",
+        completedAt: now,
+      }).where(and(
+        eq(workflowExecution.runId, run.id),
+        eq(workflowExecution.projectId, run.projectId),
+        eq(workflowExecution.status, "running"),
+      ));
+    }
+    if (run.workflowType === "meeting_minutes" && cancelsImmediately) {
       await tx.update(workflowAudioJob).set({ status: "cancelled", completedAt: now, updatedAt: now }).where(and(eq(workflowAudioJob.runId, run.id), eq(workflowAudioJob.projectId, run.projectId)));
     }
   });
@@ -509,25 +528,44 @@ export async function retryWorkflowRun(input: {
   requestHeaders: Headers;
 }): Promise<void> {
   await requireProjectRole(input.principal, input.projectId, EDIT_ROLES, input.requestHeaders);
-  const updated = await getDb().update(workflowRun).set({
-    status: "queued",
-    failureCode: null,
-    failureStep: null,
-    cancellationRequestedAt: null,
-    leasedBy: null,
-    leaseToken: null,
-    leaseExpiresAt: null,
-    heartbeatAt: null,
-    completedAt: null,
-    nextAttemptAt: new Date(),
-    updatedAt: new Date(),
-    version: sql`${workflowRun.version} + 1`,
-  }).where(and(
-    eq(workflowRun.id, input.runId),
-    eq(workflowRun.projectId, input.projectId),
-    inArray(workflowRun.status, ["failed", "cancelled"]),
-  )).returning({ id: workflowRun.id });
-  if (updated.length !== 1) throw new WorkflowError(409, "WORKFLOW_NOT_RETRYABLE", "当前工作流不能重试");
+  await getDb().transaction(async (tx) => {
+    const [current] = await tx.select({
+      status: workflowRun.status,
+      failureCode: workflowRun.failureCode,
+    }).from(workflowRun).where(and(
+      eq(workflowRun.id, input.runId),
+      eq(workflowRun.projectId, input.projectId),
+    )).limit(1).for("update", { of: workflowRun });
+    if (!current || !["failed", "cancelled"].includes(current.status)) {
+      throw new WorkflowError(409, "WORKFLOW_NOT_RETRYABLE", "当前工作流不能重试");
+    }
+    if (current.failureCode === "WORKFLOW_PROVIDER_RESULT_UNKNOWN") {
+      throw new WorkflowError(
+        409,
+        "WORKFLOW_PROVIDER_RESULT_UNKNOWN",
+        "Provider 结果未知，必须人工核对后创建新任务，不允许直接重放",
+      );
+    }
+    const updated = await tx.update(workflowRun).set({
+      status: "queued",
+      failureCode: null,
+      failureStep: null,
+      cancellationRequestedAt: null,
+      leasedBy: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      completedAt: null,
+      nextAttemptAt: sql`now()`,
+      updatedAt: new Date(),
+      version: sql`${workflowRun.version} + 1`,
+    }).where(and(
+      eq(workflowRun.id, input.runId),
+      eq(workflowRun.projectId, input.projectId),
+      eq(workflowRun.status, current.status),
+    )).returning({ id: workflowRun.id });
+    if (updated.length !== 1) throw new WorkflowError(409, "WORKFLOW_NOT_RETRYABLE", "当前工作流不能重试");
+  });
 }
 
 export async function saveArtifactVersion(input: {
@@ -608,7 +646,7 @@ export async function regenerateWorkflowArtifact(input: {
     if (!REQUIREMENT_ARTIFACT_KINDS.includes(artifact.artifactKind as RequirementArtifactKind)) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_NOT_REGENERATABLE", "该产物不支持单独重新生成");
     if (artifact.currentVersion !== input.expectedVersion) throw new WorkflowError(409, "WORKFLOW_VERSION_CONFLICT", "产物已被其他用户更新，请刷新后重试");
     await tx.update(workflowArtifact).set({ status: "draft", updatedAt: new Date() }).where(and(eq(workflowArtifact.id, artifact.id), eq(workflowArtifact.projectId, artifact.projectId)));
-    await tx.update(workflowRun).set({ status: "queued", regenerationArtifactKind: artifact.artifactKind, currentStep: 1, failureCode: null, nextAttemptAt: new Date(), updatedAt: new Date(), version: sql`${workflowRun.version} + 1` }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId)));
+    await tx.update(workflowRun).set({ status: "queued", regenerationArtifactKind: artifact.artifactKind, currentStep: 1, failureCode: null, nextAttemptAt: sql`now()`, updatedAt: new Date(), version: sql`${workflowRun.version} + 1` }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId)));
     await writeAuditEvent({ actorUserId: input.principal.user.id, projectId: input.projectId, eventType: "workflow.artifact_regeneration_queued", entityType: "workflow_artifact", entityId: artifact.id, result: "succeeded", metadata: { artifactKind: artifact.artifactKind, fromVersion: artifact.currentVersion }, ...getRequestAuditContext(input.requestHeaders) }, tx);
   });
 }
@@ -802,14 +840,47 @@ export async function deleteMeetingAudio(input: {
   requestHeaders: Headers;
 }): Promise<void> {
   await requireProjectRole(input.principal, input.projectId, ["project_manager"], input.requestHeaders);
-  const [source] = await getDb().select().from(workflowRunSource).where(and(eq(workflowRunSource.runId, input.runId), eq(workflowRunSource.projectId, input.projectId), eq(workflowRunSource.sourceType, "audio"))).limit(1);
-  if (!source) throw new WorkflowError(404, "NOT_FOUND", "会议音视频不存在");
-  if (source.status === "deleted") return;
-  const [job] = await getDb().select({ status: workflowAudioJob.status }).from(workflowAudioJob).where(and(eq(workflowAudioJob.runId, input.runId), eq(workflowAudioJob.projectId, input.projectId))).limit(1);
-  if (job && ["queued", "transcribing", "diarizing", "normalizing", "summarizing"].includes(job.status)) throw new WorkflowError(409, "AUDIO_DELETE_IN_PROGRESS", "会议任务运行期间不能删除原始音视频");
-  if (source.objectKey) await getObjectStorage().deleteObject(source.objectKey);
+  const source = await getDb().transaction(async (tx) => {
+    const [locked] = await tx.select().from(workflowRunSource).where(and(
+      eq(workflowRunSource.runId, input.runId),
+      eq(workflowRunSource.projectId, input.projectId),
+      eq(workflowRunSource.sourceType, "audio"),
+    )).limit(1).for("update", { of: workflowRunSource });
+    if (!locked) throw new WorkflowError(404, "NOT_FOUND", "会议音视频不存在");
+    if (locked.status === "deleted") return null;
+    const [job] = await tx.select({ status: workflowAudioJob.status }).from(workflowAudioJob).where(and(eq(workflowAudioJob.runId, input.runId), eq(workflowAudioJob.projectId, input.projectId))).limit(1);
+    if (job && ["queued", "transcribing", "diarizing", "normalizing", "summarizing"].includes(job.status)) throw new WorkflowError(409, "AUDIO_DELETE_IN_PROGRESS", "会议任务运行期间不能删除原始音视频");
+    if (!["ready", "deleting"].includes(locked.status)) {
+      throw new WorkflowError(409, "AUDIO_DELETE_STATE_INVALID", "会议音视频当前不能删除");
+    }
+    if (locked.status === "ready") {
+      const updated = await tx.update(workflowRunSource).set({ status: "deleting" }).where(and(
+        eq(workflowRunSource.id, locked.id),
+        eq(workflowRunSource.projectId, locked.projectId),
+        eq(workflowRunSource.status, "ready"),
+      )).returning({ id: workflowRunSource.id });
+      if (updated.length !== 1) throw new WorkflowError(409, "AUDIO_DELETE_STATE_INVALID", "会议音视频状态已变化");
+    }
+    return locked;
+  });
+  if (!source) return;
+  try {
+    if (source.objectKey) await getObjectStorage().deleteObject(source.objectKey);
+  } catch {
+    await getDb().update(workflowRunSource).set({ status: "ready" }).where(and(
+      eq(workflowRunSource.id, source.id),
+      eq(workflowRunSource.projectId, source.projectId),
+      eq(workflowRunSource.status, "deleting"),
+    ));
+    throw new WorkflowError(503, "AUDIO_DELETE_FAILED", "会议音视频删除失败，可安全重试");
+  }
   await getDb().transaction(async (tx) => {
-    await tx.update(workflowRunSource).set({ status: "deleted" }).where(and(eq(workflowRunSource.id, source.id), eq(workflowRunSource.projectId, source.projectId)));
+    const updated = await tx.update(workflowRunSource).set({ status: "deleted" }).where(and(
+      eq(workflowRunSource.id, source.id),
+      eq(workflowRunSource.projectId, source.projectId),
+      eq(workflowRunSource.status, "deleting"),
+    )).returning({ id: workflowRunSource.id });
+    if (updated.length !== 1) throw new WorkflowError(409, "AUDIO_DELETE_STATE_INVALID", "会议音视频删除状态已变化");
     await writeAuditEvent({ actorUserId: input.principal.user.id, projectId: input.projectId, eventType: "workflow.audio_deleted", entityType: "workflow_run_source", entityId: source.id, result: "succeeded", metadata: { runId: input.runId, sizeBytes: source.sizeBytes, sha256: source.sha256 }, ...getRequestAuditContext(input.requestHeaders) }, tx);
   });
 }

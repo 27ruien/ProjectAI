@@ -7,7 +7,9 @@ import { knowledgeSpace, organization, project } from "@/lib/db/schema";
 import { KnowledgeManagementError } from "@/lib/knowledge/errors";
 import { knowledgeManagementErrorResponse } from "@/lib/knowledge/http";
 import {
+  fixtureCleanupContextFromHeaders,
   fixtureContextFromHeaders,
+  deleteRegisteredFixtureProject,
   registerTestFixture,
 } from "@/lib/test-fixtures/service";
 
@@ -102,6 +104,26 @@ export async function POST(request: Request): Promise<Response> {
     });
 
     return jsonResponse({ registered });
+  } catch (error) {
+    return knowledgeManagementErrorResponse(error);
+  }
+}
+
+export async function DELETE(request: Request): Promise<Response> {
+  try {
+    requireTrustedMutationRequest(request);
+    const principal = await requireApiPrincipal(request.headers);
+    const fixture = fixtureCleanupContextFromHeaders(request.headers);
+    const parsed = inputSchema.safeParse(await request.json());
+    if (principal.user.productRole !== "super_admin" || !fixture || !parsed.success) {
+      throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "页面不存在");
+    }
+    return jsonResponse({
+      deleted: await deleteRegisteredFixtureProject({
+        ...fixture,
+        projectId: parsed.data.projectId,
+      }),
+    });
   } catch (error) {
     return knowledgeManagementErrorResponse(error);
   }

@@ -70,7 +70,10 @@ export async function getOrganizationTree(principal: AuthenticatedPrincipal) {
     db
       .select()
       .from(department)
-      .where(eq(department.organizationId, currentOrganization.id))
+      .where(and(
+        eq(department.organizationId, currentOrganization.id),
+        eq(department.status, "active"),
+      ))
       .orderBy(asc(department.level), asc(department.sortOrder), asc(department.name)),
     db
       .select({ id: user.id, displayName: user.displayName, productRole: user.productRole })

@@ -49,6 +49,15 @@ test.afterEach(async ({ page }) => {
       },
     });
     expect(registered.status(), `register fixture ${project.id}`).toBe(200);
+    const deleted = await page.request.delete(appPath("/api/test-fixtures/projects"), {
+      data: { projectId: project.id },
+      headers: {
+        origin,
+        "x-projectai-fixture-run-id": fixtureRunId,
+        "x-projectai-fixture-expires-at": fixtureExpiresAt,
+      },
+    });
+    expect(deleted.status(), `delete fixture ${project.id}`).toBe(200);
   }
 });
 
@@ -269,6 +278,15 @@ test("@organization four-level hierarchy is created, edited, moved, and rejected
     for (const departmentId of [...createdIds].reverse()) {
       const response = await mutation(page, "/api/organization/departments", "patch", { departmentId, status: "inactive" });
       expect(response.status(), `cleanup department ${departmentId}`).toBe(200);
+      const deleted = await page.request.delete(appPath("/api/organization/departments"), {
+        data: { departmentId },
+        headers: {
+          origin,
+          "x-projectai-fixture-run-id": fixtureRunId,
+          "x-projectai-fixture-expires-at": fixtureExpiresAt,
+        },
+      });
+      expect(deleted.status(), `delete department fixture ${departmentId}`).toBe(200);
     }
   }
   assertNoErrors();

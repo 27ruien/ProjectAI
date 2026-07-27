@@ -12,6 +12,7 @@ import {
   documentIngestionJob,
   documentSection,
   project,
+  projectMember,
   projectDocument,
   projectDocumentVersion,
   transcriptSpeaker,
@@ -22,6 +23,7 @@ import {
   workflowExecution,
   workflowRun,
   workflowRunSource,
+  user,
   type UserRecord,
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
@@ -30,6 +32,8 @@ import {
 } from "../../lib/workflows/audio-service";
 import {
   createRequirementFrameworkRun,
+  cancelWorkflowRun,
+  deleteMeetingAudio,
   regenerateWorkflowArtifact,
   readWorkflowRun,
   recordWorkflowExport,
@@ -39,6 +43,7 @@ import {
   saveArtifactVersion,
 } from "../../lib/workflows/service";
 import { claimWorkflowRun, processWorkflowRun } from "../../lib/workflows/worker";
+import { WorkflowError } from "../../lib/workflows/errors";
 import { setObjectStorageForTests, type ObjectStorage, type StoredObjectMetadata } from "../../lib/files/object-storage";
 
 const prefix = "v3-r2-workflow-test-";
@@ -48,13 +53,20 @@ const documentId = `${prefix}document`;
 let manager: UserRecord;
 let temporaryDirectory = "";
 let requirementRunId = "";
+let objectStorage: InMemoryObjectStorage;
 
 class InMemoryObjectStorage implements ObjectStorage {
   private readonly entries = new Map<string, { body: Uint8Array; metadata: StoredObjectMetadata }>();
+  private failDelete = false;
+
+  constructor(private readonly corruptPutMetadata = false) {}
+
+  setDeleteFailure(value: boolean) { this.failDelete = value; }
+
   async putObject(input: Parameters<ObjectStorage["putObject"]>[0]) {
     const metadata = { size: input.body.byteLength, etag: createHash("sha256").update(input.body).digest("hex"), sha256: input.sha256 };
     this.entries.set(input.key, { body: input.body, metadata });
-    return metadata;
+    return this.corruptPutMetadata ? { ...metadata, size: metadata.size + 1 } : metadata;
   }
   async getObject(key: string) {
     const entry = this.entries.get(key);
@@ -62,7 +74,10 @@ class InMemoryObjectStorage implements ObjectStorage {
     return { ...entry.metadata, body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(entry.body); controller.close(); } }) };
   }
   async headObject(key: string) { return this.entries.get(key)?.metadata ?? null; }
-  async deleteObject(key: string) { this.entries.delete(key); }
+  async deleteObject(key: string) {
+    if (this.failDelete) throw new Error("OBJECT_DELETE_FAILED");
+    this.entries.delete(key);
+  }
   async listObjects(prefix: string) { return [...this.entries.entries()].filter(([key]) => key.startsWith(prefix)).map(([key, entry]) => ({ key, ...entry.metadata })); }
 }
 
@@ -108,7 +123,8 @@ async function clearFixtures() {
 
 describe("V3 Round 2 workflow database lifecycle", () => {
   before(async () => {
-    setObjectStorageForTests(new InMemoryObjectStorage());
+    objectStorage = new InMemoryObjectStorage();
+    setObjectStorageForTests(objectStorage);
     const found = await findUserByEmail(required("SEED_MANAGER_A_EMAIL"));
     assert.ok(found);
     manager = found;
@@ -318,8 +334,76 @@ describe("V3 Round 2 workflow database lifecycle", () => {
         .from(workflowRun)
         .where(eq(workflowRun.idempotencyKeyHash, createHash("sha256").update(JSON.stringify(idempotencyKey)).digest("hex")));
       assert.deepEqual(rows, [{ id: runId }]);
+      const [job] = await getDb().select().from(workflowAudioJob).where(eq(workflowAudioJob.runId, runId));
+      assert.equal(job?.transcriptionProvider, "fake");
+      assert.equal(job?.transcriptionModel, "fake-paraformer-v2");
+      assert.equal(job?.diarizationProvider, "fake");
+      assert.equal(job?.diarizationModel, "fake-paraformer-v2");
     } finally {
       if (runId) await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("compensates an audio object when upload metadata integrity fails", async () => {
+    const storage = new InMemoryObjectStorage(true);
+    setObjectStorageForTests(storage);
+    const idempotencyKey = `${prefix}corrupt-storage-${randomUUID()}`;
+    try {
+      await assert.rejects(
+        createMeetingRun({
+          principal: principal(),
+          projectId,
+          file: new File([new Uint8Array([
+            0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45,
+          ])], "fictional-corrupt.wav", { type: "audio/wav" }),
+          idempotencyKey,
+          requestHeaders: headers,
+        }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "AUDIO_STORAGE_FAILED",
+      );
+      assert.deepEqual(await storage.listObjects(`projects/${projectId}/workflow-audio/`), []);
+      const [failedRun] = await getDb().select().from(workflowRun).where(eq(
+        workflowRun.idempotencyKeyHash,
+        createHash("sha256").update(JSON.stringify(idempotencyKey)).digest("hex"),
+      ));
+      assert.equal(failedRun?.status, "failed");
+      assert.equal(failedRun?.failureCode, "AUDIO_STORAGE_FAILED");
+      if (failedRun) await getDb().delete(workflowRun).where(eq(workflowRun.id, failedRun.id));
+    } finally {
+      setObjectStorageForTests(objectStorage);
+    }
+  });
+
+  it("restores a safe readable state when audio deletion fails and succeeds on retry", async () => {
+    const idempotencyKey = `${prefix}delete-retry-${randomUUID()}`;
+    const created = await createMeetingRun({
+      principal: principal(),
+      projectId,
+      file: new File([new Uint8Array([
+        0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x41, 0x56, 0x45,
+      ])], "fictional-delete.wav", { type: "audio/wav" }),
+      idempotencyKey,
+      requestHeaders: headers,
+    });
+    try {
+      await getDb().update(workflowAudioJob).set({ status: "failed", failureCode: "TEST_ONLY", completedAt: new Date() }).where(eq(workflowAudioJob.runId, created.runId));
+      objectStorage.setDeleteFailure(true);
+      await assert.rejects(
+        deleteMeetingAudio({ principal: principal(), projectId, runId: created.runId, requestHeaders: headers }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "AUDIO_DELETE_FAILED",
+      );
+      const [restored] = await getDb().select().from(workflowRunSource).where(eq(workflowRunSource.runId, created.runId));
+      assert.equal(restored?.status, "ready");
+      assert.equal((await objectStorage.listObjects(`projects/${projectId}/workflow-audio/${created.runId}/`)).length, 1);
+
+      objectStorage.setDeleteFailure(false);
+      await deleteMeetingAudio({ principal: principal(), projectId, runId: created.runId, requestHeaders: headers });
+      const [deleted] = await getDb().select().from(workflowRunSource).where(eq(workflowRunSource.runId, created.runId));
+      assert.equal(deleted?.status, "deleted");
+      assert.deepEqual(await objectStorage.listObjects(`projects/${projectId}/workflow-audio/${created.runId}/`), []);
+    } finally {
+      objectStorage.setDeleteFailure(false);
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, created.runId));
     }
   });
 
@@ -330,7 +414,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     const runId = `${prefix}meeting`;
     const sourceId = `${prefix}audio-source`;
     await getDb().transaction(async (tx) => {
-      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构项目 · 会议纪要 · 2026-07-27", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "3".repeat(64), modelProfileId: definition.modelProfileId, status: "queued", currentStep: 1, idempotencyKeyHash: "4".repeat(64) });
+      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构项目 · 会议纪要 · 2026-07-27", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "3".repeat(64), modelProfileId: definition.modelProfileId, status: "queued", currentStep: 1, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex") });
       await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `workflow-audio/fictional/${runId}.wav`, displayName: "虚构双人会议.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "5".repeat(64), status: "ready" });
       await tx.insert(workflowAudioJob).values({ id: `${prefix}audio-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-paraformer-v2", diarizationProvider: "fake", diarizationModel: "fake-paraformer-v2", status: "queued" });
     });
@@ -378,11 +462,219 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       await tx.insert(workflowAudioJob).values({ id: `${prefix}audio-recovery-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-paraformer-v2", diarizationProvider: "fake", diarizationModel: "fake-paraformer-v2", providerTaskId: "fake-existing-provider-task", providerTaskIdHash: createHash("sha256").update("fake-existing-provider-task").digest("hex"), status: "transcribing" });
       await tx.insert(workflowExecution).values({ id: `${prefix}audio-recovery-execution`, runId, projectId, step: 2, attempt: 1, status: "running" });
     });
-    const recovered = await claimWorkflowRun(`${prefix}recovery-worker`);
-    assert.equal(recovered?.id, runId);
-    assert.equal(recovered?.failureCode, null);
-    const [oldExecution] = await getDb().select().from(workflowExecution).where(eq(workflowExecution.id, `${prefix}audio-recovery-execution`));
-    assert.equal(oldExecution.status, "failed");
-    assert.equal(oldExecution.failureCode, "WORKFLOW_LEASE_EXPIRED_RECOVERED");
+    try {
+      const recovered = await claimWorkflowRun(`${prefix}recovery-worker`);
+      assert.equal(recovered?.id, runId);
+      assert.equal(recovered?.failureCode, null);
+      const [oldExecution] = await getDb().select().from(workflowExecution).where(eq(workflowExecution.id, `${prefix}audio-recovery-execution`));
+      assert.equal(oldExecution.status, "failed");
+      assert.equal(oldExecution.failureCode, "WORKFLOW_LEASE_EXPIRED_RECOVERED");
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("revalidates membership, active user, document lifecycle, and current version before any Provider call", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    assert.ok(target);
+    const [membership] = await getDb().select().from(projectMember).where(and(
+      eq(projectMember.projectId, projectId),
+      eq(projectMember.userId, manager.id),
+    )).limit(1);
+    assert.ok(membership);
+
+    const assertBlocked = async (
+      label: string,
+      mutate: () => Promise<void>,
+      restore: () => Promise<void>,
+    ) => {
+      const created = await createRequirementFrameworkRun({
+        principal: principal(),
+        projectId,
+        documentIds: [documentId],
+        idempotencyKey: `${prefix}reauthorize-${label}-${randomUUID()}`,
+        requestHeaders: headers,
+      });
+      const claimed = await claimWorkflowRun(`${prefix}reauthorize-${label}`);
+      assert.equal(claimed?.id, created.run.id);
+      await mutate();
+      try {
+        await assert.rejects(
+          processWorkflowRun(claimed!),
+          (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_SOURCE_ACCESS_REVOKED",
+        );
+      } finally {
+        await restore();
+        await getDb().delete(workflowRun).where(eq(workflowRun.id, created.run.id));
+      }
+    };
+
+    await getDb().update(project).set({ createdBy: "seed-admin" }).where(eq(project.id, projectId));
+    try {
+      await assertBlocked(
+        "membership",
+        async () => { await getDb().delete(projectMember).where(eq(projectMember.id, membership.id)); },
+        async () => { await getDb().insert(projectMember).values(membership).onConflictDoNothing(); },
+      );
+      await assertBlocked(
+        "disabled-user",
+        async () => { await getDb().update(user).set({ status: "disabled" }).where(eq(user.id, manager.id)); },
+        async () => { await getDb().update(user).set({ status: "active" }).where(eq(user.id, manager.id)); },
+      );
+      await assertBlocked(
+        "archived-document",
+        async () => { await getDb().update(projectDocument).set({ status: "archived", archivedBy: manager.id, archivedAt: new Date() }).where(eq(projectDocument.id, documentId)); },
+        async () => { await getDb().update(projectDocument).set({ status: "active", archivedBy: null, archivedAt: null }).where(eq(projectDocument.id, documentId)); },
+      );
+      await assertBlocked(
+        "old-version",
+        async () => { await getDb().update(projectDocumentVersion).set({ isCurrent: false }).where(eq(projectDocumentVersion.documentId, documentId)); },
+        async () => { await getDb().update(projectDocumentVersion).set({ isCurrent: true }).where(eq(projectDocumentVersion.id, `${prefix}version`)); },
+      );
+    } finally {
+      await getDb().update(project).set({ createdBy: target.createdBy }).where(eq(project.id, projectId));
+    }
+  });
+
+  it("keeps more than twenty ASR Pending polls inside one execution attempt", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
+    assert.ok(target?.departmentId && definition);
+    const runId = `${prefix}long-asr-poll`;
+    const sourceId = `${prefix}long-asr-source`;
+    await getDb().transaction(async (tx) => {
+      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构长轮询会议", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "9".repeat(64), modelProfileId: definition.modelProfileId, status: "queued", currentStep: 1, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex") });
+      await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构长轮询.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "b".repeat(64), status: "ready" });
+      await tx.insert(workflowAudioJob).values({ id: `${prefix}long-asr-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-long-poll", diarizationProvider: "fake", diarizationModel: "fake-long-poll", status: "queued" });
+    });
+    let polls = 0;
+    let submits = 0;
+    const provider = {
+      provider: "fake" as const,
+      model: "fake-long-poll",
+      diarizationProvider: "fake" as const,
+      diarizationModel: "fake-long-poll",
+      providesSpeakerIds: true as const,
+      async submit() { submits += 1; return { taskId: "fake-long-running-provider-task" }; },
+      async poll() {
+        polls += 1;
+        if (polls <= 25) return { status: "pending" as const };
+        return { status: "succeeded" as const, durationMs: 2_000, segments: [{ startMs: 0, endMs: 2_000, speakerKey: "speaker-1", text: "虚构会议确认继续验收。", confidenceBps: 9000, language: "zh-CN" }] };
+      },
+    };
+    try {
+      for (let index = 0; index < 26; index += 1) {
+        const claimed = await claimWorkflowRun(`${prefix}long-poll-worker-${index}`);
+        assert.equal(claimed?.id, runId);
+        await processWorkflowRun(claimed!, { audioProviderFactory: () => provider });
+        if (index < 25) {
+          await getDb().update(workflowRun).set({ nextAttemptAt: sql`now()` }).where(eq(workflowRun.id, runId));
+        }
+      }
+      const attempts = await getDb().select().from(workflowExecution).where(and(
+        eq(workflowExecution.runId, runId),
+        eq(workflowExecution.step, 2),
+      ));
+      assert.equal(submits, 1);
+      assert.equal(polls, 26);
+      assert.equal(attempts.length, 1);
+      assert.equal(attempts[0]!.attempt, 1);
+      assert.equal(attempts[0]!.status, "succeeded");
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("cancels a released pending ASR run and closes its running execution", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
+    assert.ok(target?.departmentId && definition);
+    const runId = `${prefix}cancel-pending-asr`;
+    const sourceId = `${prefix}cancel-pending-source`;
+    await getDb().transaction(async (tx) => {
+      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构待取消会议", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "e".repeat(64), modelProfileId: definition.modelProfileId, status: "transcribing", currentStep: 2, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex"), nextAttemptAt: new Date() });
+      await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构待取消.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "1".repeat(64), status: "ready" });
+      await tx.insert(workflowAudioJob).values({ id: `${prefix}cancel-pending-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-long-poll", diarizationProvider: "fake", diarizationModel: "fake-long-poll", providerTaskId: "fake-pending-provider-task", providerTaskIdHash: "2".repeat(64), status: "transcribing" });
+      await tx.insert(workflowExecution).values({ id: `${prefix}cancel-pending-execution`, runId, projectId, step: 2, attempt: 1, status: "running" });
+    });
+    try {
+      await cancelWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers });
+      const [cancelledRun] = await getDb().select().from(workflowRun).where(eq(workflowRun.id, runId));
+      const [cancelledJob] = await getDb().select().from(workflowAudioJob).where(eq(workflowAudioJob.runId, runId));
+      const [cancelledExecution] = await getDb().select().from(workflowExecution).where(eq(workflowExecution.runId, runId));
+      assert.equal(cancelledRun!.status, "cancelled");
+      assert.equal(cancelledJob!.status, "cancelled");
+      assert.equal(cancelledExecution!.status, "cancelled");
+      assert.equal(cancelledExecution!.failureCode, "WORKFLOW_CANCELLED");
+      assert.ok(cancelledExecution!.completedAt);
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("never replays an ASR submission whose external result is unknown", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
+    assert.ok(target?.departmentId && definition);
+    const runId = `${prefix}unknown-asr-submit`;
+    const sourceId = `${prefix}unknown-asr-source`;
+    await getDb().transaction(async (tx) => {
+      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构未知提交会议", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "3".repeat(64), modelProfileId: definition.modelProfileId, status: "queued", currentStep: 1, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex") });
+      await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构未知提交.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "5".repeat(64), status: "ready" });
+      await tx.insert(workflowAudioJob).values({ id: `${prefix}unknown-asr-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-unknown-submit", diarizationProvider: "fake", diarizationModel: "fake-unknown-submit", status: "queued" });
+    });
+    let submits = 0;
+    const provider = {
+      provider: "fake" as const,
+      model: "fake-unknown-submit",
+      diarizationProvider: "fake" as const,
+      diarizationModel: "fake-unknown-submit",
+      providesSpeakerIds: true as const,
+      async submit() {
+        submits += 1;
+        throw new Error("connection closed after request body was sent");
+      },
+      async poll() { throw new Error("poll must not run"); },
+    };
+    try {
+      const claimed = await claimWorkflowRun(`${prefix}unknown-submit-worker`);
+      assert.equal(claimed?.id, runId);
+      await assert.rejects(
+        processWorkflowRun(claimed!, { audioProviderFactory: () => provider }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_PROVIDER_RESULT_UNKNOWN",
+      );
+      assert.equal(submits, 1);
+      const [failedRun] = await getDb().select().from(workflowRun).where(eq(workflowRun.id, runId));
+      const [failedJob] = await getDb().select().from(workflowAudioJob).where(eq(workflowAudioJob.runId, runId));
+      const [failedExecution] = await getDb().select().from(workflowExecution).where(eq(workflowExecution.runId, runId));
+      assert.equal(failedRun?.status, "failed");
+      assert.equal(failedRun?.failureCode, "WORKFLOW_PROVIDER_RESULT_UNKNOWN");
+      assert.equal(failedJob?.status, "failed");
+      assert.equal(failedJob?.failureCode, "WORKFLOW_PROVIDER_RESULT_UNKNOWN");
+      assert.equal(failedExecution?.status, "failed");
+      await assert.rejects(
+        retryWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_PROVIDER_RESULT_UNKNOWN",
+      );
+      assert.equal(submits, 1);
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("refuses direct replay when a Provider dispatch result is unknown", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
+    assert.ok(target?.departmentId && definition);
+    const runId = `${prefix}unknown-provider-result`;
+    await getDb().insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构未知 Provider 结果", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "c".repeat(64), modelProfileId: definition.modelProfileId, status: "failed", currentStep: 2, idempotencyKeyHash: "d".repeat(64), failureCode: "WORKFLOW_PROVIDER_RESULT_UNKNOWN", failureStep: 2, completedAt: new Date() });
+    try {
+      await assert.rejects(
+        retryWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_PROVIDER_RESULT_UNKNOWN",
+      );
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
   });
 });

@@ -56,7 +56,7 @@ test("Round 1 daily-report generation is a durable leased job", async () => {
 });
 
 test("Round 1 fixture registry keeps synthetic UAT records out of product lists", async () => {
-  const [fixtureSchema, fixtureService, projects, knowledge, knowledgeManagement, departmentRoute, fixtureProjectRoute, organizationService, stagingUat, authorization, migration, productSeed] = await Promise.all([
+  const [fixtureSchema, fixtureService, projects, knowledge, knowledgeManagement, departmentRoute, fixtureProjectRoute, organizationService, stagingUat, authorization, migration, migrationCorrection, productSeed] = await Promise.all([
     read("lib/db/schema/test-fixtures.ts"),
     read("lib/test-fixtures/service.ts"),
     read("lib/db/repositories/project-repository.ts"),
@@ -68,6 +68,7 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
     read("tests/product-v2-staging-e2e/product-v2.spec.ts"),
     read("lib/knowledge/authorization.ts"),
     read("drizzle/0025_marvelous_stephen_strange.sql"),
+    read("drizzle/0035_slow_big_bertha.sql"),
     read("scripts/db/seed-product-v2.ts"),
   ]);
   assert.match(fixtureSchema, /uniqueIndex\("test_fixtures_entity_uidx"\)/);
@@ -75,6 +76,13 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(fixtureService, /if \(value === "production"\) return null/);
   assert.match(fixtureService, /PROJECTAI_INCLUDE_TEST_FIXTURES === "true"/);
   assert.match(fixtureService, /MAX_FIXTURE_LIFETIME_MS/);
+  assert.match(fixtureService, /fixtureCleanupContextFromHeaders/);
+  assert.match(fixtureService, /eq\(testFixture\.expiresAt, input\.expiresAt\)/);
+  assert.match(fixtureService, /deleteRegisteredFixtureProject/);
+  assert.match(fixtureService, /deleteRegisteredFixtureDepartment/);
+  assert.match(fixtureService, /delete from workflow_runs where project_id/);
+  assert.match(fixtureService, /storage\.listObjects\(`projects\/\$\{input\.projectId\}\//);
+  assert.match(fixtureService, /TEST_FIXTURE_DEPARTMENT_IN_USE/);
   assert.match(projects, /notExists/);
   assert.match(projects, /eq\(testFixture\.entityType, "project"\)/);
   assert.match(knowledge, /includeTestFixturesInProductQueries/);
@@ -86,14 +94,19 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(fixtureProjectRoute, /principal\.user\.productRole !== "super_admin"/);
   assert.match(fixtureProjectRoute, /reviewedSyntheticProjectName/);
   assert.match(fixtureProjectRoute, /now\(\) - interval '7 days'/);
+  assert.match(fixtureProjectRoute, /export async function DELETE/);
   assert.match(organizationService, /entityType: "department"/);
   assert.match(organizationService, /entityType: "knowledge_space"/);
   assert.match(stagingUat, /x-projectai-fixture-run-id/);
   assert.match(stagingUat, /x-projectai-fixture-expires-at/);
+  assert.match(stagingUat, /delete fixture/);
+  assert.match(stagingUat, /delete department fixture/);
   assert.match(authorization, /filterFixtureDocumentScopes/);
   assert.match(authorization, /knowledge_space:\$\{scope\.knowledgeSpaceId\}/);
   assert.match(migration, /uat-legacy-import-0025/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "test_fixtures"/);
+  assert.match(migrationCorrection, /Member Creator UAT \[0-9a-f\]\{8\}/);
+  assert.match(migrationCorrection, /fixture_run_id" = 'uat-legacy-import-0025'/);
   assert.doesNotMatch(productSeed, /kivisense-project-product-management-uat/);
   assert.match(productSeed, /kivisense-project-projectai-product/);
 });

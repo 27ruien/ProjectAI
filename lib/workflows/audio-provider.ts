@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { readQwenApiKey } from "@/lib/ai/project-assistant/secrets";
+import {
+  MAX_MEETING_TRANSCRIPT_CHARACTERS,
+  MAX_MEETING_TRANSCRIPT_SEGMENT_CHARACTERS,
+  MAX_MEETING_TRANSCRIPT_SEGMENTS,
+} from "./contracts";
 import { WorkflowError } from "./errors";
 
 export type AudioProviderSegment = {
@@ -43,6 +48,50 @@ function baseUrl(): string {
 function controlledCode(value: unknown): string {
   const text = typeof value === "string" ? value : "AUDIO_PROVIDER_FAILED";
   return text.replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 80) || "AUDIO_PROVIDER_FAILED";
+}
+
+const MAX_AUDIO_RESULT_BYTES = 20 * 1024 * 1024;
+
+async function readBoundedJson(response: Response): Promise<unknown> {
+  const contentLengthHeader = response.headers.get("content-length");
+  if (contentLengthHeader) {
+    const contentLength = Number(contentLengthHeader);
+    if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+      throw new WorkflowError(503, "AUDIO_RESULT_LENGTH_INVALID", "语音结果长度无效");
+    }
+    if (contentLength > MAX_AUDIO_RESULT_BYTES) {
+      throw new WorkflowError(503, "AUDIO_RESULT_TOO_LARGE", "语音结果超过安全限制");
+    }
+  }
+  if (!response.body) throw new WorkflowError(503, "AUDIO_RESULT_DOWNLOAD_FAILED", "语音结果正文缺失");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_AUDIO_RESULT_BYTES) {
+        await reader.cancel();
+        throw new WorkflowError(503, "AUDIO_RESULT_TOO_LARGE", "语音结果超过安全限制");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new WorkflowError(503, "AUDIO_PROVIDER_RESPONSE_INVALID", "语音结果格式无效");
+  }
 }
 
 export class AlibabaParaformerProvider implements AudioTranscriptionProvider, SpeakerDiarizationProvider {
@@ -89,9 +138,7 @@ export class AlibabaParaformerProvider implements AudioTranscriptionProvider, Sp
     if (resultUrl.protocol !== "https:" || resultUrl.username || resultUrl.password || !/(^|\.)aliyuncs\.com$/.test(resultUrl.hostname)) throw new WorkflowError(503, "AUDIO_RESULT_URL_INVALID", "语音结果地址无效");
     const resultResponse = await this.fetchImplementation(resultUrl, { redirect: "error" });
     if (!resultResponse.ok) throw new WorkflowError(503, "AUDIO_RESULT_DOWNLOAD_FAILED", "语音结果下载失败");
-    const contentLength = Number(resultResponse.headers.get("content-length") || 0);
-    if (contentLength > 20 * 1024 * 1024) throw new WorkflowError(503, "AUDIO_RESULT_TOO_LARGE", "语音结果超过安全限制");
-    const resultBody = await resultResponse.json() as {
+    const resultBody = await readBoundedJson(resultResponse) as {
       properties?: { original_duration_in_milliseconds?: unknown };
       transcripts?: Array<{ sentences?: Array<{ begin_time?: unknown; end_time?: unknown; text?: unknown; speaker_id?: unknown }> }>;
     };
@@ -104,7 +151,13 @@ export class AlibabaParaformerProvider implements AudioTranscriptionProvider, Sp
       confidenceBps: null,
       language: "zh-CN",
     })).filter((segment) => Number.isInteger(segment.startMs) && Number.isInteger(segment.endMs) && segment.startMs >= 0 && segment.endMs > segment.startMs && segment.text && /^speaker-[1-9][0-9]*$/.test(segment.speakerKey));
-    if (!segments.length || segments.length > 100_000) return { status: "failed", code: "AUDIO_TRANSCRIPT_EMPTY" };
+    const totalCharacters = segments.reduce((total, segment) => total + segment.text.length, 0);
+    if (!segments.length) return { status: "failed", code: "AUDIO_TRANSCRIPT_EMPTY" };
+    if (
+      segments.length > MAX_MEETING_TRANSCRIPT_SEGMENTS ||
+      totalCharacters > MAX_MEETING_TRANSCRIPT_CHARACTERS ||
+      segments.some((segment) => segment.text.length > MAX_MEETING_TRANSCRIPT_SEGMENT_CHARACTERS)
+    ) return { status: "failed", code: "AUDIO_TRANSCRIPT_TOO_LARGE" };
     const duration = resultBody.properties?.original_duration_in_milliseconds;
     return { status: "succeeded", segments, durationMs: typeof duration === "number" && Number.isFinite(duration) ? Math.round(duration) : null };
   }
@@ -123,7 +176,7 @@ export class FakeAudioTranscriptionProvider implements AudioTranscriptionProvide
   ] }; }
 }
 
-export function createAudioTranscriptionProvider(): AudioTranscriptionProvider {
+export function createAudioTranscriptionProvider(): AudioTranscriptionProvider & SpeakerDiarizationProvider {
   const environment = process.env.NEXT_PUBLIC_APP_ENV?.trim() || "development";
   const nodeEnvironment = process.env.NODE_ENV?.trim() || "";
   const provider = process.env.AUDIO_TRANSCRIPTION_PROVIDER?.trim() || "alibaba-model-studio";

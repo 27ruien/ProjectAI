@@ -8,12 +8,14 @@
 - AI 工作流首页只有“搭建需求框架”和“提取会议纪要”两个入口。Requirement Framework 固定产生项目概览、26 节需求文档、GA4 埋点计划和 Action Plan；Meeting 固定产生转写、会议纪要和待办。
 - Workflow Source、Artifact、Version、Review、Execution、Export、Audio、Speaker 和 Segment 都持久化。Caller 不能提交 Markdown、Provider、模型或验证结果；服务端校验结构化 Schema 后生成 Markdown/XLSX/DOCX。
 - 单产物重新生成只新建该产物版本。发布前重新验证来源权限、版本、内容 Digest 和 Citation，并通过私有对象存储链路写入当前项目知识空间。部分发布失败保存恢复绑定并可幂等继续。
+- 每次 AI、Repair、ASR 提交或轮询调用前，都重新校验创建者状态、当前项目角色、组织/部门归属和精确来源版本；授权失败在任何 Provider 调用前停止，数据库故障不会伪装成权限撤销。
 
 ## 音频边界
 
-- CI 仅使用 Fake ASR；Staging 真实 Provider 使用 Alibaba Model Studio 异步录音文件识别，并轮询持久化 task id，崩溃恢复不得重复提交。
+- CI 仅使用 Fake ASR；Staging 真实 Provider 使用 Alibaba Model Studio 异步录音文件识别。提交前先持久化 dispatch marker，只有 task id 安全落库后才轮询；提交结果未知时失败关闭并禁止自动重放。正常 Pending 轮询复用同一个 Execution，不消耗新的尝试次数。
 - 原始音视频只在私有对象存储，最大 100 MB；Provider 仅获得一小时短时签名地址。浏览器、日志和 Evidence 不包含对象 Key、签名 URL、Cookie、Token 或原始音频。
 - Provider 只给出 `speaker_id`。系统保留 `Speaker 1/2`，真实姓名只能由用户人工重命名；重命名产生新 Artifact Version。AI 待办仍是审核产物，不自动写正式 Action。
+- Provider 结果即使缺少 `Content-Length` 也按流式 20 MiB 上限读取；转写 Segment 与总字符数有硬限制，长会议按有界分块生成中间摘要后再合并。上传落库失败删除已写对象，删除失败恢复安全状态并允许幂等重试。
 
 ## 结构化知识与管理
 
@@ -38,6 +40,8 @@
 
 硬门禁包括：跨项目/旧版本/归档/无效 Chunk Leakage 为 0，Citation Authorization 为 1，旧 Retrieval 指标不回退，综合问题和 Faithfulness 不低于词法基线。Fake Provider 结果只证明确定性 CI；真实 Qwen 与真实 ASR 必须另在 Staging 受控 Probe/UAT 中验证。
 
+Staging UAT 的 Department、Knowledge Space 和 Project 使用精确 fixture run 与过期时间登记。每个测试结束时物理删除项目数据、对象前缀和部门树；清理接口只接受非 Production、Super Admin、精确登记且过期时间一致的记录，过期 fixture 仍可按原登记值清理。`0035` 同时撤销 `0025` 过宽历史匹配产生的误标记，正常项目不会因名称中包含 UAT 而被隐藏。
+
 ## Migration 与回滚
 
-`0026`–`0034` 仅新增 Workflow/Audio/Artifact/结构化 Chunk/隐私安全 Retrieval 字段和约束；非空升级演练保留旧 Requirement、Action、Risk、Weekly、Thread、Citation、Document 与 Chunk。失败部署使用 Staging 备份和旧镜像恢复；不得对 Staging/Production 使用 schema push、reset 或 drop。Production 本轮只读且不接收这些 Migration。
+`0026`–`0035` 仅新增 Workflow/Audio/Artifact/结构化 Chunk/隐私安全 Retrieval 字段和约束，并收紧测试 fixture 历史标记；非空升级演练保留旧 Requirement、Action、Risk、Weekly、Thread、Citation、Document 与 Chunk。失败部署使用 Staging 备份和旧镜像恢复；不得对 Staging/Production 使用 schema push、reset 或 drop。Production 本轮只读且不接收这些 Migration。

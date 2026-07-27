@@ -673,6 +673,10 @@ export const meetingSummarySchema = z.object({
   actions: z.array(z.object({ text: z.string().min(1).max(2_000), owner: z.string().min(1).max(160), deadline: dateOrTbd, dependencies: z.array(z.string().max(500)).max(50), segmentIds: z.array(z.string()).min(1).max(50) }).strict()).max(200),
 }).strict();
 
+export const MAX_MEETING_TRANSCRIPT_SEGMENTS = 5_000;
+export const MAX_MEETING_TRANSCRIPT_CHARACTERS = 240_000;
+export const MAX_MEETING_TRANSCRIPT_SEGMENT_CHARACTERS = 20_000;
+
 export const meetingTranscriptSchema = z.object({
   durationMs: z.number().int().nonnegative().nullable(),
   speakers: z.array(z.object({
@@ -688,10 +692,10 @@ export const meetingTranscriptSchema = z.object({
     endMs: z.number().int().positive(),
     speakerId: z.string().uuid(),
     speakerName: z.string().trim().min(1).max(160),
-    text: z.string().trim().min(1).max(20_000),
+    text: z.string().trim().min(1).max(MAX_MEETING_TRANSCRIPT_SEGMENT_CHARACTERS),
     confidenceBps: z.number().int().min(0).max(10_000).nullable(),
     language: z.string().trim().min(1).max(24),
-  }).strict()).min(1).max(100_000),
+  }).strict()).min(1).max(MAX_MEETING_TRANSCRIPT_SEGMENTS),
 }).strict().superRefine((value, context) => {
   const speakerIds = new Set(value.speakers.map((speaker) => speaker.id));
   const labels = new Set<string>();
@@ -700,6 +704,15 @@ export const meetingTranscriptSchema = z.object({
     if (segment.endMs <= segment.startMs) context.addIssue({ code: "custom", message: `invalid segment range: ${segment.label}` });
     if (labels.has(segment.label)) context.addIssue({ code: "custom", message: `duplicate segment label: ${segment.label}` });
     labels.add(segment.label);
+  }
+  if (
+    value.segments.reduce((total, segment) => total + segment.text.length, 0) >
+    MAX_MEETING_TRANSCRIPT_CHARACTERS
+  ) {
+    context.addIssue({
+      code: "custom",
+      message: "meeting transcript exceeds the bounded summary input",
+    });
   }
 });
 

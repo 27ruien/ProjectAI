@@ -7,6 +7,9 @@ import { getDb } from "@/lib/db/client";
 import { workflowAudioJob, workflowDefinition, workflowRun, workflowRunSource } from "@/lib/db/schema";
 import { getObjectStorage } from "@/lib/files/object-storage";
 import { WorkflowError } from "./errors";
+import { assertWorkflowProviderAuthorization } from "./authorization";
+import { isTrustedWorkflowModelProfile } from "./model-profiles";
+import { createAudioTranscriptionProvider } from "./audio-provider";
 
 const AUDIO_TYPES = new Map([
   ["mp3", ["audio/mpeg", "audio/mp3"]],
@@ -47,6 +50,7 @@ export async function createMeetingRun(input: {
   requestHeaders: Headers;
 }): Promise<{ runId: string; created: boolean }> {
   const audio = await validatedAudio(input.file);
+  const audioProvider = createAudioTranscriptionProvider();
   const idempotencyKeyHash = digest(input.idempotencyKey);
   const sourceScopeDigest = digest({ audioSha256: audio.sha256 });
   const db = getDb();
@@ -61,6 +65,9 @@ export async function createMeetingRun(input: {
     }
     const [definition] = await tx.select().from(workflowDefinition).where(and(eq(workflowDefinition.workflowType, "meeting_minutes"), eq(workflowDefinition.isActive, true))).orderBy(desc(workflowDefinition.version)).limit(1);
     if (!definition) throw new WorkflowError(503, "WORKFLOW_DEFINITION_MISSING", "会议工作流定义尚未就绪");
+    if (!isTrustedWorkflowModelProfile("meeting_minutes", definition.modelProfileId)) {
+      throw new WorkflowError(503, "WORKFLOW_MODEL_PROFILE_INVALID", "会议工作流模型配置无效");
+    }
     const runId = randomUUID();
     const sourceId = randomUUID();
     const objectKey = `projects/${target.id}/workflow-audio/${runId}/${randomBytes(24).toString("hex")}.${audio.extension}`;
@@ -80,14 +87,20 @@ export async function createMeetingRun(input: {
     });
     await tx.insert(workflowAudioJob).values({
       id: randomUUID(), runId, projectId: target.id, sourceId,
-      transcriptionProvider: "alibaba-model-studio", transcriptionModel: "paraformer-v2",
-      diarizationProvider: "alibaba-model-studio", diarizationModel: "paraformer-v2", status: "queued",
+      transcriptionProvider: audioProvider.provider,
+      transcriptionModel: audioProvider.model,
+      diarizationProvider: audioProvider.diarizationProvider,
+      diarizationModel: audioProvider.diarizationModel,
+      status: "queued",
     });
     return { runId, created: true, objectKey, sourceId };
   });
   if (!prepared.created) return { runId: prepared.runId, created: false };
+  const storage = getObjectStorage();
+  let objectStored = false;
   try {
-    const stored = await getObjectStorage().putObject({ key: prepared.objectKey!, body: audio.bytes, contentType: input.file.type, sha256: audio.sha256 });
+    const stored = await storage.putObject({ key: prepared.objectKey!, body: audio.bytes, contentType: input.file.type, sha256: audio.sha256 });
+    objectStored = true;
     if (stored.size !== audio.bytes.byteLength || stored.sha256 !== audio.sha256) throw new Error("AUDIO_STORAGE_INTEGRITY_FAILED");
     await db.transaction(async (tx) => {
       await tx.update(workflowRunSource).set({ status: "ready" }).where(and(eq(workflowRunSource.id, prepared.sourceId!), eq(workflowRunSource.runId, prepared.runId)));
@@ -95,12 +108,31 @@ export async function createMeetingRun(input: {
     });
     return { runId: prepared.runId, created: true };
   } catch {
-    await db.transaction(async (tx) => {
-      await tx.update(workflowRunSource).set({ status: "failed" }).where(eq(workflowRunSource.id, prepared.sourceId!));
-      await tx.update(workflowAudioJob).set({ status: "failed", failureCode: "AUDIO_STORAGE_FAILED", completedAt: new Date(), updatedAt: new Date() }).where(eq(workflowAudioJob.runId, prepared.runId));
-      await tx.update(workflowRun).set({ status: "failed", failureCode: "AUDIO_STORAGE_FAILED", failureStep: 1, completedAt: new Date(), updatedAt: new Date() }).where(eq(workflowRun.id, prepared.runId));
-    });
-    throw new WorkflowError(503, "AUDIO_STORAGE_FAILED", "音视频安全存储失败");
+    let compensationFailed = false;
+    if (objectStored) {
+      try {
+        await storage.deleteObject(prepared.objectKey!);
+      } catch {
+        compensationFailed = true;
+      }
+    }
+    const failureCode = compensationFailed
+      ? "AUDIO_STORAGE_COMPENSATION_FAILED"
+      : "AUDIO_STORAGE_FAILED";
+    try {
+      await db.transaction(async (tx) => {
+        await tx.update(workflowRunSource).set({ status: "failed" }).where(eq(workflowRunSource.id, prepared.sourceId!));
+        await tx.update(workflowAudioJob).set({ status: "failed", failureCode, completedAt: new Date(), updatedAt: new Date() }).where(eq(workflowAudioJob.runId, prepared.runId));
+        await tx.update(workflowRun).set({ status: "failed", failureCode, failureStep: 1, completedAt: new Date(), updatedAt: new Date() }).where(eq(workflowRun.id, prepared.runId));
+      });
+    } catch {
+      // The source remains non-readable (`uploading`) if persistence is unavailable.
+    }
+    throw new WorkflowError(
+      503,
+      failureCode,
+      compensationFailed ? "音视频存储补偿失败，需要人工核对" : "音视频安全存储失败",
+    );
   }
 }
 
@@ -152,5 +184,11 @@ export async function readSignedAudioSource(input: { runId: string; sourceId: st
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) throw new WorkflowError(404, "NOT_FOUND", "音视频来源不存在");
   const [source] = await getDb().select().from(workflowRunSource).where(and(eq(workflowRunSource.id, input.sourceId), eq(workflowRunSource.runId, input.runId), eq(workflowRunSource.sourceType, "audio"), eq(workflowRunSource.status, "ready"))).limit(1);
   if (!source?.objectKey) throw new WorkflowError(404, "NOT_FOUND", "音视频来源不存在");
+  const [run] = await getDb().select().from(workflowRun).where(and(
+    eq(workflowRun.id, input.runId),
+    eq(workflowRun.projectId, source.projectId),
+  )).limit(1);
+  if (!run) throw new WorkflowError(404, "NOT_FOUND", "音视频来源不存在");
+  await assertWorkflowProviderAuthorization(run);
   return { object: await getObjectStorage().getObject(source.objectKey), contentType: source.mimeType || "application/octet-stream" };
 }

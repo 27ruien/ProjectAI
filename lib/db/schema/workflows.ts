@@ -239,7 +239,7 @@ export const workflowRunSource = pgTable(
     ),
     check(
       "workflow_run_sources_status_check",
-      sql`${table.status} in ('uploading', 'uploaded', 'ready', 'expired', 'deleted', 'failed')`,
+      sql`${table.status} in ('uploading', 'uploaded', 'ready', 'deleting', 'expired', 'deleted', 'failed')`,
     ),
     check("workflow_run_sources_digest_check", sql`${table.sha256} ~ '^[0-9a-f]{64}$'`),
     check(
