@@ -196,9 +196,25 @@ export const ga4MeasurementPlanSchema = z.object({
   requirementEventCoverage: z.array(z.object({ requirement: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
   pageEventMatrix: z.array(z.object({ page: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
 }).strict().superRefine((value, context) => {
-  const ids = value.events.map((event) => event.eventId);
-  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", path: ["events"], message: "duplicate event id" });
-  const eventIds = new Set(ids);
+  const eventIds = new Set<string>();
+  const eventIdentity = new Map<string, string>();
+  const parameterKeys = new Map<string, Set<string>>();
+  for (const [index, event] of value.events.entries()) {
+    eventIds.add(event.eventId);
+    const identity = JSON.stringify({ eventName: event.eventName, coreEvent: event.coreEvent, eventType: event.eventType, description: event.description });
+    const previousIdentity = eventIdentity.get(event.eventId);
+    if (previousIdentity !== undefined && previousIdentity !== identity) {
+      context.addIssue({ code: "custom", path: ["events", index, "eventId"], message: "event identity conflicts with another parameter row" });
+    } else {
+      eventIdentity.set(event.eventId, identity);
+    }
+    const keys = parameterKeys.get(event.eventId) ?? new Set<string>();
+    if (keys.has(event.parameterKey)) {
+      context.addIssue({ code: "custom", path: ["events", index, "parameterKey"], message: "duplicate parameter key for event" });
+    }
+    keys.add(event.parameterKey);
+    parameterKeys.set(event.eventId, keys);
+  }
   for (const [index, entry] of value.requirementEventCoverage.entries()) {
     if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", path: ["requirementEventCoverage", index, "eventId"], message: "coverage references unknown event" });
   }

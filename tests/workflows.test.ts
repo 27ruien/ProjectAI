@@ -294,7 +294,11 @@ describe("V3 workflow artifact contracts", () => {
       assert.equal(identical.data.overview.measurementId, "TBD");
     }
     const conflicting = normalizeGa4MeasurementPlan({ ...base, events: [event, { ...event, description: "不同语义" }] });
-    assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", conflicting), "WORKFLOW_GA4_SCHEMA_events");
+    assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", conflicting), "WORKFLOW_GA4_SCHEMA_events_1_eventId");
+    const secondParameter = normalizeGa4MeasurementPlan({ ...base, events: [event, { ...event, parameterName: "页面", parameterDescription: "页面名称", parameterKey: "page_name", parameterValueRule: "stable" }] });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(secondParameter).success, true);
+    const duplicateParameter = normalizeGa4MeasurementPlan({ ...base, events: [event, { ...event, parameterDescription: "不同参数描述" }] });
+    assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", duplicateParameter), "WORKFLOW_GA4_SCHEMA_events_1_parameterKey");
     const unknownCoverage = normalizeGa4MeasurementPlan({ ...base, events: [event], pageEventMatrix: [{ page: "表单", eventId: "missing", status: "gap" }] });
     assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", unknownCoverage), "WORKFLOW_GA4_SCHEMA_pageEventMatrix_0_eventId");
     const invalidMeasurement = normalizeGa4MeasurementPlan({ ...base, overview: { ...base.overview, measurementId: "not-applicable" }, events: [event] });
