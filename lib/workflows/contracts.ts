@@ -293,9 +293,9 @@ function normalizeGa4EventType(value: unknown): unknown {
 function normalizeCoverageStatus(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const normalized = value.trim().toLowerCase();
-  if (["covered", "complete", "completed", "已覆盖", "完成"].includes(normalized)) return "covered";
-  if (["gap", "missing", "未覆盖", "缺口"].includes(normalized)) return "gap";
-  if (["pending", "tbd", "待确认", "待定"].includes(normalized)) return "pending";
+  if (["covered", "complete", "completed", "fully_covered", "fully covered", "implemented", "tracked", "yes", "已覆盖", "覆盖", "完成", "已完成", "已实现", "已埋点", "已追踪", "是"].includes(normalized)) return "covered";
+  if (["gap", "missing", "uncovered", "not_covered", "not covered", "incomplete", "partial", "partially_covered", "partially covered", "no", "未覆盖", "缺口", "缺失", "未完成", "未埋点", "部分覆盖", "否"].includes(normalized)) return "gap";
+  if (["pending", "tbd", "todo", "to_do", "planned", "unknown", "not_confirmed", "待确认", "待定", "待覆盖", "待埋点", "计划中", "未确认"].includes(normalized)) return "pending";
   return value;
 }
 

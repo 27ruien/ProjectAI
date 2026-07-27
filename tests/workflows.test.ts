@@ -323,6 +323,22 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse(excessiveLabels).success, false);
   });
 
+  it("normalizes conservative GA4 coverage status aliases", () => {
+    const make = (status: unknown) => normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [],
+      events: [{ eventName: "Open Form", coreEvent: true, eventType: "click", description: "打开表单", eventId: "form_opened", parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name", parameterValueRule: "stable", parameterValueType: "string", citations: ["E1"] }],
+      requirementEventCoverage: [], pageEventMatrix: [{ page: "表单", eventId: "form_opened", status }],
+    });
+    const partial = ga4MeasurementPlanSchema.safeParse(make("partially covered"));
+    assert.equal(partial.success, true);
+    if (partial.success) assert.equal(partial.data.pageEventMatrix[0]!.status, "gap");
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("已埋点")).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("待埋点")).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("covered pending validation")).success, false);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("not applicable")).success, false);
+  });
+
   it("normalizes bounded GA4 event wrappers and keyed event maps", () => {
     const event = {
       coreEvent: true, eventType: "click", description: "打开表单",
