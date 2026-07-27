@@ -210,7 +210,21 @@ function normalizeGa4Identifier(value: unknown): unknown {
     .replace(/[^A-Za-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
-  return /^[a-z][a-z0-9_]{0,39}$/.test(normalized) ? normalized : value;
+  if (/^[a-z][a-z0-9_]{0,39}$/.test(normalized)) return normalized;
+  if (!normalized) return value;
+
+  // GA4 limits event and parameter identifiers to 40 characters. Preserve a
+  // readable prefix and add a deterministic suffix so provider wording drift
+  // cannot silently collapse two long identifiers into the same value.
+  let hash = 0x811c9dc5;
+  for (const character of normalized) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  const suffix = hash.toString(16).padStart(8, "0");
+  const safeBase = /^[a-z]/.test(normalized) ? normalized : `x_${normalized}`;
+  const prefix = safeBase.slice(0, 31).replace(/_+$/g, "") || "x";
+  return `${prefix}_${suffix}`;
 }
 
 function normalizeGa4Boolean(value: unknown): unknown {

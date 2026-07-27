@@ -218,6 +218,26 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(validateGa4MeasurementIdGrounding(fabricated, ["approved G-FABRICATED"]), true);
   });
 
+  it("normalizes overlong GA4 identifiers without creating collisions", () => {
+    const sharedPrefix = "recommendation_result_with_a_provider_generated_shared_prefix";
+    const normalized = normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [],
+      events: [
+        { eventName: `${sharedPrefix}_one`, coreEvent: true, eventType: "result", description: "结果一", eventId: `${sharedPrefix}_one`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_one`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+        { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_two`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+      ],
+      requirementEventCoverage: [],
+      pageEventMatrix: [],
+    });
+    const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.match(parsed.data.events[0]!.parameterKey, /^[a-z][a-z0-9_]{0,39}$/);
+    assert.notEqual(parsed.data.events[0]!.parameterKey, parsed.data.events[1]!.parameterKey);
+    assert.notEqual(parsed.data.events[0]!.eventId, parsed.data.events[1]!.eventId);
+  });
+
   it("describes GA4 schema failures without provider content", () => {
     const failure = describeArtifactSchemaFailure("ga4_measurement_plan", normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构", projectLink: "TBD", citations: [] },
