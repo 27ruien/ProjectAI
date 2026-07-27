@@ -13,7 +13,7 @@
 ## 音频边界
 
 - CI 仅使用 Fake ASR；Staging 真实 Provider 使用 Alibaba Model Studio 异步录音文件识别。提交前先持久化 dispatch marker，只有 task id 安全落库后才轮询；提交结果未知时失败关闭并禁止自动重放。正常 Pending 轮询复用同一个 Execution，不消耗新的尝试次数。
-- 原始音视频只在私有对象存储，最大 100 MB；Provider 仅获得一小时短时签名地址。浏览器、日志和 Evidence 不包含对象 Key、签名 URL、Cookie、Token 或原始音频。
+- 原始音视频只在私有对象存储，最大 50 MB；Provider 仅获得一小时短时签名地址。浏览器、日志和 Evidence 不包含对象 Key、签名 URL、Cookie、Token 或原始音频。
 - Provider 只给出 `speaker_id`。系统保留 `Speaker 1/2`，真实姓名只能由用户人工重命名；重命名产生新 Artifact Version。AI 待办仍是审核产物，不自动写正式 Action。
 - Provider 结果即使缺少 `Content-Length` 也按流式 20 MiB 上限读取；转写 Segment 与总字符数有硬限制，长会议按有界分块生成中间摘要后再合并。上传落库失败删除已写对象，删除失败恢复安全状态并允许幂等重试。
 

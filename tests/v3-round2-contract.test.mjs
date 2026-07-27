@@ -57,11 +57,14 @@ test("workflow persistence uses compound isolation, leases, provenance, and huma
 });
 
 test("Staging gives Qwen and audio capability only to the app and workflow worker", async () => {
-  const [compose, deploy, audioUploadRoute, audioService] = await Promise.all([
+  const [compose, deploy, audioUploadRoute, audioService, nextConfig, fixtureProjectRoute, meetingPage] = await Promise.all([
     read("docker-compose.staging.yml"),
     read("scripts/deploy-product-v2-staging.sh"),
     read("app/api/projects/[projectId]/workflows/meeting-minutes/route.ts"),
     read("lib/workflows/audio-service.ts"),
+    read("next.config.ts"),
+    read("app/api/test-fixtures/projects/route.ts"),
+    read("components/workflow/meeting-minutes-page.tsx"),
   ]);
   assert.match(compose, /projectai-workflow-worker:/);
   assert.match(compose, /AUDIO_DOWNLOAD_SIGNING_KEY_FILE: \/run\/secrets\/audio_download_signing_key/);
@@ -73,6 +76,11 @@ test("Staging gives Qwen and audio capability only to the app and workflow worke
   assert.match(deploy, /1000:1000:600/);
   assert.match(deploy, /project-ai-os-staging-workflow-worker/);
   assert.match(audioUploadRoute, /allowedMediaTypes: \["multipart\/form-data"\]/);
+  assert.match(nextConfig, /serverActions: \{ bodySizeLimit: "52mb" \}/);
+  assert.match(audioService, /MAX_AUDIO_BYTES = 50 \* 1024 \* 1024/);
+  assert.match(meetingPage, /maxAudioBytes = 50 \* 1024 \* 1024/);
+  assert.match(fixtureProjectRoute, /V3 Requirement UAT \[a-f0-9\]\{8\}/);
+  assert.match(fixtureProjectRoute, /V3 Meeting UAT \[a-f0-9\]\{8\}/);
   assert.match(compose, /arn:aws:s3:::.*\/projects\/\*/);
   assert.match(audioService, /`projects\/\$\{target\.id\}\/workflow-audio\/\$\{runId\}\//);
   assert.doesNotMatch(audioService, /`workflow-audio\//);

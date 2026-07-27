@@ -17,7 +17,7 @@ const inputSchema = z
   .object({ projectId: z.string().min(1).max(200) })
   .strict();
 
-const reviewedSyntheticProjectName = /^(?:Member Creator UAT [a-f0-9]{8}(?: 已更新)?|Product V2 ACL UAT [a-f0-9]{8}|需求结果空间 [a-f0-9]{8})$/iu;
+const reviewedSyntheticProjectName = /^(?:Member Creator UAT [a-f0-9]{8}(?: 已更新)?|Product V2 ACL UAT [a-f0-9]{8}|需求结果空间 [a-f0-9]{8}|V3 Requirement UAT [a-f0-9]{8}|V3 Meeting UAT [a-f0-9]{8})$/iu;
 
 export async function POST(request: Request): Promise<Response> {
   try {

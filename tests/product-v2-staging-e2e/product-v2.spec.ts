@@ -185,12 +185,16 @@ async function createProjectThroughUi(page: Page, input: { name: string; departm
   await dialog.getByLabel("说明").fill("仅包含虚构数据的 Product V2 Staging UI 验收空间。");
   await dialog.getByRole("button", { name: "创建" }).click();
   await expect(dialog).toBeHidden();
-  await expect(page.getByRole("button", { name: new RegExp(input.name) })).toBeVisible();
+  await expect(page.getByRole("button", { name: `${input.name} 项目`, exact: true })).toBeVisible();
 }
 
 async function chooseSpace(page: Page, name: string) {
-  await page.getByRole("button", { name: new RegExp(name) }).click();
+  await page.getByRole("button", { name: `${name} 项目`, exact: true }).click();
   await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+}
+
+function isApiResponse(response: { url(): string; request(): { method(): string } }, pathname: string, method: string) {
+  return new URL(response.url()).pathname === appPath(pathname) && response.request().method() === method;
 }
 
 async function setMemberPermissionThroughUi(page: Page, input: { spaceName: string; access: "查看" | "编辑" }) {
@@ -577,7 +581,7 @@ test("@ai-workflow @requirement-workflow V3 requirement framework generates, ver
   await expect(generate).toBeDisabled();
   for (const source of sources) {
     const uploadResponse = page.waitForResponse(
-      (response) => response.url().endsWith(`/api/projects/${target!.projectId}/documents`) && response.request().method() === "POST",
+      (response) => isApiResponse(response, `/api/projects/${target!.projectId}/documents`, "POST"),
       { timeout: 30_000 },
     );
     await page.locator('input[type="file"]').setInputFiles({
@@ -591,7 +595,7 @@ test("@ai-workflow @requirement-workflow V3 requirement framework generates, ver
   }
   await expect(generate).toBeEnabled();
   const workflowResponse = page.waitForResponse(
-    (response) => response.url().endsWith(`/api/projects/${target!.projectId}/workflows`) && response.request().method() === "POST",
+    (response) => isApiResponse(response, `/api/projects/${target!.projectId}/workflows`, "POST"),
     { timeout: 30_000 },
   );
   await generate.click();
@@ -664,7 +668,7 @@ test("@ai-workflow @meeting-workflow V3 meeting workflow uses real ASR, confirms
   const audioPath = process.env.STAGING_MEETING_AUDIO_PATH?.trim();
   if (!audioPath || !path.isAbsolute(audioPath)) throw new Error("STAGING_MEETING_AUDIO_PATH_REQUIRED");
   const audio = await stat(audioPath);
-  if (!audio.isFile() || audio.size <= 44 || audio.size > 100 * 1024 * 1024) throw new Error("STAGING_MEETING_AUDIO_INVALID");
+  if (!audio.isFile() || audio.size <= 44 || audio.size > 50 * 1024 * 1024) throw new Error("STAGING_MEETING_AUDIO_INVALID");
 
   const assertNoErrors = observe(page);
   await login(page, "member");
@@ -683,7 +687,7 @@ test("@ai-workflow @meeting-workflow V3 meeting workflow uses real ASR, confirms
   await expect(page.getByRole("heading", { name: new RegExp(`提取会议纪要 · ${projectName}`, "u") })).toBeVisible();
   await page.locator('input[type="file"]').setInputFiles(audioPath);
   const uploadResponse = page.waitForResponse(
-    (response) => response.url().endsWith(`/api/projects/${target!.projectId}/workflows/meeting-minutes`) && response.request().method() === "POST",
+    (response) => isApiResponse(response, `/api/projects/${target!.projectId}/workflows/meeting-minutes`, "POST"),
     { timeout: 30_000 },
   );
   await page.getByRole("button", { name: "上传并开始处理" }).click();

@@ -8,6 +8,12 @@ const basePath = configuredBasePath
 const nextConfig: NextConfig = {
   basePath,
   output: "standalone",
+  experimental: {
+    // Vinext classifies multipart POSTs before App Route dispatch and otherwise
+    // applies its 1 MiB Server Action default. Keep this bounded to the same
+    // 52 MiB envelope enforced by the reviewed Staging reverse proxy.
+    serverActions: { bodySizeLimit: "52mb" },
+  },
 };
 
 export default nextConfig;

@@ -19,7 +19,7 @@ const AUDIO_TYPES = new Map([
   ["mp4", ["video/mp4"]],
   ["mov", ["video/quicktime"]],
 ]);
-const MAX_AUDIO_BYTES = 100 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
 
 function digest(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 
@@ -27,7 +27,7 @@ async function validatedAudio(file: File) {
   const extension = file.name.split(".").pop()?.toLowerCase() || "";
   const allowedMimes = AUDIO_TYPES.get(extension);
   if (!allowedMimes || !allowedMimes.includes(file.type)) throw new WorkflowError(422, "AUDIO_TYPE_UNSUPPORTED", "仅支持 MP3、M4A、WAV、AAC、MP4 和 MOV");
-  if (file.size <= 0 || file.size > MAX_AUDIO_BYTES) throw new WorkflowError(422, "AUDIO_SIZE_INVALID", "音视频必须小于等于 100 MB");
+  if (file.size <= 0 || file.size > MAX_AUDIO_BYTES) throw new WorkflowError(422, "AUDIO_SIZE_INVALID", "音视频必须小于等于 50 MB");
   const bytes = new Uint8Array(await file.arrayBuffer());
   const header = bytes.subarray(0, 16);
   const ascii = new TextDecoder("latin1").decode(header);
