@@ -11,20 +11,27 @@ import type {
 } from "../types/project-assistant";
 import { createTextFixture } from "../tests/helpers/file-fixtures";
 import {
+  addVerificationProjectMember,
   assert,
   authenticatedFetch,
   cleanupDocumentVerification,
+  createVerificationProject,
+  deleteVerificationProject,
   documentVerificationEnvironment,
   requiredEnvironment,
   responseJson,
   signIn,
+  signInMockWeCom,
   signOut,
   uploadVerificationDocument,
+  type VerificationProjectFixture,
   type VerificationSession,
 } from "./lib/staging-document-verification";
 
-const environment = documentVerificationEnvironment();
+let environment = documentVerificationEnvironment();
 const runId = randomUUID();
+const mockWeComVerification =
+  process.env.STAGING_AUTH_MODE?.trim() === "mock-wecom";
 const displayNamePrefix = "B3-A 虚构 Staging 助手验收 ";
 const expectedRetrievalMode = process.env.EXPECTED_RETRIEVAL_MODE?.trim() || "";
 assert(
@@ -37,10 +44,18 @@ const viewerAgentPrefix = "projectai-staging-assistant-viewer/0.6/";
 const managerUserAgent = `${managerAgentPrefix}${runId}`;
 const viewerUserAgent = `${viewerAgentPrefix}${runId}`;
 const modelProfileId = "qwen-project-assistant-cn-v1";
-const managerEmail = requiredEnvironment("SEED_MANAGER_A_EMAIL");
-const managerPassword = requiredEnvironment("SEED_MANAGER_A_PASSWORD");
-const viewerEmail = requiredEnvironment("SEED_VIEWER_A_EMAIL");
-const viewerPassword = requiredEnvironment("SEED_VIEWER_A_PASSWORD");
+const managerEmail = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_A_EMAIL");
+const managerPassword = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_A_PASSWORD");
+const viewerEmail = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_VIEWER_A_EMAIL");
+const viewerPassword = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_VIEWER_A_PASSWORD");
 const trackedThreadIds = new Set<string>();
 
 type RetrievalPerformance = {
@@ -61,7 +76,21 @@ type RetrievalPerformance = {
 
 let manager: VerificationSession | null = null;
 let viewer: VerificationSession | null = null;
+const fixtureProjects: VerificationProjectFixture[] = [];
 let retrievalPerformance: RetrievalPerformance | null = null;
+
+async function cleanupFixtureProjects(): Promise<void> {
+  if (!manager) return;
+  while (fixtureProjects.length > 0) {
+    const fixture = fixtureProjects.at(-1)!;
+    await deleteVerificationProject({
+      environment,
+      owner: manager,
+      fixture,
+    });
+    fixtureProjects.pop();
+  }
+}
 
 function threadPath(
   projectId: string,
@@ -334,19 +363,61 @@ async function waitForEmbeddingCoverage(documentId: string, versionId: string) {
 
 let verificationError: unknown;
 try {
-  await cleanupAll();
-  manager = await signIn({
-    environment,
-    email: managerEmail,
-    password: managerPassword,
-    userAgent: managerUserAgent,
-  });
-  viewer = await signIn({
-    environment,
-    email: viewerEmail,
-    password: viewerPassword,
-    userAgent: viewerUserAgent,
-  });
+  if (mockWeComVerification) {
+    manager = await signInMockWeCom({
+      environment,
+      identity: "super-admin",
+      userAgent: managerUserAgent,
+    });
+    viewer = await signInMockWeCom({
+      environment,
+      identity: "member",
+      userAgent: viewerUserAgent,
+    });
+    const suffix = runId.replaceAll("-", "");
+    const fixtureRunId = `uat-ai-${runId}`;
+    const projectA = await createVerificationProject({
+      environment,
+      session: manager,
+      fixtureRunId,
+      nameSuffix: suffix.slice(0, 8),
+    });
+    fixtureProjects.push(projectA);
+    const projectB = await createVerificationProject({
+      environment,
+      session: manager,
+      fixtureRunId,
+      nameSuffix: suffix.slice(-8),
+    });
+    fixtureProjects.push(projectB);
+    environment = {
+      ...environment,
+      projectAId: projectA.projectId,
+      projectBId: projectB.projectId,
+    };
+    assert(viewer.email, "Mock WeCom Viewer email is unavailable.");
+    await addVerificationProjectMember({
+      environment,
+      owner: manager,
+      projectId: projectA.projectId,
+      email: viewer.email,
+      role: "viewer",
+    });
+  } else {
+    await cleanupAll();
+    manager = await signIn({
+      environment,
+      email: managerEmail!,
+      password: managerPassword!,
+      userAgent: managerUserAgent,
+    });
+    viewer = await signIn({
+      environment,
+      email: viewerEmail!,
+      password: viewerPassword!,
+      userAgent: viewerUserAgent,
+    });
+  }
 
   const fixtureText = [
     "客户要求什么时候上线？客户要求在 2026 年 10 月 15 日上线。",
@@ -575,11 +646,12 @@ try {
     "Concurrent conflict created more than one Execution or Message pair.",
   );
 
-  const managerUser = await pool.query<{ id: string }>(
-    "select id from users where email = $1",
-    [managerEmail],
-  );
-  const managerUserId = managerUser.rows[0]?.id;
+  const managerUserId = manager.userId ?? (
+    await pool.query<{ id: string }>(
+      "select id from users where email = $1",
+      [managerEmail],
+    )
+  ).rows[0]?.id;
   assert(managerUserId, "Manager identity was not found for stale verification.");
   const staleFixtures = ["reserved", "calling_provider", "validating"].map(
     (status, index) => ({
@@ -992,10 +1064,6 @@ try {
     );
   }
 
-  await signOut(environment, manager);
-  await signOut(environment, viewer);
-  manager = null;
-  viewer = null;
   const cleanup = await cleanupAll();
   const running = await pool.query<{ count: number }>(
     `select count(*)::int as count
@@ -1004,6 +1072,11 @@ try {
   );
   assert(running.rows[0]?.count === 0, "Staging retains a running AI Execution.");
 
+  await cleanupFixtureProjects();
+  await signOut(environment, manager);
+  await signOut(environment, viewer);
+  manager = null;
+  viewer = null;
   process.stdout.write(
     `${JSON.stringify({
       ok: true,
@@ -1035,13 +1108,18 @@ try {
   throw error;
 } finally {
   try {
-    await signOut(environment, manager);
-    await signOut(environment, viewer);
+    await cleanupAll();
   } catch (cleanupError) {
     if (!verificationError) throw cleanupError;
   }
   try {
-    await cleanupAll();
+    await cleanupFixtureProjects();
+  } catch (cleanupError) {
+    if (!verificationError) throw cleanupError;
+  }
+  try {
+    await signOut(environment, manager);
+    await signOut(environment, viewer);
   } catch (cleanupError) {
     if (!verificationError) throw cleanupError;
   } finally {

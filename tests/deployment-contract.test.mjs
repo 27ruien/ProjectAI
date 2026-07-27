@@ -7,6 +7,7 @@ import { normalizeApplicationCookieName } from "../scripts/lib/cookie-name.mjs";
 
 const execFileAsync = promisify(execFile);
 const deployScript = new URL("../scripts/deploy-staging.sh", import.meta.url);
+const v3PromotionScript = new URL("../scripts/promote-v3-staging.sh", import.meta.url);
 const stagingCompose = new URL("../docker-compose.staging.yml", import.meta.url);
 const productionCompose = new URL("../docker-compose.prod.yml", import.meta.url);
 const productionRolloutCompose = new URL(
@@ -69,6 +70,29 @@ test("Staging PostgreSQL readiness checks the final TCP listener", async () => {
     script,
     /PGPASSWORD="\$POSTGRES_PASSWORD" psql \\\n+\s+--host=127\.0\.0\.1/,
   );
+});
+
+test("V3 Staging promotion is exact-head, rollback guarded, and Production read-only", async () => {
+  const script = await readFile(v3PromotionScript, "utf8");
+  assert.match(script, /origin\/\$\{EXPECTED_BRANCH\}/);
+  assert.match(script, /x-projectai-commit-sha/);
+  assert.match(script, /\.staging-deploy-lock/);
+  assert.match(script, /\.v3-staging-promotion-in-progress/);
+  assert.match(script, /\.env\.ai\.v3-promotion-backup/);
+  assert.match(script, /AI_EMBEDDING_ENABLED=true/);
+  assert.match(script, /set_mode shadow/);
+  assert.match(script, /set_mode hybrid/);
+  assert.match(script, /npm run ai:probe:qwen/);
+  assert.match(script, /npm run embeddings:probe/);
+  assert.match(script, /npm run retrieval:evaluate/);
+  assert.match(script, /npm run retrieval:probe/);
+  assert.match(script, /project-ai-os-staging-workflow-worker/);
+  assert.match(script, /STAGING_AUTH_MODE=mock-wecom/);
+  assert.doesNotMatch(script, /SEED_(?:MANAGER|VIEWER)_[A-Z_]*PASSWORD=/);
+  assert.match(script, /PRODUCTION_BEFORE/);
+  assert.match(script, /production_after.*PRODUCTION_BEFORE/);
+  assert.doesNotMatch(script, /docker compose down|printenv|\.Config\.Env/);
+  await execFileAsync("bash", ["-n", v3PromotionScript.pathname]);
 });
 
 test("B3-C2A Production Compose is private, immutable, scoped, and never uses compose down", async () => {
@@ -553,6 +577,10 @@ test("Product V2 Staging deploy accepts the reviewed agent branch and owns the d
   assert.match(
     script,
     /PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH/,
+  );
+  assert.match(
+    script,
+    /"\$EXPECTED_BRANCH" == agent\/\* \|\| "\$EXPECTED_BRANCH" == "main"/,
   );
   assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
   assert.match(

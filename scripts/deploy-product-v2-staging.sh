@@ -31,7 +31,8 @@ done
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "Run from a Git checkout"
 cd "$ROOT_DIR"
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "Expected branch ${EXPECTED_BRANCH}"
-[[ "$EXPECTED_BRANCH" == agent/* ]] || fail "PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch"
+[[ "$EXPECTED_BRANCH" == agent/* || "$EXPECTED_BRANCH" == "main" ]] \
+  || fail "PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch or main"
 [[ -z "$(git status --porcelain --untracked-files=all | grep -Ev '^\?\? pocket-charista(/|\.zip$)' || true)" ]] \
   || fail "Refusing to deploy tracked or ProjectAI untracked changes"
 git diff --check --cached
