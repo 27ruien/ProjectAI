@@ -336,29 +336,73 @@ describe("Qwen adapter and Gateway", () => {
     assert.equal(provider.calls.length, 4);
   });
 
-  it("does not retry 401 or 403 and returns only a controlled error", async () => {
-    for (const marker of ["FAKE_401", "FAKE_403"]) {
-      const provider = new FakeProjectAssistantProvider();
-      const gateway = new ProjectAssistantGateway(
-        fakeConfig(),
-        provider,
-        async () => undefined,
-      );
-      await assert.rejects(
-        gateway.generate({
-          purpose: "answer",
-          systemPrompt: "system",
-          userPrompt: `${marker} provider raw body must never surface`,
-        }),
-        (error: unknown) => {
-          assert.ok(error instanceof ProjectAssistantError);
-          assert.equal(error.code, "AI_PROVIDER_UNAVAILABLE");
-          assert.equal(error.message.includes("raw body"), false);
-          return true;
-        },
-      );
-      assert.equal(provider.calls.length, 1);
-    }
+  it("does not retry an unauthorized credential failure", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+    await assert.rejects(
+      gateway.generate({
+        purpose: "answer",
+        systemPrompt: "system",
+        userPrompt: "FAKE_401 provider raw body must never surface",
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ProjectAssistantError);
+        assert.equal(error.code, "AI_PROVIDER_UNAVAILABLE");
+        assert.equal(error.message.includes("raw body"), false);
+        return true;
+      },
+    );
+    assert.equal(provider.calls.length, 1);
+  });
+
+  it("falls back once when only the primary model is forbidden", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+    const result = await gateway.generate({
+      purpose: "answer",
+      systemPrompt: "system",
+      userPrompt: "FAKE_PRIMARY_FORBIDDEN",
+    });
+    assert.equal(result.actualModel, "qwen3.6-flash");
+    assert.equal(result.fallbackUsed, true);
+    assert.deepEqual(
+      provider.calls.map((call) => call.model),
+      ["qwen3.7-plus", "qwen3.6-flash"],
+    );
+  });
+
+  it("does not retry forbidden models and returns only a controlled error", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+    await assert.rejects(
+      gateway.generate({
+        purpose: "answer",
+        systemPrompt: "system",
+        userPrompt: "FAKE_403 provider raw body must never surface",
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ProjectAssistantError);
+        assert.equal(error.code, "AI_PROVIDER_UNAVAILABLE");
+        assert.equal(error.message.includes("raw body"), false);
+        return true;
+      },
+    );
+    assert.deepEqual(
+      provider.calls.map((call) => call.model),
+      ["qwen3.7-plus", "qwen3.6-flash"],
+    );
   });
 
   it("retries Timeout, 429 and 5xx only within the bounded policy", async () => {

@@ -69,6 +69,12 @@ export class FakeProjectAssistantProvider
     if (request.userPrompt.includes("FAKE_403")) {
       throw new AiProviderError("FORBIDDEN", false);
     }
+    if (
+      request.userPrompt.includes("FAKE_PRIMARY_FORBIDDEN") &&
+      request.model === "qwen3.7-plus"
+    ) {
+      throw new AiProviderError("FORBIDDEN", false);
+    }
     if (request.userPrompt.includes("FAKE_429")) {
       throw new AiProviderError("RATE_LIMITED", true);
     }
