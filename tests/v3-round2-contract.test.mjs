@@ -5,16 +5,19 @@ import test from "node:test";
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
 
 test("AI workflow UI exposes exactly the two approved user workflows", async () => {
-  const [home, workspace, sidebar] = await Promise.all([
+  const [home, workspace, sidebar, meeting] = await Promise.all([
     read("components/workflow/workflows-page.tsx"),
     read("components/workspace.tsx"),
     read("components/layout/sidebar.tsx"),
+    read("components/workflow/meeting-minutes-page.tsx"),
   ]);
   assert.match(home, /搭建需求框架/);
   assert.match(home, /提取会议纪要/);
   for (const internal of ["Scope 对比", "Action Plan", "Risk", "周报", "需求提取"]) assert.doesNotMatch(home, new RegExp(`title: ["']${internal}`));
   assert.match(workspace, /requirement-framework/);
   assert.match(workspace, /meeting-minutes/);
+  assert.match(meeting, /action: "retry"/);
+  assert.match(meeting, /从失败步骤重试/);
   assert.doesNotMatch(sidebar, /href: "\/(?:skills|reviews|uat)/);
 });
 
