@@ -704,7 +704,7 @@ test("@ai-workflow @meeting-workflow V3 meeting workflow uses real ASR, confirms
   await expect(page.getByRole("heading", { name: "等待人工审核" })).toBeVisible({ timeout: 30_000 });
   expect(detail.artifacts.map((artifact) => artifact.title)).toEqual(["完整会议转写", "会议纪要", "会议待办"]);
   const transcript = detail.artifacts.find((artifact) => artifact.kind === "meeting_transcript")!;
-  const transcriptSpeakers = (transcript.content.speakers ?? []) as Array<{ displayName?: string }>;
+  const transcriptSpeakers = (transcript.content.speakers ?? []) as Array<{ id?: string; displayName?: string }>;
   expect(transcriptSpeakers.length, "real ASR speaker separation").toBeGreaterThanOrEqual(2);
 
   const speakerSection = page.locator("section").filter({ has: page.getByRole("heading", { name: "确认说话人" }) });
@@ -712,10 +712,19 @@ test("@ai-workflow @meeting-workflow V3 meeting workflow uses real ASR, confirms
   expect(await speakerInputs.count(), "speaker editors").toBeGreaterThanOrEqual(2);
   for (let index = 0; index < await speakerInputs.count(); index += 1) {
     const name = `虚构发言人${index + 1}`;
+    const speakerId = transcriptSpeakers[index]?.id;
+    expect(speakerId, `speaker ${index + 1} id`).toBeTruthy();
     const input = speakerInputs.nth(index);
     await input.fill(name);
-    await input.locator("..").getByRole("button", { name: "确认" }).click();
+    const confirm = input.locator("..").getByRole("button", { name: "确认" });
+    const renameResponse = page.waitForResponse(
+      (response) => isApiResponse(response, `/api/projects/${target!.projectId}/workflows/${runId}/speakers/${speakerId}`, "PATCH"),
+      { timeout: 30_000 },
+    );
+    await confirm.click();
+    expect((await renameResponse).status(), `rename speaker ${index + 1}`).toBe(200);
     await expect(speakerSection.locator("input").nth(index)).toHaveValue(name);
+    await expect(speakerSection.locator("input").nth(index).locator("..").getByRole("button", { name: "确认" })).toBeDisabled();
   }
 
   detail = await waitForWorkflow(page, target!.projectId!, runId, "awaiting_review");

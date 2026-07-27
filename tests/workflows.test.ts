@@ -440,7 +440,7 @@ describe("V3 workflow artifact contracts", () => {
     const normalized = normalizeActionPlan({ tasks: [{
       taskCn: "确认范围", owner: "PM", stakeholder: "Client", startDate: "待确认", endDate: "TBD",
       progress: "25%", milestone: "是", parentTask: "无", dependency: [], latestConfirmationDate: "2031-03-09",
-      criticalPath: "false", sourceCitation: ["E1"], status: "进行中",
+      criticalPath: "false", sourceCitation: ["E1"], delayImpact: "   ", status: "进行中",
     }, {
       taskCn: "准备 UAT", dependency: [{ taskCn: "确认范围" }], sourceCitation: "待确认",
     }] });
@@ -451,6 +451,7 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(parsed.data.tasks[0]!.milestone, true);
     assert.equal(parsed.data.tasks[0]!.startDate, "TBD");
     assert.equal(parsed.data.tasks[0]!.status, "in_progress");
+    assert.equal(parsed.data.tasks[0]!.delayImpact, "待确认");
     assert.deepEqual(parsed.data.tasks[1]!.dependency, ["确认范围"]);
     assert.equal(validateActionPlanDateGrounding(parsed.data, ["最晚于 2031-03-09 确认"]), true);
     assert.equal(validateActionPlanDateGrounding(parsed.data, ["没有日期"]), false);

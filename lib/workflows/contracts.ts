@@ -583,7 +583,9 @@ export function normalizeActionPlan(value: unknown): unknown {
             : item.dependency ?? [],
         confirmationOwner: item.confirmationOwner ?? "TBD",
         latestConfirmationDate: normalizeActionDate(item.latestConfirmationDate),
-        delayImpact: item.delayImpact ?? "待确认",
+        delayImpact: typeof item.delayImpact === "string" && item.delayImpact.trim() === ""
+          ? "待确认"
+          : item.delayImpact ?? "待确认",
         criticalPath: normalizeActionBoolean(item.criticalPath, false),
         sourceCitation,
         assumption: item.assumption ?? "",
