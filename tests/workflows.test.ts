@@ -218,6 +218,20 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(validateGa4MeasurementIdGrounding(fabricated, ["approved G-FABRICATED"]), true);
   });
 
+  it("normalizes only semantically uniform compound GA4 value types", () => {
+    const make = (parameterValueType: unknown) => normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [],
+      events: [{ eventName: "Submit Form", coreEvent: true, eventType: "click", description: "提交", eventId: "submit_form", parameterName: "结果", parameterDescription: "提交结果", parameterKey: "submit_result", parameterValueRule: "success|failed", parameterValueType, citations: ["E1"] }],
+      requirementEventCoverage: [], pageEventMatrix: [],
+    });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("string (enum values)")).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("integer / numeric value")).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("ISO 8601 date/time")).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("string or number")).success, false);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make("object")).success, false);
+  });
+
   it("normalizes overlong GA4 identifiers without creating collisions", () => {
     const sharedPrefix = "recommendation_result_with_a_provider_generated_shared_prefix";
     const normalized = normalizeGa4MeasurementPlan({

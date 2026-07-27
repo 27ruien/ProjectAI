@@ -257,6 +257,20 @@ function normalizeGa4ValueType(value: unknown): unknown {
   if (["boolean", "bool", "布尔"].includes(normalized)) return "boolean";
   if (["date", "datetime", "timestamp", "iso_date", "iso8601", "日期", "时间"].includes(normalized)) return "date";
   if (["array", "list", "string[]", "string array", "数组", "列表"].includes(normalized)) return "array";
+  const tokens = normalized.split(/[^a-z0-9\u3400-\u9fff]+/).filter(Boolean);
+  const matchesOnly = (accepted: Set<string>, required: Set<string>) =>
+    tokens.length > 0 && tokens.every((token) => accepted.has(token)) && tokens.some((token) => required.has(token));
+  const noise = ["value", "values", "type", "类型"];
+  const stringTokens = new Set(["string", "text", "enum", "enumeration", "字符串", "文本", "枚举", ...noise]);
+  if (matchesOnly(stringTokens, new Set(["string", "text", "enum", "enumeration", "字符串", "文本", "枚举"]))) return "string";
+  const numberTokens = new Set(["number", "integer", "int", "float", "double", "decimal", "numeric", "数字", "数值", "整数", "浮点数", ...noise]);
+  if (matchesOnly(numberTokens, new Set(["number", "integer", "int", "float", "double", "decimal", "numeric", "数字", "数值", "整数", "浮点数"]))) return "number";
+  const booleanTokens = new Set(["boolean", "bool", "布尔", ...noise]);
+  if (matchesOnly(booleanTokens, new Set(["boolean", "bool", "布尔"]))) return "boolean";
+  const dateTokens = new Set(["date", "datetime", "time", "timestamp", "iso", "iso8601", "8601", "日期", "时间", ...noise]);
+  if (matchesOnly(dateTokens, new Set(["date", "datetime", "timestamp", "iso8601", "日期", "时间"]))) return "date";
+  const arrayTokens = new Set(["array", "list", "string", "数组", "列表", ...noise]);
+  if (matchesOnly(arrayTokens, new Set(["array", "list", "数组", "列表"]))) return "array";
   return value;
 }
 
