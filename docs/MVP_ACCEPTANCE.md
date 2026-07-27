@@ -156,3 +156,20 @@
 | PV2-004 | Requirement Extraction 真实来源、一次 Repair、同页编辑/整批审核、临时附件保存生命周期 | Fake/local PASS；real Qwen Staging PENDING | 一条纯虚构附件的真实生成、HTTP 200、编辑、整批批准、新项目保存和知识库回读 |
 | PV2-005 | 0019 非空升级至 0024、旧数据保留、测试 credential/Session 退休、显式 deny 优先 | Local migration/ACL rehearsal PASS；Staging PENDING | 备份后受控 Staging Migration 与不变量检查 |
 | PV2-006 | 当前 Head CI、九项 Staging UI、Reviewer、Production 不变 | PENDING | 全部动态证据写入 Draft PR；不得以本表替代实际 Run/Artifact/UAT |
+
+## Workflow and Knowledge V3 门禁
+
+本表只定义稳定验收条件，不记录动态 PASS。最终状态必须来自同一 exact Head 的 CI、Staging Evidence、清理记录和独立复审。
+
+| ID | 验收项 | 关闭条件 |
+| --- | --- | --- |
+| WKV3-001 | 日报长任务 | Job/Lease/Heartbeat/幂等、阶段反馈、离页恢复、Failure/Retry/Review/Audit 全部通过 |
+| WKV3-002 | 工作流入口 | 页面和服务端只暴露“搭建需求框架”“提取会议纪要”两类定义 |
+| WKV3-003 | Requirement Framework | 真实受权来源生成项目概览、26 节需求文档、GA4 计划与 Action Plan；版本、引用、审核、导出和发布闭环 |
+| WKV3-004 | Meeting | 私有音频、真实 Staging ASR、说话人分离/人工命名、转写/纪要/待办、审核、导出、发布与音频删除闭环 |
+| WKV3-005 | 结构化知识 | Parent/Child、表格表头、Parser/Chunker 版本、质量、禁用/恢复、Embedding 失效与重建可审核 |
+| WKV3-006 | 授权检索 | Identity→Project→Space→Document→Version→Chunk ACL；跨项目/撤权/旧版本/归档泄漏为 0 |
+| WKV3-007 | Retrieval | Query Rewrite、Lexical/Exact Vector、Weighted RRF、Candidate 集合内受控 Rerank、Context Expansion 和 Citation Revalidation 顺序固定 |
+| WKV3-008 | 回退 | Shadow 不改变 Prompt；Coverage/Provider/Timeout/Rerank 失败回退安全基线；无 Evidence 不调用 Answer Model |
+| WKV3-009 | Fixture 生命周期 | Staging 测试 Department/Space/Project 显式登记、过期可清理、普通列表不可见；基线项目不误删 |
+| WKV3-010 | 最终门禁 | 当前 exact Head CI、24 项浏览器 UAT、Staging healthy、P0/P1/P2=0、独立复审、Production 只读不变 |

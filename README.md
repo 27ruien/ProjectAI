@@ -2,7 +2,7 @@
 
 面向项目经理的 AI 项目交付工作台 MVP。它以项目为核心容器，将项目资料、知识、结构化需求、AI 工作流、人工审核、Scope 变更、Action Plan 与风险管理串联起来。
 
-> **安全提示：当前 Product V2 分支只允许本地/CI 与受控 Staging 验收，不执行 Production 部署、迁移、重启或 AI 启用。正式企业微信 OAuth/扫码仍等待企业 API 配置；Mock WeCom 与 Staging 测试登录在 Production 硬拒绝。**
+> **安全提示：当前 Workflow and Knowledge V3 分支只允许本地/CI 与受控 Staging 验收，不执行 Production 部署、迁移、重启或 AI 启用。正式企业微信 OAuth/扫码仍等待企业 API 配置；Mock WeCom 与 Staging 测试登录在 Production 硬拒绝。**
 
 ## 已实现能力
 
@@ -17,7 +17,7 @@
 - 项目知识：读取当前项目 Active/Current/Stored/Succeeded/Effective 索引，支持 FTS、contains、`pg_trgm` 模糊匹配与 PDF Page、DOCX Section、XLSX Range、PPTX Slide、文本行来源。
 - 项目 AI 助手：私人 Thread、有限多轮、Qwen 主/备用模型、服务端 Evidence/Citation 校验、资料不足、失败重试、Token Usage、限流与审计；回答不直接写入正式业务数据。
 - Assistant Evidence Retrieval：ACL 前置的有界 Query Rewrite、服务端 lexical/shadow/hybrid Mode、exact pgvector、Weighted RRF、受控 Rerank、Parent/Adjacent Context、Citation 二次校验、Lexical Fallback 与 68 条虚构 Query 质量门禁。
-- 向量基础：固定 `qwen-text-embedding-cn-v1` Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、dry-run Backfill、Probe 与 Usage；不接入浏览器检索或回答 Evidence。
+- 向量基础：固定 `qwen-text-embedding-cn-v1` Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、dry-run Backfill、Probe 与 Usage；用户知识搜索仍为词法，项目助手只在服务端授权检索链中使用向量。
 - 需求中心：TanStack Table、批量操作、CSV 导出和可编辑 Requirement Drawer。
 - AI 工作流：仅保留“搭建需求框架”和“提取会议纪要”。前者生成四类版本化产物，后者使用私有音频、异步 ASR、说话人分离与人工命名；全部经过严格 Schema、引用校验、人工审核后才能发布到知识库。
 - 审核中心：三栏审核、差异、证据、执行信息、通过/修改后通过/驳回/草稿/重新生成。
@@ -79,7 +79,7 @@ AI 产出始终先以草稿或待审核状态存在。Requirement Extraction 只
 
 项目页面先在服务端从 Session 建立用户身份，再从 PostgreSQL 查询项目成员关系。资料 API 继续验证 `projectId → documentId → versionId` 归属，再访问 PostgreSQL 文件元数据和私有对象存储；Bucket、Endpoint、Object Key 与凭据不会序列化给浏览器。其他业务模块仍在授权后按精确 `projectId` 映射 Mock 数据，客户端不会收到其他项目内容。
 
-项目知识页继续使用真实词法搜索与来源定位；项目助手则由服务端按配置使用 lexical、shadow 或经过评测的 exact-vector + RRF hybrid Evidence，最终最多 10 条、总计最多 24000 字符。Coverage、预算、Timeout、Provider 或向量异常自动回退 Lexical；没有合格 Evidence 时不调用回答模型。Query Vector 不持久化，客户端不能提交 Mode、Profile、Score 或内部 Evidence。OCR、ANN 索引和 Reranker 仍未实现。
+项目知识页继续使用真实词法搜索与来源定位；项目助手则由服务端按配置使用 lexical、shadow 或经过评测的 exact-vector + RRF hybrid Evidence，并可在授权 Candidate 集合内执行 Provider-neutral 受控 Rerank，最终最多 10 条、总计最多 24000 字符。Coverage、预算、Timeout、Provider、向量或 Rerank 异常均回退到安全的原顺序/词法结果；没有合格 Evidence 时不调用回答模型。Query Vector 不持久化，客户端不能提交 Mode、Profile、Score 或内部 Evidence。OCR、ANN 索引和专用 `qwen3-rerank` Provider 仍未实现。
 
 ## 目录
 
@@ -114,8 +114,8 @@ docs/                   MVP 规格、验收、流程、架构、测试与部署�
 - Product V2 Local/Staging Seed：仅在显式 Mock WeCom 环境 insert-only 创建 Kivisense 三个虚构身份、七个部门和虚构 UAT 项目；不创建密码，也不覆盖既有身份状态。历史测试 Seed 仅供隔离测试链使用。
 - 真实 PostgreSQL AI 状态：模型 Profile、私人 Thread、Message、Execution、Citation、Token Usage、限流和 Audit；Embedding Profile/Job/Batch/Provider Call/Chunk Vector 只供 Worker 与受保护运维使用。
 - Feature Flag 开启后，真实 PostgreSQL 还保存当前用户自己的工作随记、日报草稿、任务、AI execution 与脱敏同步摘要；管理员不会因此获得查看下属日报的新权限。
-- Product V2 真实工作流：Requirement Draft/Run/Review/Version/Source、临时附件及审核后的正式 Requirement 写入。
-- 未实现：正式企业微信 OAuth、OCR、用户知识搜索的向量检索、ANN、Rerank、Tool Calling，以及未经人工审核的正式业务写入。
+- Workflow and Knowledge V3：只有“搭建需求框架”和“提取会议纪要”两个入口；来源、Run、Artifact、Version、Review、Export、Audio、Speaker 与 Segment 持久化，审核后才可发布正式知识。
+- 未实现：正式企业微信 OAuth、OCR、用户知识搜索的向量检索、ANN、专用 `qwen3-rerank` Provider、Tool Calling，以及未经人工审核的正式业务写入。
 
 ## 本地运行
 
@@ -233,9 +233,9 @@ Compose 按容器最小化注入 Secret：Worker 只接收数据库连接和 Buc
 
 ## 后续接入
 
-1. 完成 B3-C1 Production Readiness 的独立产品、安全与运维复审；Draft PR 不自动 Ready 或合并。
-2. Production Rollout 必须在独立 B3-C2 中按 Phase 0–6 执行，不得把 readiness 当作上线授权。
-3. 后续 ANN 或 Reranker 必须独立评测和立项，不得混入 B3-C1/B3-C2。
+1. 对 Workflow and Knowledge V3 的最终 exact Head 完成 CI、Staging 真实 Provider/UAT、清理与独立复审；全部门禁通过前 Draft PR 不 Ready 或合并。
+2. Production Rollout 必须在独立 B3-C2B 授权中按 Phase 0–6 执行，不得把 Staging 验收或 readiness 当作上线授权。
+3. 后续 ANN 或专用 `qwen3-rerank` Provider 必须独立评测和立项；V3 受控 Rerank 只能重排已授权 Candidate。
 4. 保持 `ProjectKnowledgeService` 和 `AIGateway` 稳定边界；Provider Key 只进入服务端 Secret File。
 5. 项目助手回答必须显示来源并保留审计，不直接覆盖正式数据。
 
@@ -392,4 +392,4 @@ npm run test:production-rollout
 npm run production:rehearsal
 ```
 
-C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling 与 Agent Execution 未开始。
+Production Control Plane 保持冻结；V3 已实现 ACL 后、Candidate 集合内的受控 Rerank。ANN、OCR、专用 `qwen3-rerank`、Tool Calling 与 Agent Execution 未开始。

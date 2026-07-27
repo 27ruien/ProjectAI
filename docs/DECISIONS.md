@@ -259,7 +259,7 @@
 - 决策：B3-C2A 只开发 Rollout Executor，不执行 Production。formal Authorization 使用 Ed25519 签名并绑定 Session/SHA/App 与 db-tools Image/Baseline/Go-No-Go/Phase/Action/过期时间；Action 固定为 `apply`、`resume`、`rollback`、`finalize`、`lock-clear` 或 `image-transfer`，本阶段不生成 formal Authorization。
 - 执行：Phase 0–6 独立调用、独立报告、非零观察窗口和前置报告；状态保存在原子 Lock 与 Digest Journal，支持 Status/Resume/Rollback，禁止一键全阶段和 `docker compose down`。
 - 原因：JSON 布尔值和可重算 Digest 不能代表独立操作授权；签名、短有效期、阶段范围和实时基线共同降低误操作与重放风险。
-- 范围：C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling、Agent Execution 未开始。正式变更属于 B3-C2B。
+- 历史范围：该 B3-C2A 决策冻结 C1/C2/D，并禁止在当轮引入 Rerank、ANN、OCR、Tool Calling 或 Agent Execution。后续 Workflow and Knowledge V3 另行实现了 ACL 后、Candidate 集合内的受控 Rerank；Production 执行器和 B3-C2B 授权边界不变。
 
 ## DEC-022 — Production Trust、Verification 与 Egress 必须独立固定
 

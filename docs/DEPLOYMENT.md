@@ -7,7 +7,7 @@
 | Production | https://gridworks.cn/tool/projectai/ / `/tool/projectai` | `/srv/projectai` / `project-ai-os` | 当前无 ProjectAI PostgreSQL；B3-C1 不得修改 | 当前无 ProjectAI MinIO/Worker；B3-C1 不得增加 | `127.0.0.1:3100` |
 | Staging | https://gridworks.cn/tool/projectai-staging/ / `/tool/projectai-staging` | `/srv/projectai-staging` / App + Document Worker + Embedding Worker | PostgreSQL 17 + pgvector 0.8.1 / `projectai-staging-postgres` | 私有 MinIO + `projectai-staging-files` | 应用 `127.0.0.1:3101`；Worker/DB/MinIO 无端口 |
 
-B3-C1 只做 Production Readiness 和隔离 Rehearsal。不得在 Production 主机构建、迁移、重启、增加 PostgreSQL/pgvector/MinIO/Worker、配置 Qwen Secret、修改 Retrieval Mode、修改环境或重新部署。全部 Production `--apply` 被代码硬禁用；正式分阶段流程见 `PRODUCTION_RELEASE.md`，只可在后续 B3-C2 执行。
+当前 V3 任务只允许 Staging 部署与 Production 只读审计。不得在 Production 主机构建、迁移、重启、增加 PostgreSQL/pgvector/MinIO/Worker、配置 Qwen/ASR Secret、修改 Retrieval Mode、修改环境或重新部署。全部 Production `--apply` 继续被代码硬禁用；正式分阶段流程见 `PRODUCTION_RELEASE.md`，只可在独立 B3-C2B 授权后执行。
 
 ## Staging 构建元数据
 
@@ -77,7 +77,7 @@ published ports: none
 
 ## Staging 部署流程
 
-Product V2 使用专用 `scripts/deploy-product-v2-staging.sh`，只接受 `agent/projectai-product-architecture-v2` 的 clean、exact-origin Head。它在任何 release rsync 前先生成并验证 PostgreSQL custom dump并备份三个受保护配置文件，再应用 0020–0024、执行无密码的 Mock WeCom insert-only Seed、先关闭 AI 启动、运行真实 Qwen Probe、只重建 App 启用 AI，最后执行 Product V2 smoke。详细 UI 门禁见 `PRODUCT_V2_STAGING_UAT.md`。该脚本不替代下述历史全量 Staging 发布器，也不包含任何 Production 目标。
+V3 使用专用 `scripts/deploy-product-v2-staging.sh`，默认只接受 `agent/projectai-workflows-knowledge-v3` 的 clean、exact-origin Head。它在任何 release rsync 前先生成并验证 PostgreSQL custom dump并备份受保护配置文件，再按 ledger 应用 committed Migration、执行 insert-only 非生产 Seed、以受控 Flag 启动、运行真实 Provider Probe 与脱敏 smoke。详细 UI 门禁见 `PRODUCT_V2_STAGING_UAT.md` 和 `WORKFLOW_KNOWLEDGE_V3.md`。脚本不包含任何 Production 目标；检索 Mode 切换只允许在门禁通过后单独重建 Staging App，且必须使用 `--no-deps` 避免无关服务重建。
 
 使用 `scripts/deploy-staging.sh`。脚本要求：
 

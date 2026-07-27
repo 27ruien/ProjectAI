@@ -4,104 +4,80 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 当前开发版本 | `0.8.0-staging`（Product V2 stacked Draft） |
-| `main` 基线 | 已合并 B3-A、B3-B1、B3-B2；当前分支堆叠在 PR #11 Head |
-| 开发分支 | `agent/projectai-product-architecture-v2` |
-| 当前功能 PR | Product V2 企业身份、角色/部门、知识空间与 Requirement Extraction；保持 Draft，不自动合并 |
-| 动态交付事实 | PR Head、CI Run、Artifact ID/Digest、Staging image 与 Build Time 只记录在 Draft PR、Provenance Manifest 和受控部署证据 |
-| Staging | https://gridworks.cn/tool/projectai-staging/；Product V2 exact-head 部署与九项真实 UI 验收待执行 |
-| Production | https://gridworks.cn/tool/projectai/；本分支不部署、不迁移、不重启、不创建 Secret |
+| 当前开发版本 | `0.8.0-staging`（Workflow and Knowledge V3 Draft） |
+| `main` 基线 | 已合并 Product V2；本分支在该基线上新增 V3 Workflow、会议音频与授权检索能力 |
+| 开发分支 | `agent/projectai-workflows-knowledge-v3` |
+| 当前功能 PR | PR #13；在全部动态门禁关闭前保持 Draft |
+| 动态交付事实 | PR Head、CI Run、Artifact/Digest、Staging image、UAT 时间与最终结论只记录在 PR 和受控证据中 |
+| Staging | https://gridworks.cn/tool/projectai-staging/；只允许 exact-head、受控 Migration、真实 Provider Probe/UAT 与可回滚发布 |
+| Production | https://gridworks.cn/tool/projectai/；本分支只读核对，不部署、不迁移、不重启、不创建 Secret |
 
 ## 当前结论
 
-当前 Product V2 分支已在本地完成无密码 Mock WeCom 三身份，以及只在精确 Staging 配置下显示的“进入测试环境”按钮。该按钮不接受 caller 身份/角色参数，只绑定既有 Admin Seed，并通过正常数据库 Session、HttpOnly Cookie、集中授权、审计和退出链路；旧 `debug=admin` query 已退役。Product Role、Kivisense 四级部门、部门/项目知识空间 view/edit、全局授权搜索，以及真实 Requirement Extraction 的临时附件、一次 Repair、同页整批审核和保存生命周期保持不变。非空 Migration 0019→0024、显式 deny 优先级和完整隔离数据库回归、build/typecheck 和 Product V2 合约已通过；当前 Head CI、受控 Staging Migration、真实 Qwen UI 与 Reviewer 仍为待完成门禁，因此不得标记 Ready。
+V3 仍只服务项目经理。所有 Workflow、知识来源、检索、生成、审核、发布和导出都绑定服务端 Session、精确 `projectId` 与当前 ACL；AI 草稿在人工审核前不得写入正式知识库。页面只保留“搭建需求框架”和“提取会议纪要”两个工作流入口。
 
-正式企业微信 OAuth/扫码尚未实现。Production 配置对 Mock WeCom 和 Staging 测试登录硬拒绝，Production 渲染不包含测试按钮；本分支只允许 Staging，Production 必须保持不变。
+搭建需求框架以受权资料为来源，生成可版本化的项目概览、26 节需求文档、GA4 埋点计划和 Action Plan。提取会议纪要使用私有音频、异步 ASR、说话人分离、人工命名和审核，生成转写、会议纪要与待办。Caller 不能提交 Provider、模型、生成 Markdown 或验证结果；服务端校验结构化输出后生成 Markdown、XLSX 和 DOCX。
 
-当前分支在已合并的第一阶段能力上新增 Feature-flagged 项目经理个人日报与独立 Chrome MV3 企业微信连接器。日报包含真实 PostgreSQL 随记/草稿/任务/AI execution/同步摘要、现有 Gateway 的结构化 AI 整理、人工审核确认、JSON 导出和同步中心；扩展包含严格协议、持久队列、Dry Run、iframe Adapter、精确目录匹配和逐条保存。两个 Flag 默认关闭，Production 未启用或变更。
+项目助手在统一 ACL 后执行有界 Query Rewrite、Lexical/Exact Vector、Weighted RRF、Provider-neutral 受控 Rerank、Parent/Adjacent Context 与 Citation Revalidation。Rerank 只能重排已授权 Candidate；失败时回退 RRF，不得引入新来源。用户知识搜索仍为词法搜索；ANN/HNSW/IVFFlat、专用 `qwen3-rerank`、OCR、Tool Calling 与 Agent Execution 未实现。
 
-真实企业微信目标页和八字段标题已完成只读可见性核对；Chrome DOM 控制通道仍不可用，因此当前只完成 Mock E2E 与评审构建。真实 Selector、真实 Dry Run、真实单条保存和商店发布仍是明确人工验收门禁。
+Staging 的真实 Qwen、Alibaba 异步 ASR、结构化知识、Shadow/Hybrid 和浏览器 UAT 必须在每个最终 exact Head 重新核对。上一 Head 的成功不能替代当前 Head 的 CI、部署、UAT、独立复审和清理门禁，因此本文件不提前声明最终 Ready 或合并。
 
-B3-C1 在已合并 B3-B2 上建立 Production Inventory/Diff、Release Manifest、Preflight、隔离 Backup/Restore/Migration/兼容性演练、Smoke、Rollback、Go/No-Go、监控和 Evidence/Provenance。本轮只调整 Release Control Plane 与镜像元数据 Label，没有业务 Runtime 行为或 Production 外部状态变更。
+正式企业微信 OAuth/扫码尚未实现。Production 配置继续硬拒绝 Mock WeCom 与 Staging 测试登录；Production 不接收 V3 Migration、Qwen Secret、Worker 或 Retrieval Mode 变更。
 
-B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 SEC-006 边界保持不变。用户知识搜索继续使用 B2 词法检索；只有 Assistant Evidence 可使用 Hybrid。本轮不实现 ANN、Rerank 或正式业务写入。
+## Workflow and Knowledge V3 真实能力
 
-## B3-C1 Readiness 能力
+- 日报 AI 整理由 PostgreSQL Job + Worker 执行，具有 Lease、Heartbeat、幂等 Request、阶段时间、失败重试与页面恢复。
+- Workflow Source、Run、Artifact、Version、Review、Execution、Export、Audio、Speaker 与 Segment 持久化；单产物重新生成只创建该产物的新版本。
+- 发布前重新验证来源权限、版本、内容 Digest 与 Citation；部分发布失败保存恢复绑定并可幂等继续。
+- 原始音视频只进入私有对象存储；Provider 只获得短时签名地址，浏览器、日志和 Evidence 不包含对象 Key、签名 URL、Cookie、Token 或原始音频。
+- Section 作为 Parent Context，Chunk 作为 Child；表格 Chunk 携带表头，禁用 Chunk 同步失效向量并立即退出 Lexical、Vector 与 Citation 范围。
+- 检索顺序固定为 Identity → Organization/Department/Project → Knowledge Space → Document → Version → Chunk → Query Processing → Lexical/Exact Vector → Weighted RRF → Rerank → Context Expansion → Citation Revalidation → Answer。
+- 68 条纯虚构 Query 覆盖表格、跨文档、部门共享、无权资料、当前/旧版本、归档和权限撤销；Fake Provider 结果只证明确定性 CI，真实 Provider 另行在 Staging 验证。
+- 非生产测试 Fixture 由显式注册表和过期清理控制；普通组织/项目/知识来源列表不展示已停用或已登记 Fixture。
 
-- Production/Staging 只读白名单 Inventory、分类差异和 canonical SHA-256；
-- 固定 SHA/Image/Node/Base Digest/Phase/Backup/Evidence 的 Release Manifest Schema；
-- 精确基线、CI、空间、锁、活动任务、Nginx/Compose 和 Manifest Preflight；
-- 全部 Production apply 硬拒绝；当前无数据面时 Backup 为 dry-run/not-applicable；
-- 虚构非空 Backup/Checksum/Restore/0004–0007/pgvector 演练；
-- 旧 Image 在旁路 0007 数据库存在时继续运行 legacy application shell，以及新 Image AI 全关闭兼容性合同；
-- 真实 Migration File/Advisory Lock、环境感知 MinIO Inventory、Git/CI/Image/Clock/Baseline Preflight；
-- 跨 Digest、SHA 与 Image 绑定的机器可读 Smoke、Rollback、Go/No-Go、成本和监控门禁；机器 Readiness 与独立审查/上线授权分离；
-- 固定 Release Evidence allowlist 与上传后 Provenance。
+## 数据与 Migration
 
-## v0.8 B3-B2 真实能力
+- 历史 `0001`–`0025` 保持不可变。
+- `0026`–`0034` 仅新增 Workflow、Audio、Artifact、结构化 Chunk、私有检索元数据与约束。
+- 非空升级演练必须保留旧 Requirement、Action、Risk、Weekly、Thread、Citation、Document 与 Chunk。
+- Migration 只允许按 ledger 执行 committed SQL；Staging/Production 禁止 schema push、reset、drop 或修改历史 Migration。
+- V3 Migration 只允许 Staging。Production 本轮不执行任何 Migration。
 
-- 固定 `hybrid-rrf-v1`：候选 30/30/30、Evidence 10、RRF K=60、权重 1:1、cosine 最大距离 0.55、Coverage 9800 bps。
-- `lexical` 不计费；`shadow` 记录 Hybrid 但 Prompt 使用 Lexical；`hybrid` 使用 RRF 最终 Evidence。Mode 和 Profile 仅服务端可控。
-- Query Embedding 走既有 Gateway，向量只驻留请求内存；调用使用独立不可变成本账本、8192 Token 硬预留、Usage 结算、UTC 日限额和 unknown 不自动重试。
-- Exact Vector SQL 使用 `embedding <=> query_vector`，强制项目、当前版本、归档、解析成功、有效 Chunk、内容 Hash 和 Profile 过滤；不建立 ANN 索引。
-- 60 条纯虚构 Query 分别评测 Lexical、Vector、Hybrid 的 Recall、MRR、nDCG、无答案、安全泄漏和延迟，并冻结通过门禁的 v1 参数。
-- Coverage/配置/Profile/预算/Timeout/Provider 异常回退原 Lexical；无 Evidence 不调用 Answer Model。Execution 关联唯一 Retrieval Run 并记录脱敏 Candidate、Usage 与时延。
+## 安全与人工审核边界
 
-## v0.7 B3-B1 真实能力
-
-- 固定只读 Profile `qwen-text-embedding-cn-v1`：Provider `qwen`、Region `cn-beijing`、Model `text-embedding-v4`、Dimensions `1024`、Distance `cosine`、Profile Version `1`。
-- 历史 Migration `0004_groovy_nightcrawler.sql` 与 `0005_durable_embedding_calls.sql` 保持不变；本轮只新增 `0006_closed_genesis.sql`，以非破坏方式增加不可变 Provider Call Attempt、调用级预算、跨项目复合约束与旧 Batch 回填。
-- 专用 Embedding Worker 与 App 使用同一 immutable image，独立 command、无端口、Lease/Heartbeat/Retry/Stale Recovery/优雅退出；Document Worker 不获得 Qwen Secret，Embedding Worker 不获得对象存储 credential。
-- Gateway 单批最多 10 条并限制总字符；北京区 `text-embedding-v4` 预算按每条 8192、每请求 33000 的版本化硬上限预留。只有发送前可确认不计费的失败可重试；进入 `fetch` 后的 Timeout、网络、HTTP 拒绝及 2xx 解析/校验失败都终止为 `PROVIDER_RESULT_UNKNOWN`，保留预算且不得自动重试。
-- 只处理 Active Document + Current/Stored Version + Succeeded Ingestion + Effective/non-empty Chunk；同 Chunk/Profile/Hash 幂等，归档/旧版本/needs_ocr/未完成解析排除。
-- Backfill 默认 dry-run，支持 project/limit/current/effective 范围；Profile Version 或内容 Hash 变化生成新 Job。Provider Usage 原样记录，缺失或 unknown 使用完整硬预留，明确 confirmed-no-charge 才释放；手工 Unknown 恢复保留旧 Call 并为新 Call 单独预留预算。
-- 只提供测试/受保护运维的精确 cosine Probe，普通浏览器 API 不返回向量，项目知识页和 B3-A Evidence 不接入该函数。
-
-## v0.6 B3-A 真实能力
-
-- Profile 固定为 `qwen-project-assistant-cn-v1`；主模型 `qwen3.7-plus`，Fallback `qwen3.6-flash`，区域 `cn-beijing`。
-- 页面只提交问题和 `modelProfileId`；Provider、模型、Base URL、Secret、Region、Evidence 与 Prompt 都由服务端控制。
-- Qwen 使用 OpenAI-compatible `/chat/completions` 非流式调用；主模型只对网络、Timeout、429 和 5xx 执行初始调用加最多 2 次重试，之后 Fallback 一次。
-- Thread 默认创建者私有。Admin、Manager、Member、Viewer 均可在授权项目中使用自己的助手；跨项目和他人 Thread 统一 404。
-- Evidence 复用 B2 `Active + Current + Stored + Succeeded + Effective` Chunk，候选最多 30、最终最多 10、总字符最多 24000。
-- 没有合格 Evidence 时不调用 Provider，Execution 为 `insufficient_evidence` 且没有 Token Usage、actual model 或 Provider Request ID。
-- 模型只可引用本次 `[E1]`–`[E10]`；服务端生成公开 `[1]` Citation 和来源快照。非法引用只 Repair 一次，仍失败不返回回答。
-- Execution 保存 Profile、requested/actual model、Fallback、状态、版本、Evidence 数、Token Usage、Latency、问题 Hash、幂等键和受控失败码，不保存完整 Prompt 或原始 Provider Payload。
-- PostgreSQL 默认限制：每用户每分钟 6 次、用户每日 100000 Token、项目每日 500000 Token、全局同时运行 3 个 Execution。
-- UI 提供新建/历史/归档、Loading、Empty、Disabled、Insufficient、Provider Error、Retry、Fallback、引用卡片、Source Locator、Excerpt、下载和免责声明。
-
-## Staging 与 Secret 合同
-
-- `/srv/projectai-staging/.env.ai` 保存非密钥 AI 配置；`/srv/projectai-staging/secrets/qwen_api_key` 保存真实 Key。
-- Qwen Secret 只读挂载到 App 与专用 Embedding Worker；Document Worker、DB-tools、Migration 和 operations smoke 不获得 Secret。
-- 启用顺序固定为：PostgreSQL/MinIO 备份 → 新代码 Flag=false 在旧 Schema 健康 → 只执行新增 `0006` Migration/pgvector/Profile/Provider Call 校验 → Chat/Embedding Probe → 分阶段启用 → 虚构向量/Backfill/Lease/范围 Probe → B3-A 词法回归与清理。
-- Smoke 只使用虚构文件，并验证真实 Qwen、1024 维向量、Usage、同 Hash 幂等、旧版本/跨项目排除、队列清零和 Production 精确不变。
-- 发布前后精确比对 Production 容器身份、running、restart count 和 health；任何变化都使发布失败。
-
-## 明确未实现
-
-- OCR、图片理解、宏/公式执行和外部 URL 抓取。
-- 用户知识搜索的语义/Hybrid Retrieval、HNSW/IVFFlat/其他 ANN 与 Vector RAG。
-- `qwen3-rerank`、Reranker 和 B3-B3。
-- Tool Calling、Function Calling、Web Search、Agent 自主执行。
-- 自动会议总结、未经人工审核的 Requirement/Scope/Action/风险正式写入。
-- Production Qwen Secret、Production Worker 变更、Production Migration 或 Production 部署。
+- 客户端角色、`projectId`、来源、Candidate、Provider、模型、评分和验证结果均不可信。
+- 所有文档、Chunk、Vector Candidate、Context、Citation、下载、发布和导出在使用点重新执行统一 ACL；显式 Deny 优先。
+- Requirement、Scope、Action、Risk、Weekly、Workflow Artifact 与 Meeting Action 均先形成草稿或待审核版本；正式写入必须由有权用户人工批准。
+- Qwen/ASR Secret 只来自 Staging 受保护 Secret File，不进入 Git、镜像、浏览器、日志、Evidence 或 Provenance。
+- 测试证据只能使用虚构内容，不保存客户资料、完整 Prompt、Provider Payload、音频、向量、Cookie、Session 或 credential。
 
 ## 验证门禁
 
 | 门禁 | 稳定要求 |
 | --- | --- |
-| TypeScript / ESLint / Build | 当前 PR Head 全绿 |
-| 单元与架构 | Chat/Embedding 回归；Retrieval Profile、RRF、模式、评测门禁全绿 |
-| PostgreSQL 集成 | Exact Vector、复合约束、Coverage/Fallback、成本账本、幂等、unknown 与项目范围全绿 |
-| Playwright | B1/B2 回归和 8 个 B3-A 安全截图流程全绿 |
-| Evidence / Provenance | Manifest schema v3，记录实际 PNG 尺寸、AI Gateway Version 与 Profile；强 allowlist 和脱敏通过 |
-| Staging | 五服务 Healthy；lexical→评测→shadow→报告→hybrid；Probe、Assistant/B3-B1 回归、清理全绿 |
-| Production | 精确不变 |
+| TypeScript / ESLint / Build | 当前 PR exact Head 全绿 |
+| 单元与架构 | V3 Round 1/2/3、Product V2、Deployment、Release/Artifact 与安全合同全绿 |
+| PostgreSQL / Object Storage | 非空 Migration、Workflow/Audio、ACL、Fixture、检索、发布/恢复和清理全绿 |
+| Retrieval | 68 Query；ACL Leakage=0；Citation Authorization=1；Shadow 后才允许 Hybrid；Rerank 失败可审计回退 |
+| 浏览器 UAT | 24 项真实 Staging 门禁逐项留证；HTTP health 不能替代产品验收 |
+| Provider | Fake 只用于 CI；真实 Qwen 与真实 ASR 只在 Staging 虚构数据下验收 |
+| Evidence / Provenance | 强 allowlist 和脱敏；动态事实只记录在 PR/受控 Evidence |
+| 独立复审 | 无未解决 P0/P1/P2，且复审针对最终 exact Head |
+| Production | 发布前后只读基线精确不变 |
 
-## 后续
+## 明确未实现
 
-1. B3-C1 已完成并合并；Production 仍保持旧 Container/Image，B3 数据面与 AI 尚未上线。
-2. 当前 B3-C2A 只开发和隔离演练 Production Rollout Executor，PR 必须保持 Draft，不自动 Ready 或合并。
-3. 正式 Production Phase 0–6 只能在 B3-C2A 独立复审并合并后的 B3-C2B 中授权和执行。
-4. C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling 与 Agent Execution 未开始。
+- 正式企业微信 OAuth/扫码与真实企业微信写入验收。
+- OCR、图片理解、宏/公式执行和外部 URL 抓取。
+- 用户知识搜索的语义/Hybrid Retrieval、HNSW/IVFFlat/其他 ANN 与 Vector RAG。
+- 专用 `qwen3-rerank` Provider；V3 仅实现服务端、ACL 后、严格 Candidate 集合内的受控 Rerank。
+- Tool Calling、Function Calling、Web Search 与 Agent 自主执行。
+- 未经人工审核的正式业务写入。
+- Production Qwen/ASR Secret、Production Worker、Production Migration 或 Production 部署。
+
+## 下一步
+
+1. 对最终 exact Head 完成 CI、Staging 部署、24 项浏览器 UAT、测试 Fixture 清理和 Production 只读不变核对。
+2. 对最终 exact Head 完成独立产品、安全和代码复审；任何 P0/P1/P2 都必须先修复并重新经过门禁。
+3. 只有全部门禁通过后才可把 PR #13 从 Draft 标记为 Ready，并使用仓库允许的正常方式合并。
+4. 本任务不授权 Production Rollout，也不授权 B3-C2B。
