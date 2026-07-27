@@ -29,6 +29,7 @@ export type ProjectAssistantGatewayInput = {
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
+  maxOutputTokens?: number;
 };
 
 function responseFormatForPurpose(
@@ -121,7 +122,7 @@ export class ProjectAssistantGateway {
       responseFormat: responseFormatForPurpose(input.purpose),
       timeoutMs: this.config.timeoutMs,
       temperature: this.config.temperature,
-      maxOutputTokens: this.config.maxOutputTokens,
+      maxOutputTokens: Math.min(4_096, Math.max(64, input.maxOutputTokens ?? this.config.maxOutputTokens)),
     });
   }
 

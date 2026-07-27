@@ -21,11 +21,14 @@ import {
 } from "@/lib/db/schema";
 import {
   artifactSchemas,
+  describeArtifactSchemaFailure,
   normalizeRequirementsDocumentBatch,
   describeRequirementsBatchSchemaFailure,
+  normalizeGa4MeasurementPlan,
   REQUIREMENT_ARTIFACT_KINDS,
   REQUIREMENTS_SECTION_TITLES,
   requirementsDocumentBatchSchema,
+  validateGa4MeasurementIdGrounding,
   validateCitationLabels,
   type RequirementArtifactKind,
 } from "./contracts";
@@ -349,11 +352,24 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
     content = parsed.data as unknown as Record<string, unknown>;
   } else {
     const prompts = buildArtifactPrompt({ kind, projectName, evidence });
-    result = await gateway.generate({ ...prompts, purpose: "workflow_artifact" });
-    let parsed = artifactSchemas[kind].safeParse(parseJson(result.text));
-    if (!parsed.success || !validateCitationLabels(parsed.success ? parsed.data : {}, allowedLabels)) {
-      const repair = buildArtifactPrompt({ kind, projectName, evidence, previousOutput: result.text, validationFailure: parsed.success ? "CITATION_INVALID" : "SCHEMA_INVALID" });
-      const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair" });
+    const maxOutputTokens = kind === "ga4_measurement_plan" ? 4_096 : undefined;
+    result = await gateway.generate({ ...prompts, purpose: "workflow_artifact", maxOutputTokens });
+    let normalized = kind === "ga4_measurement_plan"
+      ? normalizeGa4MeasurementPlan(parseJson(result.text))
+      : parseJson(result.text);
+    let parsed = artifactSchemas[kind].safeParse(normalized);
+    const validationFailure = () => {
+      if (!parsed.success) return describeArtifactSchemaFailure(kind, normalized);
+      if (!validateCitationLabels(parsed.data, allowedLabels)) return "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID";
+      if (kind === "ga4_measurement_plan" && !validateGa4MeasurementIdGrounding(parsed.data, evidence.map((item) => item.content))) {
+        return "WORKFLOW_GA4_MEASUREMENT_ID_UNGROUNDED";
+      }
+      return null;
+    };
+    let failureCode = validationFailure();
+    if (failureCode) {
+      const repair = buildArtifactPrompt({ kind, projectName, evidence, previousOutput: result.text, validationFailure: failureCode });
+      const repaired = await gateway.generate({ ...repair, purpose: "workflow_artifact_repair", maxOutputTokens });
       result = {
         ...repaired,
         fallbackUsed: result.fallbackUsed || repaired.fallbackUsed,
@@ -362,10 +378,14 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
         totalTokens: sumUsage(result.totalTokens, repaired.totalTokens),
         latencyMs: result.latencyMs + repaired.latencyMs,
       };
-      parsed = artifactSchemas[kind].safeParse(parseJson(result.text));
+      normalized = kind === "ga4_measurement_plan"
+        ? normalizeGa4MeasurementPlan(parseJson(result.text))
+        : parseJson(result.text);
+      parsed = artifactSchemas[kind].safeParse(normalized);
+      failureCode = validationFailure();
     }
-    if (!parsed.success || !validateCitationLabels(parsed.data, allowedLabels)) {
-      await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
+    if (failureCode || !parsed.success) {
+      await getDb().update(workflowExecution).set({ status: "failed", failureCode: failureCode ?? "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
       throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过结构或引用校验");
     }
     content = parsed.data as unknown as Record<string, unknown>;

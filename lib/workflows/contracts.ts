@@ -203,6 +203,129 @@ export const ga4MeasurementPlanSchema = z.object({
   }
 });
 
+function normalizeGa4Identifier(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return /^[a-z][a-z0-9_]{0,39}$/.test(normalized) ? normalized : value;
+}
+
+function normalizeGa4Boolean(value: unknown): unknown {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "yes", "y", "是", "核心"].includes(normalized)) return true;
+  if (["false", "no", "n", "否", "非核心"].includes(normalized)) return false;
+  return value;
+}
+
+function normalizeGa4ValueType(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["string", "text", "enum", "字符串", "文本"].includes(normalized)) return "string";
+  if (["number", "integer", "float", "数字", "整数", "浮点数"].includes(normalized)) return "number";
+  if (["boolean", "bool", "布尔"].includes(normalized)) return "boolean";
+  if (["date", "datetime", "timestamp", "日期", "时间"].includes(normalized)) return "date";
+  if (["array", "list", "数组", "列表"].includes(normalized)) return "array";
+  return value;
+}
+
+function normalizeGa4EventType(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = String(normalizeGa4Identifier(value));
+  const aliases: Record<string, "page_view" | "click" | "select" | "permission" | "ai" | "result" | "error" | "custom"> = {
+    page_view: "page_view", exposure: "page_view", impression: "page_view",
+    click: "click", tap: "click",
+    select: "select", choice: "select",
+    permission: "permission", authorization: "permission",
+    ai: "ai", model: "ai",
+    result: "result", recommendation: "result",
+    error: "error", failure: "error",
+    custom: "custom",
+  };
+  return aliases[normalized] ?? value;
+}
+
+function normalizeCoverageStatus(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  if (["covered", "complete", "completed", "已覆盖", "完成"].includes(normalized)) return "covered";
+  if (["gap", "missing", "未覆盖", "缺口"].includes(normalized)) return "gap";
+  if (["pending", "tbd", "待确认", "待定"].includes(normalized)) return "pending";
+  return value;
+}
+
+export function normalizeGa4MeasurementPlan(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const overview = record.overview && typeof record.overview === "object" && !Array.isArray(record.overview)
+    ? record.overview as Record<string, unknown>
+    : null;
+  const normalizeParameter = (parameter: unknown) => {
+    if (!parameter || typeof parameter !== "object" || Array.isArray(parameter)) return parameter;
+    const item = parameter as Record<string, unknown>;
+    return {
+      name: item.name,
+      description: item.description,
+      key: normalizeGa4Identifier(item.key),
+      valueRule: item.valueRule,
+      valueType: normalizeGa4ValueType(item.valueType),
+      note: item.note ?? "",
+      citations: normalizeCitationLabels(item.citations),
+    };
+  };
+  const normalizeMatrix = (entry: unknown, firstKey: "requirement" | "page") => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const item = entry as Record<string, unknown>;
+    return { [firstKey]: item[firstKey], eventId: normalizeGa4Identifier(item.eventId), status: normalizeCoverageStatus(item.status) };
+  };
+  return {
+    overview: overview ? {
+      platform: overview.platform,
+      measurementId: typeof overview.measurementId === "string" && /^(?:tbd|待确认|未知|未配置)$/i.test(overview.measurementId.trim()) ? "TBD" : overview.measurementId,
+      validationStatus: overview.validationStatus,
+      projectName: overview.projectName,
+      projectLink: overview.projectLink,
+      citations: normalizeCitationLabels(overview.citations),
+    } : record.overview,
+    publicParameters: Array.isArray(record.publicParameters) ? record.publicParameters.map(normalizeParameter) : record.publicParameters,
+    events: Array.isArray(record.events) ? record.events.map((event) => {
+      if (!event || typeof event !== "object" || Array.isArray(event)) return event;
+      const item = event as Record<string, unknown>;
+      return {
+        eventName: normalizeGa4Identifier(item.eventName),
+        coreEvent: normalizeGa4Boolean(item.coreEvent),
+        eventType: normalizeGa4EventType(item.eventType),
+        description: item.description,
+        eventId: normalizeGa4Identifier(item.eventId),
+        parameterName: item.parameterName ?? "",
+        parameterDescription: item.parameterDescription ?? "",
+        parameterKey: normalizeGa4Identifier(item.parameterKey),
+        parameterValueRule: item.parameterValueRule ?? "",
+        parameterValueType: normalizeGa4ValueType(item.parameterValueType),
+        note: item.note ?? "",
+        developerFeedback: item.developerFeedback ?? "",
+        citations: normalizeCitationLabels(item.citations),
+      };
+    }) : record.events,
+    requirementEventCoverage: Array.isArray(record.requirementEventCoverage)
+      ? record.requirementEventCoverage.map((entry) => normalizeMatrix(entry, "requirement"))
+      : record.requirementEventCoverage,
+    pageEventMatrix: Array.isArray(record.pageEventMatrix)
+      ? record.pageEventMatrix.map((entry) => normalizeMatrix(entry, "page"))
+      : record.pageEventMatrix,
+  };
+}
+
+export function validateGa4MeasurementIdGrounding(value: unknown, evidenceContent: string[]): boolean {
+  const parsed = ga4MeasurementPlanSchema.safeParse(value);
+  if (!parsed.success || parsed.data.overview.measurementId === "TBD") return parsed.success;
+  return evidenceContent.some((content) => content.includes(parsed.data.overview.measurementId));
+}
+
 const dateOrTbd = z.string().refine((value) => value === "TBD" || /^\d{4}-\d{2}-\d{2}$/.test(value), "date must be YYYY-MM-DD or TBD");
 
 export const actionPlanSchema = z.object({
@@ -255,6 +378,14 @@ export const artifactSchemas = {
   ga4_measurement_plan: ga4MeasurementPlanSchema,
   action_plan: actionPlanSchema,
 } as const;
+
+export function describeArtifactSchemaFailure(kind: RequirementArtifactKind, value: unknown): string {
+  const parsed = artifactSchemas[kind].safeParse(value);
+  if (parsed.success) return "WORKFLOW_ARTIFACT_SCHEMA_INVALID";
+  const issue = parsed.error.issues[0];
+  const path = issue?.path.map((part) => String(part).replace(/[^a-zA-Z0-9_-]/g, "_")).join("_") || "root";
+  return `WORKFLOW_${kind === "ga4_measurement_plan" ? "GA4" : "ARTIFACT"}_SCHEMA_${path}`.slice(0, 80);
+}
 
 export const meetingSummarySchema = z.object({
   background: z.string().max(10_000),

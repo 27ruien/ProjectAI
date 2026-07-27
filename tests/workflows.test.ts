@@ -10,13 +10,16 @@ import {
   OVERVIEW_FIELDS,
   REQUIREMENTS_SECTION_TITLES,
   actionPlanSchema,
+  describeArtifactSchemaFailure,
   ga4MeasurementPlanSchema,
   meetingSummarySchema,
+  normalizeGa4MeasurementPlan,
   normalizeRequirementsDocumentBatch,
   describeRequirementsBatchSchemaFailure,
   overviewArtifactSchema,
   requirementsDocumentBatchSchema,
   requirementsDocumentSchema,
+  validateGa4MeasurementIdGrounding,
   validateCitationLabels,
 } from "../lib/workflows/contracts";
 import { buildArtifactExport } from "../lib/workflows/export";
@@ -189,6 +192,37 @@ describe("V3 workflow artifact contracts", () => {
     value.events[0]!.eventId = "submit_form";
     value.overview.measurementId = "G-FABRICATED-ID!";
     assert.equal(ga4MeasurementPlanSchema.safeParse(value).success, false);
+  });
+
+  it("normalizes bounded GA4 presentation aliases and grounds non-TBD ids", () => {
+    const normalized = normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "待确认", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: "E1" },
+      publicParameters: [{ name: "项目", description: "虚构项目", key: "Project ID", valueRule: "稳定标识", valueType: "文本", citations: "E1" }],
+      events: [{ eventName: "Submit Form", coreEvent: "是", eventType: "tap", description: "提交", eventId: "Submit Form", parameterName: "", parameterDescription: "", parameterKey: "Submit Result", parameterValueRule: "", parameterValueType: "enum", citations: "E1" }],
+      requirementEventCoverage: [{ requirement: "提交", eventId: "Submit Form", status: "已覆盖" }],
+      pageEventMatrix: [{ page: "表单", eventId: "Submit Form", status: "待确认" }],
+      ignored: "discarded",
+    });
+    const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.equal(parsed.data.overview.measurementId, "TBD");
+    assert.equal(parsed.data.events[0]!.eventId, "submit_form");
+    assert.equal(parsed.data.events[0]!.coreEvent, true);
+    assert.equal(parsed.data.events[0]!.eventType, "click");
+    assert.equal(validateGa4MeasurementIdGrounding(parsed.data, ["Measurement ID remains TBD"]), true);
+    const fabricated = { ...parsed.data, overview: { ...parsed.data.overview, measurementId: "G-FABRICATED" } };
+    assert.equal(validateGa4MeasurementIdGrounding(fabricated, ["no identifier here"]), false);
+    assert.equal(validateGa4MeasurementIdGrounding(fabricated, ["approved G-FABRICATED"]), true);
+  });
+
+  it("describes GA4 schema failures without provider content", () => {
+    const failure = describeArtifactSchemaFailure("ga4_measurement_plan", normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构", projectLink: "TBD", citations: [] },
+      publicParameters: [], events: [{ eventId: "invalid id" }], requirementEventCoverage: [], pageEventMatrix: [],
+    }));
+    assert.match(failure, /^WORKFLOW_GA4_SCHEMA_events_0_/);
+    assert.ok(failure.length <= 80);
   });
 
   it("keeps unknown dates as TBD and rejects date inversions and dependency cycles", () => {
