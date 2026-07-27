@@ -193,11 +193,15 @@ export const ga4MeasurementPlanSchema = z.object({
     developerFeedback: z.string().max(1_000),
     citations: citationLabelsSchema,
   }).strict()).min(1).max(500),
-  requirementEventCoverage: z.array(z.object({ requirement: z.string().min(1), eventId: z.string().min(1), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
-  pageEventMatrix: z.array(z.object({ page: z.string().min(1), eventId: z.string().min(1), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
+  requirementEventCoverage: z.array(z.object({ requirement: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
+  pageEventMatrix: z.array(z.object({ page: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
 }).strict().superRefine((value, context) => {
   const ids = value.events.map((event) => event.eventId);
   if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "duplicate event id" });
+  const eventIds = new Set(ids);
+  for (const entry of [...value.requirementEventCoverage, ...value.pageEventMatrix]) {
+    if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", message: `coverage references unknown event: ${entry.eventId}` });
+  }
   if (value.overview.measurementId !== "TBD" && !/^G-[A-Z0-9]+$/.test(value.overview.measurementId)) {
     context.addIssue({ code: "custom", message: "measurement id must be TBD or a GA4 id" });
   }
@@ -273,6 +277,22 @@ function normalizeCoverageStatus(value: unknown): unknown {
   return value;
 }
 
+function normalizeCoverageLabel(value: unknown, firstKey: "requirement" | "page"): unknown {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  const keys = firstKey === "requirement"
+    ? ["requirement", "requirementId", "id", "number", "name", "title"]
+    : ["page", "pageId", "id", "path", "name", "title"];
+  for (const key of keys) {
+    const candidate = item[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+    if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+  }
+  return value;
+}
+
 export function normalizeGa4MeasurementPlan(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
@@ -295,7 +315,7 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
   const normalizeMatrix = (entry: unknown, firstKey: "requirement" | "page") => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
     const item = entry as Record<string, unknown>;
-    return { [firstKey]: item[firstKey], eventId: normalizeGa4Identifier(item.eventId), status: normalizeCoverageStatus(item.status) };
+    return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId: normalizeGa4Identifier(item.eventId), status: normalizeCoverageStatus(item.status) };
   };
   return {
     overview: overview ? {

@@ -227,8 +227,8 @@ describe("V3 workflow artifact contracts", () => {
         { eventName: `${sharedPrefix}_one`, coreEvent: true, eventType: "result", description: "结果一", eventId: `${sharedPrefix}_one`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_one`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
         { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: "推荐结果", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
       ],
-      requirementEventCoverage: [],
-      pageEventMatrix: [],
+      requirementEventCoverage: [{ requirement: { id: "REQ-001", title: "生成推荐" }, eventId: `${sharedPrefix}_one`, status: "covered" }],
+      pageEventMatrix: [{ page: 12, eventId: `${sharedPrefix}_two`, status: "covered" }],
     });
     const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
     assert.equal(parsed.success, true);
@@ -237,6 +237,9 @@ describe("V3 workflow artifact contracts", () => {
     assert.match(parsed.data.events[1]!.parameterKey, /^x_[a-f0-9]{8}$/);
     assert.notEqual(parsed.data.events[0]!.parameterKey, parsed.data.events[1]!.parameterKey);
     assert.notEqual(parsed.data.events[0]!.eventId, parsed.data.events[1]!.eventId);
+    assert.equal(parsed.data.requirementEventCoverage[0]!.requirement, "REQ-001");
+    assert.equal(parsed.data.pageEventMatrix[0]!.page, "12");
+    assert.equal(ga4MeasurementPlanSchema.safeParse({ ...parsed.data, requirementEventCoverage: [{ requirement: "REQ-001", eventId: "missing_event", status: "covered" }] }).success, false);
   });
 
   it("describes GA4 schema failures without provider content", () => {
