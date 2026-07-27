@@ -38,6 +38,7 @@ test("workflow persistence uses compound isolation, leases, provenance, and huma
   assert.match(worker, /WORKFLOW_PROVIDER_RESULT_UNKNOWN/);
   assert.match(worker, /WORKFLOW_LEASE_EXPIRED_RECOVERED/);
   assert.match(worker, /nextAttemptAt: sql`now\(\) \+ interval '10 seconds'`/);
+  assert.match(worker, /if \(!run\) \{[\s\S]*?await wait\(workerConfig\.pollMs, options\.signal\);[\s\S]*?writeFile\(workerConfig\.heartbeatFile/);
   assert.match(migration, /workflow_runs_project_organization_fk/);
 });
 

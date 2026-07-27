@@ -483,6 +483,9 @@ export async function runTimesheetAiWorker(options: {
     if (!job) {
       if (options.once) break;
       await wait(config.pollMs, options.signal);
+      await writeFile(config.heartbeatFile, `${Date.now()} ${workerId}\n`, {
+        mode: 0o600,
+      });
       continue;
     }
     const controller = new AbortController();

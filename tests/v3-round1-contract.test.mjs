@@ -44,6 +44,7 @@ test("Round 1 daily-report generation is a durable leased job", async () => {
   assert.match(jobs, /for update skip locked/);
   assert.match(jobs, /TIMESHEET_PROVIDER_RESULT_UNKNOWN/);
   assert.match(jobs, /eq\(timesheetAiExecution\.userId, input\.principal\.user\.id\)/);
+  assert.match(jobs, /if \(!job\) \{[\s\S]*?await wait\(config\.pollMs, options\.signal\);[\s\S]*?writeFile\(config\.heartbeatFile/);
   assert.match(service, /sourceSelectionDigest/);
   assert.match(service, /providerDispatchedAt/);
   assert.match(service, /db\.transaction/);

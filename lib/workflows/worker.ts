@@ -579,7 +579,12 @@ export async function runWorkflowWorker(options: { once?: boolean; signal?: Abor
   do {
     if (options.signal?.aborted) break;
     const run = await claimWorkflowRun(workerId, workerConfig);
-    if (!run) { if (options.once) break; await wait(workerConfig.pollMs, options.signal); continue; }
+    if (!run) {
+      if (options.once) break;
+      await wait(workerConfig.pollMs, options.signal);
+      await writeFile(workerConfig.heartbeatFile, `${Date.now()} ${workerId}\n`, { mode: 0o600 });
+      continue;
+    }
     const controller = new AbortController();
     const heartbeat = (async () => {
       while (!controller.signal.aborted) {
