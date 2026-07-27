@@ -268,8 +268,16 @@ async function ask(
   threadId: string,
   question: string,
   key: string = randomUUID(),
+  sourceDocumentIds: string[] = [],
 ): Promise<ProjectAssistantMessageResponse> {
-  const response = await askResponse(session, threadId, question, key);
+  const response = await askResponse(
+    session,
+    threadId,
+    question,
+    key,
+    modelProfileId,
+    sourceDocumentIds,
+  );
   assert(response.status === 200, `Assistant ask returned ${response.status}.`);
   return responseJson(response, "Assistant ask");
 }
@@ -280,6 +288,7 @@ async function askResponse(
   question: string,
   key: string,
   profileId = modelProfileId,
+  sourceDocumentIds: string[] = [],
 ): Promise<Response> {
   return authenticatedFetch(
     environment,
@@ -291,7 +300,11 @@ async function askResponse(
         "content-type": "application/json",
         "idempotency-key": key,
       },
-      body: JSON.stringify({ question, modelProfileId: profileId }),
+      body: JSON.stringify({
+        question,
+        modelProfileId: profileId,
+        sourceDocumentIds,
+      }),
     },
   );
 }
@@ -456,6 +469,7 @@ try {
     managerThread.thread.id,
     groundedQuestion,
     groundedKey,
+    [uploaded.document.id],
   );
   assert(grounded.execution.status === "succeeded", "Grounded ask did not succeed.");
   assert(
@@ -538,6 +552,8 @@ try {
         manager,
         managerThread.thread.id,
         "这项工作计划在哪一天正式投产？",
+        randomUUID(),
+        [uploaded.document.id],
       );
       assert(
         semantic.execution.status === "succeeded" &&
@@ -554,6 +570,7 @@ try {
     managerThread.thread.id,
     groundedQuestion,
     groundedKey,
+    [uploaded.document.id],
   );
   assert(
     replay.execution.id === grounded.execution.id &&
@@ -574,6 +591,8 @@ try {
     managerThread.thread.id,
     `${titlePrefix}${runId}：这是不同的问题`,
     groundedKey,
+    modelProfileId,
+    [uploaded.document.id],
   );
   assert(
     conflictResponse.status === 409,
@@ -611,12 +630,16 @@ try {
       concurrentThread.thread.id,
       `${titlePrefix}${runId} 并发 A：客户要求什么时候上线？`,
       concurrentKey,
+      modelProfileId,
+      [uploaded.document.id],
     ),
     askResponse(
       manager,
       concurrentThread.thread.id,
       `${titlePrefix}${runId} 并发 B：客户上线日期是什么？`,
       concurrentKey,
+      modelProfileId,
+      [uploaded.document.id],
     ),
   ]);
   assert(
@@ -867,6 +890,8 @@ try {
     viewer,
     viewerThread.thread.id,
     `${titlePrefix}${runId} Viewer：客户要求什么时候上线？`,
+    randomUUID(),
+    [uploaded.document.id],
   );
   assert(
     viewerAnswer.execution.status === "succeeded" &&

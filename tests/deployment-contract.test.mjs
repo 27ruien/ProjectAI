@@ -807,6 +807,14 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
   assert.match(groundedVerifier, /total_latency_ms <= 8_000/);
   assert.match(groundedVerifier, /vectorSqlP95Ms <= 1_500/);
   assert.match(groundedVerifier, /retrievalP95Ms <= 8_000/);
+  assert.match(
+    groundedVerifier,
+    /sourceDocumentIds:\s*string\[\]\s*=\s*\[\]/,
+  );
+  assert.match(
+    groundedVerifier,
+    /groundedKey,\s*\[uploaded\.document\.id\]/,
+  );
   assert.match(workflow, /npm run retrieval:migration-upgrade/);
   assert.match(workflow, /npm run test:retrieval-integration/);
   assert.match(workflow, /npm run retrieval:evaluate/);
