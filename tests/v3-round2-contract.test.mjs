@@ -33,10 +33,12 @@ test("AI workflow UI exposes exactly the two approved user workflows", async () 
 });
 
 test("workflow persistence uses compound isolation, leases, provenance, and human review", async () => {
-  const [schema, service, worker, migration] = await Promise.all([
+  const [schema, service, worker, authorization, requirementPage, migration] = await Promise.all([
     read("lib/db/schema/workflows.ts"),
     read("lib/workflows/service.ts"),
     read("lib/workflows/worker.ts"),
+    read("lib/workflows/authorization.ts"),
+    read("components/workflow/requirement-framework-page.tsx"),
     read("drizzle/0028_open_dracula.sql"),
   ]);
   for (const entity of ["workflowDefinition", "workflowRun", "workflowRunSource", "workflowArtifact", "workflowArtifactVersion", "workflowReview", "workflowExecution", "workflowExport", "workflowAudioJob", "transcriptSpeaker", "transcriptSegment"]) assert.match(schema, new RegExp(`export const ${entity}`));
@@ -53,6 +55,12 @@ test("workflow persistence uses compound isolation, leases, provenance, and huma
   assert.match(worker, /WORKFLOW_LEASE_EXPIRED_RECOVERED/);
   assert.match(worker, /nextAttemptAt: sql`now\(\) \+ interval '10 seconds'`/);
   assert.match(worker, /if \(!run\) \{[\s\S]*?await wait\(workerConfig\.pollMs, options\.signal\);[\s\S]*?writeFile\(workerConfig\.heartbeatFile/);
+  const parenthesizedExpiryGuard = /sql`\(\$\{workflowRunSource\.expiresAt\} is null or \$\{workflowRunSource\.expiresAt\} > now\(\)\)`/g;
+  assert.equal(authorization.match(parenthesizedExpiryGuard)?.length, 2);
+  assert.equal(worker.match(parenthesizedExpiryGuard)?.length, 1);
+  assert.doesNotMatch(authorization, /sql`\$\{workflowRunSource\.expiresAt\} is null or/);
+  assert.doesNotMatch(worker, /sql`\$\{workflowRunSource\.expiresAt\} is null or/);
+  assert.match(requirementPage, /disabled=\{loading \|\| destinations\.length === 0\}/);
   assert.match(migration, /workflow_runs_project_organization_fk/);
 });
 

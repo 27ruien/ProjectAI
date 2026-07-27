@@ -407,7 +407,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     }
   });
 
-  it("completes Fake ASR meeting flow, preserves generic speaker names, and versions rename edits", async () => {
+  it("isolates an unexpired source from another run while completing the Fake ASR meeting flow", async () => {
     const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
     const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
     assert.ok(target?.departmentId && definition);
@@ -418,9 +418,18 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `workflow-audio/fictional/${runId}.wav`, displayName: "虚构双人会议.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "5".repeat(64), status: "ready" });
       await tx.insert(workflowAudioJob).values({ id: `${prefix}audio-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-paraformer-v2", diarizationProvider: "fake", diarizationModel: "fake-paraformer-v2", status: "queued" });
     });
-    const claimed = await claimWorkflowRun(`${prefix}audio-worker`);
-    assert.equal(claimed?.id, runId);
-    await processWorkflowRun(claimed!);
+    await getDb().update(workflowRunSource)
+      .set({ expiresAt: new Date(Date.now() + 60_000) })
+      .where(eq(workflowRunSource.runId, requirementRunId));
+    try {
+      const claimed = await claimWorkflowRun(`${prefix}audio-worker`);
+      assert.equal(claimed?.id, runId);
+      await processWorkflowRun(claimed!);
+    } finally {
+      await getDb().update(workflowRunSource)
+        .set({ expiresAt: null })
+        .where(eq(workflowRunSource.runId, requirementRunId));
+    }
     const detail = await readWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers });
     assert.equal(detail.run.status, "awaiting_review");
     assert.equal(detail.artifacts.length, 3);

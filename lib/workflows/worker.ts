@@ -230,7 +230,7 @@ async function evidenceForRun(run: typeof workflowRun.$inferSelect): Promise<Wor
       eq(workflowRunSource.runId, run.id), eq(workflowRunSource.projectId, run.projectId),
       eq(workflowRunSource.status, "ready"),
       eq(projectDocument.status, "active"),
-      sql`${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now()`,
+      sql`(${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now())`,
     )).orderBy(asc(workflowRunSource.createdAt), asc(documentChunk.chunkIndex)).limit(20);
   if (!rows.length) throw new WorkflowError(422, "WORKFLOW_EVIDENCE_EMPTY", "授权资料没有可用的当前有效内容");
   return rows.map((row, index) => ({

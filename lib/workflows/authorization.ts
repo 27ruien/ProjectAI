@@ -48,7 +48,7 @@ export async function assertWorkflowProviderAuthorization(
       eq(workflowRunSource.runId, run.id),
       eq(workflowRunSource.projectId, run.projectId),
       eq(workflowRunSource.status, "ready"),
-      sql`${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now()`,
+      sql`(${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now())`,
     ));
     if (run.workflowType === "meeting_minutes") {
       if (
@@ -101,7 +101,7 @@ export async function assertWorkflowProviderAuthorization(
         eq(workflowRunSource.runId, run.id),
         eq(workflowRunSource.projectId, run.projectId),
         eq(workflowRunSource.status, "ready"),
-        sql`${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now()`,
+        sql`(${workflowRunSource.expiresAt} is null or ${workflowRunSource.expiresAt} > now())`,
       ));
     if (validSources.length !== sources.length) {
       throw new WorkflowError(409, "WORKFLOW_SOURCE_ACCESS_REVOKED", "工作流来源不再是当前有效版本");
