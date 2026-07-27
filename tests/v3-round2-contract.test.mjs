@@ -18,6 +18,10 @@ test("AI workflow UI exposes exactly the two approved user workflows", async () 
   assert.match(workspace, /meeting-minutes/);
   assert.match(meeting, /action: "retry"/);
   assert.match(meeting, /从失败步骤重试/);
+  assert.match(meeting, /setMessage\(error instanceof Error \? error\.message : "会议纪要发布失败"\)/);
+  assert.match(meeting, /setMessage\(error instanceof Error \? error\.message : "原始音视频删除失败"\)/);
+  assert.match(meeting, /正在发布…/);
+  assert.match(meeting, /正在删除…/);
   assert.doesNotMatch(sidebar, /href: "\/(?:skills|reviews|uat)/);
 });
 
