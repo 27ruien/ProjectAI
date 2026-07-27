@@ -21,10 +21,6 @@ const fixtureExpiresAt = new Date(
 ).toISOString();
 
 async function login(page: Page, identity: Identity) {
-  await page.setExtraHTTPHeaders({
-    "x-projectai-fixture-run-id": fixtureRunId,
-    "x-projectai-fixture-expires-at": fixtureExpiresAt,
-  });
   const response = await page.request.post(appPath("/api/auth/sign-in/mock-wecom"), {
     data: { identity },
     headers: { origin },
@@ -33,6 +29,28 @@ async function login(page: Page, identity: Identity) {
   const body = await response.json() as Record<string, unknown>;
   expect(body).toEqual({ authenticated: true });
 }
+
+const syntheticProjectName = /^(?:Member Creator UAT [a-f0-9]{8}(?: 已更新)?|Product V2 ACL UAT [a-f0-9]{8}|需求结果空间 [a-f0-9]{8})$/iu;
+
+test.afterEach(async ({ page }) => {
+  await switchIdentity(page, "super-admin");
+  const response = await page.request.get(appPath("/api/projects"));
+  expect(response.status(), "fixture cleanup project list").toBe(200);
+  const body = await response.json() as {
+    projects: Array<{ id: string; name: string }>;
+  };
+  for (const project of body.projects.filter((item) => syntheticProjectName.test(item.name))) {
+    const registered = await page.request.post(appPath("/api/test-fixtures/projects"), {
+      data: { projectId: project.id },
+      headers: {
+        origin,
+        "x-projectai-fixture-run-id": fixtureRunId,
+        "x-projectai-fixture-expires-at": fixtureExpiresAt,
+      },
+    });
+    expect(registered.status(), `register fixture ${project.id}`).toBe(200);
+  }
+});
 
 async function switchIdentity(page: Page, identity: Identity) {
   await page.context().clearCookies();
@@ -195,6 +213,10 @@ test("@organization four-level hierarchy is created, edited, moved, and rejected
   await gotoInteractive(page, appPath("/organization"));
   await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
   const marker = crypto.randomUUID().slice(0, 8).toUpperCase();
+  await page.setExtraHTTPHeaders({
+    "x-projectai-fixture-run-id": fixtureRunId,
+    "x-projectai-fixture-expires-at": fixtureExpiresAt,
+  });
   const names = [1, 2, 3, 4].map((level) => `UAT 层级 ${marker}-${level}`);
   const createdIds: string[] = [];
   try {

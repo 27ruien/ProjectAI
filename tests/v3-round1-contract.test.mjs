@@ -56,13 +56,14 @@ test("Round 1 daily-report generation is a durable leased job", async () => {
 });
 
 test("Round 1 fixture registry keeps synthetic UAT records out of product lists", async () => {
-  const [fixtureSchema, fixtureService, projects, knowledge, knowledgeManagement, departmentRoute, organizationService, stagingUat, authorization, migration, productSeed] = await Promise.all([
+  const [fixtureSchema, fixtureService, projects, knowledge, knowledgeManagement, departmentRoute, fixtureProjectRoute, organizationService, stagingUat, authorization, migration, productSeed] = await Promise.all([
     read("lib/db/schema/test-fixtures.ts"),
     read("lib/test-fixtures/service.ts"),
     read("lib/db/repositories/project-repository.ts"),
     read("lib/knowledge/product-v2.ts"),
     read("lib/knowledge/management.ts"),
     read("app/api/organization/departments/route.ts"),
+    read("app/api/test-fixtures/projects/route.ts"),
     read("lib/organization/service.ts"),
     read("tests/product-v2-staging-e2e/product-v2.spec.ts"),
     read("lib/knowledge/authorization.ts"),
@@ -82,6 +83,9 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(knowledgeManagement, /options: \{ activeOnly\?: boolean \}/);
   assert.match(knowledgeManagement, /eq\(testFixture\.entityType, "department"\)/);
   assert.match(departmentRoute, /fixtureContextFromHeaders\(request\.headers\)/);
+  assert.match(fixtureProjectRoute, /principal\.user\.productRole !== "super_admin"/);
+  assert.match(fixtureProjectRoute, /reviewedSyntheticProjectName/);
+  assert.match(fixtureProjectRoute, /now\(\) - interval '7 days'/);
   assert.match(organizationService, /entityType: "department"/);
   assert.match(organizationService, /entityType: "knowledge_space"/);
   assert.match(stagingUat, /x-projectai-fixture-run-id/);
