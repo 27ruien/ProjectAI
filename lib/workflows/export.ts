@@ -18,6 +18,16 @@ import { strToU8, zipSync } from "fflate";
 import type { WorkflowArtifactPayload } from "./service";
 import { WorkflowError } from "./errors";
 
+const DOCUMENT_FONT = {
+  ascii: "Hiragino Sans GB",
+  hAnsi: "Hiragino Sans GB",
+  eastAsia: "Hiragino Sans GB",
+  hint: "eastAsia",
+};
+
+const DOCUMENT_LANGUAGE = { value: "zh-CN", eastAsia: "zh-CN" };
+const DOCUMENT_CONTENT_WIDTH = 9360;
+
 function xml(value: unknown): string {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -42,34 +52,81 @@ function paragraphForLine(line: string): Paragraph {
   if (line.startsWith("# ")) return new Paragraph({ text: line.slice(2), heading: HeadingLevel.HEADING_1, spacing: { before: 240, after: 120 } });
   if (line.startsWith("- ")) return new Paragraph({ text: line.slice(2), bullet: { level: 0 }, spacing: { after: 60 } });
   if (!line.trim()) return new Paragraph({ text: "", spacing: { after: 40 } });
-  return new Paragraph({ children: [new TextRun({ text: line, font: "Calibri", size: 22 })], spacing: { after: 100, line: 276 } });
+  return new Paragraph({ children: [new TextRun({ text: line, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE, size: 22 })], spacing: { after: 100, line: 276 } });
+}
+
+function markdownTable(lines: string[]): Table {
+  const contentRows = lines.filter((_, index) => index !== 1).map((line) =>
+    line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((value) => value.trim())
+  );
+  const columnCount = Math.max(...contentRows.map((cells) => cells.length), 1);
+  const columnWidth = Math.floor(DOCUMENT_CONTENT_WIDTH / columnCount);
+  return new Table({
+    width: { size: DOCUMENT_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: Array.from({ length: columnCount }, () => columnWidth),
+    rows: contentRows.map((cells, rowIndex) => new TableRow({
+      tableHeader: rowIndex === 0,
+      children: cells.map((value) => new TableCell({
+        width: { size: columnWidth, type: WidthType.DXA },
+        shading: rowIndex === 0 ? { type: ShadingType.CLEAR, fill: "D9EAF7" } : undefined,
+        children: [new Paragraph({
+          children: [new TextRun({ text: value, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE, size: 18, bold: rowIndex === 0 })],
+          spacing: { before: 40, after: 40 },
+        })],
+      })),
+    })),
+  });
+}
+
+function bodyForMarkdown(markdown: string): Array<Paragraph | Table> {
+  const lines = markdown.split(/\r?\n/).slice(1);
+  const body: Array<Paragraph | Table> = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (
+      /^\s*\|.*\|\s*$/.test(lines[index] ?? "") &&
+      /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/.test(lines[index + 1] ?? "")
+    ) {
+      const tableLines = [lines[index]!, lines[index + 1]!];
+      index += 2;
+      while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index] ?? "")) {
+        tableLines.push(lines[index]!);
+        index += 1;
+      }
+      index -= 1;
+      body.push(markdownTable(tableLines), new Paragraph({ text: "", spacing: { after: 80 } }));
+      continue;
+    }
+    body.push(paragraphForLine(lines[index]!));
+  }
+  return body;
 }
 
 export async function docxBytes(input: { artifact: WorkflowArtifactPayload; projectName: string; generatedAt: Date }): Promise<Uint8Array> {
   const { artifact } = input;
   const masthead = new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: DOCUMENT_CONTENT_WIDTH, type: WidthType.DXA },
+    columnWidths: [DOCUMENT_CONTENT_WIDTH],
     rows: [
-      new TableRow({ children: [new TableCell({ shading: { type: ShadingType.SOLID, fill: "1F4E78" }, children: [new Paragraph({ children: [new TextRun({ text: artifact.title, color: "FFFFFF", bold: true, size: 32, font: "Calibri" })], spacing: { before: 120, after: 80 } })] })] }),
-      new TableRow({ children: [new TableCell({ shading: { type: ShadingType.SOLID, fill: "D9EAF7" }, children: [new Paragraph({ children: [new TextRun({ text: `项目：${input.projectName}  ·  版本：v${artifact.currentVersion}  ·  生成：${input.generatedAt.toISOString()}`, color: "333333", size: 18, font: "Calibri" })], spacing: { before: 60, after: 60 } })] })] }),
+      new TableRow({ children: [new TableCell({ width: { size: DOCUMENT_CONTENT_WIDTH, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "1F4E78" }, children: [new Paragraph({ children: [new TextRun({ text: artifact.title, color: "FFFFFF", bold: true, size: 32, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE })], spacing: { before: 120, after: 80 } })] })] }),
+      new TableRow({ children: [new TableCell({ width: { size: DOCUMENT_CONTENT_WIDTH, type: WidthType.DXA }, shading: { type: ShadingType.CLEAR, fill: "D9EAF7" }, children: [new Paragraph({ children: [new TextRun({ text: `项目：${input.projectName}  ·  版本：v${artifact.currentVersion}  ·  生成：${input.generatedAt.toISOString()}`, color: "333333", size: 18, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE })], spacing: { before: 60, after: 60 } })] })] }),
     ],
   });
-  const body = artifact.markdown.split(/\r?\n/).slice(1).map(paragraphForLine);
+  const body = bodyForMarkdown(artifact.markdown);
   const document = new Document({
     styles: {
-      default: { document: { run: { font: "Calibri", size: 22 }, paragraph: { spacing: { after: 100, line: 276 } } } },
+      default: { document: { run: { font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE, size: 22 }, paragraph: { spacing: { after: 100, line: 276 } } } },
       paragraphStyles: [
-        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 32, bold: true, color: "1F4E78", font: "Calibri" }, paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 0 } },
-        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, color: "1F4E78", font: "Calibri" }, paragraph: { spacing: { before: 220, after: 100 }, outlineLevel: 1 } },
-        { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 24, bold: true, color: "365F91", font: "Calibri" }, paragraph: { spacing: { before: 160, after: 80 }, outlineLevel: 2 } },
+        { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 32, bold: true, color: "1F4E78", font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE }, paragraph: { spacing: { before: 240, after: 120 }, outlineLevel: 0 } },
+        { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 26, bold: true, color: "1F4E78", font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE }, paragraph: { spacing: { before: 220, after: 100 }, outlineLevel: 1 } },
+        { id: "Heading3", name: "Heading 3", basedOn: "Normal", next: "Normal", quickFormat: true, run: { size: 24, bold: true, color: "365F91", font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE }, paragraph: { spacing: { before: 160, after: 80 }, outlineLevel: 2 } },
       ],
     },
     sections: [{
       properties: {
         page: { margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 708, footer: 708 } },
       },
-      headers: { default: new Header({ children: [new Paragraph({ children: [new TextRun({ text: "ProjectAI · Workflow Artifact", color: "6B7280", size: 18 })] })] }) },
-      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "ProjectAI  ·  ", color: "6B7280", size: 18 }), new TextRun({ children: [PageNumber.CURRENT], color: "6B7280", size: 18 })] })] }) },
+      headers: { default: new Header({ children: [new Paragraph({ children: [new TextRun({ text: "ProjectAI · Workflow Artifact", color: "6B7280", size: 18, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE })] })] }) },
+      footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "ProjectAI  ·  ", color: "6B7280", size: 18, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE }), new TextRun({ children: [PageNumber.CURRENT], color: "6B7280", size: 18, font: DOCUMENT_FONT, language: DOCUMENT_LANGUAGE })] })] }) },
       children: [masthead, new Paragraph({ text: "" }), ...body],
     }],
   });

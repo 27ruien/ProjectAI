@@ -462,10 +462,18 @@ describe("V3 workflow artifact contracts", () => {
 
 describe("V3 artifact exports and audio provider boundary", () => {
   it("creates readable OOXML packages without embedding external files", async () => {
-    const docx = await buildArtifactExport({ artifact: artifact("requirements_document", {}, "# 虚构需求\n\n## 背景\n\n仅用于测试。\n"), projectName: "虚构项目", format: "docx" });
+    const docx = await buildArtifactExport({ artifact: artifact("requirements_document", {}, "# 虚构需求\n\n## 背景\n\n仅用于测试。\n\n| 字段 | 内容 |\n| --- | --- |\n| 名称 | 中文验收 |\n"), projectName: "虚构项目", format: "docx" });
     const docxFiles = unzipSync(docx.bytes);
     assert.ok(docxFiles["word/document.xml"]);
     assert.ok(docxFiles["word/header1.xml"]);
+    const documentXml = new TextDecoder().decode(docxFiles["word/document.xml"]);
+    assert.match(documentXml, /w:eastAsia="Hiragino Sans GB"/);
+    assert.match(documentXml, /w:hint="eastAsia"/);
+    assert.match(documentXml, /w:eastAsia="zh-CN"/);
+    assert.match(documentXml, /<w:tbl>/);
+    assert.match(documentXml, /<w:tblW w:type="dxa" w:w="9360"\/>/);
+    assert.match(documentXml, /<w:shd w:fill="D9EAF7" w:val="clear"\/>/);
+    assert.doesNotMatch(documentXml, /\| --- \|/);
     const xlsx = await buildArtifactExport({ artifact: artifact("action_plan", { tasks: [{ taskCn: "确认范围", taskEn: "Confirm scope", owner: "PM", stakeholder: "Client", startDate: "TBD", endDate: "TBD", progress: 0, milestone: true, meeting: "Kickoff", parentTask: null, dependency: [], confirmationOwner: "Client", latestConfirmationDate: "TBD", delayImpact: "影响 UAT", criticalPath: true, sourceCitation: "待确认", assumption: "", status: "pending_confirmation" }] }, "# Action Plan\n"), projectName: "虚构项目", format: "xlsx" });
     const xlsxFiles = unzipSync(xlsx.bytes);
     assert.ok(xlsxFiles["xl/worksheets/sheet1.xml"]);
