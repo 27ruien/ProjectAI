@@ -532,7 +532,32 @@ test("@ai-workflow @requirement-workflow V3 requirement framework generates, ver
   await login(page, "member");
   const marker = crypto.randomUUID().slice(0, 8);
   const projectName = `V3 Requirement UAT ${marker}`;
-  const sourceName = `虚构需求框架-${marker}`;
+  const sources = [
+    {
+      name: `虚构项目概览-${marker}`,
+      content: [
+        `虚构项目代号：${marker}。`,
+        "目标：为内部项目经理提供移动 Web 审批提醒。",
+        "平台：移动 Web；地区：仅虚构测试环境；上线日期：2037-11-18。",
+      ].join("\n"),
+    },
+    {
+      name: `虚构埋点约束-${marker}`,
+      content: [
+        "GA4 必须记录 reminder_created、reminder_sent、approval_completed 三个事件。",
+        "事件参数不得写入姓名、审批正文或其他个人信息。",
+        "无权用户访问项目时统一得到 404，并写入脱敏审计。",
+      ].join("\n"),
+    },
+    {
+      name: `虚构交付计划-${marker}`,
+      content: [
+        "项目经理可以设置审批截止日期，系统在截止前 24 小时仅提醒负责人一次。",
+        "里程碑：2037-10-15 完成提醒幂等验收；最晚确认日期：2037-09-25。",
+        "验收：重复触发不产生第二条提醒；所有 AI 草稿必须人工审核后发布。",
+      ].join("\n"),
+    },
+  ];
 
   await gotoInteractive(page, appPath("/knowledge"));
   await createProjectThroughUi(page, { name: projectName, departmentName: "Product Management" });
@@ -550,19 +575,20 @@ test("@ai-workflow @requirement-workflow V3 requirement framework generates, ver
 
   const generate = page.getByRole("button", { name: "开始生成四类产物" });
   await expect(generate).toBeDisabled();
-  await page.locator('input[type="file"]').setInputFiles({
-    name: `${sourceName}.txt`,
-    mimeType: "text/plain",
-    buffer: Buffer.from([
-      `虚构项目代号：${marker}。`,
-      "目标：为内部项目经理提供移动 Web 审批提醒。",
-      "项目经理可以设置审批截止日期，系统在截止前 24 小时仅提醒负责人一次，并记录脱敏审计。",
-      "平台：移动 Web；地区：仅虚构测试环境；上线日期：2037-11-18。",
-      "GA4 必须记录 reminder_created、reminder_sent、approval_completed 三个事件，不得写入姓名或审批正文。",
-      "验收：重复触发不产生第二条提醒；无权限用户统一得到 404；所有 AI 草稿必须人工审核后发布。",
-    ].join("\n")),
-  });
-  await expect(page.getByText("临时附件已解析并选中。未经确认不会进入正式知识库。", { exact: true })).toBeVisible({ timeout: 120_000 });
+  for (const source of sources) {
+    const uploadResponse = page.waitForResponse(
+      (response) => response.url().endsWith(`/api/projects/${target!.projectId}/documents`) && response.request().method() === "POST",
+      { timeout: 30_000 },
+    );
+    await page.locator('input[type="file"]').setInputFiles({
+      name: `${source.name}.txt`,
+      mimeType: "text/plain",
+      buffer: Buffer.from(source.content),
+    });
+    expect((await uploadResponse).status()).toBe(201);
+    await expect(page.getByText("临时附件已解析并选中。未经确认不会进入正式知识库。", { exact: true })).toBeVisible({ timeout: 120_000 });
+    await expect(page.getByText(source.name, { exact: true })).toBeVisible();
+  }
   await expect(generate).toBeEnabled();
   const workflowResponse = page.waitForResponse(
     (response) => response.url().endsWith(`/api/projects/${target!.projectId}/workflows`) && response.request().method() === "POST",
@@ -587,6 +613,20 @@ test("@ai-workflow @requirement-workflow V3 requirement framework generates, ver
     expect(artifact.sourceReferences.length, `${artifact.title} source references`).toBeGreaterThan(0);
     await expect(page.getByRole("button", { name: new RegExp(`^${artifact.title} · v1$`, "u") })).toBeVisible();
   }
+  const citedDocumentIds = new Set(detail.artifacts.flatMap((artifact) => artifact.sourceReferences)
+    .map((reference) => reference.documentId)
+    .filter((documentId): documentId is string => typeof documentId === "string"));
+  expect(citedDocumentIds.size, "all three selected fixtures are cited").toBe(3);
+  const requirements = detail.artifacts.find((artifact) => artifact.kind === "requirements_document")!;
+  expect((requirements.content.sections as unknown[]).length, "26-section requirement document").toBe(26);
+  const ga4 = detail.artifacts.find((artifact) => artifact.kind === "ga4_measurement_plan")!;
+  const ga4EventIds = new Set((ga4.content.events as Array<{ eventId?: string }>).map((event) => event.eventId));
+  for (const eventId of ["reminder_created", "reminder_sent", "approval_completed"]) expect(ga4EventIds.has(eventId), `GA4 ${eventId}`).toBe(true);
+  const actionPlan = detail.artifacts.find((artifact) => artifact.kind === "action_plan")!;
+  const actionTasks = actionPlan.content.tasks as Array<{ milestone?: boolean; latestConfirmationDate?: string }>;
+  expect(actionTasks.length, "Action Plan tasks").toBeGreaterThan(0);
+  expect(actionTasks.some((task) => task.milestone === true), "Action Plan milestone").toBe(true);
+  expect(actionTasks.every((task) => typeof task.latestConfirmationDate === "string" && task.latestConfirmationDate.length > 0), "Action Plan latest confirmation dates").toBe(true);
 
   const overview = detail.artifacts.find((artifact) => artifact.kind === "project_overview")!;
   await page.getByRole("button", { name: /^项目需求概览 · v1$/u }).click();
@@ -611,6 +651,10 @@ test("@ai-workflow @requirement-workflow V3 requirement framework generates, ver
   await page.getByRole("button", { name: "审核并发布" }).click();
   await expect(page.getByText("四类产物已发布；审核和版本记录已保存。")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByRole("heading", { name: "已发布" })).toBeVisible();
+  await gotoInteractive(page, appPath("/workflows"));
+  await gotoInteractive(page, runUrl);
+  await expect(page.getByRole("heading", { name: "已发布" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^项目需求概览 · v2$/u })).toBeVisible();
   await capture(page, "06-v3-requirement-published.png");
   assertNoErrors();
 });
