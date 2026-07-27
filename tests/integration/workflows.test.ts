@@ -4,7 +4,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
-import { eq, like, sql } from "drizzle-orm";
+import { and, eq, like, sql } from "drizzle-orm";
 import type { AuthenticatedPrincipal } from "../../lib/auth/session";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
@@ -125,6 +125,8 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     const sectionId = `${prefix}section`;
     const content = "虚构项目需要项目经理在上线前确认验收范围。上线日期和 GA4 Measurement ID 尚未确认。";
     const digest = createHash("sha256").update(content).digest("hex");
+    const analyticsContent = "GA4 contract requires the stable event experience_started and parameter event_schema_version.";
+    const analyticsDigest = createHash("sha256").update(analyticsContent).digest("hex");
     const now = new Date();
     await getDb().transaction(async (tx) => {
       await tx.insert(projectDocument).values({ id: documentId, projectId, displayName: "虚构 V3 工作流来源.md", status: "active", createdBy: manager.id });
@@ -132,6 +134,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       await tx.insert(documentIngestionJob).values({ id: jobId, projectId, documentId, versionId, generation: 1, status: "succeeded", parserVersion: "1", chunkerVersion: "1", attemptCount: 1, maxAttempts: 3, startedAt: now, completedAt: now, createdBy: manager.id });
       await tx.insert(documentSection).values({ id: sectionId, projectId, documentId, versionId, ingestionJobId: jobId, generation: 1, sectionType: "markdown_section", sectionIndex: 0, heading: "项目需求", headingPath: ["项目需求"], lineStart: 1, lineEnd: 1, sourceLocator: { type: "markdown_section", headingPath: ["项目需求"], lineStart: 1, lineEnd: 1 }, content, contentSha256: digest, characterCount: content.length, parserVersion: "1" });
       await tx.insert(documentChunk).values({ id: `${prefix}chunk`, projectId, documentId, versionId, sectionId, ingestionJobId: jobId, generation: 1, chunkIndex: 0, content, contentSha256: digest, searchText: content, characterCount: content.length, estimatedTokenCount: 48, headingPath: ["项目需求"], sourceLocator: { type: "markdown_section", headingPath: ["项目需求"], lineStart: 1, lineEnd: 1 }, parserVersion: "1", chunkerVersion: "1", isEffective: true });
+      await tx.insert(documentChunk).values({ id: `${prefix}chunk-2`, projectId, documentId, versionId, sectionId, ingestionJobId: jobId, generation: 1, chunkIndex: 1, content: analyticsContent, contentSha256: analyticsDigest, searchText: analyticsContent, characterCount: analyticsContent.length, estimatedTokenCount: 24, headingPath: ["GA4 contract"], sourceLocator: { type: "markdown_section", headingPath: ["GA4 contract"], lineStart: 2, lineEnd: 2 }, parserVersion: "1", chunkerVersion: "1", isEffective: true });
     });
   });
 
@@ -181,13 +184,31 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       saveArtifactVersion({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, content: forgedCitation, requestHeaders: headers }),
       (error: unknown) => error instanceof Error && "code" in error && error.code === "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID",
     );
-    await regenerateWorkflowArtifact({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, requestHeaders: headers });
+    const sibling = detail.artifacts.find((artifact) => artifact.id !== detail.artifacts[0]!.id)!;
+    const siblingVersion = await getDb().select({ sourceReferences: workflowArtifactVersion.sourceReferences }).from(workflowArtifactVersion).where(eq(workflowArtifactVersion.artifactId, sibling.id)).limit(1);
+    const siblingReference = {
+      label: "E2",
+      documentId,
+      versionId: `${prefix}version`,
+      chunkId: `${prefix}chunk-2`,
+      locator: { type: "markdown_section", headingPath: ["GA4 contract"], lineStart: 2, lineEnd: 2 },
+    };
+    await getDb().update(workflowArtifactVersion).set({ sourceReferences: [...siblingVersion[0]!.sourceReferences, siblingReference] }).where(and(eq(workflowArtifactVersion.artifactId, sibling.id), eq(workflowArtifactVersion.version, sibling.currentVersion)));
+    const reviewerCitation = structuredClone(detail.artifacts[0]!.content) as {
+      sections: Array<{ fields: Array<{ citations: string[] }> }>;
+    };
+    reviewerCitation.sections[0]!.fields[0]!.citations = [siblingReference.label];
+    assert.equal(await saveArtifactVersion({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, content: reviewerCitation, requestHeaders: headers }), 2);
+    const reviewerSaved = await readWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, requestHeaders: headers });
+    assert.equal(reviewerSaved.artifacts.find((artifact) => artifact.id === detail.artifacts[0]!.id)!.sourceReferences.some((reference) => reference.label === siblingReference.label), true);
+
+    await regenerateWorkflowArtifact({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 2, requestHeaders: headers });
     const regenerationClaim = await claimWorkflowRun(`${prefix}regeneration-worker`);
     assert.equal(regenerationClaim?.id, winners[0]!.id);
     await processWorkflowRun(regenerationClaim!);
     const regenerated = await readWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, requestHeaders: headers });
     assert.equal(regenerated.run.status, "awaiting_review");
-    assert.deepEqual(regenerated.artifacts.map((artifact) => artifact.currentVersion).sort(), [1, 1, 1, 2]);
+    assert.deepEqual(regenerated.artifacts.map((artifact) => artifact.currentVersion).sort(), [1, 1, 1, 3]);
 
     await getDb().update(workflowRunSource).set({ status: "expired" }).where(eq(workflowRunSource.runId, winners[0]!.id));
     await assert.rejects(

@@ -196,6 +196,25 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse(value).success, false);
   });
 
+  it("instructs GA4 generation to preserve explicit source contracts", () => {
+    const prompt = buildArtifactPrompt({
+      kind: "ga4_measurement_plan",
+      projectName: "虚构项目",
+      evidence: [{
+        label: "E1",
+        documentId: "document-1",
+        versionId: "version-1",
+        chunkId: "chunk-1",
+        documentName: "ga4.md",
+        headingPath: ["GA4 contract"],
+        locator: {},
+        content: "Required events: `experience_started`; public parameter: `event_schema_version`.",
+      }],
+    });
+    assert.match(prompt.systemPrompt, /必须逐字复制来源中的 snake_case 标识/);
+    assert.match(prompt.systemPrompt, /禁止改名、同义改写或新增未在合同中出现的分析事件/);
+  });
+
   it("normalizes bounded GA4 presentation aliases and grounds non-TBD ids", () => {
     const normalized = normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "待确认", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: "E1" },

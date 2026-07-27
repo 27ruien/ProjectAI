@@ -306,7 +306,7 @@ export const workflowArtifactVersion = pgTable(
     content: jsonb("content").$type<Record<string, unknown>>().notNull(),
     markdown: text("markdown").notNull(),
     sourceReferences: jsonb("source_references")
-      .$type<Array<{ documentId: string; versionId: string; chunkId?: string; locator?: unknown }>>()
+      .$type<Array<{ label?: string; documentId: string; versionId: string; chunkId?: string; locator?: unknown }>>()
       .notNull(),
     contentDigest: varchar("content_digest", { length: 64 }).notNull(),
     createdBy: text("created_by")

@@ -69,6 +69,103 @@ function referenceLabels(
   return unique.size === labels.length ? unique : null;
 }
 
+function collectReferencedLabels(
+  value: unknown,
+  output = new Set<string>(),
+): Set<string> {
+  if (Array.isArray(value)) {
+    for (const child of value) collectReferencedLabels(child, output);
+  } else if (value && typeof value === "object") {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      if (
+        (key === "citations" || key === "sourceCitation") &&
+        typeof child === "string" &&
+        /^E[1-9][0-9]?$/.test(child)
+      ) {
+        output.add(child);
+      }
+      if (
+        (key === "citations" || key === "segmentIds") &&
+        Array.isArray(child)
+      ) {
+        for (const label of child) {
+          if (typeof label === "string" && /^E[1-9][0-9]?$/.test(label)) {
+            output.add(label);
+          }
+        }
+      }
+      collectReferencedLabels(child, output);
+    }
+  }
+  return output;
+}
+
+type EvidenceReference = {
+  label?: string;
+  documentId: string;
+  versionId: string;
+  chunkId?: string;
+  locator?: unknown;
+};
+
+function referenceIdentity(reference: EvidenceReference): string | null {
+  const { documentId, versionId, chunkId } = reference;
+  if (
+    typeof documentId !== "string" ||
+    typeof versionId !== "string" ||
+    typeof chunkId !== "string"
+  ) {
+    return null;
+  }
+  return `${documentId}:${versionId}:${chunkId}`;
+}
+
+async function currentRunReferenceMap(input: {
+  db: DatabaseExecutor;
+  runId: string;
+  projectId: string;
+}): Promise<Map<string, EvidenceReference>> {
+  const versions = await input.db
+    .select({ sourceReferences: workflowArtifactVersion.sourceReferences })
+    .from(workflowArtifact)
+    .innerJoin(
+      workflowArtifactVersion,
+      and(
+        eq(workflowArtifactVersion.artifactId, workflowArtifact.id),
+        eq(workflowArtifactVersion.projectId, workflowArtifact.projectId),
+        eq(workflowArtifactVersion.version, workflowArtifact.currentVersion),
+      ),
+    )
+    .where(
+      and(
+        eq(workflowArtifact.runId, input.runId),
+        eq(workflowArtifact.projectId, input.projectId),
+      ),
+    );
+  const references = new Map<string, EvidenceReference>();
+  const labelsByIdentity = new Map<string, string>();
+  for (const version of versions) {
+    for (const reference of version.sourceReferences) {
+      const label = reference.label;
+      const identity = referenceIdentity(reference);
+      if (typeof label !== "string" || !/^E[1-9][0-9]?$/.test(label) || !identity) {
+        throw new WorkflowError(409, "WORKFLOW_ARTIFACT_INTEGRITY_INVALID", "产物引用映射已失效，需要重新生成");
+      }
+      const existing = references.get(label);
+      if (existing && referenceIdentity(existing) !== identity) {
+        throw new WorkflowError(409, "WORKFLOW_ARTIFACT_INTEGRITY_INVALID", "产物引用标签存在冲突，需要重新生成");
+      }
+      const existingLabel = labelsByIdentity.get(identity);
+      if (existingLabel && existingLabel !== label) {
+        throw new WorkflowError(409, "WORKFLOW_ARTIFACT_INTEGRITY_INVALID", "产物来源存在重复引用标签，需要重新生成");
+      }
+      references.set(label, reference);
+      labelsByIdentity.set(identity, label);
+    }
+  }
+  return references;
+}
+
 function validateTranscriptLabels(
   content: Record<string, unknown>,
   allowedLabels: Set<string>,
@@ -461,9 +558,12 @@ export async function saveArtifactVersion(input: {
     const parsed = schema?.safeParse(input.content);
     if (!parsed?.success) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_SCHEMA_INVALID", "产物未通过结构校验");
     const content = parsed.data as Record<string, unknown>;
+    let sourceReferences = current.sourceReferences;
     if (REQUIREMENT_ARTIFACT_KINDS.includes(artifact.artifactKind as RequirementArtifactKind)) {
-      const allowedLabels = referenceLabels(current.sourceReferences);
-      if (!allowedLabels || !validateCitationLabels(content, allowedLabels)) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID", "产物引用不在已授权来源范围内");
+      const referenceMap = await currentRunReferenceMap({ db: tx, runId: input.runId, projectId: input.projectId });
+      const allowedLabels = new Set(referenceMap.keys());
+      if (!validateCitationLabels(content, allowedLabels)) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID", "产物引用不在已授权来源范围内");
+      sourceReferences = [...collectReferencedLabels(content)].map((label) => referenceMap.get(label)!);
     } else {
       const segments = await tx.select({ sequence: transcriptSegment.sequence }).from(transcriptSegment).where(and(eq(transcriptSegment.runId, input.runId), eq(transcriptSegment.projectId, input.projectId)));
       const allowedLabels = new Set(segments.map((segment) => `S${segment.sequence}`));
@@ -477,7 +577,7 @@ export async function saveArtifactVersion(input: {
     await tx.insert(workflowArtifactVersion).values({
       id: randomUUID(), artifactId: artifact.id, projectId: artifact.projectId,
       version: nextVersion, content, markdown,
-      sourceReferences: current?.sourceReferences ?? [], contentDigest,
+      sourceReferences, contentDigest,
       createdBy: input.principal.user.id,
     });
     await tx.update(workflowArtifact).set({ currentVersion: nextVersion, contentDigest, status: "draft", updatedAt: new Date() }).where(and(eq(workflowArtifact.id, artifact.id), eq(workflowArtifact.projectId, artifact.projectId)));
