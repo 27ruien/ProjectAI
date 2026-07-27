@@ -164,6 +164,14 @@ test("pre-migration PostgreSQL backup streams and validates a custom archive", a
   assert.match(dumpBlock, /--host=127\.0\.0\.1/);
   assert.doesNotMatch(dumpBlock, /--file(?:=|\s)/);
   assert.match(script, /pg_restore --list/);
+  assert.match(
+    script,
+    /sudo sh -c 'docker exec --interactive "\$1" pg_restore --list < "\$2"'/,
+  );
+  assert.doesNotMatch(
+    script,
+    /sudo cat "\$partial_backup"[\s\\]+\| sudo docker exec[^\n]+pg_restore --list/,
+  );
   assert.match(script, /chmod 600 "\$host_backup"/);
 });
 

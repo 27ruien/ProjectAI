@@ -1412,8 +1412,8 @@ if ! sudo test -s "$partial_backup"; then
   sudo rm -f "$partial_backup" || true
   exit 1
 fi
-if ! sudo cat "$partial_backup" \
-  | sudo docker exec --interactive "$db_container_name" pg_restore --list >/dev/null; then
+if ! sudo sh -c 'docker exec --interactive "$1" pg_restore --list < "$2"' \
+  sh "$db_container_name" "$partial_backup" >/dev/null; then
   printf 'Staging backup archive validation failed.\n' >&2
   sudo rm -f "$partial_backup" || true
   exit 1

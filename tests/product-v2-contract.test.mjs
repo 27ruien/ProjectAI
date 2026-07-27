@@ -151,7 +151,14 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.doesNotMatch(deploy, /docker compose down/);
   assert.match(deploy, /REMOTE_BACKUP/);
   assert.match(deploy, /pg_dump --format=custom/);
-  assert.match(deploy, /sudo cat -- "\$backup_path" \| sudo docker exec -i project-ai-os-staging-postgres pg_restore --list/);
+  assert.match(
+    deploy,
+    /sudo sh -c 'docker exec --interactive "\$1" pg_restore --list < "\$2"'[\s\\]+sh project-ai-os-staging-postgres "\$backup_path"/,
+  );
+  assert.doesNotMatch(
+    deploy,
+    /sudo cat -- "\$backup_path" \| sudo docker exec[^\n]+pg_restore --list/,
+  );
   assert.match(deploy, /dropdb --if-exists --force --maintenance-db=postgres/);
   assert.match(deploy, /createdb --maintenance-db=postgres/);
   assert.match(deploy, /pg_restore --exit-on-error --no-owner --no-acl/);
