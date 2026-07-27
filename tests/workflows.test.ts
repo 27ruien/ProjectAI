@@ -31,6 +31,8 @@ import {
   createAudioTranscriptionProvider,
 } from "../lib/workflows/audio-provider";
 import { buildAudioProviderUrl } from "../lib/workflows/audio-service";
+import { WorkflowError } from "../lib/workflows/errors";
+import { GatewayMeetingSummaryProvider } from "../lib/workflows/meeting-summary-provider";
 import { buildArtifactPrompt } from "../lib/workflows/prompt";
 import type { WorkflowArtifactPayload } from "../lib/workflows/service";
 
@@ -457,6 +459,61 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(validateCitationLabels(summary, new Set(["S1", "S2"])), true);
     summary.actions[0]!.segmentIds = ["S9"];
     assert.equal(validateCitationLabels(summary, new Set(["S1", "S2"])), false);
+  });
+
+  it("repairs an invalid meeting summary once and accounts for both provider calls", async () => {
+    const purposes: string[] = [];
+    const valid = {
+      background: "虚构会议",
+      topics: ["验收"],
+      keyPoints: [{ text: "需要准备验收。", segmentIds: ["S1"] }],
+      decisions: [],
+      proposals: [],
+      openQuestions: [],
+      risks: [],
+      actions: [{ text: "准备验收记录", owner: "Speaker 1", deadline: "TBD", dependencies: [], segmentIds: ["S1"] }],
+    };
+    let call = 0;
+    const provider = new GatewayMeetingSummaryProvider(() => ({
+      generate: async (input) => {
+        purposes.push(input.purpose);
+        call += 1;
+        return {
+          provider: "fake" as const,
+          requestedModel: "primary",
+          actualModel: call === 1 ? "primary" : "fallback",
+          fallbackUsed: call === 2,
+          text: call === 1 ? JSON.stringify({ ...valid, actions: [{ task: "错误字段" }] }) : JSON.stringify(valid),
+          inputTokens: 10,
+          outputTokens: 5,
+          totalTokens: 15,
+          providerRequestId: `request-${call}`,
+          latencyMs: 20,
+        };
+      },
+    }));
+    const result = await provider.summarize([{ id: "S1", startMs: 0, endMs: 1_000, speaker: "Speaker 1", text: "需要准备验收。" }]);
+    assert.deepEqual(purposes, ["meeting_summary", "meeting_summary_repair"]);
+    assert.equal(result.content.actions[0]!.text, "准备验收记录");
+    assert.equal(result.actualModel, "fallback");
+    assert.equal(result.inputTokens, 20);
+    assert.equal(result.outputTokens, 10);
+    assert.equal(result.latencyMs, 40);
+  });
+
+  it("rejects a meeting summary after one bounded repair attempt", async () => {
+    let calls = 0;
+    const provider = new GatewayMeetingSummaryProvider(() => ({
+      generate: async () => {
+        calls += 1;
+        return { provider: "fake" as const, requestedModel: "primary", actualModel: "primary", fallbackUsed: false, text: "{}", inputTokens: 1, outputTokens: 1, totalTokens: 2, providerRequestId: null, latencyMs: 1 };
+      },
+    }));
+    await assert.rejects(
+      provider.summarize([{ id: "S1", startMs: 0, endMs: 1_000, speaker: "Speaker 1", text: "虚构内容" }]),
+      (error: unknown) => error instanceof WorkflowError && error.code === "MEETING_SUMMARY_INVALID",
+    );
+    assert.equal(calls, 2);
   });
 });
 

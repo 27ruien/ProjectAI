@@ -310,7 +310,7 @@ export class FakeProjectAssistantProvider
           warnings: ["源材料未提供确定日期，计划日期保持 TBD。"],
         });
       }
-    } else if (request.purpose === "meeting_summary") {
+    } else if (request.purpose === "meeting_summary" || request.purpose === "meeting_summary_repair") {
       text = JSON.stringify({
         background: "基于受控虚构转写生成。",
         topics: ["虚构项目验收"],

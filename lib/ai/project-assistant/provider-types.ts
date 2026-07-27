@@ -12,6 +12,7 @@ export type ProjectAssistantProviderPurpose =
   | "workflow_artifact"
   | "workflow_artifact_repair"
   | "meeting_summary"
+  | "meeting_summary_repair"
   | "query_rewrite"
   | "rerank";
 
