@@ -285,20 +285,24 @@ function normalizeCoverageStatus(value: unknown): unknown {
   return value;
 }
 
-function normalizeCoverageLabel(value: unknown, firstKey: "requirement" | "page"): unknown {
-  if (typeof value === "string") return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+function normalizeCoverageLabels(value: unknown, firstKey: "requirement" | "page", depth = 0): unknown[] {
+  if (depth > 2) return [value];
+  if (Array.isArray(value)) {
+    if (value.length === 0 || value.length > 20) return [value];
+    return value.flatMap((item) => normalizeCoverageLabels(item, firstKey, depth + 1));
+  }
+  if (typeof value === "string") return [value.trim()];
+  if (typeof value === "number" && Number.isFinite(value)) return [String(value)];
+  if (!value || typeof value !== "object") return [value];
   const item = value as Record<string, unknown>;
   const keys = firstKey === "requirement"
-    ? ["requirement", "requirementId", "id", "number", "name", "title"]
-    : ["page", "pageId", "id", "path", "name", "title"];
+    ? ["requirement", "requirementId", "id", "number", "name", "title", "requirements"]
+    : ["page", "pageId", "id", "path", "name", "title", "pages"];
   for (const key of keys) {
     const candidate = item[key];
-    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
-    if (typeof candidate === "number" && Number.isFinite(candidate)) return String(candidate);
+    if (candidate !== undefined) return normalizeCoverageLabels(candidate, firstKey, depth + 1);
   }
-  return value;
+  return [value];
 }
 
 function normalizeCoverageEventIds(value: unknown, depth = 0): unknown[] {
@@ -374,13 +378,15 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [entry];
     const item = entry as Record<string, unknown>;
     const rawEventReference = item.eventId ?? item.eventIds ?? item.events;
+    const rawLabel = item[firstKey] ?? item[`${firstKey}s`];
+    const normalizedLabels = [...new Set(normalizeCoverageLabels(rawLabel, firstKey))];
     const normalizedEventIds = [...new Set(normalizeCoverageEventIds(rawEventReference))];
-    return normalizedEventIds.map((normalizedEventId) => {
+    return normalizedLabels.flatMap((label) => normalizedEventIds.map((normalizedEventId) => {
       const eventId = typeof normalizedEventId === "string" && eventAliases.get(normalizedEventId)
         ? eventAliases.get(normalizedEventId)
         : normalizedEventId;
-      return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId, status: normalizeCoverageStatus(item.status) };
-    });
+      return { [firstKey]: label, eventId, status: normalizeCoverageStatus(item.status) };
+    }));
   };
   return {
     overview: overview ? {

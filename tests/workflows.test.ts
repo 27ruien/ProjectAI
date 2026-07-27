@@ -278,20 +278,35 @@ describe("V3 workflow artifact contracts", () => {
         { eventName: "Open Form", coreEvent: true, eventType: "click", description: "打开表单", eventId: "form_opened", parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
         { eventName: "Submit Form", coreEvent: true, eventType: "result", description: "提交表单", eventId: "form_submitted", parameterName: "结果", parameterDescription: "提交结果", parameterKey: "submit_result", parameterValueRule: "success|failed", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
       ],
-      requirementEventCoverage: [{ requirement: "REQ-001", eventIds: [{ eventName: "Open Form" }, "form_submitted"], status: "covered" }],
-      pageEventMatrix: [{ page: "表单", eventId: "Open Form, Submit Form", status: "covered" }],
+      requirementEventCoverage: [{ requirements: [{ id: "REQ-001" }, "REQ-002"], eventIds: [{ eventName: "Open Form" }, "form_submitted"], status: "covered" }],
+      pageEventMatrix: [{ pages: ["表单", { path: "/result" }], eventId: "Open Form, Submit Form", status: "covered" }],
     });
     const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
     assert.equal(parsed.success, true);
     if (!parsed.success) return;
-    assert.deepEqual(parsed.data.requirementEventCoverage.map((entry) => entry.eventId), ["form_opened", "form_submitted"]);
-    assert.deepEqual(parsed.data.pageEventMatrix.map((entry) => entry.eventId), ["form_opened", "form_submitted"]);
+    assert.deepEqual(parsed.data.requirementEventCoverage, [
+      { requirement: "REQ-001", eventId: "form_opened", status: "covered" },
+      { requirement: "REQ-001", eventId: "form_submitted", status: "covered" },
+      { requirement: "REQ-002", eventId: "form_opened", status: "covered" },
+      { requirement: "REQ-002", eventId: "form_submitted", status: "covered" },
+    ]);
+    assert.deepEqual(parsed.data.pageEventMatrix, [
+      { page: "表单", eventId: "form_opened", status: "covered" },
+      { page: "表单", eventId: "form_submitted", status: "covered" },
+      { page: "/result", eventId: "form_opened", status: "covered" },
+      { page: "/result", eventId: "form_submitted", status: "covered" },
+    ]);
 
     const excessive = normalizeGa4MeasurementPlan({
       ...(normalized as Record<string, unknown>),
       requirementEventCoverage: [{ requirement: "REQ-001", eventId: Array.from({ length: 21 }, (_, index) => `event_${index}`), status: "covered" }],
     });
     assert.equal(ga4MeasurementPlanSchema.safeParse(excessive).success, false);
+    const excessiveLabels = normalizeGa4MeasurementPlan({
+      ...(normalized as Record<string, unknown>),
+      requirementEventCoverage: [{ requirements: Array.from({ length: 21 }, (_, index) => `REQ-${index}`), eventId: "form_opened", status: "covered" }],
+    });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(excessiveLabels).success, false);
   });
 
   it("describes GA4 schema failures without provider content", () => {
