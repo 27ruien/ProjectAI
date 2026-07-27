@@ -485,6 +485,8 @@ try {
       fallback_reason: string | null;
       vector_candidate_count: number;
       query_calls: number;
+      query_call_states: string;
+      embedding_coverage_bps: number;
       vector_latency_ms: number;
       total_latency_ms: number;
     }>(
@@ -492,11 +494,15 @@ try {
         r.requested_mode::text as requested_retrieval_mode,
         r.effective_mode::text as effective_retrieval_mode,
         r.fallback_reason,
+        r.embedding_coverage_bps,
         r.vector_candidate_count,
         r.vector_latency_ms,
         r.total_latency_ms,
         (select count(*)::int from ai_retrieval_query_embedding_calls q
-          where q.retrieval_run_id = r.id and q.status = 'succeeded') as query_calls
+          where q.retrieval_run_id = r.id and q.status = 'succeeded') as query_calls,
+        (select coalesce(string_agg(q.status::text, ',' order by q.status::text), 'none')
+          from ai_retrieval_query_embedding_calls q
+          where q.retrieval_run_id = r.id) as query_call_states
        from ai_retrieval_runs r where r.ai_execution_id = $1`,
       [grounded.execution.id],
     );
@@ -504,7 +510,14 @@ try {
     assert(
       run?.requested_retrieval_mode === expectedRetrievalMode &&
         run.vector_candidate_count > 0 && run.query_calls === 1,
-      "The expected Retrieval mode did not produce one successful Query Embedding and Vector candidates.",
+      `The expected Retrieval mode did not produce one successful Query Embedding and Vector candidates ` +
+        `(requested=${run?.requested_retrieval_mode ?? "missing"}, ` +
+        `effective=${run?.effective_retrieval_mode ?? "missing"}, ` +
+        `fallback=${run?.fallback_reason ?? "none"}, ` +
+        `coverageBps=${run?.embedding_coverage_bps ?? -1}, ` +
+        `vectorCandidates=${run?.vector_candidate_count ?? -1}, ` +
+        `queryCalls=${run?.query_calls ?? -1}, ` +
+        `queryStates=${run?.query_call_states ?? "missing"}).`,
     );
     assert(
       run.vector_latency_ms <= 1_500 && run.total_latency_ms <= 8_000,
