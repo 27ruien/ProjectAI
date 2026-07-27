@@ -532,6 +532,33 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(result.content.actions[0]!.owner, "TBD");
   });
 
+  it("normalizes only safe empty meeting fields and unknown owners", async () => {
+    const provider = new GatewayMeetingSummaryProvider(() => ({
+      generate: async () => ({
+        provider: "fake" as const,
+        requestedModel: "primary",
+        actualModel: "primary",
+        fallbackUsed: false,
+        text: JSON.stringify({
+          background: "虚构会议",
+          keyPoints: [{ text: "已确认验收范围。", segmentIds: "S1" }],
+          actions: [{ text: "继续确认负责人", owner: "无法精确对应的称谓", deadline: "待确认", segmentIds: "S1" }],
+        }),
+        inputTokens: 1,
+        outputTokens: 1,
+        totalTokens: 2,
+        providerRequestId: null,
+        latencyMs: 1,
+      }),
+    }));
+    const result = await provider.summarize([{ id: "S1", startMs: 0, endMs: 1_000, speaker: "Speaker 1", text: "负责人稍后确认。" }]);
+    assert.equal(result.content.actions[0]!.owner, "TBD");
+    assert.equal(result.content.actions[0]!.deadline, "TBD");
+    assert.deepEqual(result.content.actions[0]!.dependencies, []);
+    assert.deepEqual(result.content.actions[0]!.segmentIds, ["S1"]);
+    assert.deepEqual(result.content.topics, []);
+  });
+
   it("rejects a meeting summary after one bounded repair attempt", async () => {
     let calls = 0;
     const provider = new GatewayMeetingSummaryProvider(() => ({

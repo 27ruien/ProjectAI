@@ -27,9 +27,51 @@ function parseJson(text: string): unknown {
   try { return JSON.parse(trimmed); } catch { throw new WorkflowError(422, "MEETING_SUMMARY_INVALID", "会议纪要不是有效 JSON"); }
 }
 
+function normalizeMeetingSummary(value: unknown, speakers: Set<string>): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const arrayOrEmpty = (candidate: unknown) => candidate === null || candidate === undefined ? [] : candidate;
+  const citedItems = (candidate: unknown) => Array.isArray(candidate) ? candidate.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const item = entry as Record<string, unknown>;
+    const segmentIds = typeof item.segmentIds === "string" && /^S[1-9][0-9]*$/.test(item.segmentIds.trim())
+      ? [item.segmentIds.trim()]
+      : item.segmentIds;
+    return { ...item, segmentIds };
+  }) : arrayOrEmpty(candidate);
+  const actions = Array.isArray(record.actions) ? record.actions.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const item = entry as Record<string, unknown>;
+    const rawOwner = typeof item.owner === "string" ? item.owner.trim() : item.owner;
+    const owner = typeof rawOwner === "string"
+      ? rawOwner === "TBD" || speakers.has(rawOwner) ? rawOwner : "TBD"
+      : rawOwner ?? "TBD";
+    const deadline = typeof item.deadline === "string" && /^(?:tbd|待确认|待定|未知|未确认)$/i.test(item.deadline.trim())
+      ? "TBD"
+      : item.deadline;
+    const dependencies = typeof item.dependencies === "string"
+      ? item.dependencies.trim() ? [item.dependencies.trim()] : []
+      : arrayOrEmpty(item.dependencies);
+    const segmentIds = typeof item.segmentIds === "string" && /^S[1-9][0-9]*$/.test(item.segmentIds.trim())
+      ? [item.segmentIds.trim()]
+      : item.segmentIds;
+    return { ...item, owner, deadline, dependencies, segmentIds };
+  }) : arrayOrEmpty(record.actions);
+  return {
+    ...record,
+    topics: arrayOrEmpty(record.topics),
+    keyPoints: citedItems(record.keyPoints),
+    decisions: citedItems(record.decisions),
+    proposals: citedItems(record.proposals),
+    openQuestions: arrayOrEmpty(record.openQuestions),
+    risks: citedItems(record.risks),
+    actions,
+  };
+}
+
 function parsedSummary(text: string, labels: Set<string>, speakers: Set<string>) {
   try {
-    const parsed = meetingSummarySchema.safeParse(parseJson(text));
+    const parsed = meetingSummarySchema.safeParse(normalizeMeetingSummary(parseJson(text), speakers));
     if (
       !parsed.success ||
       !validateCitationLabels(parsed.data, labels) ||
