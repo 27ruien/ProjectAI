@@ -197,13 +197,16 @@ export const ga4MeasurementPlanSchema = z.object({
   pageEventMatrix: z.array(z.object({ page: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
 }).strict().superRefine((value, context) => {
   const ids = value.events.map((event) => event.eventId);
-  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", message: "duplicate event id" });
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", path: ["events"], message: "duplicate event id" });
   const eventIds = new Set(ids);
-  for (const entry of [...value.requirementEventCoverage, ...value.pageEventMatrix]) {
-    if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", message: `coverage references unknown event: ${entry.eventId}` });
+  for (const [index, entry] of value.requirementEventCoverage.entries()) {
+    if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", path: ["requirementEventCoverage", index, "eventId"], message: "coverage references unknown event" });
+  }
+  for (const [index, entry] of value.pageEventMatrix.entries()) {
+    if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", path: ["pageEventMatrix", index, "eventId"], message: "coverage references unknown event" });
   }
   if (value.overview.measurementId !== "TBD" && !/^G-[A-Z0-9]+$/.test(value.overview.measurementId)) {
-    context.addIssue({ code: "custom", message: "measurement id must be TBD or a GA4 id" });
+    context.addIssue({ code: "custom", path: ["overview", "measurementId"], message: "measurement id must be TBD or a GA4 id" });
   }
 });
 
@@ -403,7 +406,7 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
     };
   };
   const eventCollection = normalizeGa4Events(record.events);
-  const normalizedEvents = Array.isArray(eventCollection) ? eventCollection.map((event) => {
+  let normalizedEvents = Array.isArray(eventCollection) ? eventCollection.map((event) => {
     if (!event || typeof event !== "object" || Array.isArray(event)) return event;
     const item = event as Record<string, unknown>;
     return {
@@ -422,6 +425,21 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
       citations: normalizeCitationLabels(item.citations),
     };
   }) : eventCollection;
+  if (Array.isArray(normalizedEvents)) {
+    const seen = new Map<string, string>();
+    normalizedEvents = normalizedEvents.filter((event) => {
+      if (!event || typeof event !== "object" || Array.isArray(event)) return true;
+      const item = event as Record<string, unknown>;
+      if (typeof item.eventId !== "string") return true;
+      const digest = JSON.stringify(item);
+      const previous = seen.get(item.eventId);
+      if (previous === undefined) {
+        seen.set(item.eventId, digest);
+        return true;
+      }
+      return previous !== digest;
+    });
+  }
   const eventAliases = new Map<string, string | null>();
   if (Array.isArray(normalizedEvents)) {
     for (const event of normalizedEvents) {
@@ -452,7 +470,7 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
   return {
     overview: overview ? {
       platform: overview.platform,
-      measurementId: typeof overview.measurementId === "string" && /^(?:tbd|待确认|未知|未配置)$/i.test(overview.measurementId.trim()) ? "TBD" : overview.measurementId,
+      measurementId: typeof overview.measurementId === "string" && /^(?:tbd|待确认|未知|未配置|待配置|待获取|暂缺|unknown|pending|not configured|not available|not provided)$/i.test(overview.measurementId.trim()) ? "TBD" : overview.measurementId,
       validationStatus: overview.validationStatus,
       projectName: overview.projectName,
       projectLink: overview.projectLink,

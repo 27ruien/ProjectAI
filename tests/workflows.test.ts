@@ -284,6 +284,23 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse(ambiguous).success, false);
   });
 
+  it("deduplicates only identical GA4 events and reports root invariants by field", () => {
+    const event = { eventName: "Open Form", coreEvent: true, eventType: "click", description: "打开表单", eventId: "form_opened", parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] };
+    const base = { overview: { platform: "GA4", measurementId: "待获取", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] }, publicParameters: [], events: [event, { ...event }], requirementEventCoverage: [], pageEventMatrix: [] };
+    const identical = ga4MeasurementPlanSchema.safeParse(normalizeGa4MeasurementPlan(base));
+    assert.equal(identical.success, true);
+    if (identical.success) {
+      assert.equal(identical.data.events.length, 1);
+      assert.equal(identical.data.overview.measurementId, "TBD");
+    }
+    const conflicting = normalizeGa4MeasurementPlan({ ...base, events: [event, { ...event, description: "不同语义" }] });
+    assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", conflicting), "WORKFLOW_GA4_SCHEMA_events");
+    const unknownCoverage = normalizeGa4MeasurementPlan({ ...base, events: [event], pageEventMatrix: [{ page: "表单", eventId: "missing", status: "gap" }] });
+    assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", unknownCoverage), "WORKFLOW_GA4_SCHEMA_pageEventMatrix_0_eventId");
+    const invalidMeasurement = normalizeGa4MeasurementPlan({ ...base, overview: { ...base.overview, measurementId: "not-applicable" }, events: [event] });
+    assert.equal(describeArtifactSchemaFailure("ga4_measurement_plan", invalidMeasurement), "WORKFLOW_GA4_SCHEMA_overview_measurementId");
+  });
+
   it("expands bounded multi-event GA4 coverage into exact event-id rows", () => {
     const normalized = normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
