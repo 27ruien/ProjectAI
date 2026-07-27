@@ -6,6 +6,7 @@ import {
   type AiGatewayResult,
 } from "@/lib/ai/project-assistant/gateway";
 import { requireAiAssistantEnabled } from "@/lib/ai/project-assistant/config";
+import { ProjectAssistantError } from "@/lib/ai/project-assistant/errors";
 import { getDb } from "@/lib/db/client";
 import {
   documentChunk,
@@ -535,7 +536,16 @@ export async function processWorkflowRun(run: typeof workflowRun.$inferSelect) {
     await getDb().update(workflowRun).set({ status: "awaiting_review", currentStep: 10, regenerationArtifactKind: null, leasedBy: null, leaseToken: null, leaseExpiresAt: null, heartbeatAt: null, updatedAt: new Date() }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
     return;
   }
+  const completedSetupSteps = new Set((await getDb().select({
+    step: workflowExecution.step,
+  }).from(workflowExecution).where(and(
+    eq(workflowExecution.runId, run.id),
+    eq(workflowExecution.projectId, run.projectId),
+    eq(workflowExecution.status, "succeeded"),
+    inArray(workflowExecution.step, [1, 2, 3, 4]),
+  ))).map((execution) => execution.step));
   for (let step = 1; step <= 4; step += 1) {
+    if (completedSetupSteps.has(step)) continue;
     const executionId = await beginStep(run, step);
     await finishStep(run, executionId, { resultDigest: createHash("sha256").update(JSON.stringify({ step, evidence: evidence.map((item) => item.label) })).digest("hex") });
   }
@@ -582,7 +592,13 @@ export async function runWorkflowWorker(options: { once?: boolean; signal?: Abor
     try { await processWorkflowRun(run); }
     catch (error) {
       if (!(error instanceof WorkflowError) || !["WORKFLOW_CANCELLED", "WORKFLOW_LEASE_LOST"].includes(error.code)) {
-        const failureCode = error instanceof WorkflowError ? error.code : "WORKFLOW_WORKER_FAILED";
+        const failureCode = error instanceof WorkflowError || error instanceof ProjectAssistantError
+          ? error.code
+          : error && typeof error === "object"
+              && "code" in error && error.code === "23514"
+              && "constraint" in error && error.constraint === "workflow_executions_attempt_check"
+            ? "WORKFLOW_EXECUTION_ATTEMPT_LIMIT"
+            : "WORKFLOW_WORKER_FAILED";
         await getDb().transaction(async (tx) => {
           await tx.update(workflowExecution).set({
             status: "failed", failureCode, completedAt: new Date(),

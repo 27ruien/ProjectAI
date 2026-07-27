@@ -31,6 +31,7 @@ import {
   readWorkflowRun,
   recordWorkflowExport,
   renameTranscriptSpeaker,
+  retryWorkflowRun,
   reviewWorkflowRun,
   saveArtifactVersion,
 } from "../../lib/workflows/service";
@@ -182,6 +183,41 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       (error: unknown) => error instanceof Error && "code" in error && error.code === "WORKFLOW_SOURCE_ACCESS_REVOKED",
     );
     await getDb().update(workflowRunSource).set({ status: "ready" }).where(eq(workflowRunSource.runId, winners[0]!.id));
+
+    await getDb().insert(workflowExecution).values(
+      [1, 2, 3, 4].flatMap((step) => Array.from({ length: 19 }, (_, index) => ({
+        id: `${prefix}setup-${step}-${index + 2}`,
+        runId: winners[0]!.id,
+        projectId,
+        step,
+        attempt: index + 2,
+        status: "succeeded" as const,
+        resultDigest: createHash("sha256").update(`setup:${step}:${index + 2}`).digest("hex"),
+        completedAt: new Date(),
+      }))),
+    );
+    await getDb().update(workflowRun).set({
+      status: "failed",
+      failureCode: "WORKFLOW_AI_OUTPUT_INVALID",
+      failureStep: 7,
+      completedAt: new Date(),
+    }).where(eq(workflowRun.id, winners[0]!.id));
+    await retryWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, requestHeaders: headers });
+    const boundedRetryClaim = await claimWorkflowRun(`${prefix}bounded-retry-worker`);
+    assert.equal(boundedRetryClaim?.id, winners[0]!.id);
+    await processWorkflowRun(boundedRetryClaim!);
+    const setupExecutionsAfterRetry = await getDb().select({
+      step: workflowExecution.step,
+      attempt: workflowExecution.attempt,
+    }).from(workflowExecution).where(eq(workflowExecution.runId, winners[0]!.id));
+    for (const step of [1, 2, 3, 4]) {
+      assert.equal(
+        Math.max(...setupExecutionsAfterRetry.filter((execution) => execution.step === step).map((execution) => execution.attempt)),
+        20,
+      );
+    }
+    const retried = await readWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, requestHeaders: headers });
+    assert.equal(retried.run.status, "awaiting_review");
 
     await reviewWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, decision: "publish", note: "虚构工作流集成审核", requestHeaders: headers });
     const published = await readWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, requestHeaders: headers });
