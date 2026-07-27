@@ -225,7 +225,7 @@ describe("V3 workflow artifact contracts", () => {
       publicParameters: [],
       events: [
         { eventName: `${sharedPrefix}_one`, coreEvent: true, eventType: "result", description: "结果一", eventId: `${sharedPrefix}_one`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_one`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
-        { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_two`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+        { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: "推荐结果", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
       ],
       requirementEventCoverage: [],
       pageEventMatrix: [],
@@ -234,6 +234,7 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(parsed.success, true);
     if (!parsed.success) return;
     assert.match(parsed.data.events[0]!.parameterKey, /^[a-z][a-z0-9_]{0,39}$/);
+    assert.match(parsed.data.events[1]!.parameterKey, /^x_[a-f0-9]{8}$/);
     assert.notEqual(parsed.data.events[0]!.parameterKey, parsed.data.events[1]!.parameterKey);
     assert.notEqual(parsed.data.events[0]!.eventId, parsed.data.events[1]!.eventId);
   });
