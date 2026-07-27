@@ -403,7 +403,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
   const markdown = renderArtifactMarkdown(kind, content);
   const contentDigest = createHash("sha256").update(JSON.stringify({ content, markdown })).digest("hex");
   const usedLabels = collectLabels(content);
-  const sourceReferences = evidence.filter((item) => usedLabels.has(item.label)).map((item) => ({ documentId: item.documentId, versionId: item.versionId, chunkId: item.chunkId, locator: item.locator }));
+  const sourceReferences = evidence.filter((item) => usedLabels.has(item.label)).map((item) => ({ label: item.label, documentId: item.documentId, versionId: item.versionId, chunkId: item.chunkId, locator: item.locator }));
   await getDb().transaction(async (tx) => {
     const artifactId = existing?.id ?? randomUUID();
     const version = (existing?.currentVersion ?? 0) + 1;

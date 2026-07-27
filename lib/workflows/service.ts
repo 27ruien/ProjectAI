@@ -19,6 +19,7 @@ import {
   workflowReview,
   workflowRun,
   workflowRunSource,
+  transcriptSegment,
   transcriptSpeaker,
   workflowAudioJob,
 } from "@/lib/db/schema";
@@ -28,6 +29,7 @@ import { listUploadableKnowledgeSpaces } from "@/lib/knowledge/management";
 import { uploadDocument } from "@/lib/files/document-service";
 import {
   REQUIREMENT_ARTIFACT_KINDS,
+  validateCitationLabels,
   workflowArtifactSchemas,
   type WorkflowArtifactKind,
   type RequirementArtifactKind,
@@ -50,6 +52,40 @@ function deterministicUuid(value: string): string {
 
 function iso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
+}
+
+function referenceLabels(
+  references: Array<Record<string, unknown>>,
+): Set<string> | null {
+  const labels = references.map((reference) => reference.label);
+  if (
+    labels.some(
+      (label) => typeof label !== "string" || !/^E[1-9][0-9]?$/.test(label),
+    )
+  ) {
+    return null;
+  }
+  const unique = new Set(labels as string[]);
+  return unique.size === labels.length ? unique : null;
+}
+
+function validateTranscriptLabels(
+  content: Record<string, unknown>,
+  allowedLabels: Set<string>,
+): boolean {
+  const segments = content.segments;
+  return (
+    Array.isArray(segments) &&
+    segments.length === allowedLabels.size &&
+    segments.every(
+      (segment) =>
+        segment !== null &&
+        typeof segment === "object" &&
+        "label" in segment &&
+        typeof segment.label === "string" &&
+        allowedLabels.has(segment.label),
+    )
+  );
 }
 
 export type WorkflowRunPayload = {
@@ -415,18 +451,29 @@ export async function saveArtifactVersion(input: {
     )).limit(1).for("update", { of: workflowArtifact });
     if (!artifact) throw new WorkflowError(404, "NOT_FOUND", "工作流产物不存在");
     if (artifact.currentVersion !== input.expectedVersion) throw new WorkflowError(409, "WORKFLOW_VERSION_CONFLICT", "产物已被其他用户更新，请刷新后重试");
-    const schema = workflowArtifactSchemas[artifact.artifactKind as WorkflowArtifactKind];
-    const parsed = schema?.safeParse(input.content);
-    if (!parsed?.success) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_SCHEMA_INVALID", "产物未通过结构校验");
-    const content = parsed.data as Record<string, unknown>;
-    const markdown = renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, content);
-    const nextVersion = artifact.currentVersion + 1;
-    const contentDigest = digest({ content, markdown });
     const [current] = await tx.select({ sourceReferences: workflowArtifactVersion.sourceReferences }).from(workflowArtifactVersion).where(and(
       eq(workflowArtifactVersion.artifactId, artifact.id),
       eq(workflowArtifactVersion.projectId, artifact.projectId),
       eq(workflowArtifactVersion.version, artifact.currentVersion),
     )).limit(1);
+    if (!current) throw new WorkflowError(409, "WORKFLOW_ARTIFACT_INTEGRITY_INVALID", "产物版本已失效，需要重新生成");
+    const schema = workflowArtifactSchemas[artifact.artifactKind as WorkflowArtifactKind];
+    const parsed = schema?.safeParse(input.content);
+    if (!parsed?.success) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_SCHEMA_INVALID", "产物未通过结构校验");
+    const content = parsed.data as Record<string, unknown>;
+    if (REQUIREMENT_ARTIFACT_KINDS.includes(artifact.artifactKind as RequirementArtifactKind)) {
+      const allowedLabels = referenceLabels(current.sourceReferences);
+      if (!allowedLabels || !validateCitationLabels(content, allowedLabels)) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID", "产物引用不在已授权来源范围内");
+    } else {
+      const segments = await tx.select({ sequence: transcriptSegment.sequence }).from(transcriptSegment).where(and(eq(transcriptSegment.runId, input.runId), eq(transcriptSegment.projectId, input.projectId)));
+      const allowedLabels = new Set(segments.map((segment) => `S${segment.sequence}`));
+      if (!validateCitationLabels(content, allowedLabels) || (artifact.artifactKind === "meeting_transcript" && !validateTranscriptLabels(content, allowedLabels))) {
+        throw new WorkflowError(422, "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID", "会议产物引用了不存在的转写片段");
+      }
+    }
+    const markdown = renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, content);
+    const nextVersion = artifact.currentVersion + 1;
+    const contentDigest = digest({ content, markdown });
     await tx.insert(workflowArtifactVersion).values({
       id: randomUUID(), artifactId: artifact.id, projectId: artifact.projectId,
       version: nextVersion, content, markdown,
@@ -479,11 +526,21 @@ async function validateCurrentArtifacts(input: {
   const authorizedDocumentIds = new Set(authorized.map((scope) => scope.documentId));
   const runSources = await input.db.select({ documentId: workflowRunSource.documentId, documentVersionId: workflowRunSource.documentVersionId, status: workflowRunSource.status }).from(workflowRunSource).where(and(eq(workflowRunSource.runId, input.run.id), eq(workflowRunSource.projectId, input.run.projectId)));
   const validSources = new Set(runSources.filter((source) => source.documentId && source.documentVersionId && source.status === "ready").map((source) => `${source.documentId}:${source.documentVersionId}`));
+  const meetingSegments = input.run.workflowType === "meeting_minutes"
+    ? await input.db.select({ sequence: transcriptSegment.sequence }).from(transcriptSegment).where(and(eq(transcriptSegment.runId, input.run.id), eq(transcriptSegment.projectId, input.run.projectId)))
+    : [];
+  const meetingLabels = new Set(meetingSegments.map((segment) => `S${segment.sequence}`));
   for (const { artifact, version } of input.artifacts) {
     const schema = workflowArtifactSchemas[artifact.artifactKind as WorkflowArtifactKind];
     const parsed = schema?.safeParse(version.content);
     if (!parsed?.success || digest({ content: parsed.data, markdown: renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, parsed.data as Record<string, unknown>) }) !== artifact.contentDigest || artifact.contentDigest !== version.contentDigest) {
       throw new WorkflowError(409, "WORKFLOW_ARTIFACT_INTEGRITY_INVALID", "产物结构或摘要已失效，需要重新生成");
+    }
+    if (input.run.workflowType === "requirement_framework") {
+      const allowedLabels = referenceLabels(version.sourceReferences);
+      if (!allowedLabels || !validateCitationLabels(parsed.data, allowedLabels)) throw new WorkflowError(409, "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID", "产物引用不在已授权来源范围内，需要重新生成");
+    } else if (!validateCitationLabels(parsed.data, meetingLabels) || (artifact.artifactKind === "meeting_transcript" && !validateTranscriptLabels(parsed.data as Record<string, unknown>, meetingLabels))) {
+      throw new WorkflowError(409, "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID", "会议产物引用了不存在的转写片段");
     }
     for (const reference of version.sourceReferences) {
       if (!authorizedDocumentIds.has(reference.documentId) || !validSources.has(`${reference.documentId}:${reference.versionId}`)) {

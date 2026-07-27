@@ -164,6 +164,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     assert.equal(detail.run.status, "awaiting_review");
     assert.equal(detail.artifacts.length, 4);
     assert.equal(detail.artifacts.every((item) => item.currentVersion === 1 && item.sourceReferences.length > 0), true);
+    assert.equal(detail.artifacts.every((item) => item.sourceReferences.every((reference) => typeof reference.label === "string" && /^E[1-9][0-9]?$/.test(reference.label))), true);
     const executions = await getDb().select().from(workflowExecution).where(eq(workflowExecution.runId, winners[0]!.id));
     assert.equal(executions.length, 10);
     assert.equal(executions.every((execution) => execution.status === "succeeded"), true);
@@ -171,6 +172,14 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     await assert.rejects(
       saveArtifactVersion({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, content: { forged: true }, requestHeaders: headers }),
       (error: unknown) => error instanceof Error && "code" in error && error.code === "WORKFLOW_ARTIFACT_SCHEMA_INVALID",
+    );
+    const forgedCitation = structuredClone(detail.artifacts[0]!.content) as {
+      sections: Array<{ fields: Array<{ citations: string[] }> }>;
+    };
+    forgedCitation.sections[0]!.fields[0]!.citations = ["E99"];
+    await assert.rejects(
+      saveArtifactVersion({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, content: forgedCitation, requestHeaders: headers }),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID",
     );
     await regenerateWorkflowArtifact({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, requestHeaders: headers });
     const regenerationClaim = await claimWorkflowRun(`${prefix}regeneration-worker`);
@@ -313,6 +322,17 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     const speakers = await getDb().select().from(transcriptSpeaker).where(eq(transcriptSpeaker.runId, runId));
     assert.deepEqual(speakers.map((speaker) => speaker.displayName).sort(), ["Speaker 1", "Speaker 2"]);
     assert.equal(speakers.every((speaker) => !speaker.confirmedByUser), true);
+
+    const minutes = detail.artifacts.find((artifact) => artifact.kind === "meeting_minutes");
+    assert.ok(minutes);
+    const forgedSegment = structuredClone(minutes.content) as {
+      keyPoints: Array<{ segmentIds: string[] }>;
+    };
+    forgedSegment.keyPoints[0]!.segmentIds = ["S999"];
+    await assert.rejects(
+      saveArtifactVersion({ principal: principal(), projectId, runId, artifactId: minutes.id, expectedVersion: minutes.currentVersion, content: forgedSegment, requestHeaders: headers }),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID",
+    );
 
     await renameTranscriptSpeaker({ principal: principal(), projectId, runId, speakerId: speakers[0]!.id, displayName: "Client", requestHeaders: headers });
     const renamed = await getDb().select().from(transcriptSpeaker).where(eq(transcriptSpeaker.id, speakers[0]!.id));
