@@ -386,6 +386,9 @@ describe("V3 workflow artifact contracts", () => {
     if (partial.success) assert.equal(partial.data.pageEventMatrix[0]!.status, "gap");
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("已埋点")).success, true);
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("待埋点")).success, true);
+    const blank = ga4MeasurementPlanSchema.safeParse(make("   "));
+    assert.equal(blank.success, true);
+    if (blank.success) assert.equal(blank.data.pageEventMatrix[0]!.status, "pending");
     assert.equal(ga4MeasurementPlanSchema.safeParse(make({ status: "需补充覆盖" })).success, true);
     assert.equal(ga4MeasurementPlanSchema.safeParse(make(["覆盖完整"])).success, true);
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("covered pending validation")).success, false);

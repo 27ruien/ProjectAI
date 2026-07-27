@@ -47,7 +47,7 @@ export function MeetingMinutesPage({ projects, initialRunId }: { projects: Autho
       const next = await jsonApi<Detail>(`/api/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(runId)}`);
       setDetail(next);
       if (!activeArtifactId && next.artifacts[0]) setActiveArtifactId(next.artifacts[0].id);
-      setMessage(next.run.failureCode ? `处理失败：${next.run.failureCode}` : "");
+      if (next.run.failureCode) setMessage(`处理失败：${next.run.failureCode}`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "会议工作流加载失败"); }
   }, [activeArtifactId, projectId, runId]);
 

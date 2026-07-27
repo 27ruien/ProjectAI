@@ -5,11 +5,12 @@ import test from "node:test";
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
 
 test("AI workflow UI exposes exactly the two approved user workflows", async () => {
-  const [home, workspace, sidebar, meeting, stagingUat] = await Promise.all([
+  const [home, workspace, sidebar, meeting, requirement, stagingUat] = await Promise.all([
     read("components/workflow/workflows-page.tsx"),
     read("components/workspace.tsx"),
     read("components/layout/sidebar.tsx"),
     read("components/workflow/meeting-minutes-page.tsx"),
+    read("components/workflow/requirement-framework-page.tsx"),
     read("tests/product-v2-staging-e2e/product-v2.spec.ts"),
   ]);
   assert.match(home, /搭建需求框架/);
@@ -23,6 +24,8 @@ test("AI workflow UI exposes exactly the two approved user workflows", async () 
   assert.match(meeting, /setMessage\(error instanceof Error \? error\.message : "原始音视频删除失败"\)/);
   assert.match(meeting, /正在发布…/);
   assert.match(meeting, /正在删除…/);
+  assert.doesNotMatch(meeting, /setMessage\(next\.run\.failureCode \?/);
+  assert.doesNotMatch(requirement, /else setMessage\(""\);/);
   assert.doesNotMatch(sidebar, /href: "\/(?:skills|reviews|uat)/);
   assert.match(stagingUat, /@requirement-workflow/);
   assert.match(stagingUat, /@meeting-workflow/);

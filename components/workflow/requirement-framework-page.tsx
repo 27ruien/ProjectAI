@@ -64,7 +64,6 @@ export function RequirementFrameworkPage({ projects, initialRunId }: { projects:
       setDetail(next);
       if (!activeArtifactId && next.artifacts[0]) setActiveArtifactId(next.artifacts[0].id);
       if (next.run.failureCode) setMessage(`工作流失败：${next.run.failureCode}`);
-      else setMessage("");
       return next;
     } catch (error) { setMessage(error instanceof Error ? error.message : "工作流加载失败"); }
   }, [activeArtifactId, projectId, runId]);
