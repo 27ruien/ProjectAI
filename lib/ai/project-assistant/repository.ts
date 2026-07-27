@@ -42,7 +42,10 @@ import { requireProjectAssistantProfile } from "./profiles";
 import type { ProjectAssistantHistoryMessage } from "./grounding";
 import type { ValidatedGroundedAnswer } from "./citations";
 import type { AiGatewayResult } from "./gateway";
-import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
+import {
+  findAuthorizedDocument,
+  listAuthorizedDocumentScope,
+} from "@/lib/knowledge/authorization";
 
 const RUNNING_EXECUTION_STATUSES = [
   "reserved",
@@ -232,15 +235,6 @@ export async function loadOwnedThread(input: {
       "对话不存在",
     );
   }
-  const authorizedDocuments = new Map(
-    (
-      await listAuthorizedDocumentScope({
-        principal: input.principal,
-        projectId: input.projectId,
-        permission: "view",
-      })
-    ).map((item) => [item.documentId, item] as const),
-  );
   const [messages, citations, executions] = await Promise.all([
     getDb()
       .select()
@@ -280,6 +274,42 @@ export async function loadOwnedThread(input: {
         ),
       ),
   ]);
+  const authorizedDocuments = new Map(
+    (
+      await listAuthorizedDocumentScope({
+        principal: input.principal,
+        projectId: input.projectId,
+        permission: "view",
+      })
+    ).map((item) => [item.documentId, item] as const),
+  );
+  // Ordinary list/search responses intentionally hide registered UAT fixture
+  // sources. A persisted Citation still needs an exact authorization check so
+  // that an authorized synthetic Staging answer is not mistaken for a revoked
+  // source. The exact lookup uses the same database authorization function and
+  // cannot make a cross-project or denied document visible.
+  const exactCitationDocumentIds = [
+    ...new Set(
+      citations
+        .map((citation) => citation.documentId)
+        .filter((documentId) => !authorizedDocuments.has(documentId)),
+    ),
+  ];
+  const exactCitationDocuments = await Promise.all(
+    exactCitationDocumentIds.map((documentId) =>
+      findAuthorizedDocument({
+        principal: input.principal,
+        projectId: input.projectId,
+        documentId,
+        permission: "view",
+      }),
+    ),
+  );
+  for (const document of exactCitationDocuments) {
+    if (document) {
+      authorizedDocuments.set(document.document.id, document.scope);
+    }
+  }
   const citationsByMessage = new Map<
     string,
     typeof citations

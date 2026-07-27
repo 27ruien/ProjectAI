@@ -17,6 +17,7 @@ import {
   documentSection,
   projectDocument,
   projectDocumentVersion,
+  testFixture,
   user,
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
@@ -75,6 +76,9 @@ async function clearAssistantState(): Promise<void> {
     await tx.delete(aiExecution);
     await tx.delete(aiMessage);
     await tx.delete(aiThread);
+    await tx
+      .delete(testFixture)
+      .where(sql`${testFixture.id} like ${`${fixturePrefix}%`}`);
     await tx
       .delete(documentChunk)
       .where(sql`${documentChunk.id} like ${`${fixturePrefix}%`}`);
@@ -510,6 +514,35 @@ describe("project assistant permissions and persistence", () => {
         .then((rows) => rows[0]?.value),
       1,
     );
+  });
+
+  it("keeps an authorized exact fixture Citation readable while product lists hide the fixture", async () => {
+    const fixture = await seedEvidence(projectA, managerA);
+    const thread = await createThread(managerA);
+    const result = await ask(managerA, thread.id, "客户要求什么时候上线？");
+    assert.equal(result.assistantMessage.citations.length, 1);
+
+    await getDb().insert(testFixture).values({
+      id: `${fixturePrefix}project-citation`,
+      entityType: "project",
+      entityId: projectA,
+      fixtureRunId: `${fixturePrefix}citation-readback`,
+      environment: "test",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const reloaded = await getProjectAssistantThread({
+      principal: principal(managerA),
+      projectId: projectA,
+      threadId: thread.id,
+      requestHeaders: headers,
+    });
+    const answer = reloaded.messages.find(
+      (message) => message.id === result.assistantMessage.id,
+    );
+    assert.equal(answer?.status, "completed");
+    assert.equal(answer?.citations.length, 1);
+    assert.equal(answer?.citations[0]?.documentId, fixture.documentId);
   });
 
   it("does not call the Provider when Evidence is insufficient", async () => {
