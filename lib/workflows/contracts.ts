@@ -333,10 +333,46 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
       citations: normalizeCitationLabels(item.citations),
     };
   };
+  const normalizedEvents = Array.isArray(record.events) ? record.events.map((event) => {
+    if (!event || typeof event !== "object" || Array.isArray(event)) return event;
+    const item = event as Record<string, unknown>;
+    return {
+      eventName: normalizeGa4Identifier(item.eventName),
+      coreEvent: normalizeGa4Boolean(item.coreEvent),
+      eventType: normalizeGa4EventType(item.eventType),
+      description: item.description,
+      eventId: normalizeGa4Identifier(item.eventId),
+      parameterName: item.parameterName ?? "",
+      parameterDescription: item.parameterDescription ?? "",
+      parameterKey: normalizeGa4Identifier(item.parameterKey),
+      parameterValueRule: item.parameterValueRule ?? "",
+      parameterValueType: normalizeGa4ValueType(item.parameterValueType),
+      note: item.note ?? "",
+      developerFeedback: item.developerFeedback ?? "",
+      citations: normalizeCitationLabels(item.citations),
+    };
+  }) : record.events;
+  const eventAliases = new Map<string, string | null>();
+  if (Array.isArray(normalizedEvents)) {
+    for (const event of normalizedEvents) {
+      if (!event || typeof event !== "object" || Array.isArray(event)) continue;
+      const item = event as Record<string, unknown>;
+      if (typeof item.eventId !== "string") continue;
+      for (const alias of [item.eventId, item.eventName]) {
+        if (typeof alias !== "string") continue;
+        const existing = eventAliases.get(alias);
+        eventAliases.set(alias, existing === undefined || existing === item.eventId ? item.eventId : null);
+      }
+    }
+  }
   const normalizeMatrix = (entry: unknown, firstKey: "requirement" | "page") => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
     const item = entry as Record<string, unknown>;
-    return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId: normalizeCoverageEventId(item.eventId), status: normalizeCoverageStatus(item.status) };
+    const normalizedEventId = normalizeCoverageEventId(item.eventId);
+    const eventId = typeof normalizedEventId === "string" && eventAliases.get(normalizedEventId)
+      ? eventAliases.get(normalizedEventId)
+      : normalizedEventId;
+    return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId, status: normalizeCoverageStatus(item.status) };
   };
   return {
     overview: overview ? {
@@ -348,25 +384,7 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
       citations: normalizeCitationLabels(overview.citations),
     } : record.overview,
     publicParameters: Array.isArray(record.publicParameters) ? record.publicParameters.map(normalizeParameter) : record.publicParameters,
-    events: Array.isArray(record.events) ? record.events.map((event) => {
-      if (!event || typeof event !== "object" || Array.isArray(event)) return event;
-      const item = event as Record<string, unknown>;
-      return {
-        eventName: normalizeGa4Identifier(item.eventName),
-        coreEvent: normalizeGa4Boolean(item.coreEvent),
-        eventType: normalizeGa4EventType(item.eventType),
-        description: item.description,
-        eventId: normalizeGa4Identifier(item.eventId),
-        parameterName: item.parameterName ?? "",
-        parameterDescription: item.parameterDescription ?? "",
-        parameterKey: normalizeGa4Identifier(item.parameterKey),
-        parameterValueRule: item.parameterValueRule ?? "",
-        parameterValueType: normalizeGa4ValueType(item.parameterValueType),
-        note: item.note ?? "",
-        developerFeedback: item.developerFeedback ?? "",
-        citations: normalizeCitationLabels(item.citations),
-      };
-    }) : record.events,
+    events: normalizedEvents,
     requirementEventCoverage: Array.isArray(record.requirementEventCoverage)
       ? record.requirementEventCoverage.map((entry) => normalizeMatrix(entry, "requirement"))
       : record.requirementEventCoverage,

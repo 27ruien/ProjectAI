@@ -243,6 +243,33 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse({ ...parsed.data, requirementEventCoverage: [{ requirement: "REQ-001", eventId: "missing_event", status: "covered" }] }).success, false);
   });
 
+  it("resolves unique GA4 event-name coverage references without guessing ambiguous aliases", () => {
+    const base = {
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [],
+      events: [
+        { eventName: "Open Form", coreEvent: true, eventType: "click", description: "打开表单", eventId: "form_opened", parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+      ],
+      requirementEventCoverage: [{ requirement: "REQ-001", eventId: { eventName: "Open Form" }, status: "covered" }],
+      pageEventMatrix: [{ page: "首页", eventId: "Open Form", status: "covered" }],
+    };
+    const normalized = normalizeGa4MeasurementPlan(base);
+    const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.equal(parsed.data.requirementEventCoverage[0]!.eventId, "form_opened");
+    assert.equal(parsed.data.pageEventMatrix[0]!.eventId, "form_opened");
+
+    const ambiguous = normalizeGa4MeasurementPlan({
+      ...base,
+      events: [
+        base.events[0],
+        { ...base.events[0], eventId: "modal_opened", description: "打开弹窗" },
+      ],
+    });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(ambiguous).success, false);
+  });
+
   it("describes GA4 schema failures without provider content", () => {
     const failure = describeArtifactSchemaFailure("ga4_measurement_plan", normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构", projectLink: "TBD", citations: [] },
