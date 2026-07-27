@@ -63,7 +63,7 @@ export async function createMeetingRun(input: {
     if (!definition) throw new WorkflowError(503, "WORKFLOW_DEFINITION_MISSING", "会议工作流定义尚未就绪");
     const runId = randomUUID();
     const sourceId = randomUUID();
-    const objectKey = `workflow-audio/${target.organizationId}/${target.id}/${runId}/${randomBytes(24).toString("hex")}.${audio.extension}`;
+    const objectKey = `projects/${target.id}/workflow-audio/${runId}/${randomBytes(24).toString("hex")}.${audio.extension}`;
     const date = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai" }).format(new Date());
     await tx.insert(workflowRun).values({
       id: runId, definitionId: definition.id, organizationId: target.organizationId,
