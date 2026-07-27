@@ -15,8 +15,16 @@ type Space = {
 const origin = "https://gridworks.cn";
 const evidenceDir = path.resolve("test-results/product-v2-staging/evidence");
 const memberProjectId = "kivisense-project-projectai-product";
+const fixtureRunId = `uat-product-v2-${crypto.randomUUID()}`;
+const fixtureExpiresAt = new Date(
+  Date.now() + 6 * 60 * 60 * 1_000,
+).toISOString();
 
 async function login(page: Page, identity: Identity) {
+  await page.setExtraHTTPHeaders({
+    "x-projectai-fixture-run-id": fixtureRunId,
+    "x-projectai-fixture-expires-at": fixtureExpiresAt,
+  });
   const response = await page.request.post(appPath("/api/auth/sign-in/mock-wecom"), {
     data: { identity },
     headers: { origin },

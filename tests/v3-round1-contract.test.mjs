@@ -56,11 +56,15 @@ test("Round 1 daily-report generation is a durable leased job", async () => {
 });
 
 test("Round 1 fixture registry keeps synthetic UAT records out of product lists", async () => {
-  const [fixtureSchema, fixtureService, projects, knowledge, authorization, migration, productSeed] = await Promise.all([
+  const [fixtureSchema, fixtureService, projects, knowledge, knowledgeManagement, departmentRoute, organizationService, stagingUat, authorization, migration, productSeed] = await Promise.all([
     read("lib/db/schema/test-fixtures.ts"),
     read("lib/test-fixtures/service.ts"),
     read("lib/db/repositories/project-repository.ts"),
     read("lib/knowledge/product-v2.ts"),
+    read("lib/knowledge/management.ts"),
+    read("app/api/organization/departments/route.ts"),
+    read("lib/organization/service.ts"),
+    read("tests/product-v2-staging-e2e/product-v2.spec.ts"),
     read("lib/knowledge/authorization.ts"),
     read("drizzle/0025_marvelous_stephen_strange.sql"),
     read("scripts/db/seed-product-v2.ts"),
@@ -75,6 +79,13 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(knowledge, /includeTestFixturesInProductQueries/);
   assert.match(knowledge, /notExists/);
   assert.match(knowledge, /eq\(testFixture\.entityType, "knowledge_space"\)/);
+  assert.match(knowledgeManagement, /options: \{ activeOnly\?: boolean \}/);
+  assert.match(knowledgeManagement, /eq\(testFixture\.entityType, "department"\)/);
+  assert.match(departmentRoute, /fixtureContextFromHeaders\(request\.headers\)/);
+  assert.match(organizationService, /entityType: "department"/);
+  assert.match(organizationService, /entityType: "knowledge_space"/);
+  assert.match(stagingUat, /x-projectai-fixture-run-id/);
+  assert.match(stagingUat, /x-projectai-fixture-expires-at/);
   assert.match(authorization, /filterFixtureDocumentScopes/);
   assert.match(authorization, /knowledge_space:\$\{scope\.knowledgeSpaceId\}/);
   assert.match(migration, /uat-legacy-import-0025/);

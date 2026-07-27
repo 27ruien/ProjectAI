@@ -7,6 +7,7 @@ import {
   getOrganizationTree,
   updateOrganizationDepartment,
 } from "@/lib/organization/service";
+import { fixtureContextFromHeaders } from "@/lib/test-fixtures/service";
 
 const createSchema = z.object({
   parentDepartmentId: z.string().min(1).max(200).nullable(),
@@ -48,6 +49,7 @@ export async function POST(request: Request): Promise<Response> {
       department: await createOrganizationDepartment({
         principal,
         ...parsed.data,
+        fixture: fixtureContextFromHeaders(request.headers),
         requestHeaders: request.headers,
       }),
     }, { status: 201 });

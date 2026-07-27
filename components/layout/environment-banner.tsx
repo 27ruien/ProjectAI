@@ -34,7 +34,7 @@ export function EnvironmentBanner() {
         <span title={APP_RUNTIME.commitSha}>Commit {APP_RUNTIME.shortCommitSha}</span>
         <span>构建时间 {APP_RUNTIME.buildTime}</span>
         <span className="font-semibold">
-          项目助手通过服务端受控的 lexical、shadow 或 hybrid 模式检索证据；Hybrid 使用 Query Embedding、精确向量检索与 RRF，并保留词法回退。知识搜索仍为词法检索，OCR、ANN 与 Rerank 尚未启用。仅允许上传虚构测试资料，禁止上传真实客户项目资料。
+          项目助手通过服务端受控的 lexical、shadow 或 hybrid 模式检索证据；Hybrid 使用 Query Embedding、精确向量检索、RRF 与受控 Rerank，并保留词法回退。知识搜索仍为词法检索，OCR 与 ANN 尚未启用。仅允许上传虚构测试资料，禁止上传真实客户项目资料。
         </span>
       </div>
     </aside>
