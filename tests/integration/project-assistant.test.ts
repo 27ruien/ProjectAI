@@ -220,6 +220,7 @@ async function ask(
   question: string,
   key: string = randomUUID(),
   modelProfileId: string = "qwen-project-assistant-cn-v1",
+  sourceDocumentIds: string[] = [],
 ) {
   return askProjectAssistant({
     principal: principal(actor),
@@ -230,6 +231,7 @@ async function ask(
     body: {
       question,
       modelProfileId,
+      sourceDocumentIds,
     },
   });
 }
@@ -543,6 +545,46 @@ describe("project assistant permissions and persistence", () => {
     assert.equal(answer?.status, "completed");
     assert.equal(answer?.citations.length, 1);
     assert.equal(answer?.citations[0]?.documentId, fixture.documentId);
+  });
+
+  it("accepts an explicitly selected authorized fixture source but rejects a cross-project source", async () => {
+    const fixture = await seedEvidence(projectA, managerA);
+    const crossProjectFixture = await seedEvidence(projectB, managerB);
+    await getDb().insert(testFixture).values({
+      id: `${fixturePrefix}project-source-selection`,
+      entityType: "project",
+      entityId: projectA,
+      fixtureRunId: `${fixturePrefix}source-selection`,
+      environment: "test",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const thread = await createThread(managerA);
+
+    const selected = await ask(
+      managerA,
+      thread.id,
+      "客户要求什么时候上线？",
+      randomUUID(),
+      "qwen-project-assistant-cn-v1",
+      [fixture.documentId],
+    );
+    assert.equal(selected.execution.status, "succeeded");
+    assert.equal(selected.assistantMessage.citations[0]?.documentId, fixture.documentId);
+
+    await assert.rejects(
+      ask(
+        managerA,
+        thread.id,
+        "跨项目来源不应可用",
+        randomUUID(),
+        "qwen-project-assistant-cn-v1",
+        [crossProjectFixture.documentId],
+      ),
+      (error: unknown) =>
+        error instanceof ProjectAssistantError &&
+        error.code === "AI_SOURCE_NOT_FOUND" &&
+        error.status === 404,
+    );
   });
 
   it("does not call the Provider when Evidence is insufficient", async () => {

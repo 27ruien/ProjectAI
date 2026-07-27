@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
-import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
+import { findAuthorizedDocument } from "@/lib/knowledge/authorization";
 import {
   getHybridRetrievalRuntimeConfig,
   finalizeFailedRetrievalRunForExecution,
@@ -141,16 +141,17 @@ export async function askProjectAssistant(input: {
     throw new ProjectAssistantError(400, "AI_INVALID_REQUEST", "知识来源选择存在重复项");
   }
   if (selectedSourceIds.length) {
-    const authorized = new Set(
-      (
-        await listAuthorizedDocumentScope({
+    const authorized = await Promise.all(
+      selectedSourceIds.map((documentId) =>
+        findAuthorizedDocument({
           principal: input.principal,
           projectId: input.projectId,
+          documentId,
           permission: "view",
-        })
-      ).map((item) => item.documentId),
+        }),
+      ),
     );
-    if (selectedSourceIds.some((documentId) => !authorized.has(documentId))) {
+    if (authorized.some((document) => document === null)) {
       throw new ProjectAssistantError(404, "AI_SOURCE_NOT_FOUND", "知识来源不存在");
     }
   }
