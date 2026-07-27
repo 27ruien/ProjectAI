@@ -115,7 +115,7 @@
 | B3B2-002 | 项目与有效性隔离 | Exact Vector 与 Candidate 的跨项目、旧版本、归档、无效 Chunk 泄漏均为 0 |
 | B3B2-003 | Query 成本一致性 | 单 Execution 单 Run/Call；硬预留、Usage-null、unknown、不自动重试与 UTC 日上限通过 |
 | B3B2-004 | RRF 与回退 | 冻结 v1 参数；Coverage/Timeout/配置/预算失败回退原 Lexical；无 Evidence 不调用 Answer Model |
-| B3B2-005 | 评测质量 | 60 条虚构 Query；Hybrid Recall@10/nDCG 不低于 Lexical，MRR 容差 0.01，语义 Recall 提升至少 0.15，精确事实与无答案门禁通过 |
+| B3B2-005 | 评测质量 | 至少 60 条虚构 Query；Hybrid Recall@10/nDCG 不低于 Lexical，MRR 容差 0.01，语义 Recall 提升至少 0.15，精确事实与无答案门禁通过 |
 | B3B2-006 | 性能 | Exact Vector P95 ≤1500ms；Hybrid Retrieval P95 ≤8000ms |
 | B3B2-007 | Staging 发布 | lexical→0007→评测→shadow→报告→hybrid；仅 Mode 切换时只重建 App，清理和 Production 精确不变 |
 | B3B2-008 | 边界 | 用户搜索仍词法；无 ANN、HNSW、IVFFlat、Rerank、`qwen3-rerank` 或 Production 发布 |

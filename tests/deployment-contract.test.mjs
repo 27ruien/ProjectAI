@@ -770,6 +770,8 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
   assert.match(script, /"assistantRetrievalMode":"hybrid"/);
   assert.match(script, /"hybridRetrievalReady":true/);
   assert.match(script, /retrieval_evaluation_digest/);
+  assert.match(script, /result\.queryCount < 60/);
+  assert.doesNotMatch(script, /"queryCount":60/);
   assert.match(script, /npm run retrieval:probe/);
   assert.match(script, /npm run retrieval:status/);
   assert.match(script, /project_scope_leakage_count/);

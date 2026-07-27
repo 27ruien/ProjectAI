@@ -2246,10 +2246,16 @@ printf 'Re-running B3-A grounded Qwen regression while Embedding remains enabled
   --env "AUTH_REQUEST_ORIGIN=https://gridworks.cn" \
   projectai-ai-smoke npm run assistant:smoke
 
-printf 'Running the 60-query fictional lexical, exact-vector, and hybrid quality evaluation.\n'
+printf 'Running the at-least-60-query fictional lexical, exact-vector, and hybrid quality evaluation.\n'
 retrieval_evaluation="$(sudo docker exec "$container_name" npm run retrieval:evaluate)"
-grep -q '"queryCount":60' <<<"$retrieval_evaluation"
 grep -q '"passed":true' <<<"$retrieval_evaluation"
+sudo docker exec "$container_name" node -e '
+  const fs = require("node:fs");
+  const result = JSON.parse(fs.readFileSync("review-artifacts/retrieval-evaluation.json", "utf8"));
+  if (!Number.isInteger(result.queryCount) || result.queryCount < 60 || result.passed !== true) {
+    process.exit(1);
+  }
+'
 retrieval_evaluation_digest="$(
   sudo docker exec "$container_name" sha256sum review-artifacts/retrieval-evaluation.json \
     | awk '{ print $1 }'

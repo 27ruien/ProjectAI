@@ -229,7 +229,7 @@
 
 - 状态：Accepted。
 - 决策：`hybrid-rrf-v1` 使用原 Lexical Top 30、exact cosine Vector Top 30 与确定性 RRF（K=60、权重 1:1），而不是在本轮引入 ANN 或 Reranker。
-- 参数：Fused Top 30、Evidence Top 10、最大距离 0.55、Coverage 9800 bps；参数由 60 条虚构 Query 的距离分布和完整质量门禁冻结。任何调整创建 v2，不原地修改 v1。
+- 参数：Fused Top 30、Evidence Top 10、最大距离 0.55、Coverage 9800 bps；参数由至少 60 条虚构 Query 的距离分布和完整质量门禁冻结。评测集可以只增不减，任何检索参数调整创建 v2，不原地修改 v1。
 - 原因：先得到可复现、可解释、无近似索引变量的质量和延迟基线；只有真实规模证明 exact scan 不足时，后续 ADR 才能评估 ANN。
 
 ## ADR-036：Shadow 必须先于 Hybrid，所有失败回退 Lexical
