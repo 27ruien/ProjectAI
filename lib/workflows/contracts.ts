@@ -536,6 +536,17 @@ function normalizeActionStatus(value: unknown): unknown {
   return aliases[normalized] ?? value;
 }
 
+function normalizeActionTaskReference(value: unknown): unknown {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length !== 1) return value;
+  const [key, reference] = entries[0]!;
+  return ["taskCn", "task", "name", "dependsOn"].includes(key) && typeof reference === "string"
+    ? reference
+    : value;
+}
+
 export function normalizeActionPlan(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
@@ -565,7 +576,11 @@ export function normalizeActionPlan(value: unknown): unknown {
         milestone: normalizeActionBoolean(item.milestone, false),
         meeting: item.meeting ?? "",
         parentTask,
-        dependency: typeof item.dependency === "string" ? [item.dependency] : item.dependency ?? [],
+        dependency: typeof item.dependency === "string"
+          ? [item.dependency]
+          : Array.isArray(item.dependency)
+            ? item.dependency.map(normalizeActionTaskReference)
+            : item.dependency ?? [],
         confirmationOwner: item.confirmationOwner ?? "TBD",
         latestConfirmationDate: normalizeActionDate(item.latestConfirmationDate),
         delayImpact: item.delayImpact ?? "待确认",

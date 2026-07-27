@@ -411,6 +411,8 @@ describe("V3 workflow artifact contracts", () => {
       taskCn: "确认范围", owner: "PM", stakeholder: "Client", startDate: "待确认", endDate: "TBD",
       progress: "25%", milestone: "是", parentTask: "无", dependency: [], latestConfirmationDate: "2031-03-09",
       criticalPath: "false", sourceCitation: ["E1"], status: "进行中",
+    }, {
+      taskCn: "准备 UAT", dependency: [{ taskCn: "确认范围" }], sourceCitation: "待确认",
     }] });
     const parsed = actionPlanSchema.safeParse(normalized);
     assert.equal(parsed.success, true);
@@ -419,10 +421,15 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(parsed.data.tasks[0]!.milestone, true);
     assert.equal(parsed.data.tasks[0]!.startDate, "TBD");
     assert.equal(parsed.data.tasks[0]!.status, "in_progress");
+    assert.deepEqual(parsed.data.tasks[1]!.dependency, ["确认范围"]);
     assert.equal(validateActionPlanDateGrounding(parsed.data, ["最晚于 2031-03-09 确认"]), true);
     assert.equal(validateActionPlanDateGrounding(parsed.data, ["没有日期"]), false);
     const suggested = { ...parsed.data, tasks: [{ ...parsed.data.tasks[0]!, latestConfirmationDate: "2031-03-08", sourceCitation: "AI 建议", assumption: "AI 建议在实现前两日确认" }] };
     assert.equal(validateActionPlanDateGrounding(suggested, ["没有日期"]), true);
+    const unknownDependencyShape = normalizeActionPlan({ tasks: [{
+      taskCn: "准备 UAT", dependency: [{ taskCn: "确认范围", reason: "前置" }], sourceCitation: "待确认",
+    }] });
+    assert.equal(actionPlanSchema.safeParse(unknownDependencyShape).success, false);
   });
 
   it("distinguishes confirmed decisions and validates every transcript citation", () => {

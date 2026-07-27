@@ -43,7 +43,7 @@ events 字段为 eventName,coreEvent,eventType,description,eventId,parameterName
 eventId/key 必须稳定 snake_case；eventType 只能是 page_view、click、select、permission、ai、result、error、custom；valueType 只能是 string、number、boolean、date、array；coreEvent 只能是 JSON boolean；Coverage status 只能是 covered、gap、pending。events[] 每行只描述一个事件参数；同一事件有多个参数时可以重复 eventId，但 eventName/coreEvent/eventType/description 必须一致且 parameterKey 必须不同。每条 requirementEventCoverage/pageEventMatrix 的 requirement/page/eventId 都必须是单个字符串，eventId 必须逐字复制当前 events[] 中某一项的 eventId；需求、页面或事件存在多对多关系时拆成多行，禁止数组、对象、事件名或不存在的 ID。未知 Measurement ID 写 TBD。`;
   }
   return `输出 {tasks:[],warnings:[]}。tasks 字段必须为 taskCn,taskEn,owner,stakeholder,startDate,endDate,progress,milestone,meeting,parentTask,dependency,confirmationOwner,latestConfirmationDate,delayImpact,criticalPath,sourceCitation,assumption,status。
-日期只能 YYYY-MM-DD 或 TBD；来源无日期不得反推确定日期；建议日期须令 sourceCitation 为“AI 建议”并在 assumption 明确“AI 建议”。progress 只能是 0–100 的 JSON integer；milestone 和 criticalPath 只能是 JSON boolean；status 只能是 not_started、in_progress、blocked、completed、pending_confirmation。dependency 和 parentTask 只能引用同一输出中的 taskCn，严禁循环依赖。`;
+日期只能 YYYY-MM-DD 或 TBD；来源无日期不得反推确定日期；建议日期须令 sourceCitation 为“AI 建议”并在 assumption 明确“AI 建议”。progress 只能是 0–100 的 JSON integer；milestone 和 criticalPath 只能是 JSON boolean；status 只能是 not_started、in_progress、blocked、completed、pending_confirmation。dependency 必须是只包含 taskCn 字符串的 JSON array（例如 ["确认验收范围"]），parentTask 必须是单个 taskCn 字符串或 null；两者只能引用同一输出中的 taskCn，严禁对象、额外元数据和循环依赖。`;
 }
 
 export function buildArtifactPrompt(input: {
