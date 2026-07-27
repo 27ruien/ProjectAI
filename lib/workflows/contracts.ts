@@ -291,11 +291,28 @@ function normalizeGa4EventType(value: unknown): unknown {
 }
 
 function normalizeCoverageStatus(value: unknown): unknown {
+  if (Array.isArray(value)) return value.length === 1 ? normalizeCoverageStatus(value[0]) : value;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record);
+    if (keys.length === 1 && ["status", "value", "name"].includes(keys[0]!)) return normalizeCoverageStatus(record[keys[0]!]!);
+    return value;
+  }
   if (typeof value !== "string") return value;
   const normalized = value.trim().toLowerCase();
   if (["covered", "complete", "completed", "fully_covered", "fully covered", "implemented", "tracked", "yes", "已覆盖", "覆盖", "完成", "已完成", "已实现", "已埋点", "已追踪", "是"].includes(normalized)) return "covered";
   if (["gap", "missing", "uncovered", "not_covered", "not covered", "incomplete", "partial", "partially_covered", "partially covered", "no", "未覆盖", "缺口", "缺失", "未完成", "未埋点", "部分覆盖", "否"].includes(normalized)) return "gap";
   if (["pending", "tbd", "todo", "to_do", "planned", "unknown", "not_confirmed", "待确认", "待定", "待覆盖", "待埋点", "计划中", "未确认"].includes(normalized)) return "pending";
+  const pendingHints = ["pending", "tbd", "todo", "planned", "unknown", "待", "计划", "确认"];
+  const gapHints = ["gap", "missing", "uncovered", "not covered", "incomplete", "partial", "未覆盖", "缺口", "缺失", "未完成", "未埋点", "部分", "不完整", "补充"];
+  const coveredHints = ["covered", "complete", "implemented", "tracked", "已覆盖", "已完成", "已实现", "已埋点", "已追踪", "覆盖完整"];
+  const has = (hints: string[]) => hints.some((hint) => normalized.includes(hint));
+  const pending = has(pendingHints);
+  const gap = has(gapHints);
+  const covered = has(coveredHints);
+  if (pending && !gap && !covered) return "pending";
+  if (gap && !pending) return "gap";
+  if (covered && !pending && !gap) return "covered";
   return value;
 }
 

@@ -335,8 +335,12 @@ describe("V3 workflow artifact contracts", () => {
     if (partial.success) assert.equal(partial.data.pageEventMatrix[0]!.status, "gap");
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("已埋点")).success, true);
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("待埋点")).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make({ status: "需补充覆盖" })).success, true);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make(["覆盖完整"])).success, true);
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("covered pending validation")).success, false);
     assert.equal(ga4MeasurementPlanSchema.safeParse(make("not applicable")).success, false);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make(["covered", "gap"])).success, false);
+    assert.equal(ga4MeasurementPlanSchema.safeParse(make({ status: "covered", note: "extra" })).success, false);
   });
 
   it("normalizes bounded GA4 event wrappers and keyed event maps", () => {
