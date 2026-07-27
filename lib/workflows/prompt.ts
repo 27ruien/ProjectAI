@@ -65,7 +65,7 @@ export function buildArtifactPrompt(input: {
     ? input.requirementSectionNumbers
     : undefined;
   const batchInstruction = sectionNumbers?.length
-    ? `\n本次只输出章节 ${sectionNumbers.join("、")}，不得输出其他章节；每节 body 应简洁、可审核，控制在 80–500 字。fact 必须至少引用一个本次 evidence 中存在的 E 标签。${sectionNumbers.includes(26) ? "本批必须提供至少一条可测试的 acceptanceCriteria。" : "本批 acceptanceCriteria 可以为空，最终由服务端统一合并去重。"}`
+    ? `\n本次只输出章节 ${sectionNumbers.join("、")}，不得输出其他章节；每节 body 应简洁、可审核，控制在 80–500 字。classification 只能原样使用英文枚举 fact、assumption、advice、pending 之一，不得附加解释或使用其他值。fact 必须至少引用一个本次 evidence 中存在的 E 标签。${sectionNumbers.includes(26) ? "本批必须提供至少一条可测试的 acceptanceCriteria。" : "本批 acceptanceCriteria 可以为空，最终由服务端统一合并去重。"}`
     : "";
   return {
     systemPrompt: `${COMMON}\n${schemaInstruction(input.kind, sectionNumbers)}${batchInstruction}`,

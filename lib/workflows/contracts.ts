@@ -96,7 +96,12 @@ function normalizeRequirementClassification(value: unknown): unknown {
     tbd: "pending",
     "待确认": "pending",
   };
-  return aliases[normalized] ?? value;
+  if (aliases[normalized]) return aliases[normalized];
+  if (/(?:^|[^a-z])fact(?:[^a-z]|$)|事实|已确认/.test(normalized)) return "fact";
+  if (/assumption|inference|假设|推测|推断/.test(normalized)) return "assumption";
+  if (/advice|suggestion|recommend|建议/.test(normalized)) return "advice";
+  if (/pending|tbd|unknown|待确认|未确认|未知/.test(normalized)) return "pending";
+  return value;
 }
 
 export function normalizeRequirementsDocumentBatch(value: unknown): unknown {

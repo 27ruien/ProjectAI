@@ -148,6 +148,24 @@ describe("V3 workflow artifact contracts", () => {
     assert.deepEqual(parsed.data.acceptanceCriteria, [criterion]);
   });
 
+  it("normalizes unambiguous classification labels and rejects unknown semantics", () => {
+    const normalized = normalizeRequirementsDocumentBatch({
+      sections: [
+        { number: 1, title: "x", body: "已确认范围。", classification: "已确认事实（fact）", citations: ["E1"] },
+        { number: 2, title: "x", body: "日期尚未确认。", classification: "未知 / pending", citations: [] },
+      ],
+    });
+    const parsed = requirementsDocumentBatchSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.equal(parsed.data.sections[0]!.classification, "fact");
+    assert.equal(parsed.data.sections[1]!.classification, "pending");
+    const unknown = normalizeRequirementsDocumentBatch({
+      sections: [{ number: 1, title: "x", body: "内容", classification: "untrusted-label", citations: [] }],
+    });
+    assert.equal(requirementsDocumentBatchSchema.safeParse(unknown).success, false);
+  });
+
   it("persists a bounded schema path instead of provider output", () => {
     const failure = describeRequirementsBatchSchemaFailure(normalizeRequirementsDocumentBatch({
       sections: [{ number: 1, title: "x", body: null, classification: "pending", citations: [] }],
