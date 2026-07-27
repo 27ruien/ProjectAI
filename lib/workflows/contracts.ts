@@ -323,6 +323,35 @@ function normalizeCoverageEventIds(value: unknown, depth = 0): unknown[] {
   return [value];
 }
 
+function normalizeGa4Events(value: unknown): unknown {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  const wrapperKeys = ["items", "events", "rows", "data"] as const;
+  for (const key of wrapperKeys) {
+    const candidate = record[key];
+    if (Array.isArray(candidate) && Object.keys(record).length === 1) return candidate.length <= 500 ? candidate : value;
+  }
+
+  const entries = Object.entries(record);
+  if (entries.length === 0 || entries.length > 500) return value;
+  const normalized = entries.flatMap(([key, candidate]) => {
+    const items = Array.isArray(candidate) ? candidate : [candidate];
+    if (items.length === 0 || items.length > 500) return [];
+    return items.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const event = item as Record<string, unknown>;
+      return {
+        ...event,
+        eventName: event.eventName ?? key,
+        eventId: event.eventId ?? key,
+      };
+    });
+  });
+  if (normalized.length === 0 || normalized.length > 500 || normalized.some((item) => !item || typeof item !== "object" || Array.isArray(item))) return value;
+  return normalized;
+}
+
 export function normalizeGa4MeasurementPlan(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
@@ -342,7 +371,8 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
       citations: normalizeCitationLabels(item.citations),
     };
   };
-  const normalizedEvents = Array.isArray(record.events) ? record.events.map((event) => {
+  const eventCollection = normalizeGa4Events(record.events);
+  const normalizedEvents = Array.isArray(eventCollection) ? eventCollection.map((event) => {
     if (!event || typeof event !== "object" || Array.isArray(event)) return event;
     const item = event as Record<string, unknown>;
     return {
@@ -360,7 +390,7 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
       developerFeedback: item.developerFeedback ?? "",
       citations: normalizeCitationLabels(item.citations),
     };
-  }) : record.events;
+  }) : eventCollection;
   const eventAliases = new Map<string, string | null>();
   if (Array.isArray(normalizedEvents)) {
     for (const event of normalizedEvents) {

@@ -309,6 +309,31 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse(excessiveLabels).success, false);
   });
 
+  it("normalizes bounded GA4 event wrappers and keyed event maps", () => {
+    const event = {
+      coreEvent: true, eventType: "click", description: "打开表单",
+      parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name",
+      parameterValueRule: "stable", parameterValueType: "string", note: "",
+      developerFeedback: "pending", citations: ["E1"],
+    };
+    const base = {
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [], requirementEventCoverage: [{ requirement: "REQ-001", eventId: "form_opened", status: "covered" }], pageEventMatrix: [],
+    };
+    const keyed = ga4MeasurementPlanSchema.safeParse(normalizeGa4MeasurementPlan({ ...base, events: { form_opened: event } }));
+    assert.equal(keyed.success, true);
+    if (keyed.success) {
+      assert.equal(keyed.data.events[0]!.eventName, "form_opened");
+      assert.equal(keyed.data.events[0]!.eventId, "form_opened");
+    }
+    const wrapped = ga4MeasurementPlanSchema.safeParse(normalizeGa4MeasurementPlan({ ...base, events: { items: [{ ...event, eventName: "Open Form", eventId: "form_opened" }] } }));
+    assert.equal(wrapped.success, true);
+    const wrapperWithUnknownSibling = normalizeGa4MeasurementPlan({ ...base, events: { items: [{ ...event, eventName: "Open Form", eventId: "form_opened" }], executable: "ignored" } });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(wrapperWithUnknownSibling).success, false);
+    const excessive = normalizeGa4MeasurementPlan({ ...base, events: { items: Array.from({ length: 501 }, () => event) } });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(excessive).success, false);
+  });
+
   it("describes GA4 schema failures without provider content", () => {
     const failure = describeArtifactSchemaFailure("ga4_measurement_plan", normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构", projectLink: "TBD", citations: [] },
