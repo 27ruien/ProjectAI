@@ -227,8 +227,8 @@ describe("V3 workflow artifact contracts", () => {
         { eventName: `${sharedPrefix}_one`, coreEvent: true, eventType: "result", description: "结果一", eventId: `${sharedPrefix}_one`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: `${sharedPrefix}_parameter_one`, parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
         { eventName: `${sharedPrefix}_two`, coreEvent: false, eventType: "result", description: "结果二", eventId: `${sharedPrefix}_two`, parameterName: "推荐", parameterDescription: "推荐结果", parameterKey: "推荐结果", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
       ],
-      requirementEventCoverage: [{ requirement: { id: "REQ-001", title: "生成推荐" }, eventId: `${sharedPrefix}_one`, status: "covered" }],
-      pageEventMatrix: [{ page: 12, eventId: `${sharedPrefix}_two`, status: "covered" }],
+      requirementEventCoverage: [{ requirement: { id: "REQ-001", title: "生成推荐" }, eventId: { eventName: `${sharedPrefix}_one` }, status: "covered" }],
+      pageEventMatrix: [{ page: 12, eventId: { id: `${sharedPrefix}_two` }, status: "covered" }],
     });
     const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
     assert.equal(parsed.success, true);

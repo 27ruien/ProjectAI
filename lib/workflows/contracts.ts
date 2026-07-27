@@ -293,6 +293,19 @@ function normalizeCoverageLabel(value: unknown, firstKey: "requirement" | "page"
   return value;
 }
 
+function normalizeCoverageEventId(value: unknown): unknown {
+  if (typeof value === "string") return normalizeGa4Identifier(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const item = value as Record<string, unknown>;
+  for (const key of ["eventId", "id", "eventName", "name"] as const) {
+    const candidate = item[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return normalizeGa4Identifier(candidate);
+    }
+  }
+  return value;
+}
+
 export function normalizeGa4MeasurementPlan(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
@@ -315,7 +328,7 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
   const normalizeMatrix = (entry: unknown, firstKey: "requirement" | "page") => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
     const item = entry as Record<string, unknown>;
-    return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId: normalizeGa4Identifier(item.eventId), status: normalizeCoverageStatus(item.status) };
+    return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId: normalizeCoverageEventId(item.eventId), status: normalizeCoverageStatus(item.status) };
   };
   return {
     overview: overview ? {
