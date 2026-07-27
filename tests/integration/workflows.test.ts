@@ -26,6 +26,9 @@ import {
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
 import {
+  createMeetingRun,
+} from "../../lib/workflows/audio-service";
+import {
   createRequirementFrameworkRun,
   regenerateWorkflowArtifact,
   readWorkflowRun,
@@ -235,6 +238,59 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       documentId, documentVersionId: `${prefix}version`, displayName: "forged",
       sha256: "f".repeat(64), status: "ready",
     }));
+  });
+
+  it("deduplicates the same meeting upload and rejects a different file with the same key", async () => {
+    const idempotencyKey = randomUUID();
+    const wav = (marker: number) => {
+      const bytes = new Uint8Array(44);
+      bytes.set(new TextEncoder().encode("RIFF"), 0);
+      bytes.set(new TextEncoder().encode("WAVE"), 8);
+      bytes[43] = marker;
+      return new File([bytes], "fictional-meeting.wav", { type: "audio/wav" });
+    };
+    let runId = "";
+    try {
+      const first = await createMeetingRun({
+        principal: principal(),
+        projectId,
+        file: wav(1),
+        idempotencyKey,
+        requestHeaders: headers,
+      });
+      runId = first.runId;
+      assert.equal(first.created, true);
+
+      const replay = await createMeetingRun({
+        principal: principal(),
+        projectId,
+        file: wav(1),
+        idempotencyKey,
+        requestHeaders: headers,
+      });
+      assert.deepEqual(replay, { runId, created: false });
+
+      await assert.rejects(
+        createMeetingRun({
+          principal: principal(),
+          projectId,
+          file: wav(2),
+          idempotencyKey,
+          requestHeaders: headers,
+        }),
+        (error: unknown) =>
+          error instanceof Error &&
+          "code" in error &&
+          error.code === "WORKFLOW_IDEMPOTENCY_CONFLICT",
+      );
+      const rows = await getDb()
+        .select({ id: workflowRun.id })
+        .from(workflowRun)
+        .where(eq(workflowRun.idempotencyKeyHash, createHash("sha256").update(JSON.stringify(idempotencyKey)).digest("hex")));
+      assert.deepEqual(rows, [{ id: runId }]);
+    } finally {
+      if (runId) await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
   });
 
   it("completes Fake ASR meeting flow, preserves generic speaker names, and versions rename edits", async () => {

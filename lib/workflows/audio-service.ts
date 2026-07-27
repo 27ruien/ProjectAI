@@ -48,13 +48,17 @@ export async function createMeetingRun(input: {
 }): Promise<{ runId: string; created: boolean }> {
   const audio = await validatedAudio(input.file);
   const idempotencyKeyHash = digest(input.idempotencyKey);
+  const sourceScopeDigest = digest({ audioSha256: audio.sha256 });
   const db = getDb();
   const prepared = await db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.projectId}:${input.principal.user.id}:${idempotencyKeyHash}:meeting`}, 0))`);
     const target = await requireProjectRole(input.principal, input.projectId, ["project_manager", "project_member"], input.requestHeaders, { db: tx, lockForUpdate: true });
     if (!target.departmentId) throw new WorkflowError(422, "WORKFLOW_DEPARTMENT_REQUIRED", "项目必须归属有效部门后才能运行工作流");
-    const [existing] = await tx.select({ id: workflowRun.id }).from(workflowRun).where(and(eq(workflowRun.projectId, target.id), eq(workflowRun.creatorId, input.principal.user.id), eq(workflowRun.idempotencyKeyHash, idempotencyKeyHash))).limit(1);
-    if (existing) return { runId: existing.id, created: false, objectKey: null as string | null, sourceId: null as string | null };
+    const [existing] = await tx.select({ id: workflowRun.id, sourceScopeDigest: workflowRun.sourceScopeDigest }).from(workflowRun).where(and(eq(workflowRun.projectId, target.id), eq(workflowRun.creatorId, input.principal.user.id), eq(workflowRun.idempotencyKeyHash, idempotencyKeyHash))).limit(1);
+    if (existing) {
+      if (existing.sourceScopeDigest !== sourceScopeDigest) throw new WorkflowError(409, "WORKFLOW_IDEMPOTENCY_CONFLICT", "相同幂等键不能用于不同的会议音视频");
+      return { runId: existing.id, created: false, objectKey: null as string | null, sourceId: null as string | null };
+    }
     const [definition] = await tx.select().from(workflowDefinition).where(and(eq(workflowDefinition.workflowType, "meeting_minutes"), eq(workflowDefinition.isActive, true))).orderBy(desc(workflowDefinition.version)).limit(1);
     if (!definition) throw new WorkflowError(503, "WORKFLOW_DEFINITION_MISSING", "会议工作流定义尚未就绪");
     const runId = randomUUID();
@@ -65,7 +69,7 @@ export async function createMeetingRun(input: {
       id: runId, definitionId: definition.id, organizationId: target.organizationId,
       departmentId: target.departmentId, projectId: target.id, workflowType: "meeting_minutes",
       creatorId: input.principal.user.id, displayName: `${target.name} · 会议纪要 · ${date}`,
-      authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: digest({ audioSha256: audio.sha256 }),
+      authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest,
       modelProfileId: definition.modelProfileId, status: "uploading", currentStep: 1, idempotencyKeyHash,
     });
     await tx.insert(workflowRunSource).values({
