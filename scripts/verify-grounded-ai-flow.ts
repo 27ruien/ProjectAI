@@ -85,7 +85,6 @@ async function cleanupFixtureProjects(): Promise<void> {
     const fixture = fixtureProjects.at(-1)!;
     await deleteVerificationProject({
       environment,
-      owner: manager,
       fixture,
     });
     fixtureProjects.pop();
@@ -308,7 +307,10 @@ async function waitForIngestion(documentId: string, versionId: string) {
         environment.projectAId,
       )}/documents/${encodeURIComponent(documentId)}/versions`,
     );
-    assert(response.status === 200, "Version list failed.");
+    assert(
+      response.status === 200,
+      `Version list returned ${response.status}.`,
+    );
     const result = await responseJson<ProjectDocumentVersionsResponse>(
       response,
       "Version list",
@@ -1107,22 +1109,31 @@ try {
   verificationError = error;
   throw error;
 } finally {
+  const cleanupErrors: unknown[] = [];
   try {
     await cleanupAll();
   } catch (cleanupError) {
-    if (!verificationError) throw cleanupError;
+    cleanupErrors.push(cleanupError);
   }
   try {
     await cleanupFixtureProjects();
   } catch (cleanupError) {
-    if (!verificationError) throw cleanupError;
+    cleanupErrors.push(cleanupError);
   }
   try {
     await signOut(environment, manager);
     await signOut(environment, viewer);
   } catch (cleanupError) {
-    if (!verificationError) throw cleanupError;
+    cleanupErrors.push(cleanupError);
   } finally {
     await closeDatabasePool();
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      verificationError
+        ? [verificationError, ...cleanupErrors]
+        : cleanupErrors,
+      "Grounded AI verification cleanup failed.",
+    );
   }
 }

@@ -103,15 +103,16 @@ export async function findAuthorizedDocument(input: {
     where document_id = ${input.documentId}
     limit 1
   `);
-  const [row] = await filterFixtureDocumentScopes(
-    result.rows.map((item) => ({
-      documentId: item.document_id,
-      sourceProjectId: item.source_project_id,
-      knowledgeSpaceId: item.knowledge_space_id,
-      sourceScope: item.source_scope,
-    })),
-    executor,
-  );
+  // Fixture-backed records stay absent from ordinary list/search responses,
+  // while an exact-ID UAT request still traverses the real authorization
+  // function. Production cannot register fixtures, and the SQL scope above
+  // continues to enforce project, role, grant, and deny rules.
+  const [row] = result.rows.map((item) => ({
+    documentId: item.document_id,
+    sourceProjectId: item.source_project_id,
+    knowledgeSpaceId: item.knowledge_space_id,
+    sourceScope: item.source_scope,
+  }));
   if (!row) return null;
   const [document] = await executor
     .select()

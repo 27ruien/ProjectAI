@@ -31,7 +31,10 @@ import {
   upsertOrganizationMember,
 } from "../../lib/knowledge/management";
 import { KnowledgeManagementError } from "../../lib/knowledge/errors";
-import { listAuthorizedDocumentScope } from "../../lib/knowledge/authorization";
+import {
+  findAuthorizedDocument,
+  listAuthorizedDocumentScope,
+} from "../../lib/knowledge/authorization";
 
 const prefix = "phase1-acl-test-";
 const secondaryOrganizationId = `${prefix}organization`;
@@ -245,6 +248,17 @@ describe("Phase 1 default-deny authorization matrix", () => {
         permission: "view",
       });
       assert.equal(filtered.some((item) => item.documentId === sharedDocumentId), false);
+      const exact = await findAuthorizedDocument({
+        principal: principal(managerB),
+        projectId: "project-002",
+        documentId: sharedDocumentId,
+        permission: "view",
+      });
+      assert.equal(
+        exact?.document.id,
+        sharedDocumentId,
+        "an authorized exact-ID UAT probe must remain usable while lists hide fixtures",
+      );
     } finally {
       await getDb().delete(testFixture).where(eq(testFixture.id, `${prefix}shared-space-fixture`));
     }

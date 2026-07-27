@@ -108,7 +108,6 @@ async function cleanupFixtureProjects(): Promise<void> {
     const fixture = fixtureProjects.at(-1)!;
     await deleteVerificationProject({
       environment,
-      owner: managerA,
       fixture,
     });
     fixtureProjects.pop();

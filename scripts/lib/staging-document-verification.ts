@@ -1,5 +1,6 @@
 import { getPool } from "../../lib/db/client";
 import { getObjectStorage } from "../../lib/files/object-storage";
+import { deleteRegisteredFixtureProject } from "../../lib/test-fixtures/service";
 import { fetchWithPublicHost } from "./fetch-with-public-host";
 
 export type VerificationSession = {
@@ -283,25 +284,24 @@ export async function addVerificationProjectMember(input: {
 
 export async function deleteVerificationProject(input: {
   environment: DocumentVerificationEnvironment;
-  owner: VerificationSession;
   fixture: VerificationProjectFixture;
 }): Promise<void> {
-  const response = await authenticatedFetch(
-    input.environment,
-    input.owner,
-    "api/test-fixtures/projects",
-    {
-      method: "DELETE",
-      headers: {
-        "content-type": "application/json",
-        ...fixtureHeaders(input.fixture),
-      },
-      body: JSON.stringify({ projectId: input.fixture.projectId }),
-    },
-  );
   assert(
-    response.status === 200,
-    `Staging verification Project cleanup returned ${response.status}.`,
+    process.env.NEXT_PUBLIC_APP_ENV === "staging" &&
+      new URL(input.environment.baseUrl).pathname.startsWith(
+        "/tool/projectai-staging",
+      ),
+    "Verification fixture cleanup is Staging-only.",
+  );
+  const deleted = await deleteRegisteredFixtureProject({
+    fixtureRunId: input.fixture.fixtureRunId,
+    environment: "staging",
+    expiresAt: new Date(input.fixture.expiresAt),
+    projectId: input.fixture.projectId,
+  });
+  assert(
+    deleted.projects === 1,
+    "Staging verification Project cleanup did not delete its exact fixture.",
   );
 }
 
