@@ -43,7 +43,7 @@ events 字段为 eventName,coreEvent,eventType,description,eventId,parameterName
 eventId/key 必须稳定 snake_case；eventType 只能是 page_view、click、select、permission、ai、result、error、custom；valueType 只能是 string、number、boolean、date、array；coreEvent 只能是 JSON boolean；Coverage status 只能是 covered、gap、pending。未知 Measurement ID 写 TBD。`;
   }
   return `输出 {tasks:[],warnings:[]}。tasks 字段必须为 taskCn,taskEn,owner,stakeholder,startDate,endDate,progress,milestone,meeting,parentTask,dependency,confirmationOwner,latestConfirmationDate,delayImpact,criticalPath,sourceCitation,assumption,status。
-日期只能 YYYY-MM-DD 或 TBD；来源无日期不得反推确定日期；建议日期须在 assumption 明确“AI 建议”。dependency 和 parentTask 只能引用同一输出中的 taskCn，严禁循环依赖。`;
+日期只能 YYYY-MM-DD 或 TBD；来源无日期不得反推确定日期；建议日期须令 sourceCitation 为“AI 建议”并在 assumption 明确“AI 建议”。progress 只能是 0–100 的 JSON integer；milestone 和 criticalPath 只能是 JSON boolean；status 只能是 not_started、in_progress、blocked、completed、pending_confirmation。dependency 和 parentTask 只能引用同一输出中的 taskCn，严禁循环依赖。`;
 }
 
 export function buildArtifactPrompt(input: {

@@ -328,6 +328,74 @@ export function validateGa4MeasurementIdGrounding(value: unknown, evidenceConten
 
 const dateOrTbd = z.string().refine((value) => value === "TBD" || /^\d{4}-\d{2}-\d{2}$/.test(value), "date must be YYYY-MM-DD or TBD");
 
+function normalizeActionDate(value: unknown): unknown {
+  if (value === null || value === undefined || value === "") return "TBD";
+  if (typeof value !== "string") return value;
+  return /^(?:tbd|待确认|待定|未知|未确认)$/i.test(value.trim()) ? "TBD" : value.trim();
+}
+
+function normalizeActionBoolean(value: unknown, fallback: boolean): unknown {
+  if (value === null || value === undefined || value === "") return fallback;
+  return normalizeGa4Boolean(value);
+}
+
+function normalizeActionStatus(value: unknown): unknown {
+  if (value === null || value === undefined || value === "") return "pending_confirmation";
+  if (typeof value !== "string") return value;
+  const normalized = value.trim().toLowerCase();
+  const aliases: Record<string, "not_started" | "in_progress" | "blocked" | "completed" | "pending_confirmation"> = {
+    not_started: "not_started", "未开始": "not_started",
+    in_progress: "in_progress", "进行中": "in_progress",
+    blocked: "blocked", "阻塞": "blocked", "受阻": "blocked",
+    completed: "completed", complete: "completed", "已完成": "completed",
+    pending_confirmation: "pending_confirmation", pending: "pending_confirmation", tbd: "pending_confirmation", "待确认": "pending_confirmation",
+  };
+  return aliases[normalized] ?? value;
+}
+
+export function normalizeActionPlan(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  return {
+    tasks: Array.isArray(record.tasks) ? record.tasks.map((task) => {
+      if (!task || typeof task !== "object" || Array.isArray(task)) return task;
+      const item = task as Record<string, unknown>;
+      const progress = typeof item.progress === "string" && /^\d{1,3}%?$/.test(item.progress.trim())
+        ? Number(item.progress.trim().replace("%", ""))
+        : item.progress ?? 0;
+      const parentTask = typeof item.parentTask === "string" && /^(?:|none|null|无|tbd|待确认)$/i.test(item.parentTask.trim())
+        ? null
+        : item.parentTask ?? null;
+      const sourceCitation = Array.isArray(item.sourceCitation) && item.sourceCitation.length === 1
+        ? item.sourceCitation[0]
+        : typeof item.sourceCitation === "string" && /^(?:tbd|无|待确认)$/i.test(item.sourceCitation.trim())
+          ? "待确认"
+          : item.sourceCitation ?? "待确认";
+      return {
+        taskCn: item.taskCn,
+        taskEn: item.taskEn ?? "",
+        owner: item.owner ?? "TBD",
+        stakeholder: item.stakeholder ?? "TBD",
+        startDate: normalizeActionDate(item.startDate),
+        endDate: normalizeActionDate(item.endDate),
+        progress,
+        milestone: normalizeActionBoolean(item.milestone, false),
+        meeting: item.meeting ?? "",
+        parentTask,
+        dependency: typeof item.dependency === "string" ? [item.dependency] : item.dependency ?? [],
+        confirmationOwner: item.confirmationOwner ?? "TBD",
+        latestConfirmationDate: normalizeActionDate(item.latestConfirmationDate),
+        delayImpact: item.delayImpact ?? "待确认",
+        criticalPath: normalizeActionBoolean(item.criticalPath, false),
+        sourceCitation,
+        assumption: item.assumption ?? "",
+        status: normalizeActionStatus(item.status),
+      };
+    }) : record.tasks,
+    warnings: Array.isArray(record.warnings) ? record.warnings : [],
+  };
+}
+
 export const actionPlanSchema = z.object({
   tasks: z.array(z.object({
     taskCn: z.string().trim().min(1).max(500),
@@ -371,6 +439,15 @@ export const actionPlanSchema = z.object({
   };
   for (const task of graph.keys()) if (visit(task)) context.addIssue({ code: "custom", message: "action plan contains a dependency cycle" });
 });
+
+export function validateActionPlanDateGrounding(value: unknown, evidenceContent: string[]): boolean {
+  const parsed = actionPlanSchema.safeParse(value);
+  if (!parsed.success) return false;
+  return parsed.data.tasks.every((task) => [task.startDate, task.endDate, task.latestConfirmationDate].every((date) => {
+    if (date === "TBD" || evidenceContent.some((content) => content.includes(date))) return true;
+    return task.sourceCitation === "AI 建议" && /AI 建议/.test(task.assumption);
+  }));
+}
 
 export const artifactSchemas = {
   project_overview: overviewArtifactSchema,

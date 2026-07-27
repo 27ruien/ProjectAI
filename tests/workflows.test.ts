@@ -13,6 +13,7 @@ import {
   describeArtifactSchemaFailure,
   ga4MeasurementPlanSchema,
   meetingSummarySchema,
+  normalizeActionPlan,
   normalizeGa4MeasurementPlan,
   normalizeRequirementsDocumentBatch,
   describeRequirementsBatchSchemaFailure,
@@ -20,6 +21,7 @@ import {
   requirementsDocumentBatchSchema,
   requirementsDocumentSchema,
   validateGa4MeasurementIdGrounding,
+  validateActionPlanDateGrounding,
   validateCitationLabels,
 } from "../lib/workflows/contracts";
 import { buildArtifactExport } from "../lib/workflows/export";
@@ -231,6 +233,25 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(actionPlanSchema.safeParse({ tasks: [task("任务 A")], warnings: [] }).success, true);
     assert.equal(actionPlanSchema.safeParse({ tasks: [task("任务 A", ["任务 B"]), task("任务 B", ["任务 A"])], warnings: [] }).success, false);
     assert.equal(actionPlanSchema.safeParse({ tasks: [{ ...task("任务 A"), startDate: "2026-08-02", endDate: "2026-08-01" }], warnings: [] }).success, false);
+  });
+
+  it("normalizes conservative Action Plan defaults and rejects ungrounded dates", () => {
+    const normalized = normalizeActionPlan({ tasks: [{
+      taskCn: "确认范围", owner: "PM", stakeholder: "Client", startDate: "待确认", endDate: "TBD",
+      progress: "25%", milestone: "是", parentTask: "无", dependency: [], latestConfirmationDate: "2031-03-09",
+      criticalPath: "false", sourceCitation: ["E1"], status: "进行中",
+    }] });
+    const parsed = actionPlanSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.equal(parsed.data.tasks[0]!.progress, 25);
+    assert.equal(parsed.data.tasks[0]!.milestone, true);
+    assert.equal(parsed.data.tasks[0]!.startDate, "TBD");
+    assert.equal(parsed.data.tasks[0]!.status, "in_progress");
+    assert.equal(validateActionPlanDateGrounding(parsed.data, ["最晚于 2031-03-09 确认"]), true);
+    assert.equal(validateActionPlanDateGrounding(parsed.data, ["没有日期"]), false);
+    const suggested = { ...parsed.data, tasks: [{ ...parsed.data.tasks[0]!, latestConfirmationDate: "2031-03-08", sourceCitation: "AI 建议", assumption: "AI 建议在实现前两日确认" }] };
+    assert.equal(validateActionPlanDateGrounding(suggested, ["没有日期"]), true);
   });
 
   it("distinguishes confirmed decisions and validates every transcript citation", () => {

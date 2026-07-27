@@ -25,10 +25,12 @@ import {
   normalizeRequirementsDocumentBatch,
   describeRequirementsBatchSchemaFailure,
   normalizeGa4MeasurementPlan,
+  normalizeActionPlan,
   REQUIREMENT_ARTIFACT_KINDS,
   REQUIREMENTS_SECTION_TITLES,
   requirementsDocumentBatchSchema,
   validateGa4MeasurementIdGrounding,
+  validateActionPlanDateGrounding,
   validateCitationLabels,
   type RequirementArtifactKind,
 } from "./contracts";
@@ -352,17 +354,22 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
     content = parsed.data as unknown as Record<string, unknown>;
   } else {
     const prompts = buildArtifactPrompt({ kind, projectName, evidence });
-    const maxOutputTokens = kind === "ga4_measurement_plan" ? 4_096 : undefined;
+    const maxOutputTokens = ["ga4_measurement_plan", "action_plan"].includes(kind) ? 4_096 : undefined;
     result = await gateway.generate({ ...prompts, purpose: "workflow_artifact", maxOutputTokens });
     let normalized = kind === "ga4_measurement_plan"
       ? normalizeGa4MeasurementPlan(parseJson(result.text))
-      : parseJson(result.text);
+      : kind === "action_plan"
+        ? normalizeActionPlan(parseJson(result.text))
+        : parseJson(result.text);
     let parsed = artifactSchemas[kind].safeParse(normalized);
     const validationFailure = () => {
       if (!parsed.success) return describeArtifactSchemaFailure(kind, normalized);
       if (!validateCitationLabels(parsed.data, allowedLabels)) return "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID";
       if (kind === "ga4_measurement_plan" && !validateGa4MeasurementIdGrounding(parsed.data, evidence.map((item) => item.content))) {
         return "WORKFLOW_GA4_MEASUREMENT_ID_UNGROUNDED";
+      }
+      if (kind === "action_plan" && !validateActionPlanDateGrounding(parsed.data, evidence.map((item) => item.content))) {
+        return "WORKFLOW_ACTION_DATE_UNGROUNDED";
       }
       return null;
     };
@@ -380,7 +387,9 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
       };
       normalized = kind === "ga4_measurement_plan"
         ? normalizeGa4MeasurementPlan(parseJson(result.text))
-        : parseJson(result.text);
+        : kind === "action_plan"
+          ? normalizeActionPlan(parseJson(result.text))
+          : parseJson(result.text);
       parsed = artifactSchemas[kind].safeParse(normalized);
       failureCode = validationFailure();
     }
