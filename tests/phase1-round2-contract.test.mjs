@@ -10,7 +10,8 @@ test("assistant source selection narrows both lexical and exact vector retrieval
   const assistant = await source("lib/ai/project-assistant/service.ts");
   const retrieval = await source("lib/ai/retrieval/service.ts");
   assert.match(assistant, /sourceSelectionDigest/);
-  assert.match(assistant, /listAuthorizedDocumentScope/);
+  assert.match(assistant, /findAuthorizedDocument/);
+  assert.doesNotMatch(assistant, /listAuthorizedDocumentScope/);
   assert.match(retrieval, /documentIds: input\.sourceDocumentIds/);
   assert.match(retrieval, /and c\.document_id in/);
 });
