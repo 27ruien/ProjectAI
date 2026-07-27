@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -521,5 +521,19 @@ describe("V3 artifact exports and audio provider boundary", () => {
     assert.match(url.searchParams.get("signature") ?? "", /^[A-Za-z0-9_-]{43}$/);
     const ttl = Number(url.searchParams.get("expires")) - Math.floor(Date.now() / 1000);
     assert.ok(ttl >= 3598 && ttl <= 3600);
+  });
+
+  it("rejects a symlinked audio signing key with a controlled failure", async () => {
+    const original = process.env.AUDIO_DOWNLOAD_SIGNING_KEY_FILE!;
+    const linked = path.join(directory, "audio-signing-link");
+    await symlink(original, linked);
+    process.env.AUDIO_DOWNLOAD_SIGNING_KEY_FILE = linked;
+    await assert.rejects(
+      buildAudioProviderUrl("run-123", "source-123"),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "AUDIO_PROVIDER_NOT_CONFIGURED",
+    );
+    process.env.AUDIO_DOWNLOAD_SIGNING_KEY_FILE = original;
   });
 });

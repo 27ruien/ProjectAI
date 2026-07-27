@@ -54,6 +54,9 @@ test("Staging gives Qwen and audio capability only to the app and workflow worke
   assert.match(compose, /project-ai-os-staging-workflow-worker/);
   assert.match(deploy, /STAGING_WORKFLOW_WORKER_IMAGE/);
   assert.match(deploy, /openssl rand -base64 48/);
+  assert.match(deploy, /install -m 0600 -o 1000 -g 1000 "\$secret_temp" "\$audio_signing_secret_file"/);
+  assert.match(deploy, /chown 1000:1000 "\$audio_signing_secret_file"/);
+  assert.match(deploy, /1000:1000:600/);
   assert.match(deploy, /project-ai-os-staging-workflow-worker/);
   assert.match(audioUploadRoute, /allowedMediaTypes: \["multipart\/form-data"\]/);
   assert.match(compose, /arn:aws:s3:::.*\/projects\/\*/);

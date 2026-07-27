@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { requireProjectRole } from "@/lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
@@ -107,11 +107,22 @@ export async function createMeetingRun(input: {
 async function signingKey(): Promise<Buffer> {
   const path = process.env.AUDIO_DOWNLOAD_SIGNING_KEY_FILE?.trim();
   if (!path) throw new WorkflowError(503, "AUDIO_PROVIDER_NOT_CONFIGURED", "语音临时下载签名尚未配置");
-  const details = await stat(path);
-  if (!details.isFile() || (details.mode & 0o077) !== 0) throw new WorkflowError(503, "AUDIO_PROVIDER_NOT_CONFIGURED", "语音临时下载签名权限无效");
-  const key = Buffer.from((await readFile(path, "utf8")).trim(), "base64");
-  if (key.length < 32 || key.length > 128) throw new WorkflowError(503, "AUDIO_PROVIDER_NOT_CONFIGURED", "语音临时下载签名无效");
-  return key;
+  try {
+    const details = await lstat(path);
+    const runtimeUid = process.getuid?.();
+    if (
+      !details.isFile()
+      || details.isSymbolicLink()
+      || (details.mode & 0o077) !== 0
+      || (runtimeUid !== undefined && details.uid !== runtimeUid)
+    ) throw new WorkflowError(503, "AUDIO_PROVIDER_NOT_CONFIGURED", "语音临时下载签名权限无效");
+    const key = Buffer.from((await readFile(path, "utf8")).trim(), "base64");
+    if (key.length < 32 || key.length > 128) throw new WorkflowError(503, "AUDIO_PROVIDER_NOT_CONFIGURED", "语音临时下载签名无效");
+    return key;
+  } catch (error) {
+    if (error instanceof WorkflowError) throw error;
+    throw new WorkflowError(503, "AUDIO_PROVIDER_NOT_CONFIGURED", "语音临时下载签名不可用");
+  }
 }
 
 function signaturePayload(runId: string, sourceId: string, expires: number) { return `${runId}\n${sourceId}\n${expires}`; }

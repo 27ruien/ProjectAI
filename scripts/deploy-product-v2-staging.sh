@@ -137,16 +137,22 @@ if ! sudo test -e "$audio_signing_secret_file"; then
   trap 'rm -f -- "$secret_temp"' EXIT
   umask 077
   openssl rand -base64 48 > "$secret_temp"
-  sudo install -m 0600 -o root -g root "$secret_temp" "$audio_signing_secret_file"
+  sudo install -m 0600 -o 1000 -g 1000 "$secret_temp" "$audio_signing_secret_file"
   rm -f -- "$secret_temp"
   trap - EXIT
 fi
+# The runtime image has a fixed node uid/gid of 1000. Compose file-backed
+# secrets retain the host file ownership, so normalize an existing key too.
+sudo chown 1000:1000 "$audio_signing_secret_file"
+sudo chmod 0600 "$audio_signing_secret_file"
 for protected in "$env_file" "$ai_env_file" "$embedding_env_file" "$qwen_secret_file" "$audio_signing_secret_file"; do
   sudo test -f "$protected"
   sudo test ! -L "$protected"
   sudo test -s "$protected"
   [[ "$(sudo stat -c '%a' "$protected")" == "600" ]]
 done
+[[ "$(sudo stat -c '%u:%g:%a' "$audio_signing_secret_file")" == "1000:1000:600" ]] \
+  || { printf 'Staging audio signing key is not readable only by the runtime user.\n' >&2; exit 1; }
 for key in POSTGRES_DB POSTGRES_USER POSTGRES_PASSWORD DATABASE_URL BETTER_AUTH_SECRET BETTER_AUTH_URL AUTH_COOKIE_PREFIX AUTH_TRUSTED_ORIGINS OBJECT_STORAGE_ENDPOINT OBJECT_STORAGE_BUCKET OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY; do
   count="$(sudo awk -F= -v key="$key" '$1 == key && length(substr($0,index($0,"=")+1)) > 0 { count += 1 } END { print count + 0 }' "$env_file")"
   [[ "$count" == "1" ]] || { printf 'Protected Staging environment is incomplete.\n' >&2; exit 1; }
