@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { appPath } from "../e2e/support/app-url";
 
@@ -10,6 +10,19 @@ type Space = {
   projectId: string | null;
   projectContextId: string | null;
   accessLevel: "view" | "edit";
+};
+type WorkflowArtifact = {
+  id: string;
+  kind: string;
+  title: string;
+  status: string;
+  currentVersion: number;
+  content: Record<string, unknown>;
+  sourceReferences: Array<Record<string, unknown>>;
+};
+type WorkflowDetail = {
+  run: { id: string; status: string; failureCode: string | null };
+  artifacts: WorkflowArtifact[];
 };
 
 const origin = "https://gridworks.cn";
@@ -30,7 +43,7 @@ async function login(page: Page, identity: Identity) {
   expect(body).toEqual({ authenticated: true });
 }
 
-const syntheticProjectName = /^(?:Member Creator UAT [a-f0-9]{8}(?: 已更新)?|Product V2 ACL UAT [a-f0-9]{8}|需求结果空间 [a-f0-9]{8})$/iu;
+const syntheticProjectName = /^(?:Member Creator UAT [a-f0-9]{8}(?: 已更新)?|Product V2 ACL UAT [a-f0-9]{8}|V3 Requirement UAT [a-f0-9]{8}|V3 Meeting UAT [a-f0-9]{8})$/iu;
 
 test.afterEach(async ({ page }) => {
   await switchIdentity(page, "super-admin");
@@ -101,6 +114,45 @@ async function capture(page: Page, name: string) {
 async function gotoInteractive(page: Page, url: string) {
   await page.goto(url);
   await page.waitForLoadState("networkidle");
+}
+
+function workflowRunId(page: Page, workflowRoute: "requirement-framework" | "meeting-minutes") {
+  const match = new URL(page.url()).pathname.match(new RegExp(`/workflows/${workflowRoute}/([^/]+)$`, "u"));
+  expect(match?.[1], `${workflowRoute} run id in URL`).toBeTruthy();
+  return decodeURIComponent(match![1]!);
+}
+
+async function waitForWorkflow(page: Page, projectId: string, runId: string, expectedStatus: string, timeoutMs = 12 * 60_000) {
+  const deadline = Date.now() + timeoutMs;
+  let latest = "not-observed";
+  while (Date.now() < deadline) {
+    const response = await page.request.get(appPath(`/api/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(runId)}`));
+    expect(response.status(), "workflow detail response").toBe(200);
+    const detail = await response.json() as WorkflowDetail;
+    latest = `${detail.run.status}${detail.run.failureCode ? `:${detail.run.failureCode}` : ""}`;
+    if (detail.run.status === expectedStatus) return detail;
+    if (["failed", "cancelled"].includes(detail.run.status)) {
+      throw new Error(`WORKFLOW_UAT_TERMINATED:${latest}`);
+    }
+    await page.waitForTimeout(2_000);
+  }
+  throw new Error(`WORKFLOW_UAT_TIMEOUT:${latest}`);
+}
+
+async function assertArtifactExport(page: Page, input: {
+  projectId: string;
+  runId: string;
+  artifactId: string;
+  format: "md" | "docx" | "xlsx" | "txt";
+  contentType: string;
+}) {
+  const response = await page.request.get(appPath(
+    `/api/projects/${encodeURIComponent(input.projectId)}/workflows/${encodeURIComponent(input.runId)}/artifacts/${encodeURIComponent(input.artifactId)}/export?format=${input.format}`,
+  ));
+  expect(response.status(), `${input.format} export response`).toBe(200);
+  expect(response.headers()["content-type"]).toContain(input.contentType);
+  expect(response.headers()["content-disposition"]).toMatch(/^attachment;/u);
+  expect((await response.body()).byteLength, `${input.format} export bytes`).toBeGreaterThan(100);
 }
 
 async function createDepartmentThroughUi(page: Page, input: {
@@ -474,54 +526,171 @@ test("@ai-retrieval-permissions real AI only cites an authorized, UI-uploaded fi
   assertNoErrors();
 });
 
-test("@ai-workflow Requirement Extraction uploads, generates, reviews, and saves through the UI", async ({ page }) => {
+test("@ai-workflow @requirement-workflow V3 requirement framework generates, versions, exports, and publishes through the UI", async ({ page }) => {
+  test.setTimeout(15 * 60_000);
   const assertNoErrors = observe(page);
   await login(page, "member");
   const marker = crypto.randomUUID().slice(0, 8);
-  const sourceName = `需求提取-${marker}`;
-  const savedProjectName = `需求结果空间 ${marker}`;
+  const projectName = `V3 Requirement UAT ${marker}`;
+  const sourceName = `虚构需求框架-${marker}`;
+
+  await gotoInteractive(page, appPath("/knowledge"));
+  await createProjectThroughUi(page, { name: projectName, departmentName: "Product Management" });
+  const target = (await spaces(page)).find((space) => space.name === projectName && space.projectId);
+  expect(target?.projectId, "new requirement UAT project").toBeTruthy();
+
   await gotoInteractive(page, appPath("/workflows"));
   await expect(page.getByRole("heading", { name: "AI 工作流" })).toBeVisible();
-  await page.getByPlaceholder("搜索工作流或业务场景").fill("需求");
-  await page.getByRole("button", { name: /^运行/u }).first().click();
-  await expect(page.getByRole("heading", { name: /需求提取/u })).toBeVisible();
-  await expect(page.getByRole("button", { name: "上传附件" })).toBeEnabled();
+  await expect(page.locator("article")).toHaveCount(2);
+  await page.getByLabel("运行项目").selectOption(target!.projectId!);
+  const requirementCard = page.locator("article").filter({ has: page.getByRole("heading", { name: "搭建需求框架" }) });
+  await requirementCard.getByRole("button", { name: "开始运行" }).click();
+  await expect(page.getByRole("heading", { name: new RegExp(`搭建需求框架 · ${projectName}`, "u") })).toBeVisible();
+  await expect(page.getByRole("button", { name: "上传临时附件" })).toBeEnabled();
 
-  const generate = page.getByRole("button", { name: "生成待审核草稿" });
+  const generate = page.getByRole("button", { name: "开始生成四类产物" });
   await expect(generate).toBeDisabled();
   await page.locator('input[type="file"]').setInputFiles({
     name: `${sourceName}.txt`,
     mimeType: "text/plain",
-    buffer: Buffer.from(`虚构需求：为内部项目 ${marker} 增加审批提醒。项目经理可以设置截止日期；到期前 24 小时提醒负责人；验收标准是提醒只发送一次并记录审计。`),
+    buffer: Buffer.from([
+      `虚构项目代号：${marker}。`,
+      "目标：为内部项目经理提供移动 Web 审批提醒。",
+      "项目经理可以设置审批截止日期，系统在截止前 24 小时仅提醒负责人一次，并记录脱敏审计。",
+      "平台：移动 Web；地区：仅虚构测试环境；上线日期：2037-11-18。",
+      "GA4 必须记录 reminder_created、reminder_sent、approval_completed 三个事件，不得写入姓名或审批正文。",
+      "验收：重复触发不产生第二条提醒；无权限用户统一得到 404；所有 AI 草稿必须人工审核后发布。",
+    ].join("\n")),
   });
-  await expect(page.getByRole("status")).toContainText("临时附件已解析完成", { timeout: 120_000 });
+  await expect(page.getByText("临时附件已解析并选中。未经确认不会进入正式知识库。", { exact: true })).toBeVisible({ timeout: 120_000 });
   await expect(generate).toBeEnabled();
-  const extractionResponse = page.waitForResponse(
-    (response) => response.url().includes("/requirement-extractions") && response.request().method() === "POST",
-    { timeout: 120_000 },
+  const workflowResponse = page.waitForResponse(
+    (response) => response.url().endsWith(`/api/projects/${target!.projectId}/workflows`) && response.request().method() === "POST",
+    { timeout: 30_000 },
   );
   await generate.click();
-  expect((await extractionResponse).status()).toBe(200);
-  await expect(page.getByRole("heading", { name: "当前页面审核" })).toBeVisible({ timeout: 120_000 });
-  const firstTitle = page.getByLabel("需求标题").first();
-  await firstTitle.fill(`${await firstTitle.inputValue()}（UAT 已复核）`);
-  await capture(page, "05-requirement-ui-review.png");
-  await page.getByRole("button", { name: "整批批准" }).click();
-  const saveDialog = page.getByRole("dialog", { name: "保存到知识库" });
-  await expect(saveDialog).toBeVisible();
-  await saveDialog.getByRole("button", { name: "新建项目空间并保存" }).click();
-  await saveDialog.getByLabel("新项目空间名称").fill(savedProjectName);
-  await expect(saveDialog.getByLabel(/保存审核后的结果/u)).toBeChecked();
-  await expect(saveDialog.getByLabel(/保存原始附件/u)).toBeChecked();
-  await saveDialog.getByRole("button", { name: "确认" }).click();
-  await expect(saveDialog).toBeHidden({ timeout: 120_000 });
-  await expect(page.getByRole("status")).toContainText("已按选择保存到知识库");
+  expect((await workflowResponse).status()).toBe(202);
+  await page.waitForURL(/\/workflows\/requirement-framework\/[^?]+\?projectId=/u, { timeout: 30_000 });
+  const runUrl = page.url();
+  const runId = workflowRunId(page, "requirement-framework");
+  await expect(page.getByText("任务在后台继续运行，可以安全离开本页面；返回后会恢复当前状态，不会重复调用 Provider。")).toBeVisible();
+  await gotoInteractive(page, appPath("/workflows"));
+  await gotoInteractive(page, runUrl);
 
+  let detail = await waitForWorkflow(page, target!.projectId!, runId, "awaiting_review");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "产物已生成，等待人工审核" })).toBeVisible({ timeout: 30_000 });
+  expect(detail.artifacts.map((artifact) => artifact.title)).toEqual([
+    "项目需求概览", "需求文档", "GA4 埋点文档", "Action Plan",
+  ]);
+  for (const artifact of detail.artifacts) {
+    expect(artifact.sourceReferences.length, `${artifact.title} source references`).toBeGreaterThan(0);
+    await expect(page.getByRole("button", { name: new RegExp(`^${artifact.title} · v1$`, "u") })).toBeVisible();
+  }
+
+  const overview = detail.artifacts.find((artifact) => artifact.kind === "project_overview")!;
+  await page.getByRole("button", { name: /^项目需求概览 · v1$/u }).click();
+  const editor = page.getByLabel("项目需求概览 结构化编辑器");
+  const edited = structuredClone(overview.content) as { pendingQuestions?: string[] };
+  edited.pendingQuestions = [...(edited.pendingQuestions ?? []), `UAT 人工复核待确认 ${marker}`];
+  await editor.fill(JSON.stringify(edited, null, 2));
+  await page.getByRole("button", { name: "保存新版本" }).click();
+  await expect(page.getByText("已保存为版本 v2，发布前仍需审核。")).toBeVisible();
+  await expect(page.getByRole("button", { name: /^项目需求概览 · v2$/u })).toBeVisible();
+  detail = await waitForWorkflow(page, target!.projectId!, runId, "awaiting_review");
+
+  for (const artifact of detail.artifacts) {
+    await assertArtifactExport(page, { projectId: target!.projectId!, runId, artifactId: artifact.id, format: "md", contentType: "text/markdown" });
+    if (["project_overview", "requirements_document"].includes(artifact.kind)) {
+      await assertArtifactExport(page, { projectId: target!.projectId!, runId, artifactId: artifact.id, format: "docx", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    } else {
+      await assertArtifactExport(page, { projectId: target!.projectId!, runId, artifactId: artifact.id, format: "xlsx", contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    }
+  }
+  await capture(page, "05-v3-requirement-review.png");
+  await page.getByRole("button", { name: "审核并发布" }).click();
+  await expect(page.getByText("四类产物已发布；审核和版本记录已保存。")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByRole("heading", { name: "已发布" })).toBeVisible();
+  await capture(page, "06-v3-requirement-published.png");
+  assertNoErrors();
+});
+
+test("@ai-workflow @meeting-workflow V3 meeting workflow uses real ASR, confirms speakers, exports, publishes, and deletes audio", async ({ page }) => {
+  test.setTimeout(15 * 60_000);
+  const audioPath = process.env.STAGING_MEETING_AUDIO_PATH?.trim();
+  if (!audioPath || !path.isAbsolute(audioPath)) throw new Error("STAGING_MEETING_AUDIO_PATH_REQUIRED");
+  const audio = await stat(audioPath);
+  if (!audio.isFile() || audio.size <= 44 || audio.size > 100 * 1024 * 1024) throw new Error("STAGING_MEETING_AUDIO_INVALID");
+
+  const assertNoErrors = observe(page);
+  await login(page, "member");
+  const marker = crypto.randomUUID().slice(0, 8);
+  const projectName = `V3 Meeting UAT ${marker}`;
   await gotoInteractive(page, appPath("/knowledge"));
-  await chooseSpace(page, savedProjectName);
-  await expect(page.getByRole("button", { name: new RegExp(`^${sourceName}(?:\\s|$)`, "u") })).toBeVisible({ timeout: 120_000 });
-  await expect(page.getByText(/需求提取审核结果/u).first()).toBeVisible({ timeout: 120_000 });
-  await capture(page, "06-requirement-saved-knowledge.png");
+  await createProjectThroughUi(page, { name: projectName, departmentName: "Product Management" });
+  const target = (await spaces(page)).find((space) => space.name === projectName && space.projectId);
+  expect(target?.projectId, "new meeting UAT project").toBeTruthy();
+
+  await gotoInteractive(page, appPath("/workflows"));
+  await expect(page.locator("article")).toHaveCount(2);
+  await page.getByLabel("运行项目").selectOption(target!.projectId!);
+  const meetingCard = page.locator("article").filter({ has: page.getByRole("heading", { name: "提取会议纪要" }) });
+  await meetingCard.getByRole("button", { name: "开始运行" }).click();
+  await expect(page.getByRole("heading", { name: new RegExp(`提取会议纪要 · ${projectName}`, "u") })).toBeVisible();
+  await page.locator('input[type="file"]').setInputFiles(audioPath);
+  const uploadResponse = page.waitForResponse(
+    (response) => response.url().endsWith(`/api/projects/${target!.projectId}/workflows/meeting-minutes`) && response.request().method() === "POST",
+    { timeout: 30_000 },
+  );
+  await page.getByRole("button", { name: "上传并开始处理" }).click();
+  expect((await uploadResponse).status()).toBe(202);
+  await page.waitForURL(/\/workflows\/meeting-minutes\/[^?]+\?projectId=/u, { timeout: 30_000 });
+  const runUrl = page.url();
+  const runId = workflowRunId(page, "meeting-minutes");
+  await expect(page.getByText("任务在后台继续处理，可安全离开页面。系统不会因刷新或返回页面重复提交语音任务。")).toBeVisible();
+  await gotoInteractive(page, appPath("/workflows"));
+  await gotoInteractive(page, runUrl);
+
+  let detail = await waitForWorkflow(page, target!.projectId!, runId, "awaiting_review");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "等待人工审核" })).toBeVisible({ timeout: 30_000 });
+  expect(detail.artifacts.map((artifact) => artifact.title)).toEqual(["完整会议转写", "会议纪要", "会议待办"]);
+  const transcript = detail.artifacts.find((artifact) => artifact.kind === "meeting_transcript")!;
+  const transcriptSpeakers = (transcript.content.speakers ?? []) as Array<{ displayName?: string }>;
+  expect(transcriptSpeakers.length, "real ASR speaker separation").toBeGreaterThanOrEqual(2);
+
+  const speakerSection = page.locator("section").filter({ has: page.getByRole("heading", { name: "确认说话人" }) });
+  const speakerInputs = speakerSection.locator("input");
+  expect(await speakerInputs.count(), "speaker editors").toBeGreaterThanOrEqual(2);
+  for (let index = 0; index < await speakerInputs.count(); index += 1) {
+    const name = `虚构发言人${index + 1}`;
+    const input = speakerInputs.nth(index);
+    await input.fill(name);
+    await input.locator("..").getByRole("button", { name: "确认" }).click();
+    await expect(speakerSection.locator("input").nth(index)).toHaveValue(name);
+  }
+
+  detail = await waitForWorkflow(page, target!.projectId!, runId, "awaiting_review");
+  const renamedTranscript = detail.artifacts.find((artifact) => artifact.kind === "meeting_transcript")!;
+  const renamedSpeakers = (renamedTranscript.content.speakers ?? []) as Array<{ displayName?: string }>;
+  expect(renamedSpeakers.every((speaker) => speaker.displayName?.startsWith("虚构发言人"))).toBe(true);
+  for (const artifact of detail.artifacts) {
+    await expect(page.getByRole("button", { name: new RegExp(`^${artifact.title} · v\\d+$`, "u") })).toBeVisible();
+    await assertArtifactExport(page, { projectId: target!.projectId!, runId, artifactId: artifact.id, format: "md", contentType: "text/markdown" });
+    if (["meeting_transcript", "meeting_minutes"].includes(artifact.kind)) {
+      await assertArtifactExport(page, { projectId: target!.projectId!, runId, artifactId: artifact.id, format: "docx", contentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    }
+    if (artifact.kind === "meeting_transcript") {
+      await assertArtifactExport(page, { projectId: target!.projectId!, runId, artifactId: artifact.id, format: "txt", contentType: "text/markdown" });
+    }
+  }
+  await capture(page, "07-v3-meeting-review.png");
+  await page.getByRole("button", { name: "审核并发布" }).click();
+  await expect(page.getByText("会议纪要已发布。AI 生成的待办仍是审核产物，不会自动成为正式项目任务。")).toBeVisible({ timeout: 120_000 });
+  await expect(page.getByRole("heading", { name: "已发布" })).toBeVisible();
+  await page.getByRole("button", { name: "删除原始音视频" }).click();
+  await expect(page.getByText("原始音视频已从私有对象存储删除；审核产物和审计记录保留。")).toBeVisible({ timeout: 30_000 });
+  await capture(page, "08-v3-meeting-published.png");
   assertNoErrors();
 });
 

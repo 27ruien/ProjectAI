@@ -5,11 +5,12 @@ import test from "node:test";
 const read = (file) => readFile(new URL(`../${file}`, import.meta.url), "utf8");
 
 test("AI workflow UI exposes exactly the two approved user workflows", async () => {
-  const [home, workspace, sidebar, meeting] = await Promise.all([
+  const [home, workspace, sidebar, meeting, stagingUat] = await Promise.all([
     read("components/workflow/workflows-page.tsx"),
     read("components/workspace.tsx"),
     read("components/layout/sidebar.tsx"),
     read("components/workflow/meeting-minutes-page.tsx"),
+    read("tests/product-v2-staging-e2e/product-v2.spec.ts"),
   ]);
   assert.match(home, /搭建需求框架/);
   assert.match(home, /提取会议纪要/);
@@ -23,6 +24,12 @@ test("AI workflow UI exposes exactly the two approved user workflows", async () 
   assert.match(meeting, /正在发布…/);
   assert.match(meeting, /正在删除…/);
   assert.doesNotMatch(sidebar, /href: "\/(?:skills|reviews|uat)/);
+  assert.match(stagingUat, /@requirement-workflow/);
+  assert.match(stagingUat, /@meeting-workflow/);
+  assert.match(stagingUat, /STAGING_MEETING_AUDIO_PATH_REQUIRED/);
+  assert.match(stagingUat, /真实 ASR|real ASR/);
+  assert.doesNotMatch(stagingUat, /Requirement Extraction uploads/);
+  assert.doesNotMatch(stagingUat, /生成待审核草稿/);
 });
 
 test("workflow persistence uses compound isolation, leases, provenance, and human review", async () => {

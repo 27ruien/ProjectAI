@@ -41,6 +41,8 @@
     "test:staging:knowledge-permissions": "playwright test --config=playwright.product-v2-staging.config.ts --grep @knowledge-permissions",
     "test:staging:ai-retrieval-permissions": "playwright test --config=playwright.product-v2-staging.config.ts --grep @ai-retrieval-permissions",
     "test:staging:ai-workflow": "playwright test --config=playwright.product-v2-staging.config.ts --grep @ai-workflow",
+    "test:staging:requirement-workflow": "playwright test --config=playwright.product-v2-staging.config.ts --grep @requirement-workflow",
+    "test:staging:meeting-workflow": "playwright test --config=playwright.product-v2-staging.config.ts --grep @meeting-workflow",
     "test:staging:daily-report": "playwright test --config=playwright.product-v2-staging.config.ts --grep @daily-report",
     "test:staging:global-search": "playwright test --config=playwright.product-v2-staging.config.ts --grep @global-search",
     "db:test-account:reset-password": "tsx scripts/db/reset-test-account-password.ts",
