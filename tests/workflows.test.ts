@@ -270,6 +270,30 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse(ambiguous).success, false);
   });
 
+  it("expands bounded multi-event GA4 coverage into exact event-id rows", () => {
+    const normalized = normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [],
+      events: [
+        { eventName: "Open Form", coreEvent: true, eventType: "click", description: "打开表单", eventId: "form_opened", parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name", parameterValueRule: "stable", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+        { eventName: "Submit Form", coreEvent: true, eventType: "result", description: "提交表单", eventId: "form_submitted", parameterName: "结果", parameterDescription: "提交结果", parameterKey: "submit_result", parameterValueRule: "success|failed", parameterValueType: "string", note: "", developerFeedback: "pending", citations: ["E1"] },
+      ],
+      requirementEventCoverage: [{ requirement: "REQ-001", eventIds: [{ eventName: "Open Form" }, "form_submitted"], status: "covered" }],
+      pageEventMatrix: [{ page: "表单", eventId: "Open Form, Submit Form", status: "covered" }],
+    });
+    const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (!parsed.success) return;
+    assert.deepEqual(parsed.data.requirementEventCoverage.map((entry) => entry.eventId), ["form_opened", "form_submitted"]);
+    assert.deepEqual(parsed.data.pageEventMatrix.map((entry) => entry.eventId), ["form_opened", "form_submitted"]);
+
+    const excessive = normalizeGa4MeasurementPlan({
+      ...(normalized as Record<string, unknown>),
+      requirementEventCoverage: [{ requirement: "REQ-001", eventId: Array.from({ length: 21 }, (_, index) => `event_${index}`), status: "covered" }],
+    });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(excessive).success, false);
+  });
+
   it("describes GA4 schema failures without provider content", () => {
     const failure = describeArtifactSchemaFailure("ga4_measurement_plan", normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构", projectLink: "TBD", citations: [] },

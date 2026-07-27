@@ -301,17 +301,22 @@ function normalizeCoverageLabel(value: unknown, firstKey: "requirement" | "page"
   return value;
 }
 
-function normalizeCoverageEventId(value: unknown): unknown {
-  if (typeof value === "string") return normalizeGa4Identifier(value);
-  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const item = value as Record<string, unknown>;
-  for (const key of ["eventId", "id", "eventName", "name"] as const) {
-    const candidate = item[key];
-    if (typeof candidate === "string" && candidate.trim()) {
-      return normalizeGa4Identifier(candidate);
-    }
+function normalizeCoverageEventIds(value: unknown, depth = 0): unknown[] {
+  if (depth > 2) return [value];
+  if (Array.isArray(value)) {
+    if (value.length === 0 || value.length > 20) return [value];
+    return value.flatMap((item) => normalizeCoverageEventIds(item, depth + 1));
   }
-  return value;
+  if (typeof value === "string") {
+    const parts = value.split(/[,，、;；|]+/).map((part) => part.trim()).filter(Boolean);
+    return (parts.length > 1 ? parts : [value]).map(normalizeGa4Identifier);
+  }
+  if (!value || typeof value !== "object") return [value];
+  const item = value as Record<string, unknown>;
+  for (const key of ["eventId", "id", "eventName", "name", "eventIds", "eventNames", "events"] as const) {
+    if (item[key] !== undefined) return normalizeCoverageEventIds(item[key], depth + 1);
+  }
+  return [value];
 }
 
 export function normalizeGa4MeasurementPlan(value: unknown): unknown {
@@ -365,14 +370,17 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
       }
     }
   }
-  const normalizeMatrix = (entry: unknown, firstKey: "requirement" | "page") => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+  const normalizeMatrix = (entry: unknown, firstKey: "requirement" | "page"): unknown[] => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [entry];
     const item = entry as Record<string, unknown>;
-    const normalizedEventId = normalizeCoverageEventId(item.eventId);
-    const eventId = typeof normalizedEventId === "string" && eventAliases.get(normalizedEventId)
-      ? eventAliases.get(normalizedEventId)
-      : normalizedEventId;
-    return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId, status: normalizeCoverageStatus(item.status) };
+    const rawEventReference = item.eventId ?? item.eventIds ?? item.events;
+    const normalizedEventIds = [...new Set(normalizeCoverageEventIds(rawEventReference))];
+    return normalizedEventIds.map((normalizedEventId) => {
+      const eventId = typeof normalizedEventId === "string" && eventAliases.get(normalizedEventId)
+        ? eventAliases.get(normalizedEventId)
+        : normalizedEventId;
+      return { [firstKey]: normalizeCoverageLabel(item[firstKey], firstKey), eventId, status: normalizeCoverageStatus(item.status) };
+    });
   };
   return {
     overview: overview ? {
@@ -386,10 +394,10 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
     publicParameters: Array.isArray(record.publicParameters) ? record.publicParameters.map(normalizeParameter) : record.publicParameters,
     events: normalizedEvents,
     requirementEventCoverage: Array.isArray(record.requirementEventCoverage)
-      ? record.requirementEventCoverage.map((entry) => normalizeMatrix(entry, "requirement"))
+      ? record.requirementEventCoverage.flatMap((entry) => normalizeMatrix(entry, "requirement"))
       : record.requirementEventCoverage,
     pageEventMatrix: Array.isArray(record.pageEventMatrix)
-      ? record.pageEventMatrix.map((entry) => normalizeMatrix(entry, "page"))
+      ? record.pageEventMatrix.flatMap((entry) => normalizeMatrix(entry, "page"))
       : record.pageEventMatrix,
   };
 }

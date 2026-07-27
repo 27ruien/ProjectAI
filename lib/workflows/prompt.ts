@@ -40,7 +40,7 @@ sections 必须为“项目背景”和“需求概览”；fields 必须逐一�
     return `输出 {overview:{platform,measurementId,validationStatus,projectName,projectLink,citations},publicParameters:[],events:[],requirementEventCoverage:[],pageEventMatrix:[]}。
 publicParameters 字段为 name,description,key,valueRule,valueType,note,citations。
 events 字段为 eventName,coreEvent,eventType,description,eventId,parameterName,parameterDescription,parameterKey,parameterValueRule,parameterValueType,note,developerFeedback,citations。
-eventId/key 必须稳定 snake_case；eventType 只能是 page_view、click、select、permission、ai、result、error、custom；valueType 只能是 string、number、boolean、date、array；coreEvent 只能是 JSON boolean；Coverage status 只能是 covered、gap、pending。未知 Measurement ID 写 TBD。`;
+eventId/key 必须稳定 snake_case；eventType 只能是 page_view、click、select、permission、ai、result、error、custom；valueType 只能是 string、number、boolean、date、array；coreEvent 只能是 JSON boolean；Coverage status 只能是 covered、gap、pending。每条 requirementEventCoverage/pageEventMatrix 的 eventId 必须是单个字符串，并逐字复制当前 events[] 中某一项的 eventId；一个需求或页面对应多个事件时拆成多行，禁止数组、对象、事件名或不存在的 ID。未知 Measurement ID 写 TBD。`;
   }
   return `输出 {tasks:[],warnings:[]}。tasks 字段必须为 taskCn,taskEn,owner,stakeholder,startDate,endDate,progress,milestone,meeting,parentTask,dependency,confirmationOwner,latestConfirmationDate,delayImpact,criticalPath,sourceCitation,assumption,status。
 日期只能 YYYY-MM-DD 或 TBD；来源无日期不得反推确定日期；建议日期须令 sourceCitation 为“AI 建议”并在 assumption 明确“AI 建议”。progress 只能是 0–100 的 JSON integer；milestone 和 criticalPath 只能是 JSON boolean；status 只能是 not_started、in_progress、blocked、completed、pending_confirmation。dependency 和 parentTask 只能引用同一输出中的 taskCn，严禁循环依赖。`;
