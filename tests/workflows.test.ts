@@ -33,6 +33,7 @@ import {
 import { buildAudioProviderUrl } from "../lib/workflows/audio-service";
 import { WorkflowError } from "../lib/workflows/errors";
 import { GatewayMeetingSummaryProvider } from "../lib/workflows/meeting-summary-provider";
+import { canonicalJsonDigest } from "../lib/workflows/digest";
 import { buildArtifactPrompt } from "../lib/workflows/prompt";
 import type { WorkflowArtifactPayload } from "../lib/workflows/service";
 
@@ -75,6 +76,13 @@ function artifact(kind: string, content: Record<string, unknown>, markdown: stri
 }
 
 describe("V3 workflow artifact contracts", () => {
+  it("keeps artifact integrity digests stable across JSONB key reordering", () => {
+    const first = { content: { background: "虚构", actions: [{ owner: "虚构负责人", text: "验收" }] }, markdown: "# 虚构" };
+    const reordered = { markdown: "# 虚构", content: { actions: [{ text: "验收", owner: "虚构负责人" }], background: "虚构" } };
+    assert.equal(canonicalJsonDigest(first), canonicalJsonDigest(reordered));
+    assert.notEqual(canonicalJsonDigest(first), canonicalJsonDigest({ ...reordered, markdown: "# 已变化" }));
+  });
+
   it("requires every overview field and a citation for facts", () => {
     const value = {
       sections: [

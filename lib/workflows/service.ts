@@ -36,6 +36,7 @@ import {
   type WorkflowType,
 } from "./contracts";
 import { WorkflowError } from "./errors";
+import { canonicalJsonDigest } from "./digest";
 import { getObjectStorage } from "@/lib/files/object-storage";
 import { renderArtifactMarkdown } from "./render";
 
@@ -43,6 +44,10 @@ const EDIT_ROLES = ["project_manager", "project_member"] as const;
 
 function digest(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function artifactDigest(content: Record<string, unknown>, markdown: string): string {
+  return canonicalJsonDigest({ content, markdown });
 }
 
 function deterministicUuid(value: string): string {
@@ -573,7 +578,7 @@ export async function saveArtifactVersion(input: {
     }
     const markdown = renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, content);
     const nextVersion = artifact.currentVersion + 1;
-    const contentDigest = digest({ content, markdown });
+    const contentDigest = artifactDigest(content, markdown);
     await tx.insert(workflowArtifactVersion).values({
       id: randomUUID(), artifactId: artifact.id, projectId: artifact.projectId,
       version: nextVersion, content, markdown,
@@ -633,7 +638,7 @@ async function validateCurrentArtifacts(input: {
   for (const { artifact, version } of input.artifacts) {
     const schema = workflowArtifactSchemas[artifact.artifactKind as WorkflowArtifactKind];
     const parsed = schema?.safeParse(version.content);
-    if (!parsed?.success || digest({ content: parsed.data, markdown: renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, parsed.data as Record<string, unknown>) }) !== artifact.contentDigest || artifact.contentDigest !== version.contentDigest) {
+    if (!parsed?.success || artifactDigest(parsed.data as Record<string, unknown>, renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, parsed.data as Record<string, unknown>)) !== artifact.contentDigest || artifact.contentDigest !== version.contentDigest) {
       throw new WorkflowError(409, "WORKFLOW_ARTIFACT_INTEGRITY_INVALID", "产物结构或摘要已失效，需要重新生成");
     }
     if (input.run.workflowType === "requirement_framework") {
@@ -782,7 +787,7 @@ export async function renameTranscriptSpeaker(input: {
       const parsed = schema?.safeParse(content);
       if (!parsed?.success) throw new WorkflowError(422, "WORKFLOW_ARTIFACT_SCHEMA_INVALID", "说话人更新后的产物未通过结构校验");
       const markdown = renderArtifactMarkdown(artifact.artifactKind as WorkflowArtifactKind, content);
-      const contentDigest = digest({ content, markdown });
+      const contentDigest = artifactDigest(content, markdown);
       const nextVersion = artifact.currentVersion + 1;
       await tx.insert(workflowArtifactVersion).values({ id: randomUUID(), artifactId: artifact.id, projectId: artifact.projectId, version: nextVersion, content, markdown, sourceReferences: version.sourceReferences, contentDigest, createdBy: input.principal.user.id });
       await tx.update(workflowArtifact).set({ currentVersion: nextVersion, contentDigest, status: "draft", updatedAt: new Date() }).where(and(eq(workflowArtifact.id, artifact.id), eq(workflowArtifact.projectId, artifact.projectId)));

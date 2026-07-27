@@ -40,6 +40,7 @@ import { createMeetingSummaryProvider } from "./meeting-summary-provider";
 import { buildAudioProviderUrl } from "./audio-service";
 import { createAudioTranscriptionProvider } from "./audio-provider";
 import { WorkflowError } from "./errors";
+import { canonicalJsonDigest } from "./digest";
 import { buildArtifactPrompt, type WorkflowEvidence } from "./prompt";
 import { artifactTitle } from "./service";
 
@@ -401,7 +402,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
     content = parsed.data as unknown as Record<string, unknown>;
   }
   const markdown = renderArtifactMarkdown(kind, content);
-  const contentDigest = createHash("sha256").update(JSON.stringify({ content, markdown })).digest("hex");
+  const contentDigest = canonicalJsonDigest({ content, markdown });
   const usedLabels = collectLabels(content);
   const sourceReferences = evidence.filter((item) => usedLabels.has(item.label)).map((item) => ({ label: item.label, documentId: item.documentId, versionId: item.versionId, chunkId: item.chunkId, locator: item.locator }));
   await getDb().transaction(async (tx) => {
@@ -427,7 +428,7 @@ async function insertMeetingArtifact(input: {
     eq(workflowArtifact.artifactKind, input.kind),
   )).limit(1);
   if (existing) return;
-  const contentDigest = createHash("sha256").update(JSON.stringify({ content: input.content, markdown: input.markdown })).digest("hex");
+  const contentDigest = canonicalJsonDigest({ content: input.content, markdown: input.markdown });
   await getDb().transaction(async (tx) => {
     const artifactId = randomUUID();
     await tx.insert(workflowArtifact).values({ id: artifactId, runId: input.run.id, projectId: input.run.projectId, artifactKind: input.kind, title: input.title, status: "awaiting_review", currentVersion: 1, contentDigest });
