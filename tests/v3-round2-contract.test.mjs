@@ -107,3 +107,21 @@ test("workflow failures preserve only controlled validation codes", async () => 
     /failureCode, completedAt: new Date\(\) \}\)\.where\(eq\(workflowExecution\.id, executionId\)\);\s*throw new WorkflowError\(422, "WORKFLOW_AI_OUTPUT_INVALID"/u,
   );
 });
+
+test("project-scoped worker writes retain compound ownership keys", async () => {
+  const authorization = await read("lib/knowledge/authorization.ts");
+  const chunks = await read("lib/knowledge/chunk-management.ts");
+  const audio = await read("lib/workflows/audio-service.ts");
+  const workflowWorker = await read("lib/workflows/worker.ts");
+  const timesheetWorker = await read("lib/timesheets/ai-jobs.ts");
+  assert.match(authorization, /eq\(projectDocument\.projectId, row\.sourceProjectId\)/u);
+  assert.match(chunks, /eq\(documentChunk\.projectId, input\.projectId\)/u);
+  assert.match(chunks, /eq\(documentChunk\.documentId, input\.documentId\)/u);
+  assert.match(audio, /eq\(workflowRunSource\.projectId, prepared\.projectId\)/u);
+  assert.match(audio, /eq\(workflowAudioJob\.projectId, prepared\.projectId\)/u);
+  assert.match(workflowWorker, /eq\(workflowRun\.projectId, candidateRow\.project_id\)/u);
+  assert.match(timesheetWorker, /eq\(timesheetAiExecution\.organizationId, candidateJob\.organization_id\)/u);
+  assert.match(timesheetWorker, /eq\(timesheetAiExecution\.userId, candidateJob\.user_id\)/u);
+  assert.match(timesheetWorker, /eq\(timesheetAiExecution\.organizationId, job\.organizationId\)/u);
+  assert.match(timesheetWorker, /eq\(timesheetAiExecution\.userId, job\.userId\)/u);
+});

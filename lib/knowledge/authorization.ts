@@ -117,7 +117,10 @@ export async function findAuthorizedDocument(input: {
   const [document] = await executor
     .select()
     .from(projectDocument)
-    .where(eq(projectDocument.id, input.documentId))
+    .where(and(
+      eq(projectDocument.id, input.documentId),
+      eq(projectDocument.projectId, row.sourceProjectId),
+    ))
     .limit(1);
   if (!document) return null;
   return {

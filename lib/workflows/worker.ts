@@ -132,8 +132,8 @@ export async function claimWorkflowRun(workerId: string, workerConfig = config()
       sql`${workflowRun.leaseExpiresAt} <= now()`,
       sql`not exists (select 1 from workflow_executions execution where execution.run_id = ${workflowRun.id} and execution.project_id = ${workflowRun.projectId} and execution.status = 'running')`,
     ));
-    const candidate = await tx.execute<{ id: string }>(sql`
-      select id from workflow_runs
+    const candidate = await tx.execute<{ id: string; project_id: string }>(sql`
+      select id, project_id from workflow_runs
       where status in (${sql.join(ACTIVE.map((status) => sql`${status}`), sql`, `)})
         and leased_by is null
         and cancellation_requested_at is null
@@ -142,8 +142,8 @@ export async function claimWorkflowRun(workerId: string, workerConfig = config()
       for update skip locked
       limit 1
     `);
-    const id = candidate.rows[0]?.id;
-    if (!id) return null;
+    const candidateRow = candidate.rows[0];
+    if (!candidateRow) return null;
     const leaseToken = randomUUID();
     const [claimed] = await tx.update(workflowRun).set({
       status: sql`case when ${workflowRun.workflowType} = 'meeting_minutes' then case when ${workflowRun.status} = 'queued' then 'transcribing' else ${workflowRun.status} end else 'validating_sources' end`,
@@ -151,7 +151,10 @@ export async function claimWorkflowRun(workerId: string, workerConfig = config()
       leasedBy: workerId, leaseToken,
       leaseExpiresAt: sql`now() + (${workerConfig.leaseSeconds} * interval '1 second')`,
       heartbeatAt: sql`now()`, updatedAt: sql`now()`, failureCode: null, failureStep: null,
-    }).where(eq(workflowRun.id, id)).returning();
+    }).where(and(
+      eq(workflowRun.id, candidateRow.id),
+      eq(workflowRun.projectId, candidateRow.project_id),
+    )).returning();
     return claimed;
   });
 }

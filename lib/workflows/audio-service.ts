@@ -61,7 +61,7 @@ export async function createMeetingRun(input: {
     const [existing] = await tx.select({ id: workflowRun.id, sourceScopeDigest: workflowRun.sourceScopeDigest }).from(workflowRun).where(and(eq(workflowRun.projectId, target.id), eq(workflowRun.creatorId, input.principal.user.id), eq(workflowRun.idempotencyKeyHash, idempotencyKeyHash))).limit(1);
     if (existing) {
       if (existing.sourceScopeDigest !== sourceScopeDigest) throw new WorkflowError(409, "WORKFLOW_IDEMPOTENCY_CONFLICT", "相同幂等键不能用于不同的会议音视频");
-      return { runId: existing.id, created: false, objectKey: null as string | null, sourceId: null as string | null };
+      return { runId: existing.id, projectId: target.id, created: false, objectKey: null as string | null, sourceId: null as string | null };
     }
     const [definition] = await tx.select().from(workflowDefinition).where(and(eq(workflowDefinition.workflowType, "meeting_minutes"), eq(workflowDefinition.isActive, true))).orderBy(desc(workflowDefinition.version)).limit(1);
     if (!definition) throw new WorkflowError(503, "WORKFLOW_DEFINITION_MISSING", "会议工作流定义尚未就绪");
@@ -93,7 +93,7 @@ export async function createMeetingRun(input: {
       diarizationModel: audioProvider.diarizationModel,
       status: "queued",
     });
-    return { runId, created: true, objectKey, sourceId };
+    return { runId, projectId: target.id, created: true, objectKey, sourceId };
   });
   if (!prepared.created) return { runId: prepared.runId, created: false };
   const storage = getObjectStorage();
@@ -103,8 +103,15 @@ export async function createMeetingRun(input: {
     objectStored = true;
     if (stored.size !== audio.bytes.byteLength || stored.sha256 !== audio.sha256) throw new Error("AUDIO_STORAGE_INTEGRITY_FAILED");
     await db.transaction(async (tx) => {
-      await tx.update(workflowRunSource).set({ status: "ready" }).where(and(eq(workflowRunSource.id, prepared.sourceId!), eq(workflowRunSource.runId, prepared.runId)));
-      await tx.update(workflowRun).set({ status: "queued", currentStep: 1, updatedAt: new Date() }).where(eq(workflowRun.id, prepared.runId));
+      await tx.update(workflowRunSource).set({ status: "ready" }).where(and(
+        eq(workflowRunSource.id, prepared.sourceId!),
+        eq(workflowRunSource.runId, prepared.runId),
+        eq(workflowRunSource.projectId, prepared.projectId),
+      ));
+      await tx.update(workflowRun).set({ status: "queued", currentStep: 1, updatedAt: new Date() }).where(and(
+        eq(workflowRun.id, prepared.runId),
+        eq(workflowRun.projectId, prepared.projectId),
+      ));
     });
     return { runId: prepared.runId, created: true };
   } catch {
@@ -121,9 +128,19 @@ export async function createMeetingRun(input: {
       : "AUDIO_STORAGE_FAILED";
     try {
       await db.transaction(async (tx) => {
-        await tx.update(workflowRunSource).set({ status: "failed" }).where(eq(workflowRunSource.id, prepared.sourceId!));
-        await tx.update(workflowAudioJob).set({ status: "failed", failureCode, completedAt: new Date(), updatedAt: new Date() }).where(eq(workflowAudioJob.runId, prepared.runId));
-        await tx.update(workflowRun).set({ status: "failed", failureCode, failureStep: 1, completedAt: new Date(), updatedAt: new Date() }).where(eq(workflowRun.id, prepared.runId));
+        await tx.update(workflowRunSource).set({ status: "failed" }).where(and(
+          eq(workflowRunSource.id, prepared.sourceId!),
+          eq(workflowRunSource.runId, prepared.runId),
+          eq(workflowRunSource.projectId, prepared.projectId),
+        ));
+        await tx.update(workflowAudioJob).set({ status: "failed", failureCode, completedAt: new Date(), updatedAt: new Date() }).where(and(
+          eq(workflowAudioJob.runId, prepared.runId),
+          eq(workflowAudioJob.projectId, prepared.projectId),
+        ));
+        await tx.update(workflowRun).set({ status: "failed", failureCode, failureStep: 1, completedAt: new Date(), updatedAt: new Date() }).where(and(
+          eq(workflowRun.id, prepared.runId),
+          eq(workflowRun.projectId, prepared.projectId),
+        ));
       });
     } catch {
       // The source remains non-readable (`uploading`) if persistence is unavailable.

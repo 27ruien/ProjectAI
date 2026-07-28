@@ -260,6 +260,8 @@ export async function cancelTimesheetAiJob(input: {
     .where(
       and(
         eq(timesheetAiExecution.id, job.id),
+        eq(timesheetAiExecution.organizationId, job.organizationId),
+        eq(timesheetAiExecution.userId, job.userId),
         inArray(timesheetAiExecution.status, [...ACTIVE_STATUSES]),
       ),
     )
@@ -335,8 +337,8 @@ export async function claimTimesheetAiJob(
           sql`${timesheetAiExecution.providerDispatchedAt} is null`,
         ),
       );
-    const candidate = await tx.execute<{ id: string }>(sql`
-      select id
+    const candidate = await tx.execute<{ id: string; organization_id: string; user_id: string }>(sql`
+      select id, organization_id, user_id
       from timesheet_ai_executions
       where status = 'queued'
         and cancellation_requested_at is null
@@ -344,8 +346,8 @@ export async function claimTimesheetAiJob(
       for update skip locked
       limit 1
     `);
-    const jobId = candidate.rows[0]?.id;
-    if (!jobId) return null;
+    const candidateJob = candidate.rows[0];
+    if (!candidateJob) return null;
     const leaseToken = randomUUID();
     const [claimed] = await tx
       .update(timesheetAiExecution)
@@ -361,7 +363,11 @@ export async function claimTimesheetAiJob(
         failureCode: null,
         failureStage: null,
       })
-      .where(eq(timesheetAiExecution.id, jobId))
+      .where(and(
+        eq(timesheetAiExecution.id, candidateJob.id),
+        eq(timesheetAiExecution.organizationId, candidateJob.organization_id),
+        eq(timesheetAiExecution.userId, candidateJob.user_id),
+      ))
       .returning();
     return claimed;
   });
@@ -369,6 +375,8 @@ export async function claimTimesheetAiJob(
 
 export async function renewTimesheetAiLease(
   jobId: string,
+  organizationId: string,
+  userId: string,
   workerId: string,
   leaseToken: string,
   config: TimesheetAiWorkerConfig = workerConfig(),
@@ -382,6 +390,8 @@ export async function renewTimesheetAiLease(
     .where(
       and(
         eq(timesheetAiExecution.id, jobId),
+        eq(timesheetAiExecution.organizationId, organizationId),
+        eq(timesheetAiExecution.userId, userId),
         eq(timesheetAiExecution.leasedBy, workerId),
         eq(timesheetAiExecution.leaseToken, leaseToken),
         inArray(timesheetAiExecution.status, [...ACTIVE_STATUSES]),
@@ -419,6 +429,8 @@ async function maintainLease(input: {
     if (input.controller.signal.aborted) return;
     const renewed = await renewTimesheetAiLease(
       input.job.id,
+      input.job.organizationId,
+      input.job.userId,
       input.workerId,
       input.job.leaseToken!,
       input.config,
@@ -505,7 +517,11 @@ export async function runTimesheetAiWorker(options: {
         const [current] = await getDb()
           .select({ status: timesheetAiExecution.status })
           .from(timesheetAiExecution)
-          .where(eq(timesheetAiExecution.id, job.id))
+          .where(and(
+            eq(timesheetAiExecution.id, job.id),
+            eq(timesheetAiExecution.organizationId, job.organizationId),
+            eq(timesheetAiExecution.userId, job.userId),
+          ))
           .limit(1);
         if (
           current &&
@@ -525,7 +541,11 @@ export async function runTimesheetAiWorker(options: {
               leaseExpiresAt: null,
               completedAt: new Date(),
             })
-            .where(eq(timesheetAiExecution.id, job.id));
+            .where(and(
+              eq(timesheetAiExecution.id, job.id),
+              eq(timesheetAiExecution.organizationId, job.organizationId),
+              eq(timesheetAiExecution.userId, job.userId),
+            ));
         }
       }
     } finally {

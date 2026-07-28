@@ -254,7 +254,12 @@ export async function mutateManagedKnowledgeChunk(input: {
           isEffective: false,
           embeddingStatus: "disabled",
         })
-        .where(eq(documentChunk.id, chunk.id));
+        .where(and(
+          eq(documentChunk.id, chunk.id),
+          eq(documentChunk.projectId, input.projectId),
+          eq(documentChunk.documentId, input.documentId),
+          eq(documentChunk.versionId, chunk.versionId),
+        ));
     } else {
       await tx
         .update(documentChunk)
@@ -262,7 +267,12 @@ export async function mutateManagedKnowledgeChunk(input: {
           isEffective: true,
           embeddingStatus: "pending",
         })
-        .where(eq(documentChunk.id, chunk.id));
+        .where(and(
+          eq(documentChunk.id, chunk.id),
+          eq(documentChunk.projectId, input.projectId),
+          eq(documentChunk.documentId, input.documentId),
+          eq(documentChunk.versionId, chunk.versionId),
+        ));
     }
     await tx
       .update(documentChunkEmbedding)
@@ -289,7 +299,12 @@ export async function mutateManagedKnowledgeChunk(input: {
         await tx
           .update(documentChunk)
           .set({ embeddingStatus: "disabled" })
-          .where(eq(documentChunk.id, chunk.id));
+          .where(and(
+            eq(documentChunk.id, chunk.id),
+            eq(documentChunk.projectId, input.projectId),
+            eq(documentChunk.documentId, input.documentId),
+            eq(documentChunk.versionId, chunk.versionId),
+          ));
       }
     }
 
@@ -319,7 +334,12 @@ export async function mutateManagedKnowledgeChunk(input: {
         contentSha256: documentChunk.contentSha256,
       })
       .from(documentChunk)
-      .where(eq(documentChunk.id, chunk.id))
+      .where(and(
+        eq(documentChunk.id, chunk.id),
+        eq(documentChunk.projectId, input.projectId),
+        eq(documentChunk.documentId, input.documentId),
+        eq(documentChunk.versionId, chunk.versionId),
+      ))
       .limit(1);
     return {
       chunk: updated!,
