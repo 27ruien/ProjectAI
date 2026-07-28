@@ -561,6 +561,15 @@ test("Product V2 Staging deploy accepts the reviewed agent branch and owns the d
   );
   assert.match(script, /project-ai-os-staging-timesheet-worker/);
   assert.match(script, /docker port project-ai-os-staging-timesheet-worker/);
+  assert.match(
+    script,
+    /legacy_workflow_container="project-ai-os-staging-workflow-worker"/,
+  );
+  assert.match(script, /com\.docker\.compose\.service/);
+  assert.match(script, /== "projectai-workflow-worker"/);
+  assert.match(script, /docker stop --time 45 "\$legacy_workflow_container"/);
+  assert.match(script, /docker rm "\$legacy_workflow_container"/);
+  assert.match(script, /docker start "\$legacy_workflow_container"/);
   assert.match(script, /minimum_available_bytes=\$\(\(12 \* 1024 \* 1024 \* 1024\)\)/);
   assert.match(script, /docker info --format '\{\{\.DockerRootDir\}\}'/);
   assert.match(script, /df --output=avail -B1 "\$capacity_path"/);

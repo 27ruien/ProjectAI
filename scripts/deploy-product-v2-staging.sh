@@ -251,6 +251,15 @@ previous_app_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-
 previous_worker_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-worker 2>/dev/null || true)"
 previous_embedding_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-embedding-worker 2>/dev/null || true)"
 previous_timesheet_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)"
+legacy_workflow_container="project-ai-os-staging-workflow-worker"
+legacy_workflow_present="false"
+legacy_workflow_was_running="false"
+if sudo docker inspect "$legacy_workflow_container" >/dev/null 2>&1; then
+  [[ "$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$legacy_workflow_container")" == "$compose_project" ]]
+  [[ "$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$legacy_workflow_container")" == "projectai-workflow-worker" ]]
+  legacy_workflow_present="true"
+  legacy_workflow_was_running="$(sudo docker inspect --format '{{.State.Running}}' "$legacy_workflow_container")"
+fi
 backup_path="$remote_dir/backups/projectai-product-v2-${deploy_id}.dump"
 env_backup="$remote_dir/backups/product-v2-auth-env-${deploy_id}.bak"
 ai_env_backup="$remote_dir/backups/product-v2-ai-env-${deploy_id}.bak"
@@ -313,12 +322,18 @@ rollback() {
   else
     "${compose_base[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
   fi
+  if [[ "$legacy_workflow_present" == "true" && "$legacy_workflow_was_running" == "true" ]]; then
+    sudo docker start "$legacy_workflow_container" >/dev/null
+  fi
   sudo rm -f -- "$marker"
   exit "$status"
 }
 
 sudo docker inspect project-ai-os-staging-minio >/dev/null
 trap rollback ERR
+if [[ "$legacy_workflow_present" == "true" && "$legacy_workflow_was_running" == "true" ]]; then
+  sudo docker stop --time 45 "$legacy_workflow_container" >/dev/null
+fi
 
 env_temp="$(sudo mktemp "$remote_dir/.env.auth-staging.product-v2.XXXXXX")"
 sudo awk -F= '
@@ -437,6 +452,9 @@ sudo rm -f /tmp/projectai-product-v2-health
 [[ -z "$(sudo docker port project-ai-os-staging-worker)" ]]
 [[ -z "$(sudo docker port project-ai-os-staging-timesheet-worker)" ]]
 sudo rm -f -- "$marker"
+if [[ "$legacy_workflow_present" == "true" ]]; then
+  sudo docker rm "$legacy_workflow_container" >/dev/null
+fi
 trap - ERR
 printf 'PRODUCT_V2_STAGING_DEPLOYED head=%s backup=%s\n' "$commit_sha" "$(basename "$backup_path")"
 REMOTE_DEPLOY
