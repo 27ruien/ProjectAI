@@ -291,6 +291,19 @@ async function finishStep(run: typeof workflowRun.$inferSelect, executionId: str
   if (updated.length !== 1) throw new WorkflowError(409, "WORKFLOW_EXECUTION_STATE_INVALID", "工作流步骤状态已变化");
 }
 
+async function failArtifactStep(projectId: string, executionId: string, failureCode: string, message: string): Promise<never> {
+  await getDb().update(workflowExecution).set({
+    status: "failed",
+    failureCode,
+    completedAt: new Date(),
+  }).where(and(
+    eq(workflowExecution.id, executionId),
+    eq(workflowExecution.projectId, projectId),
+    eq(workflowExecution.status, "running"),
+  ));
+  throw new WorkflowError(422, failureCode, message);
+}
+
 async function generateArtifact(run: typeof workflowRun.$inferSelect, projectName: string, kind: RequirementArtifactKind, evidence: WorkflowEvidence[], step: number, force = false) {
   const [existing] = await getDb().select().from(workflowArtifact).where(and(eq(workflowArtifact.runId, run.id), eq(workflowArtifact.projectId, run.projectId), eq(workflowArtifact.artifactKind, kind))).limit(1);
   if (existing && !force) return;
@@ -357,8 +370,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
         failureCode = batchFailureCode();
       }
       if (failureCode) {
-        await getDb().update(workflowExecution).set({ status: "failed", failureCode, completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
-        throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过分批结构或引用校验");
+        await failArtifactStep(run.projectId, executionId, failureCode, "AI 产物未通过分批结构或引用校验");
       }
       if (!parsedBatch.success) throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物批次状态无效");
       sections.push(...parsedBatch.data.sections.map((section) => ({
@@ -381,10 +393,24 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
       sections,
       acceptanceCriteria: [...new Set(acceptanceCriteria)].slice(0, 100),
     });
-    if (!aggregate || !parsed.success || !validateCitationLabels(parsed.data, allowedLabels)) {
-      await getDb().update(workflowExecution).set({ status: "failed", failureCode: "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
-      throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 需求文档未通过最终结构或引用校验");
-    }
+    if (!aggregate) return failArtifactStep(
+      run.projectId,
+      executionId,
+      "WORKFLOW_AI_OUTPUT_INVALID",
+      "AI 需求文档未返回可验证结果",
+    );
+    if (!parsed.success) return failArtifactStep(
+      run.projectId,
+      executionId,
+      describeArtifactSchemaFailure(kind, { sections, acceptanceCriteria }),
+      "AI 需求文档未通过最终结构校验",
+    );
+    if (!validateCitationLabels(parsed.data, allowedLabels)) return failArtifactStep(
+      run.projectId,
+      executionId,
+      "WORKFLOW_ARTIFACT_CITATION_SCOPE_INVALID",
+      "AI 需求文档未通过最终引用校验",
+    );
     result = aggregate;
     content = parsed.data as unknown as Record<string, unknown>;
   } else {
@@ -429,8 +455,12 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
       failureCode = validationFailure();
     }
     if (failureCode || !parsed.success) {
-      await getDb().update(workflowExecution).set({ status: "failed", failureCode: failureCode ?? "WORKFLOW_AI_OUTPUT_INVALID", completedAt: new Date() }).where(eq(workflowExecution.id, executionId));
-      throw new WorkflowError(422, "WORKFLOW_AI_OUTPUT_INVALID", "AI 产物未通过结构或引用校验");
+      await failArtifactStep(
+        run.projectId,
+        executionId,
+        failureCode ?? "WORKFLOW_AI_OUTPUT_INVALID",
+        "AI 产物未通过结构或引用校验",
+      );
     }
     content = parsed.data as unknown as Record<string, unknown>;
   }

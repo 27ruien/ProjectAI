@@ -97,3 +97,13 @@ test("Staging gives Qwen and audio capability only to the app and workflow worke
   assert.doesNotMatch(audioService, /`workflow-audio\//);
   assert.doesNotMatch(compose.match(/\n  projectai-document-worker:\n[\s\S]*?\n  projectai-embedding-worker:\n/)?.[0] ?? "", /qwen_api_key|audio_download_signing_key/);
 });
+
+test("workflow failures preserve only controlled validation codes", async () => {
+  const worker = await read("lib/workflows/worker.ts");
+  assert.match(worker, /throw new WorkflowError\(422, failureCode, message\)/u);
+  assert.match(worker, /failArtifactStep\(run\.projectId, executionId, failureCode/u);
+  assert.doesNotMatch(
+    worker,
+    /failureCode, completedAt: new Date\(\) \}\)\.where\(eq\(workflowExecution\.id, executionId\)\);\s*throw new WorkflowError\(422, "WORKFLOW_AI_OUTPUT_INVALID"/u,
+  );
+});
