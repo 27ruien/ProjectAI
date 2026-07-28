@@ -313,13 +313,13 @@ REMOTE_IMAGE_PREP
 log "Transferring the reviewed image archive with bounded resume"
 IMAGE_TRANSFERRED=0
 for ((attempt = 1; attempt <= IMAGE_TRANSFER_RETRIES; attempt += 1)); do
-  if rsync --archive --partial --append-verify --chmod=F600 \
+  if rsync --archive --partial --append --chmod=F600 \
     --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
     "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then
     IMAGE_TRANSFERRED=1
     break
   fi
-  log "Image transfer attempt ${attempt}/${IMAGE_TRANSFER_RETRIES} was interrupted; resuming the verified partial archive"
+  log "Image transfer attempt ${attempt}/${IMAGE_TRANSFER_RETRIES} was interrupted; resuming the same immutable partial archive"
   sleep 2
 done
 [[ "$IMAGE_TRANSFERRED" == "1" ]] || fail "Reviewed image archive transfer exhausted its retry budget"

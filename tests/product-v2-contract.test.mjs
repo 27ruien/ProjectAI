@@ -177,7 +177,8 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.match(deploy, /x-projectai-commit-sha/);
   assert.match(deploy, /IMAGE_TRANSFER_RETRIES=4/);
   assert.match(deploy, /docker save "\$APP_IMAGE_REF" "\$DB_TOOLS_IMAGE_REF" \| gzip -1 > "\$IMAGE_ARCHIVE"/);
-  assert.match(deploy, /rsync --archive --partial --append-verify --chmod=F600/);
+  assert.match(deploy, /rsync --archive --partial --append --chmod=F600/);
+  assert.doesNotMatch(deploy, /--append-verify/);
   assert.match(deploy, /Image transfer attempt \$\{attempt\}\/\$\{IMAGE_TRANSFER_RETRIES\} was interrupted/);
   assert.match(deploy, /sha256sum "\$archive"/);
   assert.match(deploy, /gzip -t "\$archive"/);
