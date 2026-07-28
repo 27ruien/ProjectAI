@@ -170,7 +170,10 @@ async function editTimesheetNote(page: Page, current: string, updated: string) {
   await expect(section.getByText(updated, { exact: true })).toBeVisible();
 }
 
-async function waitForDailyReportCompletion(page: Page) {
+async function waitForDailyReportCompletion(
+  page: Page,
+  input: { organizationId: string; reportDate: string },
+) {
   const completedToast = page
     .getByRole("status")
     .filter({ hasText: "AI 整理完成" });
@@ -197,6 +200,21 @@ async function waitForDailyReportCompletion(page: Page) {
     await expect(failureToast).not.toContainText(
       /[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}/iu,
     );
+    const query = new URLSearchParams({
+      organizationId: input.organizationId,
+      date: input.reportDate,
+    });
+    const jobResponse = await page.request.get(
+      appPath(`/api/timesheets/ai-jobs?${query.toString()}`),
+    );
+    expect(jobResponse.status()).toBe(200);
+    const jobBody = (await jobResponse.json()) as {
+      job: { failureCode: string | null } | null;
+    };
+    test.info().annotations.push({
+      type: "real-ai-retry-failure-code",
+      description: jobBody.job?.failureCode ?? "UNKNOWN",
+    });
     if (retryCount === maximumRetries) {
       throw new Error("DAILY_REPORT_REAL_AI_RETRY_LIMIT_EXCEEDED");
     }
@@ -838,6 +856,7 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     { identity: "super-admin", userId: "kivisense-mock-super-admin" },
   ] as const;
   let selected: (typeof candidates)[number] | null = null;
+  let selectedOrganizationId = "";
   let fixtureStarted = false;
 
   try {
@@ -883,6 +902,7 @@ test("@daily-report-async durable AI job survives navigation, reports completion
         jobBody.job === null
       ) {
         selected = candidate;
+        selectedOrganizationId = target!.organizationId;
         break;
       }
     }
@@ -894,13 +914,13 @@ test("@daily-report-async durable AI job survives navigation, reports completion
       "x-projectai-fixture-run-id": runId,
       "x-projectai-fixture-expires-at": expiresAt,
     });
-    fixtureStarted = true;
     await gotoInteractive(page, appPath("/daily-report"));
     const workLogs = page.getByTestId("work-log-section");
     await expect(workLogs).toContainText("今天还没有随记");
     await expect(page.getByTestId("ai-generate")).toBeDisabled();
 
     await createTimesheetNote(page, note);
+    fixtureStarted = true;
     const startedAt = performance.now();
     const enqueue = page.waitForResponse(
       (candidate) =>
@@ -919,7 +939,10 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     await expect(page.getByRole("heading", { name: "知识库" })).toBeVisible();
     await gotoInteractive(page, appPath("/daily-report"));
     await expect(page.getByTestId("ai-job-status")).toBeVisible();
-    const completedToast = await waitForDailyReportCompletion(page);
+    const completedToast = await waitForDailyReportCompletion(page, {
+      organizationId: selectedOrganizationId,
+      reportDate,
+    });
     successfulElapsedSeconds =
       Math.round((performance.now() - startedAt) / 100) / 10;
     test.info().annotations.push({
@@ -977,7 +1000,10 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     ).toHaveValue(completedDraftDescription);
     await expect(workLogs.getByText(updatedNote, { exact: true })).toBeVisible();
 
-    const retryToast = await waitForDailyReportCompletion(page);
+    const retryToast = await waitForDailyReportCompletion(page, {
+      organizationId: selectedOrganizationId,
+      reportDate,
+    });
     await retryToast.getByRole("button", { name: "查看并确认" }).click();
     await expect(timesheetTaskCards(page)).toHaveCount(1);
     await expect(timesheetTaskCards(page).first()).toContainText(updatedNote);
