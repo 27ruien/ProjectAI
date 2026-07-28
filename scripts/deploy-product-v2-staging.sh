@@ -220,22 +220,30 @@ deploy_id="$3"
 sudo install -m 0600 -o root -g root /dev/null "$marker"
 REMOTE_MARK
 
-rsync --archive --compress --delete \
-  --filter='protect /backups/***' \
-  --filter='protect /.local/***' \
-  --filter='protect /.env.auth-staging' \
-  --filter='protect /.env.ai' \
-  --filter='protect /.env.embedding' \
-  --filter='protect /secrets/***' \
-  --filter='protect /.product-v2-deploy-in-progress' \
-  --filter='protect /.staging-deploy-in-progress' \
-  --filter='protect /.staging-deploy-lock/***' \
-  --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' \
-  --exclude '/.vinext/' --exclude '/.wrangler/' --exclude '/test-results/' \
-  --exclude '/playwright-report/' --exclude '/.local/' --exclude '/.env*' \
-  --exclude '/secrets/' --exclude '*.log' \
-  --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
-  "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
+RELEASE_SYNCED=0
+for attempt in 1 2 3; do
+  if rsync --archive --compress --delete --partial --timeout=120 \
+    --filter='protect /backups/***' \
+    --filter='protect /.local/***' \
+    --filter='protect /.env.auth-staging' \
+    --filter='protect /.env.ai' \
+    --filter='protect /.env.embedding' \
+    --filter='protect /secrets/***' \
+    --filter='protect /.product-v2-deploy-in-progress' \
+    --filter='protect /.staging-deploy-in-progress' \
+    --filter='protect /.staging-deploy-lock/***' \
+    --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' \
+    --exclude '/.vinext/' --exclude '/.wrangler/' --exclude '/test-results/' \
+    --exclude '/playwright-report/' --exclude '/.local/' --exclude '/.env*' \
+    --exclude '/secrets/' --exclude '*.log' \
+    --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
+    "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"; then
+    RELEASE_SYNCED=1
+    break
+  fi
+  log "Release sync attempt ${attempt} failed; retrying the same reviewed release tree"
+done
+[[ "$RELEASE_SYNCED" == "1" ]] || fail "Reviewed Staging release sync failed after 3 attempts"
 
 log "Creating the reviewed image archive"
 docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 >"$IMAGE_ARCHIVE"

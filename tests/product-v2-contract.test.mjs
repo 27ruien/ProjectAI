@@ -167,6 +167,15 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
     deploy.indexOf("REMOTE_BACKUP") < deploy.indexOf("rsync --archive"),
     "verified Staging backup must finish before the release tree is synchronized",
   );
+  assert.match(deploy, /RELEASE_SYNCED=0[\s\S]*for attempt in 1 2 3/);
+  assert.match(
+    deploy,
+    /rsync --archive --compress --delete --partial --timeout=120/,
+  );
+  assert.match(
+    deploy,
+    /Reviewed Staging release sync failed after 3 attempts/,
+  );
   assert.match(
     deploy,
     /docker save "\$APP_IMAGE_REF" "\$DB_TOOLS_IMAGE_REF" \| gzip -1 >"\$IMAGE_ARCHIVE"/,
