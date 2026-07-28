@@ -192,7 +192,7 @@ async function waitForDailyReportCompletion(page: Page) {
 
     await expect(failureToast).toContainText("失败阶段");
     await expect(failureToast).toContainText(
-      /脱敏请求编号：[a-f0-9]{8}…[a-f0-9]{4}/iu,
+      /(?:脱敏请求编号|脱敏 requestId)：[a-f0-9]{8}…[a-f0-9]{4}/iu,
     );
     await expect(failureToast).not.toContainText(
       /[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}/iu,
