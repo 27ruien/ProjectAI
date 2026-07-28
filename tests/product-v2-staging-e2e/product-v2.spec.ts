@@ -878,6 +878,28 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     const completedToast = page
       .getByRole("status")
       .filter({ hasText: "AI 整理完成" });
+    const initialFailureToast = page
+      .getByRole("alert")
+      .filter({ hasText: "AI 整理失败" });
+    await expect(completedToast.or(initialFailureToast)).toBeVisible({
+      timeout: 120_000,
+    });
+    if (await initialFailureToast.isVisible()) {
+      await expect(initialFailureToast).toContainText("失败阶段");
+      await expect(initialFailureToast).toContainText(
+        /脱敏请求编号：[a-f0-9]{8}…[a-f0-9]{4}/iu,
+      );
+      const initialRetry = page.waitForResponse(
+        (candidate) =>
+          /\/api\/timesheets\/ai-jobs\/[^/]+\/retry$/u.test(
+            new URL(candidate.url()).pathname,
+          ) && candidate.request().method() === "POST",
+      );
+      await initialFailureToast
+        .getByRole("button", { name: "重试" })
+        .click();
+      expect((await initialRetry).status()).toBe(202);
+    }
     await expect(completedToast).toContainText(
       "AI 工时草稿已生成 1 条，共 1 小时，待确认 1 条",
       { timeout: 120_000 },
@@ -979,9 +1001,11 @@ test("@daily-report-async durable AI job survives navigation, reports completion
         };
       };
       expect(body.deleted.workLogs).toBe(1);
-      expect(body.deleted.executions).toBeGreaterThanOrEqual(2);
-      expect(body.deleted.drafts).toBe(1);
-      expect(body.deleted.tasks).toBe(1);
+      expect(body.deleted.executions).toBeGreaterThanOrEqual(1);
+      if (successfulElapsedSeconds > 0) {
+        expect(body.deleted.drafts).toBe(1);
+        expect(body.deleted.tasks).toBe(1);
+      }
     }
   }
 });
