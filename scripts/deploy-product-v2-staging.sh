@@ -26,7 +26,7 @@ log() { printf '[projectai-product-v2-staging] %s\n' "$*"; }
 fail() { printf '[projectai-product-v2-staging] ERROR: %s\n' "$*" >&2; exit 1; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"; }
 
-for command_name in git ssh rsync docker gzip shasum tar mktemp curl node; do
+for command_name in git ssh rsync docker gzip shasum chmod tar mktemp curl node; do
   require_command "$command_name"
 done
 
@@ -280,6 +280,7 @@ rsync --archive --compress --delete \
 log "Creating the reviewed image archive"
 IMAGE_ARCHIVE="${RELEASE_ROOT}/projectai-images-${COMMIT_SHA}.tar.gz"
 docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 > "$IMAGE_ARCHIVE"
+chmod 600 "$IMAGE_ARCHIVE"
 IMAGE_ARCHIVE_DIGEST="$(shasum -a 256 "$IMAGE_ARCHIVE" | awk '{print $1}')"
 IMAGE_ARCHIVE_BYTES="$(wc -c < "$IMAGE_ARCHIVE" | tr -d '[:space:]')"
 [[ "$IMAGE_ARCHIVE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
@@ -313,7 +314,7 @@ REMOTE_IMAGE_PREP
 log "Transferring the reviewed image archive with bounded resume"
 IMAGE_TRANSFERRED=0
 for ((attempt = 1; attempt <= IMAGE_TRANSFER_RETRIES; attempt += 1)); do
-  if rsync --archive --partial --append --chmod=F600 \
+  if rsync --archive --partial --append \
     --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
     "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then
     IMAGE_TRANSFERRED=1
