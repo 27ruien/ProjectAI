@@ -16,7 +16,7 @@ import { MOCK_WECOM_IDENTITIES } from "../../lib/auth/providers";
 
 const ORGANIZATION_ID = "org-legacy-default";
 const MEMBER_DEPARTMENT_ID = "kivisense-dept-product-management";
-const MEMBER_PROJECT_ID = "kivisense-project-product-management-uat";
+const MEMBER_PROJECT_ID = "kivisense-project-projectai-product";
 
 function assertEnvironment(): void {
   const environment = (process.env.NEXT_PUBLIC_APP_ENV || process.env.NODE_ENV || "")
@@ -163,9 +163,9 @@ async function main(): Promise<void> {
       id: MEMBER_PROJECT_ID,
       organizationId: ORGANIZATION_ID,
       departmentId: MEMBER_DEPARTMENT_ID,
-      name: "Product Management UAT",
+      name: "ProjectAI 产品重构",
       clientName: "Kivisense Internal",
-      description: "ProjectAI Product V2 非生产虚构项目空间。",
+      description: "Kivisense 内部 ProjectAI 产品重构与验收空间。",
       status: "active",
       createdBy: memberId,
     }).onConflictDoNothing({ target: project.id });
@@ -200,13 +200,13 @@ async function main(): Promise<void> {
       .update(knowledgeSpace)
       .set({
         departmentId: MEMBER_DEPARTMENT_ID,
-        name: "Product Management UAT",
-        description: "ProjectAI Product V2 非生产虚构项目知识空间。",
+        name: "ProjectAI 产品重构",
+        description: "Kivisense 内部 ProjectAI 项目知识空间。",
         updatedAt: new Date(),
       })
       .where(eq(knowledgeSpace.id, memberProjectSpace.id));
     await tx.insert(knowledgeSpaceMember).values({
-      id: "kivisense-space-member-product-management-uat",
+      id: "kivisense-space-member-projectai-product",
       knowledgeSpaceId: memberProjectSpace.id,
       userId: memberId,
       role: "manager",

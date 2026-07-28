@@ -872,7 +872,7 @@ if [[ -n "$previous_image" ]]; then
     --project-name "$compose_project"
     --file "$compose_file"
   )
-  "${rollback_compose[@]}" stop --timeout 45 projectai-embedding-worker projectai-document-worker >/dev/null 2>&1 || true
+  "${rollback_compose[@]}" stop --timeout 45 projectai-timesheet-worker projectai-embedding-worker projectai-document-worker >/dev/null 2>&1 || true
   "${rollback_compose[@]}" up --detach --no-deps --no-build --pull never projectai-staging
 
   restored=0
@@ -936,9 +936,10 @@ if [[ -n "$previous_image" ]]; then
   else
     "${rollback_compose[@]}" rm --stop --force projectai-embedding-worker >/dev/null 2>&1 || true
   fi
+  "${rollback_compose[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
 else
   printf 'No previous Staging image exists; stopping the failed application and Worker while preserving PostgreSQL.\n' >&2
-  "${compose[@]}" stop projectai-embedding-worker projectai-document-worker projectai-staging
+  "${compose[@]}" stop projectai-timesheet-worker projectai-embedding-worker projectai-document-worker projectai-staging
   failed_app_running="$(sudo docker inspect --format '{{.State.Running}}' "$container_name" 2>/dev/null || printf 'false')"
   [[ "$failed_app_running" != "true" ]]
   failed_worker_running="$(sudo docker inspect --format '{{.State.Running}}' "$worker_container_name" 2>/dev/null || printf 'false')"
@@ -1138,6 +1139,7 @@ minio_image_ref="${23}"
 minio_client_image_ref="${24}"
 embedding_env_file="${25}"
 embedding_worker_container_name="${26}"
+timesheet_worker_container_name="project-ai-os-staging-timesheet-worker"
 postgres_image_ref="${27}"
 origin='http://127.0.0.1:3101'
 
@@ -1149,6 +1151,7 @@ cd "$remote_dir"
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$worker_container_name" == "project-ai-os-staging-worker" ]]
 [[ "$embedding_worker_container_name" == "project-ai-os-staging-embedding-worker" ]]
+[[ "$timesheet_worker_container_name" == "project-ai-os-staging-timesheet-worker" ]]
 [[ "$minio_container_name" == "project-ai-os-staging-minio" ]]
 [[ "$minio_volume_name" == "projectai-staging-minio" ]]
 [[ "$minio_bucket_name" == "projectai-staging-files" ]]
@@ -1197,6 +1200,7 @@ compose=(
   "STAGING_APP_IMAGE=$app_image_ref"
   "STAGING_WORKER_IMAGE=$app_image_ref"
   "STAGING_EMBEDDING_WORKER_IMAGE=$app_image_ref"
+  "STAGING_TIMESHEET_WORKER_IMAGE=$app_image_ref"
   "STAGING_DB_TOOLS_IMAGE=$db_tools_image_ref"
   "STAGING_POSTGRES_IMAGE=$postgres_image_ref"
   "STAGING_MINIO_IMAGE=$minio_image_ref"
@@ -1344,7 +1348,7 @@ done
 # Quiesce both writers before taking the PostgreSQL and object snapshots so
 # the two independently transactional stores share one boundary.
 writers_running=0
-for writer_container in "$container_name" "$worker_container_name" "$embedding_worker_container_name"; do
+for writer_container in "$container_name" "$worker_container_name" "$embedding_worker_container_name" "$timesheet_worker_container_name"; do
   if sudo docker inspect "$writer_container" >/dev/null 2>&1 \
     && [[ "$(sudo docker inspect --format '{{.State.Running}}' "$writer_container")" == "true" ]]; then
     writers_running=1
@@ -1352,7 +1356,7 @@ for writer_container in "$container_name" "$worker_container_name" "$embedding_w
 done
 if [[ "$writers_running" == "1" ]]; then
   printf 'Stopping the Staging application and both Workers briefly for a cross-store snapshot.\n'
-  "${compose[@]}" stop --timeout 45 projectai-embedding-worker projectai-document-worker projectai-staging
+  "${compose[@]}" stop --timeout 45 projectai-timesheet-worker projectai-embedding-worker projectai-document-worker projectai-staging
 fi
 
 backup_timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
@@ -1907,7 +1911,28 @@ done
 }
 grep -q ' disabled$' < <(sudo docker exec "$embedding_worker_container_name" sh -ec 'cat /tmp/projectai-embedding-worker-heartbeat')
 
-printf 'Starting the Staging application after both Workers are healthy.\n'
+printf 'Starting the persistent Staging timesheet AI Worker.\n'
+"${compose[@]}" up --detach --no-build --pull never projectai-timesheet-worker
+timesheet_worker_ready=0
+timesheet_worker_health="starting"
+for _ in $(seq 1 60); do
+  timesheet_worker_health="$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$timesheet_worker_container_name")"
+  if [[ "$timesheet_worker_health" == "unhealthy" || "$timesheet_worker_health" == "exited" || "$timesheet_worker_health" == "dead" ]]; then
+    printf 'Staging timesheet AI Worker entered terminal state: %s\n' "$timesheet_worker_health" >&2
+    exit 1
+  fi
+  if [[ "$timesheet_worker_health" == "healthy" ]]; then
+    timesheet_worker_ready=1
+    break
+  fi
+  sleep 2
+done
+[[ "$timesheet_worker_ready" == "1" ]] || {
+  printf 'Staging timesheet AI Worker readiness timed out; final health: %s\n' "$timesheet_worker_health" >&2
+  exit 1
+}
+
+printf 'Starting the Staging application after all Workers are healthy.\n'
 "${compose[@]}" up --detach --no-build --pull never projectai-staging
 
 ready=0
@@ -1958,15 +1983,29 @@ grep -qi '^x-projectai-chunker-version: 1$' <<<"$health_headers"
 [[ "$(sudo docker inspect --format '{{.Image}}' "$container_name")" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' "$worker_container_name")" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' "$embedding_worker_container_name")" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' "$timesheet_worker_container_name")" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/secrets/qwen_api_key"}}{{.RW}}|{{.Destination}}{{end}}{{end}}' "$container_name")" == "false|/run/secrets/qwen_api_key" ]]
 [[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/secrets/qwen_api_key"}}{{.Destination}}{{end}}{{end}}' "$worker_container_name")" ]]
 [[ -z "$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$worker_container_name" | grep -E '^(QWEN_|AI_PROVIDER=|AI_ASSISTANT_ENABLED=)' || true)" ]]
 [[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/secrets/qwen_api_key"}}{{.RW}}|{{.Destination}}{{end}}{{end}}' "$embedding_worker_container_name")" == "false|/run/secrets/qwen_api_key" ]]
 [[ -z "$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$embedding_worker_container_name" | grep -E '^(OBJECT_STORAGE_|MINIO_ROOT_)' || true)" ]]
+[[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/run/secrets/qwen_api_key"}}{{.RW}}|{{.Destination}}{{end}}{{end}}' "$timesheet_worker_container_name")" == "false|/run/secrets/qwen_api_key" ]]
+sudo docker exec "$timesheet_worker_container_name" sh -ec '
+  for key in \
+    OBJECT_STORAGE_ENDPOINT OBJECT_STORAGE_REGION OBJECT_STORAGE_BUCKET \
+    OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY \
+    OBJECT_STORAGE_FORCE_PATH_STYLE OBJECT_STORAGE_USE_SSL \
+    MINIO_ROOT_USER MINIO_ROOT_PASSWORD
+  do
+    if printenv "$key" >/dev/null 2>&1; then exit 1; fi
+  done
+'
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$worker_container_name")" == "healthy" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$embedding_worker_container_name")" == "healthy" ]]
+[[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$timesheet_worker_container_name")" == "healthy" ]]
 [[ -z "$(sudo docker port "$worker_container_name")" ]]
 [[ -z "$(sudo docker port "$embedding_worker_container_name")" ]]
+[[ -z "$(sudo docker port "$timesheet_worker_container_name")" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$db_container_name")" == "healthy" ]]
 [[ "$(sudo docker inspect --format '{{.State.Health.Status}}' "$minio_container_name")" == "healthy" ]]
 [[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Type}}|{{.Name}}|{{.Destination}}{{end}}{{end}}' "$minio_container_name")" == "volume|${minio_volume_name}|/data" ]]

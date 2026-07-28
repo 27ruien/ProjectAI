@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CheckCircle2,
   FolderKey,
@@ -29,7 +29,13 @@ type Space = {
   type: "organization" | "department" | "project" | "restricted";
   visibility: string;
 };
-type Department = { id: string; organizationId: string; name: string };
+type Department = {
+  id: string;
+  organizationId: string;
+  name: string;
+  status: "active" | "inactive";
+  isActive: boolean;
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(withBasePath(path), {
@@ -51,6 +57,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 export function ProjectKnowledgeSourcesPanel({
   project,
 }: {
@@ -65,35 +75,56 @@ export function ProjectKnowledgeSourcesPanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const loadRequest = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    loadRequest.current?.abort();
+    const controller = new AbortController();
+    loadRequest.current = controller;
     setLoading(true);
     setError(null);
     try {
       const [sourceResponse, spaceResponse, administrationResponse] = await Promise.all([
         request<{ sources: Source[] }>(
           `/api/projects/${encodeURIComponent(project.id)}/knowledge-sources`,
+          { signal: controller.signal },
         ),
-        request<{ knowledgeSpaces: Space[] }>("/api/knowledge-spaces"),
-        request<{ departments: Department[] }>("/api/organizations"),
+        request<{ knowledgeSpaces: Space[] }>("/api/knowledge-spaces", {
+          signal: controller.signal,
+        }),
+        request<{ departments: Department[] }>(
+          "/api/organizations?activeOnly=true",
+          { signal: controller.signal },
+        ),
       ]);
+      if (controller.signal.aborted) return;
       setSources(sourceResponse.sources);
       setSpaces(spaceResponse.knowledgeSpaces);
       setDepartments(
         administrationResponse.departments.filter(
-          (item) => item.organizationId === project.organizationId,
+          (item) =>
+            item.organizationId === project.organizationId &&
+            item.status === "active" &&
+            item.isActive,
         ),
       );
     } catch (caught) {
+      if (isAbortError(caught)) return;
       setError(caught instanceof Error ? caught.message : "加载失败");
     } finally {
-      setLoading(false);
+      if (loadRequest.current === controller) {
+        loadRequest.current = null;
+        setLoading(false);
+      }
     }
   }, [project.id, project.organizationId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      loadRequest.current?.abort();
+    };
   }, [load]);
   const mounted = useMemo(
     () => new Set(sources.map((item) => item.source.knowledgeSpaceId)),

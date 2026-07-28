@@ -12,9 +12,16 @@ type Space = {
   accessLevel: "view" | "edit";
 };
 
-const origin = "https://gridworks.cn";
+const origin = new URL(
+  process.env.PLAYWRIGHT_BASE_URL ??
+    "https://gridworks.cn/tool/projectai-staging",
+).origin;
 const evidenceDir = path.resolve("test-results/product-v2-staging/evidence");
-const memberProjectId = "kivisense-project-product-management-uat";
+const memberProjectId = "kivisense-project-projectai-product";
+const fixtureRunId = `uat-product-v2-${crypto.randomUUID()}`;
+const fixtureExpiresAt = new Date(
+  Date.now() + 6 * 60 * 60 * 1_000,
+).toISOString();
 
 async function login(page: Page, identity: Identity) {
   const response = await page.request.post(appPath("/api/auth/sign-in/mock-wecom"), {
@@ -25,6 +32,43 @@ async function login(page: Page, identity: Identity) {
   const body = await response.json() as Record<string, unknown>;
   expect(body).toEqual({ authenticated: true });
 }
+
+const syntheticProjectName =
+  /^(?:Member Creator UAT [a-f0-9]{8}(?: 已更新)?|Product V2 ACL UAT [a-f0-9]{8}|需求结果空间 [a-f0-9]{8})$/iu;
+
+test.afterEach(async ({ page }) => {
+  await switchIdentity(page, "super-admin");
+  const response = await page.request.get(appPath("/api/projects"));
+  expect(response.status(), "fixture cleanup project list").toBe(200);
+  const body = (await response.json()) as {
+    projects: Array<{ id: string; name: string }>;
+  };
+  for (const project of body.projects.filter((item) =>
+    syntheticProjectName.test(item.name),
+  )) {
+    const fixtureHeaders = {
+      origin,
+      "x-projectai-fixture-run-id": fixtureRunId,
+      "x-projectai-fixture-expires-at": fixtureExpiresAt,
+    };
+    const registered = await page.request.post(
+      appPath("/api/test-fixtures/projects"),
+      {
+        data: { projectId: project.id },
+        headers: fixtureHeaders,
+      },
+    );
+    expect(registered.status(), `register fixture ${project.id}`).toBe(200);
+    const deleted = await page.request.delete(
+      appPath("/api/test-fixtures/projects"),
+      {
+        data: { projectId: project.id },
+        headers: fixtureHeaders,
+      },
+    );
+    expect(deleted.status(), `delete fixture ${project.id}`).toBe(200);
+  }
+});
 
 async function switchIdentity(page: Page, identity: Identity) {
   await page.context().clearCookies();
@@ -187,6 +231,10 @@ test("@organization four-level hierarchy is created, edited, moved, and rejected
   await gotoInteractive(page, appPath("/organization"));
   await expect(page.getByRole("heading", { name: "组织架构" })).toBeVisible();
   const marker = crypto.randomUUID().slice(0, 8).toUpperCase();
+  await page.setExtraHTTPHeaders({
+    "x-projectai-fixture-run-id": fixtureRunId,
+    "x-projectai-fixture-expires-at": fixtureExpiresAt,
+  });
   const names = [1, 2, 3, 4].map((level) => `UAT 层级 ${marker}-${level}`);
   const createdIds: string[] = [];
   try {
@@ -239,6 +287,21 @@ test("@organization four-level hierarchy is created, edited, moved, and rejected
     for (const departmentId of [...createdIds].reverse()) {
       const response = await mutation(page, "/api/organization/departments", "patch", { departmentId, status: "inactive" });
       expect(response.status(), `cleanup department ${departmentId}`).toBe(200);
+      const deleted = await page.request.delete(
+        appPath("/api/organization/departments"),
+        {
+          data: { departmentId },
+          headers: {
+            origin,
+            "x-projectai-fixture-run-id": fixtureRunId,
+            "x-projectai-fixture-expires-at": fixtureExpiresAt,
+          },
+        },
+      );
+      expect(
+        deleted.status(),
+        `delete department fixture ${departmentId}`,
+      ).toBe(200);
     }
   }
   assertNoErrors();
@@ -302,7 +365,9 @@ test("@knowledge @knowledge-permissions Member creator keeps edit rights after r
     mimeType: "text/plain",
     buffer: Buffer.from(`虚构创建者权限验收文件 ${marker}，不包含客户信息。`),
   });
-  await expect(page.getByRole("status")).toContainText("文件已安全上传");
+  await expect(
+    page.getByRole("status").filter({ hasText: "文件已安全上传" }),
+  ).toBeVisible();
   await expect(page.getByText(displayName, { exact: true })).toBeVisible();
   await capture(page, "03-member-creator-refresh-edit-upload.png");
 
@@ -344,7 +409,9 @@ test("@knowledge @knowledge-permissions project creation, sharing, upload, previ
     mimeType: "text/plain",
     buffer: Buffer.from(`虚构权限验收文件 ${marker}，不包含客户信息。`),
   });
-  await expect(page.getByRole("status")).toContainText("文件已安全上传");
+  await expect(
+    page.getByRole("status").filter({ hasText: "文件已安全上传" }),
+  ).toBeVisible();
   await expect(page.getByText(displayName, { exact: true })).toBeVisible();
   await page.getByText(displayName, { exact: true }).click();
   const preview = page.getByRole("dialog", { name: new RegExp(`文件详情 · ${displayName}`) });
@@ -380,6 +447,87 @@ test("@knowledge @knowledge-permissions project creation, sharing, upload, previ
 
   await switchIdentity(page, "admin");
   expect((await mutation(page, `/api/projects/${target!.projectId}/documents/${uploaded!.id}/archive`, "post", {})).status()).toBe(200);
+  assertNoErrors();
+});
+
+test("@knowledge-race rapid project switching aborts the old file request without replacing the active project", async ({ page }) => {
+  const assertNoErrors = observe(page);
+  await login(page, "admin");
+  await gotoInteractive(page, appPath("/knowledge"));
+  const markerA = crypto.randomUUID().slice(0, 8);
+  const markerB = crypto.randomUUID().slice(0, 8);
+  const projectAName = `Product V2 ACL UAT ${markerA}`;
+  const projectBName = `Product V2 ACL UAT ${markerB}`;
+  const documentName = `切换竞态-${markerB}`;
+  await createProjectThroughUi(page, {
+    name: projectAName,
+    departmentName: "Product Management",
+  });
+  await createProjectThroughUi(page, {
+    name: projectBName,
+    departmentName: "Product Management",
+  });
+  const availableSpaces = await spaces(page);
+  const projectA = availableSpaces.find(
+    (space) => space.name === projectAName && space.projectId,
+  );
+  const projectB = availableSpaces.find(
+    (space) => space.name === projectBName && space.projectId,
+  );
+  expect(projectA).toBeTruthy();
+  expect(projectB).toBeTruthy();
+
+  await chooseSpace(page, projectBName);
+  await page.locator('input[type="file"]').setInputFiles({
+    name: `${documentName}.txt`,
+    mimeType: "text/plain",
+    buffer: Buffer.from(`虚构快速切换验收 ${markerB}，不包含客户信息。`),
+  });
+  await expect(
+    page.getByRole("status").filter({ hasText: "文件已安全上传" }),
+  ).toBeVisible();
+  await expect(page.getByText(documentName, { exact: true })).toBeVisible();
+
+  let releaseOldRequest!: () => void;
+  let oldRequestReached!: () => void;
+  const release = new Promise<void>((resolve) => {
+    releaseOldRequest = resolve;
+  });
+  const reached = new Promise<void>((resolve) => {
+    oldRequestReached = resolve;
+  });
+  const oldProjectDocuments = new RegExp(
+    `/api/projects/${projectA!.projectId}/documents\\?status=active$`,
+    "u",
+  );
+  await page.route(oldProjectDocuments, async (route) => {
+    oldRequestReached();
+    await release;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ documents: [] }),
+    });
+  });
+
+  await page.getByRole("button", { name: new RegExp(projectAName) }).click();
+  await reached;
+  await page.getByRole("button", { name: new RegExp(projectBName) }).click();
+  await expect(
+    page.getByRole("heading", { name: projectBName, exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(documentName, { exact: true })).toBeVisible();
+  releaseOldRequest();
+  await page.waitForTimeout(250);
+  await expect(
+    page.getByRole("heading", { name: projectBName, exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(documentName, { exact: true })).toBeVisible();
+  await expect(page.getByText("文件列表加载失败")).toHaveCount(0);
+  await expect(
+    page.getByRole("alert").filter({ hasText: /AbortError/iu }),
+  ).toHaveCount(0);
+  await page.unroute(oldProjectDocuments);
   assertNoErrors();
 });
 
@@ -497,11 +645,11 @@ test("@daily-report @global-search retained daily report and keyboard search rem
 
   await page.keyboard.press("ControlOrMeta+K");
   search = page.getByPlaceholder("搜索已授权知识空间");
-  await search.fill("Product Management UAT");
-  await expect(page.getByRole("dialog", { name: "全局搜索" })).toContainText("Product Management UAT");
+  await search.fill("ProjectAI 产品重构");
+  await expect(page.getByRole("dialog", { name: "全局搜索" })).toContainText("ProjectAI 产品重构");
   await search.press("Enter");
   await expect(page).toHaveURL(new RegExp(`/knowledge\\?projectId=${memberProjectId}$`, "u"));
-  await expect(page.getByText("Product Management UAT", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("ProjectAI 产品重构", { exact: true }).first()).toBeVisible();
   await capture(page, "07-global-search-result.png");
   assertNoErrors();
 });

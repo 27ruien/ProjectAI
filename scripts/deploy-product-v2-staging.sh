@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/projectai-product-architecture-v2"
+readonly DEFAULT_EXPECTED_BRANCH="agent/projectai-product-architecture-v2"
+readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
 readonly REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 readonly REMOTE_DIR="/srv/projectai-staging"
 readonly COMPOSE_PROJECT="projectai-staging"
@@ -29,6 +30,7 @@ done
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "Run from a Git checkout"
 cd "$ROOT_DIR"
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "Expected branch ${EXPECTED_BRANCH}"
+[[ "$EXPECTED_BRANCH" == agent/* ]] || fail "PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch"
 [[ -z "$(git status --porcelain --untracked-files=all | grep -Ev '^\?\? pocket-charista(/|\.zip$)' || true)" ]] \
   || fail "Refusing to deploy tracked or ProjectAI untracked changes"
 git diff --check --cached
@@ -112,6 +114,17 @@ command -v curl >/dev/null
 command -v rsync >/dev/null
 sudo docker compose version >/dev/null
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+minimum_available_bytes=$((12 * 1024 * 1024 * 1024))
+docker_root="$(sudo docker info --format '{{.DockerRootDir}}')"
+[[ "$docker_root" == /* ]]
+for capacity_path in "$docker_root" /srv/projectai-staging; do
+  available_bytes="$(df --output=avail -B1 "$capacity_path" | awk 'NR == 2 { print $1 }')"
+  [[ "$available_bytes" =~ ^[0-9]+$ ]]
+  if (( available_bytes < minimum_available_bytes )); then
+    printf 'Staging deployment requires at least 12 GiB free before backup, image transfer, or migration.\n' >&2
+    exit 1
+  fi
+done
 for protected in "$env_file" "$ai_env_file" "$embedding_env_file" "$qwen_secret_file"; do
   sudo test -f "$protected"
   sudo test ! -L "$protected"
@@ -237,6 +250,7 @@ cd "$remote_dir"
 previous_app_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging 2>/dev/null || true)"
 previous_worker_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-worker 2>/dev/null || true)"
 previous_embedding_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-embedding-worker 2>/dev/null || true)"
+previous_timesheet_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)"
 backup_path="$remote_dir/backups/projectai-product-v2-${deploy_id}.dump"
 env_backup="$remote_dir/backups/product-v2-auth-env-${deploy_id}.bak"
 ai_env_backup="$remote_dir/backups/product-v2-ai-env-${deploy_id}.bak"
@@ -252,6 +266,7 @@ compose_base=(
   sudo env "NEXT_PUBLIC_COMMIT_SHA=$commit_sha" "NEXT_PUBLIC_APP_VERSION=$app_version"
   "NEXT_PUBLIC_BUILD_TIME=$build_time" "STAGING_APP_IMAGE=$app_image_ref"
   "STAGING_WORKER_IMAGE=$app_image_ref" "STAGING_EMBEDDING_WORKER_IMAGE=$app_image_ref"
+  "STAGING_TIMESHEET_WORKER_IMAGE=$app_image_ref"
   "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref"
   "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref"
   docker compose --env-file "$env_file" --env-file "$embedding_env_file"
@@ -261,21 +276,42 @@ compose_base=(
 rollback() {
   local status=$?
   trap - ERR
-  set +e
+  set -Eeuo pipefail
   printf 'Product V2 deployment failed; restoring the verified Staging database, environment, and prior images.\n' >&2
-  "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker >/dev/null 2>&1
-  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec 'pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+  "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker projectai-timesheet-worker >/dev/null 2>&1
+  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec '
+    case "$POSTGRES_DB" in
+      ""|postgres|template0|template1|*[!A-Za-z0-9_]*)
+        printf "Refusing to rebuild an invalid Staging database target.\n" >&2
+        exit 1
+        ;;
+    esac
+    dropdb --if-exists --force --maintenance-db=postgres -U "$POSTGRES_USER" "$POSTGRES_DB"
+    createdb --maintenance-db=postgres -U "$POSTGRES_USER" --owner="$POSTGRES_USER" "$POSTGRES_DB"
+    pg_restore --exit-on-error --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+  '
   sudo install -m 0600 -o root -g root "$env_backup" "$env_file"
   sudo install -m 0600 -o deploy -g deploy "$ai_env_backup" "$ai_env_file"
   sudo install -m 0600 -o root -g root "$embedding_env_backup" "$embedding_env_file"
-  if [[ -n "$previous_app_ref" && -n "$previous_worker_ref" ]]; then
-    sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
-      "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
+  [[ -n "$previous_app_ref" && -n "$previous_worker_ref" ]]
+  sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
+    "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
+    "STAGING_TIMESHEET_WORKER_IMAGE=${previous_timesheet_ref:-$previous_app_ref}" \
+    "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
+    "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
+    docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
+    --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
+    projectai-document-worker projectai-embedding-worker projectai-staging >/dev/null
+  if [[ -n "$previous_timesheet_ref" ]]; then
+    sudo env "STAGING_APP_IMAGE=$previous_app_ref" \
+      "STAGING_TIMESHEET_WORKER_IMAGE=$previous_timesheet_ref" \
       "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
       "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
       docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
       --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
-      projectai-document-worker projectai-embedding-worker projectai-staging >/dev/null
+      projectai-timesheet-worker >/dev/null
+  else
+    "${compose_base[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
   fi
   sudo rm -f -- "$marker"
   exit "$status"
@@ -332,7 +368,7 @@ sudo rm -f -- "$embedding_temp"
 
 "${compose_base[@]}" run --rm --no-deps --pull never --interactive=false --no-TTY projectai-migrate npm run db:migrate
 "${compose_base[@]}" run --rm --no-deps --pull never --interactive=false --no-TTY projectai-migrate npm run db:seed:product-v2
-"${compose_base[@]}" up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-staging
+"${compose_base[@]}" up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-staging
 
 ready=0
 for _ in $(seq 1 90); do
@@ -353,7 +389,8 @@ sudo awk -F= '
 ' "$ai_env_file" | sudo tee "$ai_temp" >/dev/null
 sudo install -m 0600 -o deploy -g deploy "$ai_temp" "$ai_env_file"
 sudo rm -f -- "$ai_temp"
-"${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+"${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never \
+  projectai-timesheet-worker projectai-staging
 
 enabled=0
 for _ in $(seq 1 90); do
@@ -361,7 +398,11 @@ for _ in $(seq 1 90); do
   if grep -qi "^x-projectai-commit-sha: ${commit_sha}$" <<<"$headers" \
     && grep -q '"status":"ok"' /tmp/projectai-product-v2-health \
     && grep -q '"aiAssistantEnabled":true' /tmp/projectai-product-v2-health \
-    && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health; then enabled=1; break; fi
+    && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health \
+    && [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)" == "healthy" ]]; then
+    enabled=1
+    break
+  fi
   sleep 2
 done
 sudo rm -f /tmp/projectai-product-v2-health
@@ -391,7 +432,10 @@ sudo rm -f /tmp/projectai-product-v2-health
 
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging)" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-worker)" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-timesheet-worker)" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker)" == "healthy" ]]
 [[ -z "$(sudo docker port project-ai-os-staging-worker)" ]]
+[[ -z "$(sudo docker port project-ai-os-staging-timesheet-worker)" ]]
 sudo rm -f -- "$marker"
 trap - ERR
 printf 'PRODUCT_V2_STAGING_DEPLOYED head=%s backup=%s\n' "$commit_sha" "$(basename "$backup_path")"

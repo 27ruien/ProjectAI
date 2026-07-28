@@ -30,6 +30,16 @@ const documentWorker = process.env.START_DOCUMENT_WORKER === "false"
         stdio: "inherit",
       },
     );
+const timesheetWorker = process.env.START_TIMESHEET_AI_WORKER === "false"
+  ? null
+  : spawn(
+      process.execPath,
+      ["--import", "tsx", "scripts/timesheet-ai-worker.ts"],
+      {
+        env: process.env,
+        stdio: "inherit",
+      },
+    );
 
 const proxy = http.createServer((request, response) => {
   const incomingUrl = new URL(request.url || "/", `http://${request.headers.host || host}`);
@@ -66,6 +76,7 @@ function stop(exitCode = 0) {
   stopping = true;
   if (!child.killed) child.kill("SIGTERM");
   if (documentWorker && !documentWorker.killed) documentWorker.kill("SIGTERM");
+  if (timesheetWorker && !timesheetWorker.killed) timesheetWorker.kill("SIGTERM");
   proxy.close(() => process.exit(exitCode));
   proxy.closeAllConnections();
   setTimeout(() => process.exit(exitCode), 2_000).unref();
@@ -83,6 +94,14 @@ documentWorker?.once("exit", (code, signal) => {
   if (stopping) return;
   process.stderr.write(
     `Document E2E worker exited unexpectedly (${signal || code || "unknown"}).\n`,
+  );
+  stop(code || 1);
+});
+
+timesheetWorker?.once("exit", (code, signal) => {
+  if (stopping) return;
+  process.stderr.write(
+    `Timesheet AI E2E worker exited unexpectedly (${signal || code || "unknown"}).\n`,
   );
   stop(code || 1);
 });

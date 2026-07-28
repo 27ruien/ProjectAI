@@ -1,4 +1,13 @@
-import { and, asc, count, eq, inArray, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  eq,
+  inArray,
+  notExists,
+  or,
+  sql,
+} from "drizzle-orm";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 import { requireProjectRole } from "@/lib/auth/authorization";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
@@ -17,6 +26,7 @@ import {
   projectDocument,
   projectKnowledgeSource,
   projectMember,
+  testFixture,
   user,
   type DepartmentRole,
   type GrantEffect,
@@ -29,6 +39,7 @@ import {
 import { KnowledgeManagementError } from "./errors";
 import { findAuthorizedDocument } from "./authorization";
 import { listAuthorizedDocumentScope } from "./authorization";
+import { includeTestFixturesInProductQueries } from "@/lib/test-fixtures/service";
 
 type AuditInput = {
   principal: AuthenticatedPrincipal;
@@ -497,8 +508,64 @@ async function requireDepartmentAdmin(
 
 export async function listKnowledgeAdministration(
   principal: AuthenticatedPrincipal,
+  options: { activeOnly?: boolean } = {},
 ) {
   const db = getDb();
+  const activeOnly = options.activeOnly === true;
+  const includeFixtures = includeTestFixturesInProductQueries();
+  const departmentIsVisible = activeOnly
+    ? and(
+        eq(department.status, "active"),
+        eq(department.isActive, true),
+        includeFixtures
+          ? sql`true`
+          : notExists(
+              db
+                .select({ id: testFixture.id })
+                .from(testFixture)
+                .where(
+                  and(
+                    eq(testFixture.entityType, "department"),
+                    eq(testFixture.entityId, department.id),
+                    eq(testFixture.isTestFixture, true),
+                  ),
+                ),
+            ),
+      )
+    : sql`true`;
+  const spaceIsVisible = activeOnly
+    ? and(
+        eq(knowledgeSpace.isActive, true),
+        includeFixtures
+          ? sql`true`
+          : and(
+              notExists(
+                db
+                  .select({ id: testFixture.id })
+                  .from(testFixture)
+                  .where(
+                    and(
+                      eq(testFixture.entityType, "knowledge_space"),
+                      eq(testFixture.entityId, knowledgeSpace.id),
+                      eq(testFixture.isTestFixture, true),
+                    ),
+                  ),
+              ),
+              notExists(
+                db
+                  .select({ id: testFixture.id })
+                  .from(testFixture)
+                  .where(
+                    and(
+                      eq(testFixture.entityType, "project"),
+                      eq(testFixture.entityId, knowledgeSpace.projectId),
+                      eq(testFixture.isTestFixture, true),
+                    ),
+                  ),
+              ),
+            ),
+      )
+    : sql`true`;
   const organizations =
     principal.user.productRole !== "member"
       ? await db.select().from(organization).orderBy(asc(organization.name))
@@ -539,7 +606,12 @@ export async function listKnowledgeAdministration(
       db
         .select()
         .from(department)
-        .where(inArray(department.organizationId, organizationIds))
+        .where(
+          and(
+            inArray(department.organizationId, organizationIds),
+            departmentIsVisible,
+          ),
+        )
         .orderBy(asc(department.name)),
       db
         .select()
@@ -547,6 +619,7 @@ export async function listKnowledgeAdministration(
         .where(
           and(
             inArray(knowledgeSpace.organizationId, organizationIds),
+            spaceIsVisible,
             noMatchingSpaceViewDeny(principal),
           ),
         )
@@ -618,21 +691,26 @@ export async function listKnowledgeAdministration(
     .select()
     .from(department)
     .where(
-      or(
-        adminOrganizationIds.length
-          ? inArray(department.organizationId, adminOrganizationIds)
-          : sql`false`,
-        departmentIds.length ? inArray(department.id, departmentIds) : sql`false`,
-        projectIds.length
-          ? sql`exists (
-              select 1 from projects visible_project
-              where visible_project.id in (${sql.join(
-                projectIds.map((id) => sql`${id}`),
-                sql`, `,
-              )})
-                and visible_project.department_id = ${department.id}
-            )`
-          : sql`false`,
+      and(
+        departmentIsVisible,
+        or(
+          adminOrganizationIds.length
+            ? inArray(department.organizationId, adminOrganizationIds)
+            : sql`false`,
+          departmentIds.length
+            ? inArray(department.id, departmentIds)
+            : sql`false`,
+          projectIds.length
+            ? sql`exists (
+                select 1 from projects visible_project
+                where visible_project.id in (${sql.join(
+                  projectIds.map((id) => sql`${id}`),
+                  sql`, `,
+                )})
+                  and visible_project.department_id = ${department.id}
+              )`
+            : sql`false`,
+        ),
       ),
     )
     .orderBy(asc(department.name));
@@ -643,6 +721,7 @@ export async function listKnowledgeAdministration(
     .where(
       and(
         inArray(knowledgeSpace.organizationId, organizationIds),
+        spaceIsVisible,
         noMatchingSpaceViewDeny(principal),
         or(
           adminOrganizationIds.length

@@ -433,7 +433,8 @@ export async function readProjectDocumentVersionFile(
 
 export function documentErrorMessage(error: unknown): string {
   if (!(error instanceof DocumentApiError)) {
-    return "项目资料操作失败，请稍后重试。";
+    if (error instanceof Error && error.name === "AbortError") return "";
+    return "项目资料操作失败，请稍后重试。（DOCUMENT_REQUEST_FAILED）";
   }
   const messages: Record<string, string> = {
     FILE_TOO_LARGE: "文件为空或超过上传大小限制。",
@@ -451,5 +452,5 @@ export function documentErrorMessage(error: unknown): string {
     FORBIDDEN: "你没有执行此操作的权限。",
     UNAUTHENTICATED: "登录已失效，请重新登录。",
   };
-  return messages[error.code] || "项目资料操作失败，请稍后重试。";
+  return `${messages[error.code] || error.message || "项目资料操作失败，请稍后重试。"}（${error.code}）`;
 }

@@ -510,6 +510,63 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(dockerfile, /USER node/);
 });
 
+test("Staging timesheet AI Worker is immutable, least-privileged, and deployment-gated", async () => {
+  const [compose, script] = await Promise.all([
+    readFile(stagingCompose, "utf8"),
+    readFile(deployScript, "utf8"),
+  ]);
+  const workerMatch = compose.match(
+    /\n  projectai-timesheet-worker:\n([\s\S]*?)\nvolumes:/,
+  );
+  assert.ok(workerMatch, "missing Compose service projectai-timesheet-worker");
+  const worker = workerMatch[1];
+  assert.match(worker, /STAGING_TIMESHEET_WORKER_IMAGE/);
+  assert.match(worker, /worker:timesheets/);
+  assert.match(worker, /qwen_api_key/);
+  assert.match(worker, /projectai-staging-internal/);
+  assert.match(worker, /projectai-timesheet-ai-worker-heartbeat/);
+  assert.match(worker, /restart: unless-stopped/);
+  assert.doesNotMatch(worker, /^\s+ports:/m);
+  assert.doesNotMatch(worker, /OBJECT_STORAGE_|MINIO_ROOT_/);
+  assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
+  assert.match(script, /up --detach --no-build --pull never projectai-timesheet-worker/);
+  assert.match(script, /timesheet_worker_container_name="project-ai-os-staging-timesheet-worker"/);
+  assert.match(script, /eq \.Destination "\/run\/secrets\/qwen_api_key"/);
+  assert.match(script, /OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY/);
+  assert.match(script, /if printenv "\$key" >\/dev\/null 2>&1; then exit 1; fi/);
+  assert.match(script, /docker port "\$timesheet_worker_container_name"/);
+});
+
+test("Product V2 Staging deploy accepts the reviewed agent branch and owns the daily-report Worker lifecycle", async () => {
+  const script = await readFile(
+    new URL("../scripts/deploy-product-v2-staging.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    script,
+    /PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH/,
+  );
+  assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
+  assert.match(
+    script,
+    /up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-staging/,
+  );
+  assert.match(
+    script,
+    /up --detach --no-deps --force-recreate --no-build --pull never \\\n\s+projectai-timesheet-worker projectai-staging/,
+  );
+  assert.match(
+    script,
+    /docker inspect --format '\{\{if \.State\.Health\}\}\{\{\.State\.Health\.Status\}\}\{\{else\}\}\{\{\.State\.Status\}\}\{\{end\}\}' project-ai-os-staging-timesheet-worker/,
+  );
+  assert.match(script, /project-ai-os-staging-timesheet-worker/);
+  assert.match(script, /docker port project-ai-os-staging-timesheet-worker/);
+  assert.match(script, /minimum_available_bytes=\$\(\(12 \* 1024 \* 1024 \* 1024\)\)/);
+  assert.match(script, /docker info --format '\{\{\.DockerRootDir\}\}'/);
+  assert.match(script, /df --output=avail -B1 "\$capacity_path"/);
+  assert.match(script, /before backup, image transfer, or migration/);
+});
+
 test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
   const [script, compose, verifier] = await Promise.all([
     readFile(deployScript, "utf8"),
