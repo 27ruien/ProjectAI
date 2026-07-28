@@ -296,6 +296,16 @@ export async function deleteRegisteredFixtureProject(
       await tx.execute(
         sql`delete from requirements where project_id = ${input.projectId}`,
       );
+      const optionalAheadSchema = await tx.execute<{
+        workflow_runs: boolean;
+      }>(sql`
+        select to_regclass('public.workflow_runs') is not null as workflow_runs
+      `);
+      if (optionalAheadSchema.rows[0]?.workflow_runs) {
+        await tx.execute(
+          sql`delete from workflow_runs where project_id = ${input.projectId}`,
+        );
+      }
       await tx.execute(
         sql`delete from requirement_extraction_runs where project_id = ${input.projectId}`,
       );

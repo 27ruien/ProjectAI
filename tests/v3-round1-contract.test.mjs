@@ -108,6 +108,13 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(fixtureService, /deleteRegisteredFixtureProject/);
   assert.match(fixtureService, /deleteRegisteredFixtureTimesheetRun/);
   assert.match(fixtureService, /TEST_FIXTURE_TIMESHEET_SCOPE_MISMATCH/);
+  assert.match(fixtureService, /to_regclass\('public\.workflow_runs'\)/);
+  assert.ok(
+    fixtureService.indexOf("delete from workflow_runs") <
+      fixtureService.indexOf("delete from requirement_extraction_runs"),
+    "ahead-schema fixture rows must be deleted before their restricted legacy run",
+  );
+  assert.doesNotMatch(fixtureService, /@\/lib\/db\/schema\/workflows/);
   assert.match(timesheetFixtureRoute, /timesheetDateSchema/);
   assert.match(timesheetFixtureRoute, /deleteRegisteredFixtureTimesheetRun/);
   assert.doesNotMatch(productSeed, /kivisense-project-product-management-uat/);
