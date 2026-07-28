@@ -186,6 +186,12 @@ describe("Round 1 exact fixture cleanup", () => {
       entityType: "knowledge_space",
       entityId: createdSpace.id,
     });
+    await getDb().execute(sql`
+      update test_fixtures
+      set expires_at = expires_at + interval '0.000789 seconds'
+      where entity_type = 'project'
+        and entity_id = ${projectId}
+    `);
     assert.deepEqual(
       await listAuthorizedDocumentScope({
         principal,

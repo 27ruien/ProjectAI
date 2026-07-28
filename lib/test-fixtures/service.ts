@@ -182,7 +182,7 @@ async function lockFixture(
         eq(testFixture.entityId, input.entityId),
         eq(testFixture.fixtureRunId, input.fixtureRunId),
         eq(testFixture.environment, input.environment),
-        eq(testFixture.expiresAt, input.expiresAt),
+        sql`date_trunc('milliseconds', ${testFixture.expiresAt}) = ${input.expiresAt}`,
         eq(testFixture.isTestFixture, true),
       ),
     )
