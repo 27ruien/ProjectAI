@@ -1,8 +1,39 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
+const extractShellFunction = (script, name) => {
+  const match = script.match(new RegExp(`(?:^|\\n)${name}\\(\\) \\{[\\s\\S]*?\\n\\}`, "u"));
+  assert.ok(match, `Expected ${name} shell function.`);
+  return match[0].trimStart();
+};
+const runBash = (script, environment) => new Promise((resolve) => {
+  const child = spawn("/bin/bash", ["-c", script], {
+    env: { ...process.env, ...environment },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.on("close", (code, signal) => resolve({ code, signal, stdout, stderr }));
+});
+const waitForFile = async (filePath) => {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      return await readFile(filePath, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+  assert.fail(`Timed out waiting for ${path.basename(filePath)}.`);
+};
 
 test("Product V2 primary navigation contains only approved modules", async () => {
   const sidebar = await read("components/layout/sidebar.tsx");
@@ -175,20 +206,141 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.match(deploy, /WECOM_TIMESHEET_SYNC_ENABLED=false/);
   assert.match(deploy, /ai:probe:qwen/);
   assert.match(deploy, /x-projectai-commit-sha/);
-  assert.match(deploy, /IMAGE_TRANSFER_RETRIES=4/);
+  assert.match(deploy, /IMAGE_CHUNK_BYTES=16777216/);
+  assert.match(deploy, /IMAGE_TRANSFER_CONCURRENCY=8/);
+  assert.match(deploy, /IMAGE_TRANSFER_RETRIES=3/);
   assert.match(deploy, /docker save "\$APP_IMAGE_REF" "\$DB_TOOLS_IMAGE_REF" \| gzip -1 > "\$IMAGE_ARCHIVE"/);
   assert.match(deploy, /chmod 600 "\$IMAGE_ARCHIVE"/);
+  assert.match(deploy, /split -b "\$IMAGE_CHUNK_BYTES" "\$IMAGE_ARCHIVE"/);
+  assert.match(deploy, /Transferring \$\{IMAGE_CHUNK_COUNT\} reviewed image chunks with bounded parallel resume/);
   assert.match(deploy, /rsync --archive --partial --append/);
   assert.doesNotMatch(deploy, /--chmod=/);
   assert.doesNotMatch(deploy, /--append-verify/);
-  assert.match(deploy, /Image transfer attempt \$\{attempt\}\/\$\{IMAGE_TRANSFER_RETRIES\} was interrupted/);
-  assert.match(deploy, /sha256sum "\$archive"/);
-  assert.match(deploy, /gzip -t "\$archive"/);
-  assert.match(deploy, /gzip -dc -- "\$1" \| docker load/);
+  assert.match(deploy, /IMAGE_TRANSFER_PIDS\+=\("\$!"\)/);
+  assert.match(deploy, /stop_image_transfers\(\) \{[\s\S]*kill -TERM "\$transfer_pid"[\s\S]*wait "\$transfer_pid"/);
+  assert.match(deploy, /cleanup\(\) \{[\s\S]*stop_image_transfers[\s\S]*clear_predeploy_marker[\s\S]*release_lock/);
+  assert.match(deploy, /trap '[^']*kill -TERM "\$rsync_pid"[^']*wait "\$rsync_pid"[^']*' INT TERM/);
+  assert.match(deploy, /cat chunk-\* \| sha256sum/);
+  assert.match(deploy, /cat chunk-\* \| gzip -t/);
+  assert.match(deploy, /cat chunk-\* \| gzip -dc \| docker load/);
   assert.match(deploy, /clear_predeploy_marker/);
   assert.match(deploy, /REMOTE_DEPLOY_STARTED=1/);
   assert.match(deploy, /"amd64" \|\| "\$arch" == "x86_64"[\s\S]*printf 'amd64'/);
   assert.match(deploy, /"arm64" \|\| "\$arch" == "aarch64"[\s\S]*printf 'arm64'/);
+});
+
+test("Staging image chunks retry exactly within budget", async (context) => {
+  const deploy = await read("scripts/deploy-product-v2-staging.sh");
+  const transferFunction = extractShellFunction(deploy, "transfer_image_chunk");
+  const directory = await mkdtemp(path.join(tmpdir(), "projectai-chunk-retry-"));
+  context.after(() => rm(directory, { force: true, recursive: true }));
+  const fakeRsync = path.join(directory, "rsync");
+  const fakeSleep = path.join(directory, "sleep");
+  const chunkPath = path.join(directory, "chunk-aa");
+  await writeFile(fakeRsync, `#!/usr/bin/env bash
+set -Eeuo pipefail
+attempts=0
+if [[ -f "$FAKE_RSYNC_ATTEMPTS" ]]; then attempts="$(/bin/cat "$FAKE_RSYNC_ATTEMPTS")"; fi
+attempts=$((attempts + 1))
+printf '%s\\n' "$attempts" > "$FAKE_RSYNC_ATTEMPTS"
+(( attempts >= FAKE_RSYNC_SUCCEED_AT ))
+`, { mode: 0o700 });
+  await writeFile(fakeSleep, "#!/usr/bin/env bash\nexit 0\n", { mode: 0o700 });
+  await writeFile(chunkPath, "synthetic chunk\n", { mode: 0o600 });
+  const harness = `set -Eeuo pipefail
+IMAGE_TRANSFER_RETRIES=3
+REMOTE_HOST=staging.invalid
+REMOTE_IMAGE_TRANSFER_DIR=/srv/projectai-staging/.image-transfer/test
+log() { :; }
+${transferFunction}
+transfer_image_chunk "$CHUNK_PATH"
+`;
+
+  const successfulAttempts = path.join(directory, "successful-attempts");
+  const successful = await runBash(harness, {
+    CHUNK_PATH: chunkPath,
+    FAKE_RSYNC_ATTEMPTS: successfulAttempts,
+    FAKE_RSYNC_SUCCEED_AT: "3",
+    PATH: `${directory}:${process.env.PATH}`,
+  });
+  assert.equal(successful.code, 0, successful.stderr);
+  assert.equal((await readFile(successfulAttempts, "utf8")).trim(), "3");
+
+  const exhaustedAttempts = path.join(directory, "exhausted-attempts");
+  const exhausted = await runBash(harness, {
+    CHUNK_PATH: chunkPath,
+    FAKE_RSYNC_ATTEMPTS: exhaustedAttempts,
+    FAKE_RSYNC_SUCCEED_AT: "9",
+    PATH: `${directory}:${process.env.PATH}`,
+  });
+  assert.equal(exhausted.code, 1, exhausted.stderr);
+  assert.equal((await readFile(exhaustedAttempts, "utf8")).trim(), "3");
+});
+
+test("Staging image transfer interruption stops nested rsync before cleanup", { timeout: 10_000 }, async (context) => {
+  const deploy = await read("scripts/deploy-product-v2-staging.sh");
+  const stopFunction = extractShellFunction(deploy, "stop_image_transfers");
+  const transferFunction = extractShellFunction(deploy, "transfer_image_chunk");
+  const directory = await mkdtemp(path.join(tmpdir(), "projectai-chunk-interrupt-"));
+  context.after(() => rm(directory, { force: true, recursive: true }));
+  const fakeRsync = path.join(directory, "rsync");
+  const chunkPath = path.join(directory, "chunk-aa");
+  const rsyncPidPath = path.join(directory, "rsync.pid");
+  const rsyncStoppedPath = path.join(directory, "rsync-stopped");
+  const cleanupPath = path.join(directory, "cleanup-complete");
+  await writeFile(fakeRsync, `#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\\n' "$$" > "$FAKE_RSYNC_PID_FILE"
+trap 'printf stopped > "$FAKE_RSYNC_STOPPED"; exit 143' INT TERM
+while :; do /bin/sleep 1; done
+`, { mode: 0o700 });
+  await writeFile(chunkPath, "synthetic chunk\n", { mode: 0o600 });
+  const harness = `set -Eeuo pipefail
+IMAGE_TRANSFER_RETRIES=3
+REMOTE_HOST=staging.invalid
+REMOTE_IMAGE_TRANSFER_DIR=/srv/projectai-staging/.image-transfer/test
+IMAGE_TRANSFER_PIDS=()
+log() { :; }
+${stopFunction}
+${transferFunction}
+cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
+  stop_image_transfers
+  printf cleaned > "$CLEANUP_MARKER"
+  exit "$status"
+}
+trap cleanup EXIT
+transfer_image_chunk "$CHUNK_PATH" &
+IMAGE_TRANSFER_PIDS+=("$!")
+printf 'ready\\n'
+wait "\${IMAGE_TRANSFER_PIDS[0]}"
+`;
+  const child = spawn("/bin/bash", ["-c", harness], {
+    env: {
+      ...process.env,
+      CHUNK_PATH: chunkPath,
+      CLEANUP_MARKER: cleanupPath,
+      FAKE_RSYNC_PID_FILE: rsyncPidPath,
+      FAKE_RSYNC_STOPPED: rsyncStoppedPath,
+      PATH: `${directory}:${process.env.PATH}`,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const stderr = [];
+  child.stderr.on("data", (chunk) => stderr.push(chunk));
+  const [ready] = await once(child.stdout, "data");
+  assert.match(String(ready), /ready/);
+  const rsyncPid = Number.parseInt((await waitForFile(rsyncPidPath)).trim(), 10);
+  assert.ok(Number.isSafeInteger(rsyncPid) && rsyncPid > 1);
+  const exited = once(child, "exit");
+  child.kill("SIGTERM");
+  const [code, signal] = await exited;
+  assert.ok(code === 143 || signal === "SIGTERM", Buffer.concat(stderr).toString("utf8"));
+  assert.equal((await waitForFile(rsyncStoppedPath)).trim(), "stopped");
+  assert.equal((await waitForFile(cleanupPath)).trim(), "cleaned");
+  assert.throws(() => process.kill(rsyncPid, 0), (error) => error?.code === "ESRCH");
 });
 
 test("CI separates legacy regression, Mock WeCom, and production-build auth modes", async () => {

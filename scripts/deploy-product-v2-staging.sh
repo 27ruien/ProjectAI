@@ -17,7 +17,9 @@ readonly AUDIO_SIGNING_SECRET_FILE="${REMOTE_DIR}/secrets/audio_download_signing
 readonly LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
 readonly MARKER="${REMOTE_DIR}/.product-v2-deploy-in-progress"
 readonly IMAGE_TRANSFER_DIR="${REMOTE_DIR}/.image-transfer"
-readonly IMAGE_TRANSFER_RETRIES=4
+readonly IMAGE_CHUNK_BYTES=16777216
+readonly IMAGE_TRANSFER_CONCURRENCY=8
+readonly IMAGE_TRANSFER_RETRIES=3
 readonly POSTGRES_IMAGE_REF="pgvector/pgvector:0.8.1-pg17@sha256:3e8b3adfd27b5707128f60956f62a793c3c9326ea8cfaf0eab7adccb5d700b21"
 readonly MINIO_IMAGE_REF="quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
 readonly MINIO_CLIENT_IMAGE_REF="quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"
@@ -26,7 +28,7 @@ log() { printf '[projectai-product-v2-staging] %s\n' "$*"; }
 fail() { printf '[projectai-product-v2-staging] ERROR: %s\n' "$*" >&2; exit 1; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"; }
 
-for command_name in git ssh rsync docker gzip shasum chmod tar mktemp curl node; do
+for command_name in git ssh rsync docker gzip shasum chmod split mkdir tar mktemp curl node; do
   require_command "$command_name"
 done
 
@@ -51,6 +53,8 @@ DB_TOOLS_IMAGE_REF="project-ai-os-staging-db-tools:${COMMIT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-product-v2-release.XXXXXX")"
 LOCK_ACQUIRED=0
 REMOTE_DEPLOY_STARTED=0
+REMOTE_IMAGE_TRANSFER_DIR=""
+IMAGE_TRANSFER_PIDS=()
 
 SSH=(
   ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12
@@ -73,14 +77,27 @@ REMOTE_UNLOCK
 
 clear_predeploy_marker() {
   [[ "$LOCK_ACQUIRED" == "1" && "$REMOTE_DEPLOY_STARTED" == "0" ]] || return 0
-  "${SSH[@]}" bash -s -- "$LOCK_DIR" "$DEPLOY_ID" "$MARKER" <<'REMOTE_CLEAR_MARKER'
+  "${SSH[@]}" bash -s -- \
+    "$LOCK_DIR" "$DEPLOY_ID" "$MARKER" "$REMOTE_IMAGE_TRANSFER_DIR" <<'REMOTE_CLEAR_MARKER'
 set -Eeuo pipefail
 lock_dir="$1"
 deploy_id="$2"
 marker="$3"
+transfer_dir="$4"
 [[ "$lock_dir" == "/srv/projectai-staging/.staging-deploy-lock" ]]
 [[ "$marker" == "/srv/projectai-staging/.product-v2-deploy-in-progress" ]]
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+if [[ -n "$transfer_dir" ]]; then
+  [[ "$transfer_dir" == "/srv/projectai-staging/.image-transfer/${deploy_id}" ]]
+  if sudo test -e "$transfer_dir"; then
+    sudo test -d "$transfer_dir"
+    sudo test ! -L "$transfer_dir"
+    [[ "$(sudo stat -c '%a|%U:%G' "$transfer_dir")" == "700|deploy:deploy" ]]
+    sudo find "$transfer_dir" -mindepth 1 -maxdepth 1 -type f -name 'chunk-[a-z][a-z]' -delete
+    [[ -z "$(sudo find "$transfer_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+    sudo rmdir "$transfer_dir"
+  fi
+fi
 if sudo test -e "$marker"; then
   sudo test -f "$marker"
   sudo test ! -L "$marker"
@@ -90,10 +107,25 @@ fi
 REMOTE_CLEAR_MARKER
 }
 
+stop_image_transfers() {
+  local transfer_pid
+  (( ${#IMAGE_TRANSFER_PIDS[@]} > 0 )) || return 0
+  for transfer_pid in "${IMAGE_TRANSFER_PIDS[@]}"; do
+    if kill -0 "$transfer_pid" 2>/dev/null; then
+      kill -TERM "$transfer_pid" 2>/dev/null || true
+    fi
+  done
+  for transfer_pid in "${IMAGE_TRANSFER_PIDS[@]}"; do
+    wait "$transfer_pid" 2>/dev/null || true
+  done
+  IMAGE_TRANSFER_PIDS=()
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
   set +e
+  stop_image_transfers || status=1
   clear_predeploy_marker || status=1
   release_lock || status=1
   rm -rf -- "$RELEASE_ROOT"
@@ -285,67 +317,122 @@ IMAGE_ARCHIVE_DIGEST="$(shasum -a 256 "$IMAGE_ARCHIVE" | awk '{print $1}')"
 IMAGE_ARCHIVE_BYTES="$(wc -c < "$IMAGE_ARCHIVE" | tr -d '[:space:]')"
 [[ "$IMAGE_ARCHIVE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
 [[ "$IMAGE_ARCHIVE_BYTES" =~ ^[1-9][0-9]*$ ]]
-REMOTE_IMAGE_ARCHIVE="${IMAGE_TRANSFER_DIR}/${COMMIT_SHA}.tar.gz"
+IMAGE_CHUNK_DIR="${RELEASE_ROOT}/image-chunks"
+mkdir -m 700 "$IMAGE_CHUNK_DIR"
+split -b "$IMAGE_CHUNK_BYTES" "$IMAGE_ARCHIVE" "${IMAGE_CHUNK_DIR}/chunk-"
+chmod 600 "${IMAGE_CHUNK_DIR}"/chunk-*
+IMAGE_CHUNK_COUNT="$(find "$IMAGE_CHUNK_DIR" -maxdepth 1 -type f -name 'chunk-[a-z][a-z]' | wc -l | tr -d '[:space:]')"
+[[ "$IMAGE_CHUNK_COUNT" =~ ^[1-9][0-9]*$ ]]
+REMOTE_IMAGE_TRANSFER_DIR="${IMAGE_TRANSFER_DIR}/${DEPLOY_ID}"
 
 "${SSH[@]}" bash -s -- \
-  "$IMAGE_TRANSFER_DIR" "$REMOTE_IMAGE_ARCHIVE" "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_PREP'
+  "$IMAGE_TRANSFER_DIR" "$REMOTE_IMAGE_TRANSFER_DIR" "$LOCK_DIR" "$DEPLOY_ID" \
+  "$COMMIT_SHA" <<'REMOTE_IMAGE_PREP'
 set -Eeuo pipefail
-transfer_dir="$1"
-archive="$2"
+transfer_root="$1"
+transfer_dir="$2"
 lock_dir="$3"
 deploy_id="$4"
-[[ "$transfer_dir" == "/srv/projectai-staging/.image-transfer" ]]
-[[ "$archive" == "$transfer_dir/"*.tar.gz ]]
+commit_sha="$5"
+[[ "$transfer_root" == "/srv/projectai-staging/.image-transfer" ]]
+[[ "$transfer_dir" == "$transfer_root/${deploy_id}" ]]
+[[ "$commit_sha" =~ ^[0-9a-f]{40}$ ]]
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
-if sudo test -e "$transfer_dir"; then
-  sudo test -d "$transfer_dir"
-  sudo test ! -L "$transfer_dir"
-  [[ "$(sudo stat -c '%a|%U:%G' "$transfer_dir")" == "700|deploy:deploy" ]]
+if sudo test -e "$transfer_root"; then
+  sudo test -d "$transfer_root"
+  sudo test ! -L "$transfer_root"
+  [[ "$(sudo stat -c '%a|%U:%G' "$transfer_root")" == "700|deploy:deploy" ]]
 else
-  sudo install -d -m 0700 -o deploy -g deploy "$transfer_dir"
+  sudo install -d -m 0700 -o deploy -g deploy "$transfer_root"
 fi
-if sudo test -e "$archive"; then
-  sudo test -f "$archive"
-  sudo test ! -L "$archive"
-  sudo rm -f -- "$archive"
+legacy_archive="${transfer_root}/${commit_sha}.tar.gz"
+if sudo test -e "$legacy_archive"; then
+  sudo test -f "$legacy_archive"
+  sudo test ! -L "$legacy_archive"
+  [[ "$(sudo stat -c '%a|%U:%G' "$legacy_archive")" == "600|deploy:deploy" ]]
+  sudo unlink "$legacy_archive"
 fi
+sudo test ! -e "$transfer_dir"
+sudo install -d -m 0700 -o deploy -g deploy "$transfer_dir"
 REMOTE_IMAGE_PREP
 
-log "Transferring the reviewed image archive with bounded resume"
-IMAGE_TRANSFERRED=0
-for ((attempt = 1; attempt <= IMAGE_TRANSFER_RETRIES; attempt += 1)); do
-  if rsync --archive --partial --append \
-    --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
-    "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then
-    IMAGE_TRANSFERRED=1
-    break
+transfer_image_chunk() {
+  local chunk_path="$1"
+  local chunk_name="${chunk_path##*/}"
+  local attempt
+  local rsync_pid=""
+  trap 'if [[ -n "$rsync_pid" ]]; then kill -TERM "$rsync_pid" 2>/dev/null || true; wait "$rsync_pid" 2>/dev/null || true; fi; exit 143' INT TERM
+  [[ "$chunk_name" =~ ^chunk-[a-z][a-z]$ ]]
+  for ((attempt = 1; attempt <= IMAGE_TRANSFER_RETRIES; attempt += 1)); do
+    rsync --archive --partial --append \
+      --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
+      "$chunk_path" "${REMOTE_HOST}:${REMOTE_IMAGE_TRANSFER_DIR}/${chunk_name}" &
+    rsync_pid="$!"
+    if wait "$rsync_pid"; then
+      rsync_pid=""
+      return 0
+    fi
+    rsync_pid=""
+    log "Image chunk ${chunk_name} attempt ${attempt}/${IMAGE_TRANSFER_RETRIES} was interrupted; resuming"
+    sleep 2
+  done
+  return 1
+}
+
+log "Transferring ${IMAGE_CHUNK_COUNT} reviewed image chunks with bounded parallel resume"
+IMAGE_TRANSFER_FAILED=0
+for chunk_path in "${IMAGE_CHUNK_DIR}"/chunk-*; do
+  transfer_image_chunk "$chunk_path" &
+  IMAGE_TRANSFER_PIDS+=("$!")
+  if (( ${#IMAGE_TRANSFER_PIDS[@]} >= IMAGE_TRANSFER_CONCURRENCY )); then
+    for transfer_pid in "${IMAGE_TRANSFER_PIDS[@]}"; do
+      if ! wait "$transfer_pid"; then IMAGE_TRANSFER_FAILED=1; fi
+    done
+    IMAGE_TRANSFER_PIDS=()
+    [[ "$IMAGE_TRANSFER_FAILED" == "0" ]] || break
   fi
-  log "Image transfer attempt ${attempt}/${IMAGE_TRANSFER_RETRIES} was interrupted; resuming the same immutable partial archive"
-  sleep 2
 done
-[[ "$IMAGE_TRANSFERRED" == "1" ]] || fail "Reviewed image archive transfer exhausted its retry budget"
+for transfer_pid in "${IMAGE_TRANSFER_PIDS[@]}"; do
+  if ! wait "$transfer_pid"; then IMAGE_TRANSFER_FAILED=1; fi
+done
+IMAGE_TRANSFER_PIDS=()
+[[ "$IMAGE_TRANSFER_FAILED" == "0" ]] || fail "Reviewed image chunk transfer exhausted its retry budget"
 
 log "Verifying and loading the reviewed images on Staging"
 "${SSH[@]}" bash -s -- \
-  "$REMOTE_IMAGE_ARCHIVE" "$IMAGE_ARCHIVE_DIGEST" "$IMAGE_ARCHIVE_BYTES" \
-  "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_LOAD'
+  "$REMOTE_IMAGE_TRANSFER_DIR" "$IMAGE_CHUNK_COUNT" "$IMAGE_ARCHIVE_DIGEST" \
+  "$IMAGE_ARCHIVE_BYTES" "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_LOAD'
 set -Eeuo pipefail
-archive="$1"
-expected_digest="$2"
-expected_bytes="$3"
-lock_dir="$4"
-deploy_id="$5"
-[[ "$archive" == "/srv/projectai-staging/.image-transfer/"*.tar.gz ]]
+transfer_dir="$1"
+expected_chunks="$2"
+expected_digest="$3"
+expected_bytes="$4"
+lock_dir="$5"
+deploy_id="$6"
+[[ "$transfer_dir" == "/srv/projectai-staging/.image-transfer/${deploy_id}" ]]
+[[ "$expected_chunks" =~ ^[1-9][0-9]*$ ]]
 [[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
 [[ "$expected_bytes" =~ ^[1-9][0-9]*$ ]]
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
-sudo test -f "$archive"
-sudo test ! -L "$archive"
-[[ "$(sudo stat -c '%a|%U:%G|%s' "$archive")" == "600|deploy:deploy|${expected_bytes}" ]]
-[[ "$(sha256sum "$archive" | awk '{print $1}')" == "$expected_digest" ]]
-gzip -t "$archive"
-sudo sh -c 'gzip -dc -- "$1" | docker load >/dev/null' sh "$archive"
-sudo rm -f -- "$archive"
+sudo test -d "$transfer_dir"
+sudo test ! -L "$transfer_dir"
+[[ "$(sudo stat -c '%a|%U:%G' "$transfer_dir")" == "700|deploy:deploy" ]]
+[[ "$(find "$transfer_dir" -mindepth 1 -maxdepth 1 -type f -name 'chunk-[a-z][a-z]' | wc -l | tr -d '[:space:]')" == "$expected_chunks" ]]
+[[ "$(find "$transfer_dir" -mindepth 1 -maxdepth 1 | wc -l | tr -d '[:space:]')" == "$expected_chunks" ]]
+for chunk_path in "$transfer_dir"/chunk-*; do
+  [[ "${chunk_path##*/}" =~ ^chunk-[a-z][a-z]$ ]]
+  [[ "$(stat -c '%a|%U:%G' "$chunk_path")" == "600|deploy:deploy" ]]
+  [[ "$(stat -c '%s' "$chunk_path")" =~ ^[1-9][0-9]*$ ]]
+done
+actual_bytes="$(find "$transfer_dir" -maxdepth 1 -type f -name 'chunk-[a-z][a-z]' -printf '%s\n' | awk '{ total += $1 } END { print total + 0 }')"
+[[ "$actual_bytes" == "$expected_bytes" ]]
+actual_digest="$(cd "$transfer_dir" && cat chunk-* | sha256sum | awk '{print $1}')"
+[[ "$actual_digest" == "$expected_digest" ]]
+(cd "$transfer_dir" && cat chunk-* | gzip -t)
+sudo sh -c 'cd "$1" && cat chunk-* | gzip -dc | docker load >/dev/null' sh "$transfer_dir"
+sudo find "$transfer_dir" -mindepth 1 -maxdepth 1 -type f -name 'chunk-[a-z][a-z]' -delete
+[[ -z "$(sudo find "$transfer_dir" -mindepth 1 -maxdepth 1 -print -quit)" ]]
+sudo rmdir "$transfer_dir"
 REMOTE_IMAGE_LOAD
 
 log "Backing up, migrating, seeding, and starting Product V2 on Staging"
