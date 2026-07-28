@@ -170,6 +170,50 @@ async function editTimesheetNote(page: Page, current: string, updated: string) {
   await expect(section.getByText(updated, { exact: true })).toBeVisible();
 }
 
+async function waitForDailyReportCompletion(page: Page) {
+  const completedToast = page
+    .getByRole("status")
+    .filter({ hasText: "AI 整理完成" });
+  const failureToast = page
+    .getByRole("alert")
+    .filter({ hasText: "AI 整理失败" });
+  const maximumRetries = 2;
+
+  for (let retryCount = 0; retryCount <= maximumRetries; retryCount += 1) {
+    await expect(completedToast.or(failureToast)).toBeVisible({
+      timeout: 120_000,
+    });
+    if (await completedToast.isVisible()) {
+      await expect(completedToast).toContainText(
+        "AI 工时草稿已生成 1 条，共 1 小时，待确认 1 条",
+      );
+      return completedToast;
+    }
+
+    await expect(failureToast).toContainText("失败阶段");
+    await expect(failureToast).toContainText(
+      /脱敏请求编号：[a-f0-9]{8}…[a-f0-9]{4}/iu,
+    );
+    await expect(failureToast).not.toContainText(
+      /[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}/iu,
+    );
+    if (retryCount === maximumRetries) {
+      throw new Error("DAILY_REPORT_REAL_AI_RETRY_LIMIT_EXCEEDED");
+    }
+    const retry = page.waitForResponse(
+      (candidate) =>
+        /\/api\/timesheets\/ai-jobs\/[^/]+\/retry$/u.test(
+          new URL(candidate.url()).pathname,
+        ) && candidate.request().method() === "POST",
+    );
+    await failureToast.getByRole("button", { name: "重试" }).click();
+    expect((await retry).status()).toBe(202);
+    await expect(failureToast).toHaveCount(0);
+  }
+
+  throw new Error("DAILY_REPORT_REAL_AI_COMPLETION_UNREACHABLE");
+}
+
 async function createProjectThroughUi(page: Page, input: { name: string; departmentName: string }) {
   await page.getByRole("button", { name: "新建项目空间" }).click();
   const dialog = page.getByRole("dialog", { name: "新建项目空间" });
@@ -875,35 +919,7 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     await expect(page.getByRole("heading", { name: "知识库" })).toBeVisible();
     await gotoInteractive(page, appPath("/daily-report"));
     await expect(page.getByTestId("ai-job-status")).toBeVisible();
-    const completedToast = page
-      .getByRole("status")
-      .filter({ hasText: "AI 整理完成" });
-    const initialFailureToast = page
-      .getByRole("alert")
-      .filter({ hasText: "AI 整理失败" });
-    await expect(completedToast.or(initialFailureToast)).toBeVisible({
-      timeout: 120_000,
-    });
-    if (await initialFailureToast.isVisible()) {
-      await expect(initialFailureToast).toContainText("失败阶段");
-      await expect(initialFailureToast).toContainText(
-        /脱敏请求编号：[a-f0-9]{8}…[a-f0-9]{4}/iu,
-      );
-      const initialRetry = page.waitForResponse(
-        (candidate) =>
-          /\/api\/timesheets\/ai-jobs\/[^/]+\/retry$/u.test(
-            new URL(candidate.url()).pathname,
-          ) && candidate.request().method() === "POST",
-      );
-      await initialFailureToast
-        .getByRole("button", { name: "重试" })
-        .click();
-      expect((await initialRetry).status()).toBe(202);
-    }
-    await expect(completedToast).toContainText(
-      "AI 工时草稿已生成 1 条，共 1 小时，待确认 1 条",
-      { timeout: 120_000 },
-    );
+    const completedToast = await waitForDailyReportCompletion(page);
     successfulElapsedSeconds =
       Math.round((performance.now() - startedAt) / 100) / 10;
     test.info().annotations.push({
@@ -961,21 +977,7 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     ).toHaveValue(completedDraftDescription);
     await expect(workLogs.getByText(updatedNote, { exact: true })).toBeVisible();
 
-    const retry = page.waitForResponse(
-      (candidate) =>
-        /\/api\/timesheets\/ai-jobs\/[^/]+\/retry$/u.test(
-          new URL(candidate.url()).pathname,
-        ) && candidate.request().method() === "POST",
-    );
-    await failedToast.getByRole("button", { name: "重试" }).click();
-    expect((await retry).status()).toBe(202);
-    const retryToast = page
-      .getByRole("status")
-      .filter({ hasText: "AI 整理完成" });
-    await expect(retryToast).toContainText(
-      "AI 工时草稿已生成 1 条，共 1 小时，待确认 1 条",
-      { timeout: 120_000 },
-    );
+    const retryToast = await waitForDailyReportCompletion(page);
     await retryToast.getByRole("button", { name: "查看并确认" }).click();
     await expect(timesheetTaskCards(page)).toHaveCount(1);
     await expect(timesheetTaskCards(page).first()).toContainText(updatedNote);
