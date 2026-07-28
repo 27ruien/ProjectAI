@@ -46,12 +46,12 @@ export function completedTimesheetToastMessage(
 ): string {
   const totalHours = draft?.totalHours ?? 0;
   const pendingCount = draft?.summary.pendingCount ?? job.outputCount ?? 0;
-  return `AI 工时草稿已生成 ${job.outputCount ?? 0} 条，共 ${totalHours} 小时，待确认 ${pendingCount} 条。`;
+  return `AI 整理完成。AI 工时草稿已生成 ${job.outputCount ?? 0} 条，共 ${totalHours} 小时，待确认 ${pendingCount} 条。`;
 }
 
 export function failedTimesheetToastMessage(
   job: Pick<TerminalJob, "requestId" | "failureStage">,
   stageLabel: string,
 ): string {
-  return `AI 整理在“${stageLabel}”失败。脱敏 requestId：${redactRequestId(job.requestId)}`;
+  return `AI 整理失败。失败阶段：“${stageLabel}”。脱敏 requestId：${redactRequestId(job.requestId)}`;
 }

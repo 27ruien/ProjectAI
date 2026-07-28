@@ -1,6 +1,15 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { getDb, type DatabaseExecutor } from "@/lib/db/client";
-import { testFixture } from "@/lib/db/schema";
+import {
+  auditEvent,
+  dailyTimesheetDraft,
+  testFixture,
+  timesheetAiExecution,
+  timesheetSyncBatch,
+  timesheetSyncItem,
+  timesheetTask,
+  workLogRecord,
+} from "@/lib/db/schema";
 import { getObjectStorage } from "@/lib/files/object-storage";
 
 export const FIXTURE_RUN_HEADER = "x-projectai-fixture-run-id";
@@ -13,6 +22,7 @@ const ALLOWED_ENTITY_TYPES = new Set([
   "project",
   "knowledge_space",
   "daily_timesheet_draft",
+  "timesheet_ai_execution",
   "work_log_record",
 ]);
 
@@ -125,6 +135,35 @@ export async function isRegisteredFixture(
     )
     .limit(1);
   return Boolean(record);
+}
+
+export async function registeredFixtureContext(
+  entityType: string,
+  entityId: string,
+  db: DatabaseExecutor = getDb(),
+): Promise<FixtureContext | null> {
+  const [record] = await db
+    .select({
+      fixtureRunId: testFixture.fixtureRunId,
+      environment: testFixture.environment,
+      expiresAt: testFixture.expiresAt,
+    })
+    .from(testFixture)
+    .where(
+      and(
+        eq(testFixture.entityType, entityType),
+        eq(testFixture.entityId, entityId),
+        eq(testFixture.isTestFixture, true),
+      ),
+    )
+    .limit(1);
+  return record
+    ? {
+        fixtureRunId: record.fixtureRunId,
+        environment: record.environment as FixtureContext["environment"],
+        expiresAt: record.expiresAt,
+      }
+    : null;
 }
 
 async function lockFixture(
@@ -478,5 +517,164 @@ export async function deleteRegisteredFixtureDepartment(
       ),
     );
     return { departments: 1, knowledgeSpaces: spaces.rows.length };
+  });
+}
+
+export async function deleteRegisteredFixtureTimesheetRun(
+  input: FixtureContext & { userId: string; reportDate: string },
+): Promise<{
+  workLogs: number;
+  executions: number;
+  drafts: number;
+  tasks: number;
+  syncBatches: number;
+  syncItems: number;
+}> {
+  return getDb().transaction(async (tx) => {
+    const fixtures = await tx
+      .select({
+        id: testFixture.id,
+        entityType: testFixture.entityType,
+        entityId: testFixture.entityId,
+      })
+      .from(testFixture)
+      .where(
+        and(
+          eq(testFixture.fixtureRunId, input.fixtureRunId),
+          eq(testFixture.environment, input.environment),
+          eq(testFixture.expiresAt, input.expiresAt),
+          eq(testFixture.isTestFixture, true),
+          inArray(testFixture.entityType, [
+            "work_log_record",
+            "timesheet_ai_execution",
+            "daily_timesheet_draft",
+          ]),
+        ),
+      )
+      .for("update", { of: testFixture });
+    if (fixtures.length === 0) {
+      throw new Error("TEST_FIXTURE_TIMESHEET_RUN_NOT_REGISTERED");
+    }
+
+    const ids = (entityType: string) =>
+      fixtures
+        .filter((fixture) => fixture.entityType === entityType)
+        .map((fixture) => fixture.entityId);
+    const workLogIds = ids("work_log_record");
+    const executionIds = ids("timesheet_ai_execution");
+    const draftIds = ids("daily_timesheet_draft");
+
+    const workLogs = workLogIds.length
+      ? await tx
+          .select({
+            id: workLogRecord.id,
+            userId: workLogRecord.userId,
+            reportDate: workLogRecord.recordDate,
+          })
+          .from(workLogRecord)
+          .where(inArray(workLogRecord.id, workLogIds))
+      : [];
+    const executions = executionIds.length
+      ? await tx
+          .select({
+            id: timesheetAiExecution.id,
+            userId: timesheetAiExecution.userId,
+            reportDate: timesheetAiExecution.reportDate,
+          })
+          .from(timesheetAiExecution)
+          .where(inArray(timesheetAiExecution.id, executionIds))
+      : [];
+    const drafts = draftIds.length
+      ? await tx
+          .select({
+            id: dailyTimesheetDraft.id,
+            userId: dailyTimesheetDraft.userId,
+            reportDate: dailyTimesheetDraft.reportDate,
+          })
+          .from(dailyTimesheetDraft)
+          .where(inArray(dailyTimesheetDraft.id, draftIds))
+      : [];
+    if (
+      [...workLogs, ...executions, ...drafts].some(
+        (record) =>
+          record.userId !== input.userId ||
+          record.reportDate !== input.reportDate,
+      )
+    ) {
+      throw new Error("TEST_FIXTURE_TIMESHEET_SCOPE_MISMATCH");
+    }
+
+    const existingDraftIds = drafts.map((draft) => draft.id);
+    const tasks = existingDraftIds.length
+      ? await tx
+          .select({ id: timesheetTask.id })
+          .from(timesheetTask)
+          .where(inArray(timesheetTask.draftId, existingDraftIds))
+      : [];
+    const batches = existingDraftIds.length
+      ? await tx
+          .select({ id: timesheetSyncBatch.id })
+          .from(timesheetSyncBatch)
+          .where(inArray(timesheetSyncBatch.draftId, existingDraftIds))
+      : [];
+    const taskIds = tasks.map((task) => task.id);
+    const batchIds = batches.map((batch) => batch.id);
+    const syncItems =
+      taskIds.length || batchIds.length
+        ? await tx
+            .delete(timesheetSyncItem)
+            .where(
+              or(
+                taskIds.length
+                  ? inArray(timesheetSyncItem.taskId, taskIds)
+                  : sql`false`,
+                batchIds.length
+                  ? inArray(timesheetSyncItem.batchId, batchIds)
+                  : sql`false`,
+              ),
+            )
+            .returning({ id: timesheetSyncItem.id })
+        : [];
+    if (batchIds.length) {
+      await tx
+        .delete(timesheetSyncBatch)
+        .where(inArray(timesheetSyncBatch.id, batchIds));
+    }
+    if (taskIds.length) {
+      await tx.delete(timesheetTask).where(inArray(timesheetTask.id, taskIds));
+    }
+    if (executionIds.length) {
+      await tx
+        .delete(timesheetAiExecution)
+        .where(inArray(timesheetAiExecution.id, executionIds));
+    }
+    if (existingDraftIds.length) {
+      await tx
+        .delete(dailyTimesheetDraft)
+        .where(inArray(dailyTimesheetDraft.id, existingDraftIds));
+    }
+    if (workLogIds.length) {
+      await tx
+        .delete(workLogRecord)
+        .where(inArray(workLogRecord.id, workLogIds));
+    }
+    const resourceIds = [...workLogIds, ...executionIds, ...draftIds];
+    if (resourceIds.length) {
+      await tx
+        .delete(auditEvent)
+        .where(inArray(auditEvent.entityId, resourceIds));
+    }
+    await tx
+      .delete(testFixture)
+      .where(inArray(testFixture.id, fixtures.map((fixture) => fixture.id)));
+
+    return {
+      workLogs: workLogs.length,
+      executions: executions.length,
+      drafts: drafts.length,
+      tasks: tasks.length,
+      syncBatches: batches.length,
+      syncItems: syncItems.length,
+    };
   });
 }

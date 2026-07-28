@@ -36,6 +36,7 @@ import {
   consumeTerminalToast,
   failedTimesheetToastMessage,
   hasConsumedTerminalToast,
+  redactRequestId,
 } from "@/lib/timesheets/terminal-toast";
 import { useToast } from "@/components/common/toast";
 
@@ -1436,7 +1437,7 @@ export function DailyReportPage({
                 ) : null}
                 {aiJob.status === "failed" ? (
                   <p className="mt-1 text-xs text-danger">
-                    失败阶段：{aiJob.failureStage ?? "未知"} · 请求编号：{aiJob.requestId}
+                    失败阶段：{aiJob.failureStage ?? "未知"} · 脱敏请求编号：{redactRequestId(aiJob.requestId)}
                   </p>
                 ) : null}
                 {aiJob.status === "completed" ? (

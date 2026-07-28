@@ -106,7 +106,7 @@ describe("daily timesheet AI trust boundary", () => {
         { outputCount: 2 },
         { totalHours: 3.5, summary: { pendingCount: 2 } },
       ),
-      "AI 工时草稿已生成 2 条，共 3.5 小时，待确认 2 条。",
+      "AI 整理完成。AI 工时草稿已生成 2 条，共 3.5 小时，待确认 2 条。",
     );
     assert.equal(
       failedTimesheetToastMessage(
@@ -116,7 +116,7 @@ describe("daily timesheet AI trust boundary", () => {
         },
         "校验字段和来源",
       ),
-      "AI 整理在“校验字段和来源”失败。脱敏 requestId：12345678…9abc",
+      "AI 整理失败。失败阶段：“校验字段和来源”。脱敏 requestId：12345678…9abc",
     );
   });
 

@@ -7,6 +7,10 @@ import { getDb } from "@/lib/db/client";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { findUserById } from "@/lib/db/repositories/user-repository";
 import {
+  fixtureContextFromHeaders,
+  registerTestFixture,
+} from "@/lib/test-fixtures/service";
+import {
   timesheetAiExecution,
   type TimesheetAiExecutionRecord,
 } from "@/lib/db/schema";
@@ -121,6 +125,7 @@ export async function enqueueTimesheetAiJob(
 ): Promise<{ job: TimesheetAiJobPayload; created: boolean }> {
   const prepared = await prepareDailyTimesheetGeneration(input);
   const aiConfig = requireAiAssistantEnabled();
+  const fixture = fixtureContextFromHeaders(input.requestHeaders);
   const db = getDb();
   return db.transaction(async (tx) => {
     await tx.execute(
@@ -160,6 +165,16 @@ export async function enqueueTimesheetAiJob(
         sourceCount: prepared.records.length,
       })
       .returning();
+    if (fixture) {
+      await registerTestFixture(
+        {
+          ...fixture,
+          entityType: "timesheet_ai_execution",
+          entityId: created.id,
+        },
+        tx,
+      );
+    }
     await writeAuditEvent(
       {
         actorUserId: input.principal.user.id,

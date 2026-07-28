@@ -67,6 +67,7 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
     authorization,
     migration,
     productSeed,
+    timesheetFixtureRoute,
   ] = await Promise.all([
     read("lib/db/schema/test-fixtures.ts"),
     read("lib/test-fixtures/service.ts"),
@@ -79,6 +80,7 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
     read("lib/knowledge/authorization.ts"),
     read("drizzle/0025_marvelous_stephen_strange.sql"),
     read("scripts/db/seed-product-v2.ts"),
+    read("app/api/test-fixtures/timesheets/route.ts"),
   ]);
   assert.match(fixtureSchema, /uniqueIndex\("test_fixtures_entity_uidx"\)/);
   assert.match(fixtureSchema, /expiresAt/);
@@ -104,6 +106,10 @@ test("Round 1 fixture registry keeps synthetic UAT records out of product lists"
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "test_fixtures"/);
   assert.doesNotMatch(migration, /slug like '%uat%'/);
   assert.match(fixtureService, /deleteRegisteredFixtureProject/);
+  assert.match(fixtureService, /deleteRegisteredFixtureTimesheetRun/);
+  assert.match(fixtureService, /TEST_FIXTURE_TIMESHEET_SCOPE_MISMATCH/);
+  assert.match(timesheetFixtureRoute, /timesheetDateSchema/);
+  assert.match(timesheetFixtureRoute, /deleteRegisteredFixtureTimesheetRun/);
   assert.doesNotMatch(productSeed, /kivisense-project-product-management-uat/);
   assert.match(productSeed, /kivisense-project-projectai-product/);
 });
@@ -152,6 +158,8 @@ test("Round 1 Staging fixture maintenance is inventory-first and Production-forb
   assert.match(lifecycle, /LEGACY_ORGANIZATION_ID = "uat-org-projectai-v1"/);
   assert.match(lifecycle, /deleteRegisteredFixtureProject/);
   assert.match(lifecycle, /deleteRegisteredFixtureDepartment/);
+  assert.match(lifecycle, /deleteRegisteredFixtureTimesheetRun/);
+  assert.match(lifecycle, /fixtureTimesheets/);
   assert.match(lifecycle, /const before = await inventory\(\)/);
   assert.match(lifecycle, /const after = await inventory\(\)/);
 });

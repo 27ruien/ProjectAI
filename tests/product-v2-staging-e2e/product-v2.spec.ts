@@ -134,6 +134,42 @@ async function selectOptionContaining(select: ReturnType<Page["getByLabel"]>, te
   await select.selectOption(value!);
 }
 
+function timesheetTaskCards(page: Page) {
+  return page.locator("article").filter({ has: page.getByText(/^任务 \d+ ·/u) });
+}
+
+async function createTimesheetNote(page: Page, note: string) {
+  const section = page.getByTestId("work-log-section");
+  await section.getByRole("textbox", { name: "随记内容（必填）" }).fill(note);
+  await section
+    .getByRole("combobox", { name: "项目（可选）" })
+    .selectOption(memberProjectId);
+  const response = page.waitForResponse(
+    (candidate) =>
+      candidate.url().endsWith(appPath("/api/timesheets/work-logs")) &&
+      candidate.request().method() === "POST",
+  );
+  await section.getByRole("button", { name: "保存随记" }).click();
+  expect((await response).status()).toBe(201);
+  await expect(section.getByText(note, { exact: true })).toBeVisible();
+}
+
+async function editTimesheetNote(page: Page, current: string, updated: string) {
+  const section = page.getByTestId("work-log-section");
+  const row = section.locator("article").filter({ hasText: current });
+  await row.getByRole("button", { name: "编辑" }).click();
+  await row.getByRole("textbox").fill(updated);
+  const response = page.waitForResponse(
+    (candidate) =>
+      /\/api\/timesheets\/work-logs\/[^/]+$/u.test(
+        new URL(candidate.url()).pathname,
+      ) && candidate.request().method() === "PATCH",
+  );
+  await row.getByRole("button", { name: "保存", exact: true }).click();
+  expect((await response).status()).toBe(200);
+  await expect(section.getByText(updated, { exact: true })).toBeVisible();
+}
+
 async function createProjectThroughUi(page: Page, input: { name: string; departmentName: string }) {
   await page.getByRole("button", { name: "新建项目空间" }).click();
   const dialog = page.getByRole("dialog", { name: "新建项目空间" });
@@ -652,4 +688,295 @@ test("@daily-report @global-search retained daily report and keyboard search rem
   await expect(page.getByText("ProjectAI 产品重构", { exact: true }).first()).toBeVisible();
   await capture(page, "07-global-search-result.png");
   assertNoErrors();
+});
+
+test("@fixture-isolation registered projects stay out of ordinary UI, Search, and unauthorized AI access before exact cleanup", async ({ page }) => {
+  const assertNoErrors = observe(page);
+  const marker = crypto.randomUUID().slice(0, 8);
+  const projectName = `Product V2 ACL UAT ${marker}`;
+  const runId = `uat-fixture-isolation-${crypto.randomUUID()}`;
+  const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1_000).toISOString();
+  const headers = {
+    origin,
+    "x-projectai-fixture-run-id": runId,
+    "x-projectai-fixture-expires-at": expiresAt,
+  };
+  let projectId = "";
+
+  try {
+    await login(page, "super-admin");
+    const created = await page.request.post(appPath("/api/projects"), {
+      data: {
+        name: projectName,
+        clientName: "[TEST] Synthetic fixture client",
+        description: "仅用于 Round 1 Fixture 隔离验收。",
+        status: "planning",
+        stage: "discovery",
+        health: "healthy",
+        departmentId: "kivisense-dept-product-management",
+      },
+      headers,
+    });
+    expect(created.status()).toBe(201);
+    projectId = ((await created.json()) as { project: { id: string } }).project.id;
+
+    const projectsResponse = await page.request.get(appPath("/api/projects"));
+    expect(projectsResponse.status()).toBe(200);
+    const projectList = (await projectsResponse.json()) as {
+      projects: Array<{ id: string; name: string }>;
+    };
+    expect(projectList.projects).not.toContainEqual(
+      expect.objectContaining({ id: projectId }),
+    );
+    expect(projectList.projects.map((project) => project.name)).not.toContain(
+      projectName,
+    );
+    expect((await spaces(page)).some((space) => space.projectId === projectId))
+      .toBe(false);
+
+    await gotoInteractive(page, appPath("/projects"));
+    await expect(page.getByText(projectName, { exact: true })).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+K");
+    const search = page.getByPlaceholder("搜索已授权知识空间");
+    await search.fill(projectName);
+    await expect(page.getByRole("dialog", { name: "全局搜索" })).not.toContainText(
+      projectName,
+    );
+    await search.press("Escape");
+
+    await switchIdentity(page, "member");
+    expect(
+      (
+        await page.request.get(
+          appPath(`/api/projects/${projectId}/ai/threads`),
+        )
+      ).status(),
+    ).toBe(404);
+    assertNoErrors();
+  } finally {
+    if (projectId) {
+      await switchIdentity(page, "super-admin");
+      const deleted = await page.request.delete(
+        appPath("/api/test-fixtures/projects"),
+        {
+          data: { projectId },
+          headers,
+        },
+      );
+      expect(deleted.status(), "exact isolated project cleanup").toBe(200);
+    }
+  }
+});
+
+test("@daily-report-async durable AI job survives navigation, reports completion, and retries a source-change failure", async ({ page }) => {
+  test.slow();
+  const assertNoErrors = observe(page);
+  const reportDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const runId = `uat-daily-report-${crypto.randomUUID()}`;
+  const expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1_000).toISOString();
+  const fixtureHeaders = {
+    origin,
+    "x-projectai-fixture-run-id": runId,
+    "x-projectai-fixture-expires-at": expiresAt,
+  };
+  const marker = crypto.randomUUID().slice(0, 8);
+  const note = `[UAT] Round 1 async ${marker}，完成虚构验收，1 小时，已完成，进度 100%，无加班。`;
+  const updatedNote = `${note} 已更新。`;
+  let successfulElapsedSeconds = 0;
+  const candidates = [
+    { identity: "member", userId: "kivisense-mock-member" },
+    { identity: "admin", userId: "kivisense-mock-admin" },
+    { identity: "super-admin", userId: "kivisense-mock-super-admin" },
+  ] as const;
+  let selected: (typeof candidates)[number] | null = null;
+  let fixtureStarted = false;
+
+  try {
+    for (const candidate of candidates) {
+      await switchIdentity(page, candidate.identity);
+      const projectResponse = await page.request.get(appPath("/api/projects"));
+      expect(projectResponse.status()).toBe(200);
+      const projects = (await projectResponse.json()) as {
+        projects: Array<{ id: string; organizationId: string }>;
+      };
+      const target = projects.projects.find(
+        (project) => project.id === memberProjectId,
+      );
+      expect(target, `${candidate.identity} daily-report project`).toBeTruthy();
+      const query = new URLSearchParams({
+        organizationId: target!.organizationId,
+        date: reportDate,
+      });
+      const [workLogResponse, draftResponse, jobResponse] = await Promise.all([
+        page.request.get(
+          appPath(`/api/timesheets/work-logs?${query.toString()}`),
+        ),
+        page.request.get(
+          appPath(`/api/timesheets/drafts?${query.toString()}`),
+        ),
+        page.request.get(
+          appPath(`/api/timesheets/ai-jobs?${query.toString()}`),
+        ),
+      ]);
+      expect(workLogResponse.status()).toBe(200);
+      expect(draftResponse.status()).toBe(200);
+      expect(jobResponse.status()).toBe(200);
+      const workLogBody = (await workLogResponse.json()) as {
+        records: unknown[];
+      };
+      const draftBody = (await draftResponse.json()) as {
+        draft: unknown | null;
+      };
+      const jobBody = (await jobResponse.json()) as { job: unknown | null };
+      if (
+        workLogBody.records.length === 0 &&
+        draftBody.draft === null &&
+        jobBody.job === null
+      ) {
+        selected = candidate;
+        break;
+      }
+    }
+    expect(
+      selected,
+      `one controlled identity must have an empty ${reportDate} daily report`,
+    ).toBeTruthy();
+    await page.setExtraHTTPHeaders({
+      "x-projectai-fixture-run-id": runId,
+      "x-projectai-fixture-expires-at": expiresAt,
+    });
+    fixtureStarted = true;
+    await gotoInteractive(page, appPath("/daily-report"));
+    const workLogs = page.getByTestId("work-log-section");
+    await expect(workLogs).toContainText("今天还没有随记");
+    await expect(page.getByTestId("ai-generate")).toBeDisabled();
+
+    await createTimesheetNote(page, note);
+    const startedAt = performance.now();
+    const enqueue = page.waitForResponse(
+      (candidate) =>
+        candidate.url().endsWith(appPath("/api/timesheets/drafts/generate")) &&
+        candidate.request().method() === "POST",
+    );
+    await page.getByTestId("ai-generate").click();
+    expect((await enqueue).status()).toBe(202);
+    await expect(page.getByTestId("ai-job-status")).toHaveAttribute(
+      "data-state",
+      /^(?:queued|reading_notes|matching_projects|merging_duplicates|generating_draft|validating_result)$/u,
+    );
+    await expect(page.getByTestId("ai-generate")).toBeDisabled();
+
+    await gotoInteractive(page, appPath("/knowledge"));
+    await expect(page.getByRole("heading", { name: "知识库" })).toBeVisible();
+    await gotoInteractive(page, appPath("/daily-report"));
+    await expect(page.getByTestId("ai-job-status")).toBeVisible();
+    const completedToast = page
+      .getByRole("status")
+      .filter({ hasText: "AI 整理完成" });
+    await expect(completedToast).toContainText(
+      "AI 工时草稿已生成 1 条，共 1 小时，待确认 1 条",
+      { timeout: 120_000 },
+    );
+    successfulElapsedSeconds =
+      Math.round((performance.now() - startedAt) / 100) / 10;
+    test.info().annotations.push({
+      type: "real-ai-elapsed-seconds",
+      description: String(successfulElapsedSeconds),
+    });
+    await completedToast
+      .getByRole("button", { name: "查看并确认" })
+      .click();
+    await expect(timesheetTaskCards(page)).toHaveCount(1);
+    await expect(timesheetTaskCards(page).first()).toContainText(note);
+    await expect(workLogs.getByText(note, { exact: true })).toBeVisible();
+
+    await gotoInteractive(page, appPath("/daily-report"));
+    await expect(
+      page.getByRole("status").filter({ hasText: "AI 整理完成" }),
+    ).toHaveCount(0);
+
+    const failingEnqueue = page.waitForResponse(
+      (candidate) =>
+        candidate.url().endsWith(appPath("/api/timesheets/drafts/generate")) &&
+        candidate.request().method() === "POST",
+    );
+    await page.getByTestId("ai-generate").click();
+    expect((await failingEnqueue).status()).toBe(202);
+    await editTimesheetNote(page, note, updatedNote);
+
+    const failedJob = page.getByTestId("ai-job-status");
+    await expect(failedJob).toHaveAttribute("data-state", "failed", {
+      timeout: 120_000,
+    });
+    await expect(failedJob).toContainText("整理失败");
+    await expect(failedJob).toContainText("失败阶段");
+    await expect(failedJob).toContainText(
+      /脱敏请求编号：[a-f0-9]{8}…[a-f0-9]{4}/iu,
+    );
+    await expect(failedJob).not.toContainText(
+      /[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}/iu,
+    );
+    const failedToast = page
+      .getByRole("alert")
+      .filter({ hasText: "AI 整理失败" });
+    await expect(failedToast).toContainText("失败阶段", {
+      timeout: 20_000,
+    });
+    await expect(
+      timesheetTaskCards(page)
+        .first()
+        .getByRole("textbox", { name: /任务详情（必填）/u }),
+    ).toHaveValue(note);
+    await expect(workLogs.getByText(updatedNote, { exact: true })).toBeVisible();
+
+    const retry = page.waitForResponse(
+      (candidate) =>
+        /\/api\/timesheets\/ai-jobs\/[^/]+\/retry$/u.test(
+          new URL(candidate.url()).pathname,
+        ) && candidate.request().method() === "POST",
+    );
+    await failedToast.getByRole("button", { name: "重试" }).click();
+    expect((await retry).status()).toBe(202);
+    const retryToast = page
+      .getByRole("status")
+      .filter({ hasText: "AI 整理完成" });
+    await expect(retryToast).toContainText(
+      "AI 工时草稿已生成 1 条，共 1 小时，待确认 1 条",
+      { timeout: 120_000 },
+    );
+    await retryToast.getByRole("button", { name: "查看并确认" }).click();
+    await expect(timesheetTaskCards(page)).toHaveCount(1);
+    await expect(timesheetTaskCards(page).first()).toContainText(updatedNote);
+    expect(successfulElapsedSeconds).toBeGreaterThan(0);
+    assertNoErrors();
+  } finally {
+    if (fixtureStarted && selected) {
+      await switchIdentity(page, "super-admin");
+      const cleanup = await page.request.delete(
+        appPath("/api/test-fixtures/timesheets"),
+        {
+          data: { userId: selected.userId, reportDate },
+          headers: fixtureHeaders,
+        },
+      );
+      expect(cleanup.status(), "exact daily-report fixture cleanup").toBe(200);
+      const body = (await cleanup.json()) as {
+        deleted: {
+          workLogs: number;
+          executions: number;
+          drafts: number;
+          tasks: number;
+        };
+      };
+      expect(body.deleted.workLogs).toBe(1);
+      expect(body.deleted.executions).toBeGreaterThanOrEqual(2);
+      expect(body.deleted.drafts).toBe(1);
+      expect(body.deleted.tasks).toBe(1);
+    }
+  }
 });

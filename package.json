@@ -40,6 +40,8 @@
     "test:staging:ai-retrieval-permissions": "playwright test --config=playwright.product-v2-staging.config.ts --grep @ai-retrieval-permissions",
     "test:staging:ai-workflow": "playwright test --config=playwright.product-v2-staging.config.ts --grep @ai-workflow",
     "test:staging:daily-report": "playwright test --config=playwright.product-v2-staging.config.ts --grep @daily-report",
+    "test:staging:daily-report-async": "playwright test --config=playwright.product-v2-staging.config.ts --grep @daily-report-async",
+    "test:staging:fixture-isolation": "playwright test --config=playwright.product-v2-staging.config.ts --grep @fixture-isolation",
     "test:staging:global-search": "playwright test --config=playwright.product-v2-staging.config.ts --grep @global-search",
     "test:round1:local-product": "NODE_ENV=test playwright test --config=playwright.round1-local.config.ts --grep '@organization|@knowledge-permissions|@knowledge-race|@daily-report|@global-search'",
     "db:test-account:reset-password": "tsx scripts/db/reset-test-account-password.ts",

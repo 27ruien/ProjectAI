@@ -20,6 +20,11 @@ import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { listAuthorizedProjects } from "@/lib/db/repositories/project-repository";
 import {
+  fixtureContextFromHeaders,
+  registeredFixtureContext,
+  registerTestFixture,
+} from "@/lib/test-fixtures/service";
+import {
   dailyTimesheetDraft,
   actionItem,
   timesheetAiExecution,
@@ -1046,6 +1051,7 @@ export async function createWorkLog(input: {
   }
   const recordedAt = new Date(input.values.recordedAt);
   assertRecordedDate(recordedAt, input.values.recordDate);
+  const fixture = fixtureContextFromHeaders(input.requestHeaders);
   const db = getDb();
   const record = await db.transaction(async (tx) => {
     await requireTimesheetOrganization(
@@ -1082,6 +1088,16 @@ export async function createWorkLog(input: {
         statusHint: input.values.statusHint ?? null,
       })
       .returning();
+    if (fixture) {
+      await registerTestFixture(
+        {
+          ...fixture,
+          entityType: "work_log_record",
+          entityId: created.id,
+        },
+        tx,
+      );
+    }
     await invalidateEditableDraft(
       input.values.organizationId,
       input.principal.user.id,
@@ -1941,6 +1957,32 @@ export async function generateDailyTimesheet(
         .limit(1)
         .for("update", { of: dailyTimesheetDraft });
       const draftId = existing[0]?.id ?? crypto.randomUUID();
+      const executionFixture = await registeredFixtureContext(
+        "timesheet_ai_execution",
+        executionId,
+        tx,
+      );
+      if (executionFixture && existing[0]) {
+        const existingDraftFixture = await registeredFixtureContext(
+          "daily_timesheet_draft",
+          draftId,
+          tx,
+        );
+        if (
+          !existingDraftFixture ||
+          existingDraftFixture.fixtureRunId !==
+            executionFixture.fixtureRunId ||
+          existingDraftFixture.environment !== executionFixture.environment ||
+          existingDraftFixture.expiresAt.getTime() !==
+            executionFixture.expiresAt.getTime()
+        ) {
+          throw new TimesheetError(
+            409,
+            "TEST_FIXTURE_TIMESHEET_CONFLICT",
+            "测试日报日期已存在非本次验收草稿",
+          );
+        }
+      }
       const verifiedProjects = new Map<string, { id: string; name: string }>();
       for (const projectId of [
         ...new Set(
@@ -2137,6 +2179,16 @@ export async function generateDailyTimesheet(
         .select()
         .from(dailyTimesheetDraft)
         .where(eq(dailyTimesheetDraft.id, draftId));
+      if (executionFixture) {
+        await registerTestFixture(
+          {
+            ...executionFixture,
+            entityType: "daily_timesheet_draft",
+            entityId: draftId,
+          },
+          tx,
+        );
+      }
       return draftPayload(draft, tx);
     });
     return saved;

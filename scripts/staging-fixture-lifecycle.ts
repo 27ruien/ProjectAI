@@ -10,6 +10,7 @@ import { getObjectStorage } from "../lib/files/object-storage";
 import {
   deleteRegisteredFixtureDepartment,
   deleteRegisteredFixtureProject,
+  deleteRegisteredFixtureTimesheetRun,
   type FixtureContext,
 } from "../lib/test-fixtures/service";
 
@@ -56,19 +57,31 @@ async function inventory(): Promise<Record<string, number>> {
     fixtures: number;
     fixture_projects: number;
     fixture_departments: number;
+    fixture_timesheets: number;
     legacy_organizations: number;
     organizations: number;
     projects: number;
     documents: number;
+    work_logs: number;
+    timesheet_drafts: number;
+    timesheet_executions: number;
   }>(sql`
     select
       (select count(*)::int from test_fixtures) as fixtures,
       (select count(*)::int from test_fixtures where entity_type = 'project') as fixture_projects,
       (select count(*)::int from test_fixtures where entity_type = 'department') as fixture_departments,
+      (select count(*)::int from test_fixtures where entity_type in (
+        'work_log_record',
+        'timesheet_ai_execution',
+        'daily_timesheet_draft'
+      )) as fixture_timesheets,
       (select count(*)::int from organizations where id = ${LEGACY_ORGANIZATION_ID}) as legacy_organizations,
       (select count(*)::int from organizations) as organizations,
       (select count(*)::int from projects) as projects,
-      (select count(*)::int from project_documents) as documents
+      (select count(*)::int from project_documents) as documents,
+      (select count(*)::int from work_log_records) as work_logs,
+      (select count(*)::int from daily_timesheet_drafts) as timesheet_drafts,
+      (select count(*)::int from timesheet_ai_executions) as timesheet_executions
   `);
   const objects = await getObjectStorage().listObjects("");
   const row = database.rows[0]!;
@@ -76,15 +89,61 @@ async function inventory(): Promise<Record<string, number>> {
     fixtures: Number(row.fixtures),
     fixtureProjects: Number(row.fixture_projects),
     fixtureDepartments: Number(row.fixture_departments),
+    fixtureTimesheets: Number(row.fixture_timesheets),
     legacyOrganizations: Number(row.legacy_organizations),
     organizations: Number(row.organizations),
     projects: Number(row.projects),
     documents: Number(row.documents),
+    workLogs: Number(row.work_logs),
+    timesheetDrafts: Number(row.timesheet_drafts),
+    timesheetExecutions: Number(row.timesheet_executions),
     objects: objects.length,
   };
 }
 
 async function cleanup(): Promise<void> {
+  const timesheetRuns = await getDb().execute<{
+    fixture_run_id: string;
+    environment: string;
+    expires_at: Date;
+    user_id: string;
+    report_date: string;
+  }>(sql`
+    select distinct
+      f.fixture_run_id,
+      f.environment,
+      f.expires_at,
+      coalesce(w.user_id, e.user_id, d.user_id) as user_id,
+      coalesce(w.record_date, e.report_date, d.report_date)::text as report_date
+    from test_fixtures f
+    left join work_log_records w
+      on f.entity_type = 'work_log_record' and f.entity_id = w.id
+    left join timesheet_ai_executions e
+      on f.entity_type = 'timesheet_ai_execution' and f.entity_id = e.id
+    left join daily_timesheet_drafts d
+      on f.entity_type = 'daily_timesheet_draft' and f.entity_id = d.id
+    where f.is_test_fixture = true
+      and f.environment = 'staging'
+      and f.entity_type in (
+        'work_log_record',
+        'timesheet_ai_execution',
+        'daily_timesheet_draft'
+      )
+    order by f.fixture_run_id, user_id, report_date
+  `);
+  for (const run of timesheetRuns.rows) {
+    if (!run.user_id || !run.report_date) {
+      throw new Error("STAGING_FIXTURE_TIMESHEET_REVIEW_REQUIRED");
+    }
+    await deleteRegisteredFixtureTimesheetRun({
+      fixtureRunId: run.fixture_run_id,
+      environment: run.environment as FixtureContext["environment"],
+      expiresAt: run.expires_at,
+      userId: run.user_id,
+      reportDate: run.report_date,
+    });
+  }
+
   const projectFixtures = await getDb()
     .select({
       entityId: testFixture.entityId,
