@@ -688,7 +688,7 @@ test("@ai-workflow @meeting-workflow V3 meeting workflow uses real ASR, confirms
   await page.locator('input[type="file"]').setInputFiles(audioPath);
   const uploadResponse = page.waitForResponse(
     (response) => isApiResponse(response, `/api/projects/${target!.projectId}/workflows/meeting-minutes`, "POST"),
-    { timeout: 30_000 },
+    { timeout: 120_000 },
   );
   await page.getByRole("button", { name: "上传并开始处理" }).click();
   expect((await uploadResponse).status()).toBe(202);

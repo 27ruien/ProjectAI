@@ -163,7 +163,7 @@ const parameterSchema = z.object({
   description: z.string().trim().min(1).max(500),
   key: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
   valueRule: z.string().trim().min(1).max(1_000),
-  valueType: z.enum(["string", "number", "boolean", "date", "array"]),
+  valueType: z.enum(["string", "number", "boolean", "date", "array", "TBD"]),
   note: z.string().max(1_000),
   citations: citationLabelsSchema,
 }).strict();
@@ -191,7 +191,7 @@ export const ga4MeasurementPlanSchema = z.object({
     parameterDescription: z.string().max(500),
     parameterKey: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
     parameterValueRule: z.string().max(1_000),
-    parameterValueType: z.enum(["string", "number", "boolean", "date", "array"]),
+    parameterValueType: z.enum(["string", "number", "boolean", "date", "array", "TBD"]),
     note: z.string().max(1_000),
     developerFeedback: z.string().max(1_000),
     citations: citationLabelsSchema,
@@ -272,7 +272,11 @@ function normalizeGa4Boolean(value: unknown): unknown {
 }
 
 function normalizeGa4ValueType(value: unknown): unknown {
-  if (Array.isArray(value)) return value.length === 1 ? normalizeGa4ValueType(value[0]) : value;
+  if (value === null || value === undefined) return "TBD";
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "TBD";
+    return value.length === 1 ? normalizeGa4ValueType(value[0]) : value;
+  }
   if (value && typeof value === "object") {
     const item = value as Record<string, unknown>;
     for (const key of ["valueType", "type", "name"] as const) {
@@ -282,6 +286,7 @@ function normalizeGa4ValueType(value: unknown): unknown {
   }
   if (typeof value !== "string") return value;
   const normalized = value.trim().toLowerCase();
+  if (["", "tbd", "unknown", "pending", "not provided", "not available", "待确认", "待定", "未知", "未提供"].includes(normalized)) return "TBD";
   if (["string", "text", "enum", "enumeration", "string(enum)", "enum(string)", "string/enum", "enum/string", "字符串", "文本", "枚举"].includes(normalized)) return "string";
   if (["number", "integer", "float", "double", "decimal", "numeric", "数字", "数值", "整数", "浮点数"].includes(normalized)) return "number";
   if (["boolean", "bool", "布尔"].includes(normalized)) return "boolean";

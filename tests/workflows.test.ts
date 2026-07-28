@@ -426,6 +426,28 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(ga4MeasurementPlanSchema.safeParse(excessive).success, false);
   });
 
+  it("keeps missing GA4 parameter value types explicitly pending", () => {
+    const normalized = normalizeGa4MeasurementPlan({
+      overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构项目", projectLink: "TBD", citations: ["E1"] },
+      publicParameters: [{ name: "语言", description: "界面语言", key: "language", valueRule: "待确认", citations: ["E1"] }],
+      events: [{ eventName: "form_opened", coreEvent: true, eventType: "click", description: "打开表单", eventId: "form_opened", parameterName: "入口", parameterDescription: "入口名称", parameterKey: "entry_name", parameterValueRule: "待确认", citations: ["E1"] }],
+      requirementEventCoverage: [{ requirement: "REQ-001", eventId: "form_opened", status: "covered" }],
+      pageEventMatrix: [],
+    });
+    const parsed = ga4MeasurementPlanSchema.safeParse(normalized);
+    assert.equal(parsed.success, true);
+    if (parsed.success) {
+      assert.equal(parsed.data.publicParameters[0]!.valueType, "TBD");
+      assert.equal(parsed.data.events[0]!.parameterValueType, "TBD");
+    }
+
+    const malformed = normalizeGa4MeasurementPlan({
+      ...(normalized as Record<string, unknown>),
+      events: [{ ...(normalized as { events: Array<Record<string, unknown>> }).events[0], parameterValueType: "object" }],
+    });
+    assert.equal(ga4MeasurementPlanSchema.safeParse(malformed).success, false);
+  });
+
   it("describes GA4 schema failures without provider content", () => {
     const failure = describeArtifactSchemaFailure("ga4_measurement_plan", normalizeGa4MeasurementPlan({
       overview: { platform: "GA4", measurementId: "TBD", validationStatus: "pending", projectName: "虚构", projectLink: "TBD", citations: [] },
