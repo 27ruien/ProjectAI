@@ -2,10 +2,9 @@ import { expect, test, type Page, type Route } from "@playwright/test";
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sanitizePlaywrightTrace } from "../../scripts/uat/sanitize-playwright-trace.mjs";
-import { actorCredentials } from "../e2e/support/auth";
 import { appPath } from "../e2e/support/app-url";
 
-const authorizedProjectId = "uat-project-wecom-v1";
+const authorizedProjectId = "kivisense-project-projectai-product";
 const evidenceDirectory = path.resolve("test-results/uat-ui/evidence");
 const rawTracePath = path.resolve("test-results/uat-ui/raw/local-uat-ui-trace.zip");
 const sanitizedTracePath = path.join(evidenceDirectory, "local-uat-ui-trace.sanitized.zip");
@@ -61,12 +60,11 @@ async function capture(page: Page, fileName: string) {
 test("real Local UAT UI completes the daily-report journey from an empty seed", async ({ page, context }) => {
   await mkdir(evidenceDirectory, { recursive: true, mode: 0o700 });
   await mkdir(path.dirname(rawTracePath), { recursive: true, mode: 0o700 });
-  const credentials = actorCredentials("uatManager");
   const consoleErrors: string[] = [];
   const expectedFailureInjectionConsoleErrors: string[] = [];
   const confirmRequests: Array<{ path: string; status: number }> = [];
   let confirmedResponse: { status: string; version: number; confirmedAtPresent: boolean } | null = null;
-  let traceSecretValues = [credentials.password];
+  let traceSecretValues: string[] = [];
   let traceStarted = false;
   let failureInjectionActive = false;
 
@@ -81,18 +79,16 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
   page.on("pageerror", (error) => consoleErrors.push(error.message));
 
   try {
-    await test.step("login through the rendered form without tracing credentials", async () => {
+    await test.step("login through the rendered Mock WeCom identity without tracing the Session", async () => {
       await page.goto(appPath("/login"));
       await capture(page, "01-login.png");
-      await page.getByRole("textbox", { name: "邮箱" }).fill(credentials.email);
-      await page.locator('input[name="password"]').fill(credentials.password);
-      await page.getByRole("button", { name: "登录", exact: true }).click();
-      await expect(page).toHaveURL(new RegExp(`${appPath("/dashboard")}$`));
+      await page.getByRole("button", { name: /Kivisense Member/u }).click();
+      await expect(page).toHaveURL(new RegExp(`${appPath("/daily-report")}$`));
       const cookies = await context.cookies();
-      traceSecretValues = [
-        credentials.password,
-        ...cookies.flatMap((cookie) => [cookie.value, `${cookie.name}=${cookie.value}`]),
-      ];
+      traceSecretValues = cookies.flatMap((cookie) => [
+        cookie.value,
+        `${cookie.name}=${cookie.value}`,
+      ]);
       await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
       traceStarted = true;
     });
@@ -183,14 +179,28 @@ test("real Local UAT UI completes the daily-report journey from an empty seed", 
       await reached;
       await expect(page.getByTestId("ai-generate")).toHaveAttribute("data-state", "submitting");
       releaseGenerate();
-      expect((await response).status()).toBe(201);
+      expect((await response).status()).toBe(202);
       await page.unroute("**/api/timesheets/drafts/generate", generateHandler);
-      await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
+      await expect(page.getByTestId("ai-job-status")).toBeVisible();
+      await page.goto(appPath("/knowledge"));
+      await expect(page.getByRole("heading", { name: "知识库" })).toBeVisible();
+      await page.goto(appPath("/daily-report"));
+      const completionToast = page
+        .getByRole("status")
+        .filter({ hasText: "AI 工时草稿已生成" });
+      await expect(completionToast).toContainText(
+        /已生成 1 条，共 1 小时，待确认 1 条/u,
+      );
+      await completionToast.getByRole("button", { name: "查看并确认" }).click();
       await expect(taskCards(page)).toHaveCount(1);
       await expect(taskCards(page).first()).toContainText(editedNoteA);
       await expect(page.getByText("紧急重要度（可选）")).toBeVisible();
       await expect(page.getByPlaceholder("可选，当前不设置")).toBeDisabled();
       await capture(page, "04-ai-draft.png");
+      await waitForWorkLogs(page, () => page.reload());
+      await expect(
+        page.getByRole("status").filter({ hasText: "AI 工时草稿已生成" }),
+      ).toHaveCount(0);
     });
 
     await test.step("scenario 4: show a specific field error and clear it after correction", async () => {

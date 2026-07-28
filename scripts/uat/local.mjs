@@ -76,6 +76,7 @@ async function main() {
     NEXT_PUBLIC_APP_ENV: "test",
     NEXT_PUBLIC_BASE_PATH: "/tool/projectai-uat",
     PROJECTAI_UAT_ENVIRONMENT: "local",
+    PROJECTAI_INCLUDE_TEST_FIXTURES: "true",
     ALLOW_UAT_SEED: "true",
     AUTH_LOCAL_ORIGIN: "http://127.0.0.1:3300",
     AUTH_COOKIE_PREFIX: "projectai_uat_local",

@@ -15,6 +15,13 @@ import {
 import { TimesheetError } from "../lib/timesheets/errors";
 import { mockSmartSheetResult } from "../lib/timesheets/mock-smartsheet-provider";
 import { updateSyncBatchSchema } from "../lib/timesheets/contracts";
+import {
+  completedTimesheetToastMessage,
+  consumeTerminalToast,
+  failedTimesheetToastMessage,
+  hasConsumedTerminalToast,
+  redactRequestId,
+} from "../lib/timesheets/terminal-toast";
 
 const now = new Date("2026-07-22T02:30:00.000Z");
 
@@ -75,6 +82,44 @@ function expectCode(operation: () => unknown, code: string): void {
 }
 
 describe("daily timesheet AI trust boundary", () => {
+  it("consumes a terminal Toast once and keeps request IDs redacted", () => {
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, value);
+      },
+    };
+    const job = { id: "job-1", status: "completed" as const };
+    assert.equal(hasConsumedTerminalToast(storage, job), false);
+    consumeTerminalToast(storage, job);
+    assert.equal(hasConsumedTerminalToast(storage, job), true);
+    assert.equal(
+      redactRequestId("12345678-1234-1234-1234-123456789abc"),
+      "12345678…9abc",
+    );
+  });
+
+  it("builds actionable completion and failure Toast details", () => {
+    assert.equal(
+      completedTimesheetToastMessage(
+        { outputCount: 2 },
+        { totalHours: 3.5, summary: { pendingCount: 2 } },
+      ),
+      "AI 整理完成。AI 工时草稿已生成 2 条，共 3.5 小时，待确认 2 条。",
+    );
+    assert.equal(
+      failedTimesheetToastMessage(
+        {
+          failureStage: "validating_result",
+          requestId: "12345678-1234-1234-1234-123456789abc",
+        },
+        "校验字段和来源",
+      ),
+      "AI 整理失败。失败阶段：“校验字段和来源”。脱敏 requestId：12345678…9abc",
+    );
+  });
+
   it("rejects invalid calendar dates", async () => {
     const { timesheetDateSchema } = await import("../lib/timesheets/contracts");
     assert.equal(timesheetDateSchema.safeParse("2026-02-31").success, false);
@@ -239,6 +284,17 @@ describe("daily timesheet AI trust boundary", () => {
   it("instructs the model not to merge different deliverables", () => {
     const prompts = buildTimesheetPrompts({ today_records: [] });
     assert.match(prompts.systemPrompt, /不同项目、交付物或状态必须分开/);
+  });
+
+  it("binds real-provider output to the complete strict JSON contract", () => {
+    const prompts = buildTimesheetPrompts({ today_records: [] });
+    assert.match(prompts.systemPrompt, /不得遗漏 required 字段或增加任何字段/);
+    assert.match(prompts.systemPrompt, /"additionalProperties":false/);
+    assert.match(
+      prompts.systemPrompt,
+      /"required":\["description","project_id","hours","overtime_hours","category_id","status","urgency","progress","source_record_ids","confidence","needs_review","review_fields"\]/,
+    );
+    assert.match(prompts.systemPrompt, /"needs_review":\{"type":"boolean","const":true\}/);
   });
 
   it("conservatively rejects AI merging same-project records before human review", () => {

@@ -6,7 +6,9 @@ import {
   ChevronLeft,
   ChevronRight,
   Building2,
+  FolderKanban,
   Library,
+  Search,
   Workflow,
   Clock3,
   X,
@@ -22,9 +24,11 @@ const navigation: Array<{
   role?: "super_admin";
 }> = [
   { label: "工作日报", href: "/daily-report", icon: Clock3, feature: "pmDailyReport" },
+  { label: "项目", href: "/projects", icon: FolderKanban },
   { label: "AI 工作流", href: "/workflows", icon: Workflow },
   { label: "知识库", href: "/knowledge", icon: Library },
   { label: "组织架构", href: "/organization", icon: Building2, role: "super_admin" },
+  { label: "全局搜索", href: "/search", icon: Search },
 ];
 
 interface SidebarProps {

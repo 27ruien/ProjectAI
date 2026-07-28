@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly EXPECTED_BRANCH="agent/projectai-product-architecture-v2"
+readonly DEFAULT_EXPECTED_BRANCH="agent/projectai-product-architecture-v2"
+readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
 readonly REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 readonly REMOTE_DIR="/srv/projectai-staging"
 readonly COMPOSE_PROJECT="projectai-staging"
@@ -22,13 +23,14 @@ log() { printf '[projectai-product-v2-staging] %s\n' "$*"; }
 fail() { printf '[projectai-product-v2-staging] ERROR: %s\n' "$*" >&2; exit 1; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"; }
 
-for command_name in git ssh rsync docker gzip tar mktemp curl node; do
+for command_name in git ssh rsync docker gzip tar mktemp curl node shasum; do
   require_command "$command_name"
 done
 
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "Run from a Git checkout"
 cd "$ROOT_DIR"
 [[ "$(git branch --show-current)" == "$EXPECTED_BRANCH" ]] || fail "Expected branch ${EXPECTED_BRANCH}"
+[[ "$EXPECTED_BRANCH" == agent/* ]] || fail "PROJECTAI_STAGING_DEPLOY_BRANCH must name an agent branch"
 [[ -z "$(git status --porcelain --untracked-files=all | grep -Ev '^\?\? pocket-charista(/|\.zip$)' || true)" ]] \
   || fail "Refusing to deploy tracked or ProjectAI untracked changes"
 git diff --check --cached
@@ -43,6 +45,9 @@ DEPLOY_ID="${COMMIT_SHA}-$(date -u +'%Y%m%dT%H%M%SZ')-$$-${RANDOM}"
 APP_IMAGE_REF="project-ai-os-staging:${COMMIT_SHA}"
 DB_TOOLS_IMAGE_REF="project-ai-os-staging-db-tools:${COMMIT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-product-v2-release.XXXXXX")"
+IMAGE_ARCHIVE="${RELEASE_ROOT}/release-images.tar.gz"
+REMOTE_IMAGE_DIR="${REMOTE_DIR}/.local/image-transfers"
+REMOTE_IMAGE_ARCHIVE="${REMOTE_IMAGE_DIR}/${DEPLOY_ID}.tar.gz"
 LOCK_ACQUIRED=0
 
 SSH=(
@@ -52,12 +57,19 @@ SSH=(
 
 release_lock() {
   [[ "$LOCK_ACQUIRED" == "1" ]] || return 0
-  "${SSH[@]}" bash -s -- "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_UNLOCK'
+  "${SSH[@]}" bash -s -- \
+    "$LOCK_DIR" "$DEPLOY_ID" "$MARKER" "$REMOTE_IMAGE_ARCHIVE" <<'REMOTE_UNLOCK'
 set -Eeuo pipefail
 lock_dir="$1"
 deploy_id="$2"
+marker="$3"
+image_archive="$4"
 [[ "$lock_dir" == "/srv/projectai-staging/.staging-deploy-lock" ]]
+[[ "$marker" == "/srv/projectai-staging/.product-v2-deploy-in-progress" ]]
+[[ "$image_archive" == "/srv/projectai-staging/.local/image-transfers/${deploy_id}.tar.gz" ]]
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+sudo test ! -L "$marker"
+sudo rm -f -- "$marker" "$image_archive"
 sudo rm -f -- "$lock_dir/deploy-id"
 sudo rmdir -- "$lock_dir"
 REMOTE_UNLOCK
@@ -112,6 +124,17 @@ command -v curl >/dev/null
 command -v rsync >/dev/null
 sudo docker compose version >/dev/null
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+minimum_available_bytes=$((12 * 1024 * 1024 * 1024))
+docker_root="$(sudo docker info --format '{{.DockerRootDir}}')"
+[[ "$docker_root" == /* ]]
+for capacity_path in "$docker_root" /srv/projectai-staging; do
+  available_bytes="$(df --output=avail -B1 "$capacity_path" | awk 'NR == 2 { print $1 }')"
+  [[ "$available_bytes" =~ ^[0-9]+$ ]]
+  if (( available_bytes < minimum_available_bytes )); then
+    printf 'Staging deployment requires at least 12 GiB free before backup, image transfer, or migration.\n' >&2
+    exit 1
+  fi
+done
 for protected in "$env_file" "$ai_env_file" "$embedding_env_file" "$qwen_secret_file"; do
   sudo test -f "$protected"
   sudo test ! -L "$protected"
@@ -181,7 +204,7 @@ sudo docker inspect project-ai-os-staging-postgres >/dev/null
 sudo docker exec project-ai-os-staging-postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | sudo tee "$backup_path" >/dev/null
 sudo chmod 600 "$backup_path"
 sudo test -s "$backup_path"
-sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres pg_restore --list >/dev/null
+sudo sh -c 'docker exec -i project-ai-os-staging-postgres pg_restore --list < "$1" >/dev/null' sh "$backup_path"
 sudo install -m 0600 -o root -g root "$env_file" "$env_backup"
 sudo install -m 0600 -o root -g root "$ai_env_file" "$ai_env_backup"
 sudo install -m 0600 -o root -g root "$embedding_env_file" "$embedding_env_backup"
@@ -197,25 +220,76 @@ deploy_id="$3"
 sudo install -m 0600 -o root -g root /dev/null "$marker"
 REMOTE_MARK
 
-rsync --archive --compress --delete \
-  --filter='protect /backups/***' \
-  --filter='protect /.local/***' \
-  --filter='protect /.env.auth-staging' \
-  --filter='protect /.env.ai' \
-  --filter='protect /.env.embedding' \
-  --filter='protect /secrets/***' \
-  --filter='protect /.product-v2-deploy-in-progress' \
-  --filter='protect /.staging-deploy-in-progress' \
-  --filter='protect /.staging-deploy-lock/***' \
-  --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' \
-  --exclude '/.vinext/' --exclude '/.wrangler/' --exclude '/test-results/' \
-  --exclude '/playwright-report/' --exclude '/.local/' --exclude '/.env*' \
-  --exclude '/secrets/' --exclude '*.log' \
-  --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
-  "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
+RELEASE_SYNCED=0
+for attempt in 1 2 3; do
+  if rsync --archive --compress --delete --partial --timeout=120 \
+    --filter='protect /backups/***' \
+    --filter='protect /.local/***' \
+    --filter='protect /.env.auth-staging' \
+    --filter='protect /.env.ai' \
+    --filter='protect /.env.embedding' \
+    --filter='protect /secrets/***' \
+    --filter='protect /.product-v2-deploy-in-progress' \
+    --filter='protect /.staging-deploy-in-progress' \
+    --filter='protect /.staging-deploy-lock/***' \
+    --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' \
+    --exclude '/.vinext/' --exclude '/.wrangler/' --exclude '/test-results/' \
+    --exclude '/playwright-report/' --exclude '/.local/' --exclude '/.env*' \
+    --exclude '/secrets/' --exclude '*.log' \
+    --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
+    "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"; then
+    RELEASE_SYNCED=1
+    break
+  fi
+  log "Release sync attempt ${attempt} failed; retrying the same reviewed release tree"
+done
+[[ "$RELEASE_SYNCED" == "1" ]] || fail "Reviewed Staging release sync failed after 3 attempts"
 
-log "Transferring the reviewed images"
-docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+log "Creating the reviewed image archive"
+docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 >"$IMAGE_ARCHIVE"
+chmod 600 "$IMAGE_ARCHIVE"
+IMAGE_ARCHIVE_SIZE="$(stat -f '%z' "$IMAGE_ARCHIVE")"
+IMAGE_ARCHIVE_SHA256="$(shasum -a 256 "$IMAGE_ARCHIVE" | awk '{ print $1 }')"
+[[ "$IMAGE_ARCHIVE_SIZE" =~ ^[1-9][0-9]*$ && "$IMAGE_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+log "Transferring the reviewed images with bounded resume"
+"${SSH[@]}" bash -s -- "$REMOTE_IMAGE_DIR" "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_DIR'
+set -Eeuo pipefail
+image_dir="$1"; lock_dir="$2"; deploy_id="$3"
+[[ "$image_dir" == "/srv/projectai-staging/.local/image-transfers" ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+sudo install -d -m 0700 -o root -g root "$image_dir"
+REMOTE_IMAGE_DIR
+IMAGE_TRANSFERRED=0
+for attempt in 1 2 3; do
+  if rsync --archive --partial --append --timeout=120 \
+    --rsync-path='sudo rsync' \
+    --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
+    "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then
+    IMAGE_TRANSFERRED=1
+    break
+  fi
+  log "Image transfer attempt ${attempt} failed; retaining the exact partial archive for bounded resume"
+done
+[[ "$IMAGE_TRANSFERRED" == "1" ]] || fail "Reviewed image transfer failed after 3 attempts"
+
+log "Verifying and loading the reviewed images"
+"${SSH[@]}" bash -s -- \
+  "$REMOTE_IMAGE_ARCHIVE" "$IMAGE_ARCHIVE_SIZE" "$IMAGE_ARCHIVE_SHA256" \
+  "$LOCK_DIR" "$DEPLOY_ID" "$APP_IMAGE_REF" "$APP_IMAGE_ID" \
+  "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" <<'REMOTE_IMAGE_LOAD'
+set -Eeuo pipefail
+image_archive="$1"; expected_size="$2"; expected_sha256="$3"; lock_dir="$4"
+deploy_id="$5"; app_ref="$6"; app_id="$7"; db_tools_ref="$8"; db_tools_id="$9"
+[[ "$image_archive" == "/srv/projectai-staging/.local/image-transfers/${deploy_id}.tar.gz" ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+[[ "$(sudo stat -c '%s' "$image_archive")" == "$expected_size" ]]
+[[ "$(sudo sha256sum "$image_archive" | awk '{ print $1 }')" == "$expected_sha256" ]]
+sudo sh -c 'gzip -dc -- "$1" | docker load >/dev/null' sh "$image_archive"
+[[ "$(sudo docker image inspect --format '{{.Id}}' "$app_ref")" == "$app_id" ]]
+[[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_ref")" == "$db_tools_id" ]]
+sudo rm -f -- "$image_archive"
+REMOTE_IMAGE_LOAD
 
 log "Backing up, migrating, seeding, and starting Product V2 on Staging"
 "${SSH[@]}" bash -s -- \
@@ -237,6 +311,16 @@ cd "$remote_dir"
 previous_app_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging 2>/dev/null || true)"
 previous_worker_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-worker 2>/dev/null || true)"
 previous_embedding_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-embedding-worker 2>/dev/null || true)"
+previous_timesheet_ref="$(sudo docker inspect --format '{{.Config.Image}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)"
+legacy_workflow_container="project-ai-os-staging-workflow-worker"
+legacy_workflow_present="false"
+legacy_workflow_was_running="false"
+if sudo docker inspect "$legacy_workflow_container" >/dev/null 2>&1; then
+  [[ "$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.project"}}' "$legacy_workflow_container")" == "$compose_project" ]]
+  [[ "$(sudo docker inspect --format '{{index .Config.Labels "com.docker.compose.service"}}' "$legacy_workflow_container")" == "projectai-workflow-worker" ]]
+  legacy_workflow_present="true"
+  legacy_workflow_was_running="$(sudo docker inspect --format '{{.State.Running}}' "$legacy_workflow_container")"
+fi
 backup_path="$remote_dir/backups/projectai-product-v2-${deploy_id}.dump"
 env_backup="$remote_dir/backups/product-v2-auth-env-${deploy_id}.bak"
 ai_env_backup="$remote_dir/backups/product-v2-ai-env-${deploy_id}.bak"
@@ -252,6 +336,7 @@ compose_base=(
   sudo env "NEXT_PUBLIC_COMMIT_SHA=$commit_sha" "NEXT_PUBLIC_APP_VERSION=$app_version"
   "NEXT_PUBLIC_BUILD_TIME=$build_time" "STAGING_APP_IMAGE=$app_image_ref"
   "STAGING_WORKER_IMAGE=$app_image_ref" "STAGING_EMBEDDING_WORKER_IMAGE=$app_image_ref"
+  "STAGING_TIMESHEET_WORKER_IMAGE=$app_image_ref"
   "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref"
   "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref"
   docker compose --env-file "$env_file" --env-file "$embedding_env_file"
@@ -261,21 +346,45 @@ compose_base=(
 rollback() {
   local status=$?
   trap - ERR
-  set +e
+  set -Eeuo pipefail
   printf 'Product V2 deployment failed; restoring the verified Staging database, environment, and prior images.\n' >&2
-  "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker >/dev/null 2>&1
-  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec 'pg_restore --clean --if-exists --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+  "${compose_base[@]}" stop projectai-staging projectai-document-worker projectai-embedding-worker projectai-timesheet-worker >/dev/null 2>&1
+  sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres sh -ec '
+    case "$POSTGRES_DB" in
+      ""|postgres|template0|template1|*[!A-Za-z0-9_]*)
+        printf "Refusing to rebuild an invalid Staging database target.\n" >&2
+        exit 1
+        ;;
+    esac
+    dropdb --if-exists --force --maintenance-db=postgres -U "$POSTGRES_USER" "$POSTGRES_DB"
+    createdb --maintenance-db=postgres -U "$POSTGRES_USER" --owner="$POSTGRES_USER" "$POSTGRES_DB"
+    pg_restore --exit-on-error --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+  '
   sudo install -m 0600 -o root -g root "$env_backup" "$env_file"
   sudo install -m 0600 -o deploy -g deploy "$ai_env_backup" "$ai_env_file"
   sudo install -m 0600 -o root -g root "$embedding_env_backup" "$embedding_env_file"
-  if [[ -n "$previous_app_ref" && -n "$previous_worker_ref" ]]; then
-    sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
-      "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
+  [[ -n "$previous_app_ref" && -n "$previous_worker_ref" ]]
+  sudo env "STAGING_APP_IMAGE=$previous_app_ref" "STAGING_WORKER_IMAGE=$previous_worker_ref" \
+    "STAGING_EMBEDDING_WORKER_IMAGE=${previous_embedding_ref:-$previous_app_ref}" \
+    "STAGING_TIMESHEET_WORKER_IMAGE=${previous_timesheet_ref:-$previous_app_ref}" \
+    "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
+    "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
+    docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
+    --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
+    projectai-document-worker projectai-embedding-worker projectai-staging >/dev/null
+  if [[ -n "$previous_timesheet_ref" ]]; then
+    sudo env "STAGING_APP_IMAGE=$previous_app_ref" \
+      "STAGING_TIMESHEET_WORKER_IMAGE=$previous_timesheet_ref" \
       "STAGING_DB_TOOLS_IMAGE=$db_tools_ref" "STAGING_POSTGRES_IMAGE=$postgres_ref" \
       "STAGING_MINIO_IMAGE=$minio_ref" "STAGING_MINIO_CLIENT_IMAGE=$minio_client_ref" \
       docker compose --env-file "$env_file" --env-file "$embedding_env_file" \
       --project-name "$compose_project" --file "$compose_file" up --detach --no-build --pull never \
-      projectai-document-worker projectai-embedding-worker projectai-staging >/dev/null
+      projectai-timesheet-worker >/dev/null
+  else
+    "${compose_base[@]}" rm --stop --force projectai-timesheet-worker >/dev/null 2>&1 || true
+  fi
+  if [[ "$legacy_workflow_present" == "true" && "$legacy_workflow_was_running" == "true" ]]; then
+    sudo docker start "$legacy_workflow_container" >/dev/null
   fi
   sudo rm -f -- "$marker"
   exit "$status"
@@ -283,6 +392,9 @@ rollback() {
 
 sudo docker inspect project-ai-os-staging-minio >/dev/null
 trap rollback ERR
+if [[ "$legacy_workflow_present" == "true" && "$legacy_workflow_was_running" == "true" ]]; then
+  sudo docker stop --time 45 "$legacy_workflow_container" >/dev/null
+fi
 
 env_temp="$(sudo mktemp "$remote_dir/.env.auth-staging.product-v2.XXXXXX")"
 sudo awk -F= '
@@ -332,7 +444,7 @@ sudo rm -f -- "$embedding_temp"
 
 "${compose_base[@]}" run --rm --no-deps --pull never --interactive=false --no-TTY projectai-migrate npm run db:migrate
 "${compose_base[@]}" run --rm --no-deps --pull never --interactive=false --no-TTY projectai-migrate npm run db:seed:product-v2
-"${compose_base[@]}" up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-staging
+"${compose_base[@]}" up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-staging
 
 ready=0
 for _ in $(seq 1 90); do
@@ -353,7 +465,8 @@ sudo awk -F= '
 ' "$ai_env_file" | sudo tee "$ai_temp" >/dev/null
 sudo install -m 0600 -o deploy -g deploy "$ai_temp" "$ai_env_file"
 sudo rm -f -- "$ai_temp"
-"${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never projectai-staging
+"${compose_base[@]}" up --detach --no-deps --force-recreate --no-build --pull never \
+  projectai-timesheet-worker projectai-staging
 
 enabled=0
 for _ in $(seq 1 90); do
@@ -361,7 +474,11 @@ for _ in $(seq 1 90); do
   if grep -qi "^x-projectai-commit-sha: ${commit_sha}$" <<<"$headers" \
     && grep -q '"status":"ok"' /tmp/projectai-product-v2-health \
     && grep -q '"aiAssistantEnabled":true' /tmp/projectai-product-v2-health \
-    && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health; then enabled=1; break; fi
+    && grep -q '"aiProviderConfigured":true' /tmp/projectai-product-v2-health \
+    && [[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker 2>/dev/null || true)" == "healthy" ]]; then
+    enabled=1
+    break
+  fi
   sleep 2
 done
 sudo rm -f /tmp/projectai-product-v2-health
@@ -391,8 +508,14 @@ sudo rm -f /tmp/projectai-product-v2-health
 
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging)" == "$app_image_id" ]]
 [[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-worker)" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{.Image}}' project-ai-os-staging-timesheet-worker)" == "$app_image_id" ]]
+[[ "$(sudo docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' project-ai-os-staging-timesheet-worker)" == "healthy" ]]
 [[ -z "$(sudo docker port project-ai-os-staging-worker)" ]]
+[[ -z "$(sudo docker port project-ai-os-staging-timesheet-worker)" ]]
 sudo rm -f -- "$marker"
+if [[ "$legacy_workflow_present" == "true" ]]; then
+  sudo docker rm "$legacy_workflow_container" >/dev/null
+fi
 trap - ERR
 printf 'PRODUCT_V2_STAGING_DEPLOYED head=%s backup=%s\n' "$commit_sha" "$(basename "$backup_path")"
 REMOTE_DEPLOY

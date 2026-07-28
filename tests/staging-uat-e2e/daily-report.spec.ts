@@ -164,7 +164,7 @@ test("Staging Project Manager completes the rendered daily-report flow and Restr
       );
       await page.getByRole("button", { name: "AI 整理今日工时" }).click();
       await expect(page.getByTestId("ai-generate")).toHaveAttribute("data-state", "submitting");
-      expect((await generateResponse).status()).toBe(201);
+      expect((await generateResponse).status()).toBe(202);
       await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
       await expect(tasks(page)).toHaveCount(1);
       const card = tasks(page).first();

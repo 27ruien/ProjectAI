@@ -87,6 +87,12 @@ export class ProjectAssistantGateway {
         );
       } catch (error) {
         primaryFailure = error;
+        if (
+          error instanceof AiProviderError &&
+          error.code === "FORBIDDEN"
+        ) {
+          break;
+        }
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
         }

@@ -35,6 +35,14 @@ import {
   updateWorkLog,
 } from "../../lib/timesheets/service";
 import { TimesheetError } from "../../lib/timesheets/errors";
+import {
+  cancelTimesheetAiJob,
+  claimTimesheetAiJob,
+  enqueueTimesheetAiJob,
+  getLatestTimesheetAiJob,
+  processTimesheetAiJob,
+  retryTimesheetAiJob,
+} from "../../lib/timesheets/ai-jobs";
 
 const prefix = "timesheet-mvp-test-";
 const projectId = `${prefix}project`;
@@ -245,6 +253,203 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     assert.equal(afterCount[0].count, beforeCount[0].count);
   });
 
+  it("deduplicates concurrent enqueue requests and restores the durable job", async () => {
+    const reportDate = "2026-07-24";
+    await makeRecord(reportDate, "完成虚构持久任务幂等验证，1 小时");
+    const request = {
+      principal: principal(manager),
+      organizationId,
+      reportDate,
+      timezone: "Asia/Shanghai" as const,
+      requestHeaders: headers,
+    };
+    const [first, second] = await Promise.all([
+      enqueueTimesheetAiJob(request),
+      enqueueTimesheetAiJob(request),
+    ]);
+    assert.equal(first.job.id, second.job.id);
+    assert.equal([first.created, second.created].filter(Boolean).length, 1);
+    const restored = await getLatestTimesheetAiJob(request);
+    assert.equal(restored?.id, first.job.id);
+    assert.equal(restored?.status, "queued");
+    const cancelled = await cancelTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      jobId: first.job.id,
+      requestHeaders: headers,
+    });
+    assert.equal(cancelled.status, "cancelled");
+  });
+
+  it("allows only one worker claim and completes the persisted state machine", async () => {
+    const reportDate = "2026-07-25";
+    await makeRecord(reportDate, "已完成虚构后台状态机验证，1 小时");
+    const queued = await enqueueTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      reportDate,
+      timezone: "Asia/Shanghai",
+      requestHeaders: headers,
+    });
+    const [claimA, claimB] = await Promise.all([
+      claimTimesheetAiJob(`${prefix}worker-a`),
+      claimTimesheetAiJob(`${prefix}worker-b`),
+    ]);
+    const claims = [claimA, claimB].filter(
+      (claim): claim is NonNullable<typeof claim> => Boolean(claim),
+    );
+    assert.equal(claims.length, 1);
+    assert.equal(claims[0].id, queued.job.id);
+    await processTimesheetAiJob({
+      job: claims[0],
+      workerId: claims[0].leasedBy!,
+    });
+    const completed = await getLatestTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      reportDate,
+      requestHeaders: headers,
+    });
+    assert.equal(completed?.status, "completed");
+    assert.ok((completed?.outputCount ?? 0) > 0);
+  });
+
+  it("recovers a crashed worker before dispatch and fails closed after a provider timeout", async () => {
+    const beforeDispatchId = `${prefix}lease-before-provider`;
+    const afterDispatchId = `${prefix}lease-after-provider`;
+    const expiredAt = new Date(Date.now() - 60_000);
+    const startedAt = new Date(Date.now() - 120_000);
+    const common = {
+      organizationId,
+      userId: manager.id,
+      skillId: "pm-daily-timesheet-generation",
+      modelProfileId: "qwen-project-assistant-cn-v1",
+      promptVersion: "pm-daily-report-v1",
+      sourceSelectionDigest: "0".repeat(64),
+      sourceCount: 1,
+      status: "generating_draft" as const,
+      leasedBy: `${prefix}crashed-worker`,
+      leaseToken: `${prefix}expired-lease`,
+      leaseExpiresAt: expiredAt,
+      heartbeatAt: expiredAt,
+      startedAt,
+      currentStageStartedAt: startedAt,
+    };
+    await getDb().insert(timesheetAiExecution).values([
+      {
+        ...common,
+        id: beforeDispatchId,
+        executionId: beforeDispatchId,
+        requestId: beforeDispatchId,
+        reportDate: "2026-07-14",
+        createdAt: new Date(startedAt.getTime() - 2_000),
+      },
+      {
+        ...common,
+        id: afterDispatchId,
+        executionId: afterDispatchId,
+        requestId: afterDispatchId,
+        reportDate: "2026-07-15",
+        providerDispatchedAt: startedAt,
+        createdAt: new Date(startedAt.getTime() - 1_000),
+      },
+    ]);
+
+    const reclaimed = await claimTimesheetAiJob(`${prefix}recovery-worker`);
+    assert.equal(reclaimed?.id, beforeDispatchId);
+    assert.equal(reclaimed?.status, "reading_notes");
+    const [uncertain] = await getDb()
+      .select({
+        status: timesheetAiExecution.status,
+        failureCode: timesheetAiExecution.failureCode,
+        failureStage: timesheetAiExecution.failureStage,
+      })
+      .from(timesheetAiExecution)
+      .where(eq(timesheetAiExecution.id, afterDispatchId));
+    assert.deepEqual(uncertain, {
+      status: "failed",
+      failureCode: "TIMESHEET_PROVIDER_RESULT_UNKNOWN",
+      failureStage: "generating_draft",
+    });
+    await cancelTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      jobId: beforeDispatchId,
+      requestHeaders: headers,
+    });
+    await getDb()
+      .delete(timesheetAiExecution)
+      .where(inArray(timesheetAiExecution.id, [beforeDispatchId, afterDispatchId]));
+  });
+
+  it("fails closed on queued source drift and retries without a partial draft", async () => {
+    const reportDate = "2026-07-26";
+    const record = await makeRecord(reportDate, "已完成虚构失败恢复验证，1 小时");
+    const queued = await enqueueTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      reportDate,
+      timezone: "Asia/Shanghai",
+      requestHeaders: headers,
+    });
+    await getDb()
+      .update(workLogRecord)
+      .set({
+        rawText: "已完成虚构失败恢复验证并补充事实，1 小时",
+        updatedAt: new Date(),
+      })
+      .where(eq(workLogRecord.id, record.id));
+    const claimed = await claimTimesheetAiJob(`${prefix}worker-drift`);
+    assert.equal(claimed?.id, queued.job.id);
+    await assert.rejects(() =>
+      processTimesheetAiJob({
+        job: claimed!,
+        workerId: claimed!.leasedBy!,
+      }),
+    );
+    const failed = await getLatestTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      reportDate,
+      requestHeaders: headers,
+    });
+    assert.equal(failed?.status, "failed");
+    assert.equal(failed?.failureCode, "TIMESHEET_SOURCE_CHANGED");
+    const [partialDraft] = await getDb()
+      .select({ id: dailyTimesheetDraft.id })
+      .from(dailyTimesheetDraft)
+      .where(
+        and(
+          eq(dailyTimesheetDraft.organizationId, organizationId),
+          eq(dailyTimesheetDraft.userId, manager.id),
+          eq(dailyTimesheetDraft.reportDate, reportDate),
+        ),
+      )
+      .limit(1);
+    assert.equal(partialDraft, undefined);
+    const retried = await retryTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      jobId: queued.job.id,
+      requestHeaders: headers,
+    });
+    assert.notEqual(retried.job.id, queued.job.id);
+    assert.equal(retried.job.attemptCount, 2);
+    const retryClaim = await claimTimesheetAiJob(`${prefix}worker-retry`);
+    assert.equal(retryClaim?.id, retried.job.id);
+    await processTimesheetAiJob({
+      job: retryClaim!,
+      workerId: retryClaim!.leasedBy!,
+    });
+    const completed = await getLatestTimesheetAiJob({
+      principal: principal(manager),
+      organizationId,
+      reportDate,
+      requestHeaders: headers,
+    });
+    assert.equal(completed?.status, "completed");
+  });
+
   it("recovers a stale generation before starting a new one", async () => {
     const reportDate = "2026-07-19";
     await makeRecord(reportDate, "已完成虚构日报恢复验证，1 小时");
@@ -253,6 +458,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       await getDb().insert(timesheetAiExecution).values({
         id: staleId,
         executionId: staleId,
+        requestId: staleId,
         organizationId,
         userId: manager.id,
         reportDate,
@@ -350,6 +556,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
       getDb().insert(timesheetAiExecution).values({
         id: `${prefix}forged-ai-owner`,
         executionId: `${prefix}forged-ai-owner`,
+        requestId: `${prefix}forged-ai-owner`,
         organizationId,
         userId: otherManager.id,
         draftId: generated.id,

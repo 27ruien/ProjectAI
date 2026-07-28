@@ -18,9 +18,11 @@ import {
   session,
   timesheetAiExecution,
   timesheetSyncBatch,
+  testFixture,
   user,
   workLogRecord,
 } from "../../lib/db/schema";
+import { registerTestFixture } from "../../lib/test-fixtures/service";
 
 type Command = "seed" | "verify" | "cleanup";
 type AccountKey = "admin" | "manager" | "restricted";
@@ -58,6 +60,7 @@ const USER_SPECS: Record<AccountKey, { displayName: string; email: string }> = {
   },
 };
 const PROJECT_IDS = [PROJECT_MAIN_ID, PROJECT_RESTRICTED_ID];
+const FIXTURE_RUN_ID = "uat-managed-projectai-v1";
 const UAT_MARKER = IS_STAGING_UAT ? "[ProjectAI-STAGING-UAT]" : "[UAT]";
 const ORGANIZATION_NAME = IS_STAGING_UAT ? "ProjectAI Staging UAT" : "ProjectAI UAT";
 const ORGANIZATION_SLUG = IS_STAGING_UAT ? "projectai-staging-uat" : "projectai-uat";
@@ -285,6 +288,36 @@ async function seed(credentials: CredentialFile): Promise<void> {
         .onConflictDoNothing({ target: [projectMember.projectId, projectMember.userId] });
     }
 
+    const fixture = {
+      fixtureRunId: FIXTURE_RUN_ID,
+      environment: "local" as const,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1_000),
+    };
+    await registerTestFixture(
+      { ...fixture, entityType: "organization", entityId: ORGANIZATION_ID },
+      tx,
+    );
+    await registerTestFixture(
+      { ...fixture, entityType: "department", entityId: DEPARTMENT_ID },
+      tx,
+    );
+    for (const projectId of PROJECT_IDS) {
+      await registerTestFixture(
+        { ...fixture, entityType: "project", entityId: projectId },
+        tx,
+      );
+    }
+    const spaces = await tx
+      .select({ id: knowledgeSpace.id })
+      .from(knowledgeSpace)
+      .where(inArray(knowledgeSpace.projectId, PROJECT_IDS));
+    for (const space of spaces) {
+      await registerTestFixture(
+        { ...fixture, entityType: "knowledge_space", entityId: space.id },
+        tx,
+      );
+    }
+
   });
 }
 
@@ -304,6 +337,11 @@ async function verify(credentials: CredentialFile): Promise<void> {
   }
   const logs = await db.select().from(workLogRecord).where(and(eq(workLogRecord.organizationId, ORGANIZATION_ID), eq(workLogRecord.userId, USER_IDS.manager)));
   if (logs.length !== 0) throw new Error("UAT_VERIFY_EMPTY_WORK_LOGS_FAILED");
+  const fixtures = await db
+    .select({ entityType: testFixture.entityType, entityId: testFixture.entityId })
+    .from(testFixture)
+    .where(eq(testFixture.fixtureRunId, FIXTURE_RUN_ID));
+  if (fixtures.length < 5) throw new Error("UAT_VERIFY_FIXTURE_REGISTRY_FAILED");
   for (const key of Object.keys(USER_SPECS) as AccountKey[]) {
     const [credential] = await db.select({ hash: account.passwordHash }).from(account)
       .where(and(eq(account.userId, USER_IDS[key]), eq(account.providerId, "credential"))).limit(1);
@@ -312,8 +350,8 @@ async function verify(credentials: CredentialFile): Promise<void> {
     }
   }
   const schemaVersion = await db.execute<{ id: number }>(sql`select id from drizzle.__drizzle_migrations order by id desc limit 1`);
-  if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 25) throw new Error("UAT_MIGRATION_0024_REQUIRED");
-  process.stdout.write(`UAT verification passed: schema=0024; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
+  if (schemaVersion.rows.length !== 1 || Number(schemaVersion.rows[0].id) < 26) throw new Error("UAT_MIGRATION_0025_REQUIRED");
+  process.stdout.write(`UAT verification passed: schema=0025; users=3; projects=2; seededWorkLogs=0; credentials=${path.relative(ROOT, CREDENTIAL_PATH)}.\n`);
 }
 
 async function cleanup(): Promise<void> {
@@ -338,6 +376,7 @@ async function cleanup(): Promise<void> {
     await tx.delete(session).where(inArray(session.userId, Object.values(USER_IDS)));
     await tx.delete(account).where(inArray(account.userId, Object.values(USER_IDS)));
     await tx.delete(user).where(inArray(user.id, Object.values(USER_IDS)));
+    await tx.delete(testFixture).where(eq(testFixture.fixtureRunId, FIXTURE_RUN_ID));
   });
   process.stdout.write("UAT-owned database records were removed; the local credential file was preserved.\n");
 }

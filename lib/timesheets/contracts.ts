@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const TIMESHEET_SYNC_PROTOCOL_VERSION = 1 as const;
-export const TIMESHEET_PROMPT_VERSION = "pm-daily-report-v1";
+export const TIMESHEET_PROMPT_VERSION = "pm-daily-report-v2";
 export const TIMESHEET_SKILL_ID = "pm-daily-timesheet-generation";
 
 export const TIMESHEET_CATEGORIES = [
