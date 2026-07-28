@@ -159,9 +159,29 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
   assert.match(deploy, /pg_restore --exit-on-error --no-owner --no-acl/);
   assert.match(deploy, /""\|postgres\|template0\|template1\|\*\[!A-Za-z0-9_\]\*/);
   assert.match(deploy, /rollback\(\) \{[\s\S]*set -Eeuo pipefail/);
+  assert.match(
+    deploy,
+    /sudo rm -f -- "\$marker" "\$image_archive"[\s\S]*sudo rmdir -- "\$lock_dir"/,
+  );
   assert.ok(
     deploy.indexOf("REMOTE_BACKUP") < deploy.indexOf("rsync --archive"),
     "verified Staging backup must finish before the release tree is synchronized",
+  );
+  assert.match(
+    deploy,
+    /docker save "\$APP_IMAGE_REF" "\$DB_TOOLS_IMAGE_REF" \| gzip -1 >"\$IMAGE_ARCHIVE"/,
+  );
+  assert.match(deploy, /for attempt in 1 2 3/);
+  assert.match(deploy, /--partial --append-verify --timeout=120/);
+  assert.match(deploy, /--rsync-path='sudo rsync'/);
+  assert.match(deploy, /sudo sha256sum "\$image_archive"/);
+  assert.match(
+    deploy,
+    /sudo sh -c 'gzip -dc -- "\$1" \| docker load >\/dev\/null' sh "\$image_archive"/,
+  );
+  assert.doesNotMatch(
+    deploy,
+    /docker save "\$APP_IMAGE_REF" "\$DB_TOOLS_IMAGE_REF" \| gzip -1 \| "\$\{SSH\[@\]\}"/,
   );
   assert.match(deploy, /AUTH_PROVIDER=mock-wecom/);
   assert.match(deploy, /ALLOW_STAGING_TEST_LOGIN=true/);

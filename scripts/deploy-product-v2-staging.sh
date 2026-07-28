@@ -23,7 +23,7 @@ log() { printf '[projectai-product-v2-staging] %s\n' "$*"; }
 fail() { printf '[projectai-product-v2-staging] ERROR: %s\n' "$*" >&2; exit 1; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"; }
 
-for command_name in git ssh rsync docker gzip tar mktemp curl node; do
+for command_name in git ssh rsync docker gzip tar mktemp curl node shasum; do
   require_command "$command_name"
 done
 
@@ -45,6 +45,9 @@ DEPLOY_ID="${COMMIT_SHA}-$(date -u +'%Y%m%dT%H%M%SZ')-$$-${RANDOM}"
 APP_IMAGE_REF="project-ai-os-staging:${COMMIT_SHA}"
 DB_TOOLS_IMAGE_REF="project-ai-os-staging-db-tools:${COMMIT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-product-v2-release.XXXXXX")"
+IMAGE_ARCHIVE="${RELEASE_ROOT}/release-images.tar.gz"
+REMOTE_IMAGE_DIR="${REMOTE_DIR}/.local/image-transfers"
+REMOTE_IMAGE_ARCHIVE="${REMOTE_IMAGE_DIR}/${DEPLOY_ID}.tar.gz"
 LOCK_ACQUIRED=0
 
 SSH=(
@@ -54,12 +57,19 @@ SSH=(
 
 release_lock() {
   [[ "$LOCK_ACQUIRED" == "1" ]] || return 0
-  "${SSH[@]}" bash -s -- "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_UNLOCK'
+  "${SSH[@]}" bash -s -- \
+    "$LOCK_DIR" "$DEPLOY_ID" "$MARKER" "$REMOTE_IMAGE_ARCHIVE" <<'REMOTE_UNLOCK'
 set -Eeuo pipefail
 lock_dir="$1"
 deploy_id="$2"
+marker="$3"
+image_archive="$4"
 [[ "$lock_dir" == "/srv/projectai-staging/.staging-deploy-lock" ]]
+[[ "$marker" == "/srv/projectai-staging/.product-v2-deploy-in-progress" ]]
+[[ "$image_archive" == "/srv/projectai-staging/.local/image-transfers/${deploy_id}.tar.gz" ]]
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+sudo test ! -L "$marker"
+sudo rm -f -- "$marker" "$image_archive"
 sudo rm -f -- "$lock_dir/deploy-id"
 sudo rmdir -- "$lock_dir"
 REMOTE_UNLOCK
@@ -227,8 +237,51 @@ rsync --archive --compress --delete \
   --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 
-log "Transferring the reviewed images"
-docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+log "Creating the reviewed image archive"
+docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 >"$IMAGE_ARCHIVE"
+chmod 600 "$IMAGE_ARCHIVE"
+IMAGE_ARCHIVE_SIZE="$(stat -f '%z' "$IMAGE_ARCHIVE")"
+IMAGE_ARCHIVE_SHA256="$(shasum -a 256 "$IMAGE_ARCHIVE" | awk '{ print $1 }')"
+[[ "$IMAGE_ARCHIVE_SIZE" =~ ^[1-9][0-9]*$ && "$IMAGE_ARCHIVE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+
+log "Transferring the reviewed images with bounded resume"
+"${SSH[@]}" bash -s -- "$REMOTE_IMAGE_DIR" "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_DIR'
+set -Eeuo pipefail
+image_dir="$1"; lock_dir="$2"; deploy_id="$3"
+[[ "$image_dir" == "/srv/projectai-staging/.local/image-transfers" ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+sudo install -d -m 0700 -o root -g root "$image_dir"
+REMOTE_IMAGE_DIR
+IMAGE_TRANSFERRED=0
+for attempt in 1 2 3; do
+  if rsync --archive --partial --append-verify --timeout=120 \
+    --rsync-path='sudo rsync' \
+    --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
+    "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then
+    IMAGE_TRANSFERRED=1
+    break
+  fi
+  log "Image transfer attempt ${attempt} failed; retaining the exact partial archive for bounded resume"
+done
+[[ "$IMAGE_TRANSFERRED" == "1" ]] || fail "Reviewed image transfer failed after 3 attempts"
+
+log "Verifying and loading the reviewed images"
+"${SSH[@]}" bash -s -- \
+  "$REMOTE_IMAGE_ARCHIVE" "$IMAGE_ARCHIVE_SIZE" "$IMAGE_ARCHIVE_SHA256" \
+  "$LOCK_DIR" "$DEPLOY_ID" "$APP_IMAGE_REF" "$APP_IMAGE_ID" \
+  "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" <<'REMOTE_IMAGE_LOAD'
+set -Eeuo pipefail
+image_archive="$1"; expected_size="$2"; expected_sha256="$3"; lock_dir="$4"
+deploy_id="$5"; app_ref="$6"; app_id="$7"; db_tools_ref="$8"; db_tools_id="$9"
+[[ "$image_archive" == "/srv/projectai-staging/.local/image-transfers/${deploy_id}.tar.gz" ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+[[ "$(sudo stat -c '%s' "$image_archive")" == "$expected_size" ]]
+[[ "$(sudo sha256sum "$image_archive" | awk '{ print $1 }')" == "$expected_sha256" ]]
+sudo sh -c 'gzip -dc -- "$1" | docker load >/dev/null' sh "$image_archive"
+[[ "$(sudo docker image inspect --format '{{.Id}}' "$app_ref")" == "$app_id" ]]
+[[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_ref")" == "$db_tools_id" ]]
+sudo rm -f -- "$image_archive"
+REMOTE_IMAGE_LOAD
 
 log "Backing up, migrating, seeding, and starting Product V2 on Staging"
 "${SSH[@]}" bash -s -- \
