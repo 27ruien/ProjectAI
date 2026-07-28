@@ -262,7 +262,7 @@ sudo install -d -m 0700 -o root -g root "$image_dir"
 REMOTE_IMAGE_DIR
 IMAGE_TRANSFERRED=0
 for attempt in 1 2 3; do
-  if rsync --archive --partial --append-verify --timeout=120 \
+  if rsync --archive --partial --append --timeout=120 \
     --rsync-path='sudo rsync' \
     --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
     "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then

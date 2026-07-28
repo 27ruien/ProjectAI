@@ -181,7 +181,8 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
     /docker save "\$APP_IMAGE_REF" "\$DB_TOOLS_IMAGE_REF" \| gzip -1 >"\$IMAGE_ARCHIVE"/,
   );
   assert.match(deploy, /for attempt in 1 2 3/);
-  assert.match(deploy, /--partial --append-verify --timeout=120/);
+  assert.match(deploy, /--partial --append --timeout=120/);
+  assert.doesNotMatch(deploy, /--append-verify/);
   assert.match(deploy, /--rsync-path='sudo rsync'/);
   assert.match(deploy, /sudo sha256sum "\$image_archive"/);
   assert.match(
