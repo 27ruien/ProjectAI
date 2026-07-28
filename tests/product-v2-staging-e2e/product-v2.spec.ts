@@ -894,6 +894,11 @@ test("@daily-report-async durable AI job survives navigation, reports completion
     await expect(timesheetTaskCards(page)).toHaveCount(1);
     await expect(timesheetTaskCards(page).first()).toContainText(note);
     await expect(workLogs.getByText(note, { exact: true })).toBeVisible();
+    const completedDraftDescription = await timesheetTaskCards(page)
+      .first()
+      .getByRole("textbox", { name: /任务详情（必填）/u })
+      .inputValue();
+    expect(completedDraftDescription.trim()).not.toBe("");
 
     await gotoInteractive(page, appPath("/daily-report"));
     await expect(
@@ -931,7 +936,7 @@ test("@daily-report-async durable AI job survives navigation, reports completion
       timesheetTaskCards(page)
         .first()
         .getByRole("textbox", { name: /任务详情（必填）/u }),
-    ).toHaveValue(note);
+    ).toHaveValue(completedDraftDescription);
     await expect(workLogs.getByText(updatedNote, { exact: true })).toBeVisible();
 
     const retry = page.waitForResponse(
