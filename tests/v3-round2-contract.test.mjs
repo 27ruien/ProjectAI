@@ -59,7 +59,7 @@ test("workflow persistence uses compound isolation, leases, provenance, and huma
   assert.match(worker, /nextAttemptAt: sql`now\(\) \+ interval '10 seconds'`/);
   assert.match(worker, /if \(!run\) \{[\s\S]*?await wait\(workerConfig\.pollMs, options\.signal\);[\s\S]*?writeFile\(workerConfig\.heartbeatFile/);
   const parenthesizedExpiryGuard = /sql`\(\$\{workflowRunSource\.expiresAt\} is null or \$\{workflowRunSource\.expiresAt\} > now\(\)\)`/g;
-  assert.equal(authorization.match(parenthesizedExpiryGuard)?.length, 2);
+  assert.equal(authorization.match(parenthesizedExpiryGuard)?.length, 3);
   assert.equal(worker.match(parenthesizedExpiryGuard)?.length, 1);
   assert.doesNotMatch(authorization, /sql`\$\{workflowRunSource\.expiresAt\} is null or/);
   assert.doesNotMatch(worker, /sql`\$\{workflowRunSource\.expiresAt\} is null or/);

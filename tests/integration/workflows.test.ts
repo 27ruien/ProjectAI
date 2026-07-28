@@ -9,6 +9,7 @@ import type { AuthenticatedPrincipal } from "../../lib/auth/session";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   documentChunk,
+  documentGrant,
   documentIngestionJob,
   documentSection,
   project,
@@ -34,6 +35,7 @@ import {
   createRequirementFrameworkRun,
   cancelWorkflowRun,
   deleteMeetingAudio,
+  listWorkflowRuns,
   regenerateWorkflowArtifact,
   readWorkflowRun,
   recordWorkflowExport,
@@ -229,7 +231,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     await getDb().update(workflowRunSource).set({ status: "expired" }).where(eq(workflowRunSource.runId, winners[0]!.id));
     await assert.rejects(
       reviewWorkflowRun({ principal: principal(), projectId, runId: winners[0]!.id, decision: "publish", note: "撤权验证", requestHeaders: headers }),
-      (error: unknown) => error instanceof Error && "code" in error && error.code === "WORKFLOW_SOURCE_ACCESS_REVOKED",
+      (error: unknown) => error instanceof WorkflowError && error.code === "NOT_FOUND",
     );
     await getDb().update(workflowRunSource).set({ status: "ready" }).where(eq(workflowRunSource.runId, winners[0]!.id));
 
@@ -284,6 +286,40 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       documentId, documentVersionId: `${prefix}version`, displayName: "forged",
       sha256: "f".repeat(64), status: "ready",
     }));
+  });
+
+  it("hides requirement runs, artifacts, and exports after source access is revoked", async () => {
+    const grantId = `${prefix}workflow-source-view-deny`;
+    const [artifact] = await getDb().select().from(workflowArtifact).where(and(
+      eq(workflowArtifact.runId, requirementRunId),
+      eq(workflowArtifact.projectId, projectId),
+    )).limit(1);
+    assert.ok(artifact);
+    await getDb().insert(documentGrant).values({
+      id: grantId,
+      organizationId: "org-legacy-default",
+      projectId,
+      documentId,
+      subjectType: "user",
+      subjectId: manager.id,
+      permission: "view",
+      effect: "deny",
+      createdBy: manager.id,
+    });
+    try {
+      const runs = await listWorkflowRuns({ principal: principal(), projectId, limit: 100 });
+      assert.equal(runs.some((run) => run.id === requirementRunId), false);
+      await assert.rejects(
+        readWorkflowRun({ principal: principal(), projectId, runId: requirementRunId, requestHeaders: headers }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "NOT_FOUND",
+      );
+      await assert.rejects(
+        recordWorkflowExport({ principal: principal(), projectId, artifactId: artifact.id, format: "md", bytes: new TextEncoder().encode("revoked export"), requestHeaders: headers }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "NOT_FOUND",
+      );
+    } finally {
+      await getDb().delete(documentGrant).where(eq(documentGrant.id, grantId));
+    }
   });
 
   it("deduplicates the same meeting upload and rejects a different file with the same key", async () => {
@@ -677,6 +713,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     assert.ok(target?.departmentId && definition);
     const runId = `${prefix}unknown-provider-result`;
     await getDb().insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构未知 Provider 结果", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "c".repeat(64), modelProfileId: definition.modelProfileId, status: "failed", currentStep: 2, idempotencyKeyHash: "d".repeat(64), failureCode: "WORKFLOW_PROVIDER_RESULT_UNKNOWN", failureStep: 2, completedAt: new Date() });
+    await getDb().insert(workflowRunSource).values({ id: `${runId}-audio`, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构未知结果.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "e".repeat(64), status: "ready" });
     try {
       await assert.rejects(
         retryWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers }),

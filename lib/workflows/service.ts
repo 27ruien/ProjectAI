@@ -40,6 +40,7 @@ import { canonicalJsonDigest } from "./digest";
 import { getObjectStorage } from "@/lib/files/object-storage";
 import { renderArtifactMarkdown } from "./render";
 import { isTrustedWorkflowModelProfile } from "./model-profiles";
+import { assertWorkflowRunReadAuthorization, listReadableWorkflowRunIds } from "./authorization";
 
 const EDIT_ROLES = ["project_manager", "project_member"] as const;
 
@@ -254,7 +255,14 @@ export async function listWorkflowRuns(input: {
     .where(inArray(workflowRun.projectId, projectIds))
     .orderBy(desc(workflowRun.updatedAt))
     .limit(Math.min(Math.max(input.limit ?? 30, 1), 100));
-  return rows.map(({ run, sourceCount, artifactCount }) => serializeRun(run, sourceCount, artifactCount));
+  const readableRunIds = await listReadableWorkflowRunIds({
+    principal: input.principal,
+    runs: rows.map(({ run }) => run),
+    db,
+  });
+  return rows
+    .filter(({ run }) => readableRunIds.has(run.id))
+    .map(({ run, sourceCount, artifactCount }) => serializeRun(run, sourceCount, artifactCount));
 }
 
 function serializeRun(
@@ -454,6 +462,7 @@ export async function readWorkflowRun(input: {
     eq(workflowRun.projectId, input.projectId),
   )).limit(1);
   if (!record) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
+  await assertWorkflowRunReadAuthorization({ principal: input.principal, run: record, db });
   const sources = await db.select({ id: workflowRunSource.id }).from(workflowRunSource).where(and(eq(workflowRunSource.runId, record.id), eq(workflowRunSource.projectId, record.projectId)));
   const artifacts = await db
     .select({ artifact: workflowArtifact, version: workflowArtifactVersion })
@@ -497,6 +506,7 @@ export async function cancelWorkflowRun(input: {
       eq(workflowRun.projectId, input.projectId),
     )).limit(1).for("update", { of: workflowRun });
     if (!run) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
+    await assertWorkflowRunReadAuthorization({ principal: input.principal, run, db: tx });
     if (["published", "cancelled", "legacy_read_only"].includes(run.status)) return;
     const cancelsImmediately = run.status === "queued" || !run.leaseToken;
     await tx.update(workflowRun).set(
@@ -529,16 +539,14 @@ export async function retryWorkflowRun(input: {
 }): Promise<void> {
   await requireProjectRole(input.principal, input.projectId, EDIT_ROLES, input.requestHeaders);
   await getDb().transaction(async (tx) => {
-    const [current] = await tx.select({
-      status: workflowRun.status,
-      failureCode: workflowRun.failureCode,
-    }).from(workflowRun).where(and(
+    const [current] = await tx.select().from(workflowRun).where(and(
       eq(workflowRun.id, input.runId),
       eq(workflowRun.projectId, input.projectId),
     )).limit(1).for("update", { of: workflowRun });
     if (!current || !["failed", "cancelled"].includes(current.status)) {
       throw new WorkflowError(409, "WORKFLOW_NOT_RETRYABLE", "当前工作流不能重试");
     }
+    await assertWorkflowRunReadAuthorization({ principal: input.principal, run: current, db: tx });
     if (current.failureCode === "WORKFLOW_PROVIDER_RESULT_UNKNOWN") {
       throw new WorkflowError(
         409,
@@ -579,10 +587,11 @@ export async function saveArtifactVersion(input: {
 }): Promise<number> {
   await requireProjectRole(input.principal, input.projectId, EDIT_ROLES, input.requestHeaders);
   return getDb().transaction(async (tx) => {
-    const [run] = await tx.select({ status: workflowRun.status }).from(workflowRun).where(and(
+    const [run] = await tx.select().from(workflowRun).where(and(
       eq(workflowRun.id, input.runId), eq(workflowRun.projectId, input.projectId),
     )).limit(1).for("update", { of: workflowRun });
     if (!run) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
+    await assertWorkflowRunReadAuthorization({ principal: input.principal, run, db: tx });
     if (run.status !== "awaiting_review") throw new WorkflowError(409, "WORKFLOW_EDIT_NOT_READY", "当前工作流不能编辑");
     const [artifact] = await tx.select().from(workflowArtifact).where(and(
       eq(workflowArtifact.id, input.artifactId),
@@ -640,6 +649,7 @@ export async function regenerateWorkflowArtifact(input: {
   await getDb().transaction(async (tx) => {
     const [run] = await tx.select().from(workflowRun).where(and(eq(workflowRun.id, input.runId), eq(workflowRun.projectId, input.projectId))).limit(1).for("update", { of: workflowRun });
     if (!run) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
+    await assertWorkflowRunReadAuthorization({ principal: input.principal, run, db: tx });
     if (run.workflowType !== "requirement_framework" || run.status !== "awaiting_review") throw new WorkflowError(409, "WORKFLOW_REGENERATION_NOT_READY", "当前工作流不能重新生成产物");
     const [artifact] = await tx.select().from(workflowArtifact).where(and(eq(workflowArtifact.id, input.artifactId), eq(workflowArtifact.runId, run.id), eq(workflowArtifact.projectId, run.projectId))).limit(1).for("update", { of: workflowArtifact });
     if (!artifact) throw new WorkflowError(404, "NOT_FOUND", "工作流产物不存在");
@@ -706,6 +716,7 @@ export async function reviewWorkflowRun(input: {
   const prepare = await db.transaction(async (tx) => {
     const [run] = await tx.select().from(workflowRun).where(and(eq(workflowRun.id, input.runId), eq(workflowRun.projectId, input.projectId))).limit(1).for("update", { of: workflowRun });
     if (!run) throw new WorkflowError(404, "NOT_FOUND", "工作流不存在");
+    await assertWorkflowRunReadAuthorization({ principal: input.principal, run, db: tx });
     if (run.status !== "awaiting_review") throw new WorkflowError(409, "WORKFLOW_REVIEW_NOT_READY", "工作流尚未进入审核阶段");
     const artifacts = await tx.select({ artifact: workflowArtifact, version: workflowArtifactVersion }).from(workflowArtifact).innerJoin(workflowArtifactVersion, and(eq(workflowArtifactVersion.artifactId, workflowArtifact.id), eq(workflowArtifactVersion.projectId, workflowArtifact.projectId), eq(workflowArtifactVersion.version, workflowArtifact.currentVersion))).where(and(eq(workflowArtifact.runId, run.id), eq(workflowArtifact.projectId, run.projectId))).orderBy(asc(workflowArtifact.createdAt));
     await validateCurrentArtifacts({ principal: input.principal, projectId: input.projectId, run, artifacts, db: tx });
@@ -782,13 +793,27 @@ export async function recordWorkflowExport(input: {
   requestHeaders: Headers;
 }): Promise<void> {
   await requireProjectAccess(input.principal, input.projectId, input.requestHeaders);
-  const [artifact] = await getDb().select().from(workflowArtifact).where(and(eq(workflowArtifact.id, input.artifactId), eq(workflowArtifact.projectId, input.projectId))).limit(1);
-  if (!artifact) throw new WorkflowError(404, "NOT_FOUND", "工作流产物不存在");
-  await getDb().insert(workflowExport).values({
-    id: randomUUID(), artifactId: artifact.id, projectId: artifact.projectId,
-    artifactVersion: artifact.currentVersion, format: input.format,
-    sha256: createHash("sha256").update(input.bytes).digest("hex"),
-    sizeBytes: input.bytes.byteLength, createdBy: input.principal.user.id,
+  await getDb().transaction(async (tx) => {
+    const [row] = await tx
+      .select({ artifact: workflowArtifact, run: workflowRun })
+      .from(workflowArtifact)
+      .innerJoin(workflowRun, and(
+        eq(workflowRun.id, workflowArtifact.runId),
+        eq(workflowRun.projectId, workflowArtifact.projectId),
+      ))
+      .where(and(
+        eq(workflowArtifact.id, input.artifactId),
+        eq(workflowArtifact.projectId, input.projectId),
+      ))
+      .limit(1);
+    if (!row) throw new WorkflowError(404, "NOT_FOUND", "工作流产物不存在");
+    await assertWorkflowRunReadAuthorization({ principal: input.principal, run: row.run, db: tx });
+    await tx.insert(workflowExport).values({
+      id: randomUUID(), artifactId: row.artifact.id, projectId: row.artifact.projectId,
+      artifactVersion: row.artifact.currentVersion, format: input.format,
+      sha256: createHash("sha256").update(input.bytes).digest("hex"),
+      sizeBytes: input.bytes.byteLength, createdBy: input.principal.user.id,
+    });
   });
 }
 
