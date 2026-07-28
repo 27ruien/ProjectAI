@@ -108,8 +108,8 @@ async function capture(page: Page, name: string) {
 }
 
 async function gotoInteractive(page: Page, url: string) {
-  await page.goto(url);
-  await page.waitForLoadState("networkidle");
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("main")).toBeVisible();
 }
 
 async function createDepartmentThroughUi(page: Page, input: {
