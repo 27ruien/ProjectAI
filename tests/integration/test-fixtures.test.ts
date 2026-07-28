@@ -100,7 +100,7 @@ describe("Round 1 exact fixture cleanup", () => {
     await getDb().insert(project).values({
       id: projectId,
       organizationId: "org-legacy-default",
-      departmentId: "kivisense-dept-product-management",
+      departmentId: "dept-legacy-default",
       name: "Product V2 ACL UAT 1234abcd",
       clientName: "[TEST] Synthetic fixture client",
       description: "[TEST] Round 1 exact cleanup",
