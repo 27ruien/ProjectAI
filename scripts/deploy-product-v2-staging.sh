@@ -194,7 +194,7 @@ sudo docker inspect project-ai-os-staging-postgres >/dev/null
 sudo docker exec project-ai-os-staging-postgres sh -ec 'pg_dump --format=custom --no-owner --no-acl -U "$POSTGRES_USER" -d "$POSTGRES_DB"' | sudo tee "$backup_path" >/dev/null
 sudo chmod 600 "$backup_path"
 sudo test -s "$backup_path"
-sudo cat -- "$backup_path" | sudo docker exec -i project-ai-os-staging-postgres pg_restore --list >/dev/null
+sudo sh -c 'docker exec -i project-ai-os-staging-postgres pg_restore --list < "$1" >/dev/null' sh "$backup_path"
 sudo install -m 0600 -o root -g root "$env_file" "$env_backup"
 sudo install -m 0600 -o root -g root "$ai_env_file" "$ai_env_backup"
 sudo install -m 0600 -o root -g root "$embedding_env_file" "$embedding_env_backup"
