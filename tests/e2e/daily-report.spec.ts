@@ -31,7 +31,9 @@ test("项目经理从随记生成、审核并确认个人日报", async ({ page 
     await notes.getByRole("textbox", { name: "随记内容（必填）" }).fill(uniqueText);
     await notes.getByRole("combobox", { name: "项目（可选）" }).selectOption({ index: 1 });
     await notes.getByRole("button", { name: "保存随记", exact: true }).click();
-    await expect(page.getByRole("status")).toContainText("随记已保存");
+    await expect(
+      page.getByRole("status").filter({ hasText: "随记已保存" }),
+    ).toBeVisible();
 
     const query = new URLSearchParams({
       organizationId: "org-legacy-default",
@@ -53,12 +55,16 @@ test("项目经理从随记生成、审核并确认个人日报", async ({ page 
     expect(recordId).toBeTruthy();
 
     await page.getByRole("button", { name: "AI 整理今日工时" }).click();
-    await expect(page.getByRole("status")).toContainText("AI 工时草稿已生成");
+    await expect(
+      page.getByRole("status").filter({ hasText: "AI 工时草稿已生成" }),
+    ).toBeVisible();
     const taskCard = page.locator("article").filter({ hasText: "任务 1" });
     await taskCard.getByRole("spinbutton", { name: /^正常工时/ }).fill("1");
     await taskCard.getByRole("spinbutton", { name: /^加班工时/ }).fill("0");
     await page.getByRole("button", { name: "确认本次工时" }).click();
-    await expect(page.getByRole("status")).toContainText("本次工时已整批确认");
+    await expect(
+      page.getByRole("status").filter({ hasText: "本次工时已整批确认" }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "复制 JSON" })).toBeEnabled();
     await expect(page.getByText(/扩展未安装或未连接|Mock SmartSheet Provider/)).toBeVisible();
     await expect(page.getByRole("button", { name: "同步到腾讯文档" })).toBeDisabled();
