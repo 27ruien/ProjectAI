@@ -16,6 +16,8 @@ readonly QWEN_SECRET_FILE="${REMOTE_DIR}/secrets/qwen_api_key"
 readonly AUDIO_SIGNING_SECRET_FILE="${REMOTE_DIR}/secrets/audio_download_signing_key"
 readonly LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
 readonly MARKER="${REMOTE_DIR}/.product-v2-deploy-in-progress"
+readonly IMAGE_TRANSFER_DIR="${REMOTE_DIR}/.image-transfer"
+readonly IMAGE_TRANSFER_RETRIES=4
 readonly POSTGRES_IMAGE_REF="pgvector/pgvector:0.8.1-pg17@sha256:3e8b3adfd27b5707128f60956f62a793c3c9326ea8cfaf0eab7adccb5d700b21"
 readonly MINIO_IMAGE_REF="quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z"
 readonly MINIO_CLIENT_IMAGE_REF="quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z"
@@ -24,7 +26,7 @@ log() { printf '[projectai-product-v2-staging] %s\n' "$*"; }
 fail() { printf '[projectai-product-v2-staging] ERROR: %s\n' "$*" >&2; exit 1; }
 require_command() { command -v "$1" >/dev/null 2>&1 || fail "Required command is unavailable: $1"; }
 
-for command_name in git ssh rsync docker gzip tar mktemp curl node; do
+for command_name in git ssh rsync docker gzip shasum tar mktemp curl node; do
   require_command "$command_name"
 done
 
@@ -48,6 +50,7 @@ APP_IMAGE_REF="project-ai-os-staging:${COMMIT_SHA}"
 DB_TOOLS_IMAGE_REF="project-ai-os-staging-db-tools:${COMMIT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-product-v2-release.XXXXXX")"
 LOCK_ACQUIRED=0
+REMOTE_DEPLOY_STARTED=0
 
 SSH=(
   ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12
@@ -68,10 +71,30 @@ REMOTE_UNLOCK
   LOCK_ACQUIRED=0
 }
 
+clear_predeploy_marker() {
+  [[ "$LOCK_ACQUIRED" == "1" && "$REMOTE_DEPLOY_STARTED" == "0" ]] || return 0
+  "${SSH[@]}" bash -s -- "$LOCK_DIR" "$DEPLOY_ID" "$MARKER" <<'REMOTE_CLEAR_MARKER'
+set -Eeuo pipefail
+lock_dir="$1"
+deploy_id="$2"
+marker="$3"
+[[ "$lock_dir" == "/srv/projectai-staging/.staging-deploy-lock" ]]
+[[ "$marker" == "/srv/projectai-staging/.product-v2-deploy-in-progress" ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+if sudo test -e "$marker"; then
+  sudo test -f "$marker"
+  sudo test ! -L "$marker"
+  [[ "$(sudo stat -c '%a|%U:%G|%s' "$marker")" == "600|root:root|0" ]]
+  sudo unlink "$marker"
+fi
+REMOTE_CLEAR_MARKER
+}
+
 cleanup() {
   local status=$?
   trap - EXIT
   set +e
+  clear_predeploy_marker || status=1
   release_lock || status=1
   rm -rf -- "$RELEASE_ROOT"
   exit "$status"
@@ -114,7 +137,9 @@ deploy_id="$6"
 audio_signing_secret_file="$7"
 command -v docker >/dev/null
 command -v curl >/dev/null
+command -v gzip >/dev/null
 command -v rsync >/dev/null
+command -v sha256sum >/dev/null
 sudo docker compose version >/dev/null
 command -v openssl >/dev/null
 [[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
@@ -244,6 +269,7 @@ rsync --archive --compress --delete \
   --filter='protect /.product-v2-deploy-in-progress' \
   --filter='protect /.staging-deploy-in-progress' \
   --filter='protect /.staging-deploy-lock/***' \
+  --filter='protect /.image-transfer/***' \
   --exclude '/.git/' --exclude '/node_modules/' --exclude '/dist/' \
   --exclude '/.vinext/' --exclude '/.wrangler/' --exclude '/test-results/' \
   --exclude '/playwright-report/' --exclude '/.local/' --exclude '/.env*' \
@@ -251,10 +277,78 @@ rsync --archive --compress --delete \
   --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 
-log "Transferring the reviewed images"
-docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+log "Creating the reviewed image archive"
+IMAGE_ARCHIVE="${RELEASE_ROOT}/projectai-images-${COMMIT_SHA}.tar.gz"
+docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" | gzip -1 > "$IMAGE_ARCHIVE"
+IMAGE_ARCHIVE_DIGEST="$(shasum -a 256 "$IMAGE_ARCHIVE" | awk '{print $1}')"
+IMAGE_ARCHIVE_BYTES="$(wc -c < "$IMAGE_ARCHIVE" | tr -d '[:space:]')"
+[[ "$IMAGE_ARCHIVE_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+[[ "$IMAGE_ARCHIVE_BYTES" =~ ^[1-9][0-9]*$ ]]
+REMOTE_IMAGE_ARCHIVE="${IMAGE_TRANSFER_DIR}/${COMMIT_SHA}.tar.gz"
+
+"${SSH[@]}" bash -s -- \
+  "$IMAGE_TRANSFER_DIR" "$REMOTE_IMAGE_ARCHIVE" "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_PREP'
+set -Eeuo pipefail
+transfer_dir="$1"
+archive="$2"
+lock_dir="$3"
+deploy_id="$4"
+[[ "$transfer_dir" == "/srv/projectai-staging/.image-transfer" ]]
+[[ "$archive" == "$transfer_dir/"*.tar.gz ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+if sudo test -e "$transfer_dir"; then
+  sudo test -d "$transfer_dir"
+  sudo test ! -L "$transfer_dir"
+  [[ "$(sudo stat -c '%a|%U:%G' "$transfer_dir")" == "700|deploy:deploy" ]]
+else
+  sudo install -d -m 0700 -o deploy -g deploy "$transfer_dir"
+fi
+if sudo test -e "$archive"; then
+  sudo test -f "$archive"
+  sudo test ! -L "$archive"
+  sudo rm -f -- "$archive"
+fi
+REMOTE_IMAGE_PREP
+
+log "Transferring the reviewed image archive with bounded resume"
+IMAGE_TRANSFERRED=0
+for ((attempt = 1; attempt <= IMAGE_TRANSFER_RETRIES; attempt += 1)); do
+  if rsync --archive --partial --append-verify --chmod=F600 \
+    --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
+    "$IMAGE_ARCHIVE" "${REMOTE_HOST}:${REMOTE_IMAGE_ARCHIVE}"; then
+    IMAGE_TRANSFERRED=1
+    break
+  fi
+  log "Image transfer attempt ${attempt}/${IMAGE_TRANSFER_RETRIES} was interrupted; resuming the verified partial archive"
+  sleep 2
+done
+[[ "$IMAGE_TRANSFERRED" == "1" ]] || fail "Reviewed image archive transfer exhausted its retry budget"
+
+log "Verifying and loading the reviewed images on Staging"
+"${SSH[@]}" bash -s -- \
+  "$REMOTE_IMAGE_ARCHIVE" "$IMAGE_ARCHIVE_DIGEST" "$IMAGE_ARCHIVE_BYTES" \
+  "$LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_IMAGE_LOAD'
+set -Eeuo pipefail
+archive="$1"
+expected_digest="$2"
+expected_bytes="$3"
+lock_dir="$4"
+deploy_id="$5"
+[[ "$archive" == "/srv/projectai-staging/.image-transfer/"*.tar.gz ]]
+[[ "$expected_digest" =~ ^[0-9a-f]{64}$ ]]
+[[ "$expected_bytes" =~ ^[1-9][0-9]*$ ]]
+[[ "$(sudo cat "$lock_dir/deploy-id")" == "$deploy_id" ]]
+sudo test -f "$archive"
+sudo test ! -L "$archive"
+[[ "$(sudo stat -c '%a|%U:%G|%s' "$archive")" == "600|deploy:deploy|${expected_bytes}" ]]
+[[ "$(sha256sum "$archive" | awk '{print $1}')" == "$expected_digest" ]]
+gzip -t "$archive"
+sudo sh -c 'gzip -dc -- "$1" | docker load >/dev/null' sh "$archive"
+sudo rm -f -- "$archive"
+REMOTE_IMAGE_LOAD
 
 log "Backing up, migrating, seeding, and starting Product V2 on Staging"
+REMOTE_DEPLOY_STARTED=1
 "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$ENV_FILE" "$AI_ENV_FILE" "$EMBEDDING_ENV_FILE" "$QWEN_SECRET_FILE" \
   "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$MARKER" "$LOCK_DIR" "$DEPLOY_ID" \
