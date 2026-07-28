@@ -110,6 +110,11 @@ async function capture(page: Page, name: string) {
 async function gotoInteractive(page: Page, url: string) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await expect(page.locator("main")).toBeVisible();
+  if (new URL(page.url()).pathname.endsWith("/login")) {
+    await expect(page.getByRole("button", { name: "进入测试环境" })).toBeEnabled();
+    return;
+  }
+  await expect(page.locator('header[data-client-ready="true"]')).toBeVisible();
 }
 
 async function createDepartmentThroughUi(page: Page, input: {
