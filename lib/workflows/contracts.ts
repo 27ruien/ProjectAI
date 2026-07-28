@@ -168,6 +168,9 @@ const parameterSchema = z.object({
   citations: citationLabelsSchema,
 }).strict();
 
+const ga4IdentifierSchema = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/);
+const ga4CoverageEventIdSchema = z.union([ga4IdentifierSchema, z.literal("TBD")]);
+
 export const ga4MeasurementPlanSchema = z.object({
   overview: z.object({
     platform: z.string().trim().min(1).max(80),
@@ -183,7 +186,7 @@ export const ga4MeasurementPlanSchema = z.object({
     coreEvent: z.boolean(),
     eventType: z.enum(["page_view", "click", "select", "permission", "ai", "result", "error", "custom"]),
     description: z.string().trim().min(1).max(500),
-    eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
+    eventId: ga4IdentifierSchema,
     parameterName: z.string().max(120),
     parameterDescription: z.string().max(500),
     parameterKey: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/),
@@ -193,8 +196,8 @@ export const ga4MeasurementPlanSchema = z.object({
     developerFeedback: z.string().max(1_000),
     citations: citationLabelsSchema,
   }).strict()).min(1).max(500),
-  requirementEventCoverage: z.array(z.object({ requirement: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
-  pageEventMatrix: z.array(z.object({ page: z.string().trim().min(1).max(500), eventId: z.string().regex(/^[a-z][a-z0-9_]{0,39}$/), status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
+  requirementEventCoverage: z.array(z.object({ requirement: z.string().trim().min(1).max(500), eventId: ga4CoverageEventIdSchema, status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
+  pageEventMatrix: z.array(z.object({ page: z.string().trim().min(1).max(500), eventId: ga4CoverageEventIdSchema, status: z.enum(["covered", "gap", "pending"]) }).strict()).max(1_000),
 }).strict().superRefine((value, context) => {
   const eventIds = new Set<string>();
   const eventIdentity = new Map<string, string>();
@@ -216,10 +219,18 @@ export const ga4MeasurementPlanSchema = z.object({
     parameterKeys.set(event.eventId, keys);
   }
   for (const [index, entry] of value.requirementEventCoverage.entries()) {
-    if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", path: ["requirementEventCoverage", index, "eventId"], message: "coverage references unknown event" });
+    if (entry.eventId === "TBD") {
+      if (entry.status === "covered") context.addIssue({ code: "custom", path: ["requirementEventCoverage", index, "eventId"], message: "covered requirement must reference an existing event" });
+    } else if (!eventIds.has(entry.eventId)) {
+      context.addIssue({ code: "custom", path: ["requirementEventCoverage", index, "eventId"], message: "coverage references unknown event" });
+    }
   }
   for (const [index, entry] of value.pageEventMatrix.entries()) {
-    if (!eventIds.has(entry.eventId)) context.addIssue({ code: "custom", path: ["pageEventMatrix", index, "eventId"], message: "coverage references unknown event" });
+    if (entry.eventId === "TBD") {
+      if (entry.status === "covered") context.addIssue({ code: "custom", path: ["pageEventMatrix", index, "eventId"], message: "covered page must reference an existing event" });
+    } else if (!eventIds.has(entry.eventId)) {
+      context.addIssue({ code: "custom", path: ["pageEventMatrix", index, "eventId"], message: "coverage references unknown event" });
+    }
   }
   if (value.overview.measurementId !== "TBD" && !/^G-[A-Z0-9]+$/.test(value.overview.measurementId)) {
     context.addIssue({ code: "custom", path: ["overview", "measurementId"], message: "measurement id must be TBD or a GA4 id" });
@@ -478,11 +489,14 @@ export function normalizeGa4MeasurementPlan(value: unknown): unknown {
     const rawLabel = item[firstKey] ?? item[`${firstKey}s`];
     const normalizedLabels = [...new Set(normalizeCoverageLabels(rawLabel, firstKey))];
     const normalizedEventIds = [...new Set(normalizeCoverageEventIds(rawEventReference))];
+    const status = normalizeCoverageStatus(item.status);
     return normalizedLabels.flatMap((label) => normalizedEventIds.map((normalizedEventId) => {
-      const eventId = typeof normalizedEventId === "string" && eventAliases.get(normalizedEventId)
+      const trustedEventId = typeof normalizedEventId === "string"
         ? eventAliases.get(normalizedEventId)
-        : normalizedEventId;
-      return { [firstKey]: label, eventId, status: normalizeCoverageStatus(item.status) };
+        : undefined;
+      const eventId = trustedEventId
+        ?? (status === "gap" || status === "pending" ? "TBD" : normalizedEventId);
+      return { [firstKey]: label, eventId, status };
     }));
   };
   return {
