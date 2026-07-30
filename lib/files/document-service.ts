@@ -264,6 +264,7 @@ async function reserveUpload(input: {
     | "restricted"
     | null;
   originalFilename: string;
+  versionNote: string | null;
   extension: string;
   declaredMimeType: string;
   detectedMimeType: string;
@@ -380,6 +381,7 @@ async function reserveUpload(input: {
           uploadId: input.uploadId,
           objectKey: generateObjectKey(input.projectId, document.id, versionId),
           originalFilename: input.originalFilename,
+          versionNote: input.versionNote,
           normalizedExtension: input.extension,
           declaredMimeType: input.declaredMimeType,
           detectedMimeType: input.detectedMimeType,
@@ -657,6 +659,7 @@ export async function uploadDocument(input: {
   idempotencyKey: string;
   file: File;
   displayName: string | null;
+  versionNote?: string | null;
   knowledgeSpaceId?: string | null;
   temporaryWorkflowId?: string;
   documentId?: string;
@@ -723,6 +726,7 @@ export async function uploadDocument(input: {
         knowledgeSpaceId: destination?.id ?? null,
         knowledgeVisibility: destination?.visibility ?? null,
         originalFilename: validated.originalFilename,
+        versionNote: input.versionNote?.trim() || null,
         extension: validated.extension,
         declaredMimeType: validated.declaredMimeType,
         detectedMimeType: validated.detectedMimeType,

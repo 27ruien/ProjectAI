@@ -119,6 +119,7 @@ export const projectDocumentVersion = pgTable(
     uploadId: varchar("upload_id", { length: 128 }).notNull(),
     objectKey: varchar("object_key", { length: 700 }).notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+    versionNote: varchar("version_note", { length: 500 }),
     normalizedExtension: varchar("normalized_extension", { length: 12 }).notNull(),
     declaredMimeType: varchar("declared_mime_type", { length: 200 }).notNull(),
     detectedMimeType: varchar("detected_mime_type", { length: 200 }).notNull(),

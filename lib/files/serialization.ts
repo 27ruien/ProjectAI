@@ -49,6 +49,7 @@ export function serializeDocumentVersion(
     versionNumber: version.versionNumber,
     isCurrent: version.isCurrent,
     originalFilename: version.originalFilename,
+    versionNote: version.versionNote,
     extension: version.normalizedExtension,
     detectedMimeType: version.detectedMimeType,
     sizeBytes: version.sizeBytes,

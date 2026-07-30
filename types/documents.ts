@@ -33,6 +33,7 @@ export interface ProjectDocumentVersionDto {
   versionNumber: number;
   isCurrent: boolean;
   originalFilename: string;
+  versionNote: string | null;
   extension: string;
   detectedMimeType: string;
   sizeBytes: number;

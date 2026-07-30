@@ -538,8 +538,6 @@ services:
         condition: service_completed_successfully
       projectai-document-worker:
         condition: service_healthy
-      projectai-embedding-worker:
-        condition: service_healthy
     networks:
       - projectai-staging-internal
     ports:
@@ -615,6 +613,8 @@ services:
       start_period: 30s
 
   projectai-embedding-worker:
+    profiles:
+      - embedding
     image: ${STAGING_EMBEDDING_WORKER_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     container_name: project-ai-os-staging-embedding-worker
     restart: unless-stopped

@@ -49,6 +49,7 @@ const projectSelection = {
   name: project.name,
   clientName: project.clientName,
   description: project.description,
+  isInternal: project.isInternal,
   status: project.status,
   stage: project.stage,
   health: project.health,
@@ -67,6 +68,7 @@ export async function listAuthorizedProjects(
     const rows = await db
       .select(projectSelection)
       .from(project)
+      .where(eq(project.isInternal, false))
       .orderBy(desc(project.updatedAt));
     return rows.map((row) => ({ ...row, projectRole: null }));
   }
@@ -81,7 +83,10 @@ export async function listAuthorizedProjects(
         eq(projectMember.userId, userId),
       ),
     )
-    .where(or(eq(project.createdBy, userId), isNotNull(projectMember.id)))
+    .where(and(
+      eq(project.isInternal, false),
+      or(eq(project.createdBy, userId), isNotNull(projectMember.id)),
+    ))
     .orderBy(desc(project.updatedAt));
   return rows.map((row) => withEffectiveCreatorRole(row, userId));
 }

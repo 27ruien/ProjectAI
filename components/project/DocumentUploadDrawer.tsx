@@ -86,7 +86,10 @@ function pendingUploadTimeoutError(): DocumentApiError {
   );
 }
 
-function pendingUploadSignal(parent: AbortSignal | undefined, timeoutMs: number) {
+function pendingUploadSignal(
+  parent: AbortSignal | undefined,
+  timeoutMs: number,
+) {
   const controller = new AbortController();
   let timedOut = false;
   const abortFromParent = () => controller.abort();
@@ -166,7 +169,10 @@ export async function resolvePendingDocumentUpload(
     return initialResponse;
   }
 
-  const intervalMs = Math.max(1, options.intervalMs ?? PENDING_UPLOAD_POLL_INTERVAL_MS);
+  const intervalMs = Math.max(
+    1,
+    options.intervalMs ?? PENDING_UPLOAD_POLL_INTERVAL_MS,
+  );
   const timeoutMs = Math.max(1, options.timeoutMs ?? PENDING_UPLOAD_TIMEOUT_MS);
   const now = options.now ?? Date.now;
   const wait = options.wait ?? waitForPendingUpload;
@@ -177,15 +183,22 @@ export async function resolvePendingDocumentUpload(
   try {
     while (now() - startedAt < timeoutMs) {
       if (polling.signal.aborted) throw uploadAbortError();
-      const response = await loadVersions(projectId, documentId, polling.signal);
+      const response = await loadVersions(
+        projectId,
+        documentId,
+        polling.signal,
+      );
       if (
         response.document &&
-        (response.document.projectId !== projectId || response.document.id !== documentId)
+        (response.document.projectId !== projectId ||
+          response.document.id !== documentId)
       ) {
         throw invalidUploadResponse();
       }
 
-      const version = response.versions.find((candidate) => candidate.id === versionId);
+      const version = response.versions.find(
+        (candidate) => candidate.id === versionId,
+      );
       if (!version || version.documentId !== documentId) {
         throw invalidUploadResponse();
       }
@@ -229,11 +242,12 @@ export function DocumentUploadDrawer({
   const controllerRef = useRef<AbortController | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [displayName, setDisplayName] = useState(target?.displayName ?? "");
-  const [knowledgeSpaceId, setKnowledgeSpaceId] = useState(
-    destinations.find((destination) => destination.projectId === projectId)?.id ??
+  const [versionNote, setVersionNote] = useState("");
+  const knowledgeSpaceId =
+    destinations.find((destination) => destination.projectId === projectId)
+      ?.id ??
       destinations[0]?.id ??
-      "",
-  );
+      "";
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [phase, setPhase] = useState<UploadPhase>("idle");
   const [progress, setProgress] = useState(0);
@@ -266,7 +280,9 @@ export function DocumentUploadDrawer({
     const extension = extensionFromFile(selected);
     if (!allowedExtensions.includes(extension)) {
       setFile(null);
-      setError(`仅支持 ${allowedExtensions.map((value) => value.toUpperCase()).join("、")} 文件。`);
+      setError(
+        `仅支持 ${allowedExtensions.map((value) => value.toUpperCase()).join("、")} 文件。`,
+      );
       setPhase("error");
       return;
     }
@@ -305,6 +321,7 @@ export function DocumentUploadDrawer({
         documentId: target?.documentId,
         file,
         displayName: isVersionUpload ? undefined : normalizedName,
+        versionNote,
         knowledgeSpaceId: isVersionUpload ? undefined : knowledgeSpaceId,
         idempotencyKey: idempotencyKey || crypto.randomUUID(),
         signal: controller.signal,
@@ -379,8 +396,16 @@ export function DocumentUploadDrawer({
                 (!isVersionUpload && (!displayName.trim() || !knowledgeSpaceId))
               }
             >
-              {phase === "error" ? <RotateCw className="size-4" /> : <UploadCloud className="size-4" />}
-              {phase === "error" ? "重试上传" : isVersionUpload ? "上传新版本" : "开始上传"}
+              {phase === "error" ? (
+                <RotateCw className="size-4" />
+              ) : (
+                <UploadCloud className="size-4" />
+              )}
+              {phase === "error"
+                ? "重试上传"
+                : isVersionUpload
+                  ? "上传新版本"
+                  : "开始上传"}
             </Button>
           ) : null}
         </div>
@@ -392,7 +417,8 @@ export function DocumentUploadDrawer({
           onDragOver={(event) => event.preventDefault()}
           onDrop={(event) => {
             event.preventDefault();
-            if (phase !== "uploading") selectFile(event.dataTransfer.files.item(0));
+            if (phase !== "uploading")
+              selectFile(event.dataTransfer.files.item(0));
           }}
         >
           <input
@@ -401,14 +427,20 @@ export function DocumentUploadDrawer({
             accept={accept}
             className="sr-only"
             aria-label="选择上传文件"
-            onChange={(event) => selectFile(event.target.files?.item(0) ?? null)}
+            onChange={(event) =>
+              selectFile(event.target.files?.item(0) ?? null)
+            }
           />
           <span className="mx-auto grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
             <UploadCloud className="size-5" />
           </span>
-          <p className="mt-3 text-sm font-semibold text-foreground">拖放文件到此处，或选择文件</p>
+          <p className="mt-3 text-sm font-semibold text-foreground">
+            拖放文件到此处，或选择文件
+          </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            支持 {allowedExtensions.map((value) => value.toUpperCase()).join("、")}，单文件不超过 {formatBytes(policy.maxBytes)}
+            支持{" "}
+            {allowedExtensions.map((value) => value.toUpperCase()).join("、")}
+            ，单文件不超过 {formatBytes(policy.maxBytes)}
           </p>
           <Button
             type="button"
@@ -428,9 +460,12 @@ export function DocumentUploadDrawer({
               <FileText className="size-4" />
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-foreground">{file.name}</p>
+              <p className="truncate text-sm font-medium text-foreground">
+                {file.name}
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                {extensionFromFile(file).toUpperCase()} · {formatBytes(file.size)}
+                {extensionFromFile(file).toUpperCase()} ·{" "}
+                {formatBytes(file.size)}
               </p>
             </div>
           </div>
@@ -438,48 +473,31 @@ export function DocumentUploadDrawer({
 
         {!isVersionUpload ? (
           <div className="space-y-4">
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">资料名称</span>
-            <input
-              value={displayName}
-              maxLength={240}
-              disabled={phase === "uploading" || phase === "success"}
-              onChange={(event) => setDisplayName(event.target.value)}
-              placeholder="选择文件后可修改资料名称"
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
-            />
-            <span className="mt-1.5 block text-[11px] text-muted-foreground">
-              资料名称用于列表展示，不会改变原始文件名。
-            </span>
-          </label>
-          <label className="block">
-            <span className="mb-1.5 block text-xs font-medium text-foreground">知识空间</span>
-            <select
-              value={knowledgeSpaceId}
-              disabled={phase === "uploading" || phase === "success"}
-              onChange={(event) => setKnowledgeSpaceId(event.target.value)}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
-            >
-              {destinations.map((destination) => (
-                <option key={destination.id} value={destination.id}>
-                  {destination.name} · {{
-                    organization: "公司",
-                    department: "部门",
-                    project: "项目",
-                    restricted: "受限",
-                  }[destination.type]}
-                </option>
-              ))}
-            </select>
-            <span className="mt-1.5 block text-[11px] text-muted-foreground">
-              仅显示服务端确认可上传的空间；目标空间同时绑定到幂等请求。
-            </span>
-          </label>
+            <div className="rounded-lg border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+              文件会自动归入当前项目，并使用文件名作为资料名称；无需配置知识空间、解析策略或
+              AI 参数。
+            </div>
           </div>
         ) : null}
 
+        <label className="block text-sm font-medium text-foreground">
+          版本说明（可选）
+          <textarea
+            value={versionNote}
+            maxLength={500}
+            rows={3}
+            disabled={phase === "uploading"}
+            onChange={(event) => setVersionNote(event.target.value)}
+            placeholder="例如：补充验收标准并更新项目排期"
+            className="mt-2 w-full resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+        </label>
+
         {phase === "uploading" ? (
-          <div className="rounded-xl border border-primary/20 bg-primary/5 p-4" role="status">
+          <div
+            className="rounded-xl border border-primary/20 bg-primary/5 p-4"
+            role="status"
+          >
             <div className="flex items-center justify-between gap-3 text-xs">
               <span className="font-medium text-foreground">
                 {progress < 100 ? "正在上传文件" : "服务端正在校验并安全保存"}
@@ -499,12 +517,17 @@ export function DocumentUploadDrawer({
                 style={{ width: `${progress}%` }}
               />
             </div>
-            <p className="mt-2 text-[11px] text-muted-foreground">上传完成前请保持此页面打开。</p>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              上传完成前请保持此页面打开。
+            </p>
           </div>
         ) : null}
 
         {phase === "success" ? (
-          <div className="flex items-start gap-3 rounded-xl border border-success/20 bg-success-soft p-4" role="status">
+          <div
+            className="flex items-start gap-3 rounded-xl border border-success/20 bg-success-soft p-4"
+            role="status"
+          >
             <CheckCircle2 className="mt-0.5 size-5 shrink-0 text-success" />
             <div>
               <p className="text-sm font-semibold text-foreground">
@@ -520,14 +543,19 @@ export function DocumentUploadDrawer({
         ) : null}
 
         {error ? (
-          <div ref={errorRef} className="flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive-soft p-3 text-sm text-destructive" role="alert">
+          <div
+            ref={errorRef}
+            className="flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive-soft p-3 text-sm text-destructive"
+            role="alert"
+          >
             <AlertCircle className="mt-0.5 size-4 shrink-0" />
             <span>{error}</span>
           </div>
         ) : null}
 
         <p className="rounded-lg border border-info/15 bg-info-soft px-3 py-2.5 text-xs leading-5 text-info">
-          文件安全存储后会进入独立 Worker 的异步解析队列；只有当前有效且授权通过的 Chunk 才能参与检索。
+          文件安全存储后会进入独立 Worker
+          的异步解析队列；只有当前有效且授权通过的 Chunk 才能参与检索。
         </p>
       </div>
     </Drawer>

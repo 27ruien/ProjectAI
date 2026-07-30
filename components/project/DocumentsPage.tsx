@@ -13,6 +13,7 @@ import {
   Archive,
   ArchiveRestore,
   Download,
+  Eye,
   FileCheck2,
   FileText,
   FolderArchive,
@@ -35,10 +36,10 @@ import {
   listProjectDocuments,
   reindexProjectDocumentVersion,
   restoreProjectDocument,
-  setProjectDocumentVisibility,
   setProjectDocumentGrant,
   type ProjectDocumentGrantDto,
 } from "@/lib/documents/client";
+import { withBasePath } from "@/lib/base-path";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import type {
   DocumentListCountsDto,
@@ -48,7 +49,10 @@ import type {
   ProjectDocumentUploadResponse,
   ProjectDocumentVersionDto,
 } from "@/types/documents";
-import { DocumentUploadDrawer, type DocumentUploadTarget } from "./DocumentUploadDrawer";
+import {
+  DocumentUploadDrawer,
+  type DocumentUploadTarget,
+} from "./DocumentUploadDrawer";
 import { DocumentVersionDrawer } from "./DocumentVersionDrawer";
 import { ProjectContextHeader } from "./ProjectContextHeader";
 
@@ -111,30 +115,28 @@ function statusPresentation(document: ProjectDocumentDto) {
     };
   }
   const storageStatus = document.currentVersion?.storageStatus;
-  return (
-    {
-      pending: {
-        label: "处理中",
-        classes: "border-info/20 bg-info-soft text-info",
-      },
-      stored: {
-        label: "已存储",
-        classes: "border-success/20 bg-success-soft text-success",
-      },
-      failed: {
-        label: "上传失败",
-        classes: "border-destructive/20 bg-destructive-soft text-destructive",
-      },
-      quarantined: {
-        label: "已隔离",
-        classes: "border-warning/20 bg-warning-soft text-warning",
-      },
-      deleted: {
-        label: "不可用",
-        classes: "border-border bg-muted text-muted-foreground",
-      },
-    }[storageStatus ?? "pending"]
-  );
+  return {
+    pending: {
+      label: "处理中",
+      classes: "border-info/20 bg-info-soft text-info",
+    },
+    stored: {
+      label: "已存储",
+      classes: "border-success/20 bg-success-soft text-success",
+    },
+    failed: {
+      label: "上传失败",
+      classes: "border-destructive/20 bg-destructive-soft text-destructive",
+    },
+    quarantined: {
+      label: "已隔离",
+      classes: "border-warning/20 bg-warning-soft text-warning",
+    },
+    deleted: {
+      label: "不可用",
+      classes: "border-border bg-muted text-muted-foreground",
+    },
+  }[storageStatus ?? "pending"];
 }
 
 function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
@@ -191,7 +193,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
   const [documents, setDocuments] = useState<ProjectDocumentDto[]>([]);
   const [counts, setCounts] = useState<DocumentListCountsDto>(emptyCounts);
   const [policy, setPolicy] = useState<DocumentUploadPolicyDto>(defaultPolicy);
-  const [listPermissions, setListPermissions] = useState<DocumentListPermissionsDto | null>(null);
+  const [listPermissions, setListPermissions] =
+    useState<DocumentListPermissionsDto | null>(null);
   const [search, setSearch] = useState("");
   const [listError, setListError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -199,9 +202,9 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadTarget, setUploadTarget] = useState<DocumentUploadTarget>(null);
-  const [versionDocument, setVersionDocument] = useState<ProjectDocumentDto | null>(null);
+  const [versionDocument, setVersionDocument] =
+    useState<ProjectDocumentDto | null>(null);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
-  const [grantDocument, setGrantDocument] = useState<ProjectDocumentDto | null>(null);
 
   const loadDocuments = useCallback(
     async (options: { signal?: AbortSignal; background?: boolean } = {}) => {
@@ -222,7 +225,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         setListPermissions(response.permissions);
         setPhase("ready");
       } catch (caught) {
-        if (isAbortError(caught) || sequence !== requestSequence.current) return;
+        if (isAbortError(caught) || sequence !== requestSequence.current)
+          return;
         const message = documentErrorMessage(caught);
         if (options.background) setActionError(message);
         else {
@@ -250,7 +254,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         setPhase("ready");
       })
       .catch((caught: unknown) => {
-        if (isAbortError(caught) || sequence !== requestSequence.current) return;
+        if (isAbortError(caught) || sequence !== requestSequence.current)
+          return;
         setListError(documentErrorMessage(caught));
         setPhase("error");
       });
@@ -287,7 +292,11 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     if (!keyword) return documents;
     return documents.filter((document) => {
       const version = document.currentVersion;
-      return [document.displayName, version?.originalFilename, version?.extension]
+      return [
+        document.displayName,
+        version?.originalFilename,
+        version?.extension,
+      ]
         .filter(Boolean)
         .some((value) => value?.toLocaleLowerCase("zh-CN").includes(keyword));
     });
@@ -304,7 +313,10 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
 
   const openVersionUpload = (document: ProjectDocumentDto) => {
     setVersionDocument(null);
-    setUploadTarget({ documentId: document.id, displayName: document.displayName });
+    setUploadTarget({
+      documentId: document.id,
+      displayName: document.displayName,
+    });
     setUploadOpen(true);
   };
 
@@ -374,30 +386,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     setPendingAction(actionKey);
     setActionError(null);
     try {
-      await reindexProjectDocumentVersion(
-        project.id,
-        document.id,
-        version.id,
-      );
+      await reindexProjectDocumentVersion(project.id, document.id, version.id);
       toast(`已为“${document.displayName}”创建新的解析任务`, "success");
-      await loadDocuments({ background: true });
-    } catch (caught) {
-      setActionError(documentErrorMessage(caught));
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const changeVisibility = async (
-    document: ProjectDocumentDto,
-    visibility: ProjectDocumentDto["visibility"],
-  ) => {
-    const actionKey = `visibility:${document.id}`;
-    setPendingAction(actionKey);
-    setActionError(null);
-    try {
-      await setProjectDocumentVisibility(project.id, document.id, visibility);
-      toast(`“${document.displayName}”的可见范围已更新`, "success");
       await loadDocuments({ background: true });
     } catch (caught) {
       setActionError(documentErrorMessage(caught));
@@ -408,18 +398,21 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
 
   return (
     <div className="min-h-full bg-background">
-      <ProjectContextHeader project={project} activeTab="documents" />
+      <ProjectContextHeader project={project} activeTab="files" />
       <main className="px-5 py-5 lg:px-8 lg:py-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-xl font-semibold tracking-tight text-foreground">项目资料</h2>
+            <h2 className="text-xl font-semibold tracking-tight text-foreground">
+              项目资料
+            </h2>
             <p className="mt-1 text-sm text-muted-foreground">
               安全管理项目文件、当前有效版本和历史版本。
             </p>
           </div>
           {canUpload ? (
             <Button type="button" onClick={openNewDocumentUpload}>
-              <Upload className="size-4" />上传资料
+              <Upload className="size-4" />
+              上传资料
             </Button>
           ) : null}
         </div>
@@ -428,7 +421,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           <Info className="mt-0.5 size-4 shrink-0" />
           <p>
             <strong className="font-semibold">文件已真实存储；</strong>
-            当前有效版本会由独立 Worker 异步解析并建立全文知识索引，项目助手只使用服务端授权的有效来源。
+            当前有效版本会由独立 Worker
+            异步解析并建立全文知识索引，项目助手只使用服务端授权的有效来源。
           </p>
         </aside>
 
@@ -439,25 +433,41 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         ) : null}
 
         {actionError ? (
-          <div className="mt-4 flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive-soft px-4 py-3 text-sm text-destructive" role="alert">
+          <div
+            className="mt-4 flex items-start gap-2 rounded-xl border border-destructive/20 bg-destructive-soft px-4 py-3 text-sm text-destructive"
+            role="alert"
+          >
             <AlertCircle className="mt-0.5 size-4 shrink-0" />
             <span className="flex-1">{actionError}</span>
-            <button type="button" aria-label="关闭错误提示" onClick={() => setActionError(null)} className="rounded p-1 hover:bg-destructive/10">
+            <button
+              type="button"
+              aria-label="关闭错误提示"
+              onClick={() => setActionError(null)}
+              className="rounded p-1 hover:bg-destructive/10"
+            >
               <X className="size-3.5" />
             </button>
           </div>
         ) : null}
 
-        <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" aria-busy={phase === "loading" || refreshing}>
+        <section
+          className="mt-5 overflow-hidden rounded-xl border border-border bg-card"
+          aria-busy={phase === "loading" || refreshing}
+        >
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <div className="flex items-center gap-1 rounded-lg bg-muted p-1" role="group" aria-label="资料状态">
+            <div
+              className="flex items-center gap-1 rounded-lg bg-muted p-1"
+              role="group"
+              aria-label="资料状态"
+            >
               <button
                 type="button"
                 aria-pressed={view === "active"}
                 onClick={() => changeView("active")}
                 className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors ${view === "active" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
-                <FileCheck2 className="size-3.5" />有效资料
+                <FileCheck2 className="size-3.5" />
+                有效资料
                 <span className="tabular-nums">{counts.active}</span>
               </button>
               <button
@@ -466,7 +476,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
                 onClick={() => changeView("archived")}
                 className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors ${view === "archived" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
               >
-                <FolderArchive className="size-3.5" />归档资料
+                <FolderArchive className="size-3.5" />
+                归档资料
                 <span className="tabular-nums">{counts.archived}</span>
               </button>
             </div>
@@ -481,7 +492,12 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
                   className="h-8 w-56 rounded-lg border border-input bg-background pl-8 pr-8 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/15"
                 />
                 {search ? (
-                  <button type="button" aria-label="清除搜索" onClick={() => setSearch("")} className="absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-muted">
+                  <button
+                    type="button"
+                    aria-label="清除搜索"
+                    onClick={() => setSearch("")}
+                    className="absolute right-1.5 top-1/2 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:bg-muted"
+                  >
                     <X className="size-3" />
                   </button>
                 ) : null}
@@ -508,10 +524,21 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
                 <span className="mx-auto grid size-11 place-items-center rounded-xl bg-destructive-soft text-destructive">
                   <AlertCircle className="size-5" />
                 </span>
-                <h3 className="mt-4 text-sm font-semibold text-foreground">资料加载失败</h3>
-                <p className="mt-1 max-w-sm text-sm text-muted-foreground">{listError}</p>
-                <Button type="button" variant="outline" size="sm" className="mt-4" onClick={() => void loadDocuments()}>
-                  <RefreshCw className="size-3.5" />重新加载
+                <h3 className="mt-4 text-sm font-semibold text-foreground">
+                  资料加载失败
+                </h3>
+                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                  {listError}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={() => void loadDocuments()}
+                >
+                  <RefreshCw className="size-3.5" />
+                  重新加载
                 </Button>
               </div>
             </div>
@@ -525,13 +552,25 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
             />
           ) : null}
 
-          {phase === "ready" && documents.length > 0 && filteredDocuments.length === 0 ? (
+          {phase === "ready" &&
+          documents.length > 0 &&
+          filteredDocuments.length === 0 ? (
             <div className="grid min-h-72 place-items-center px-6 text-center">
               <div>
                 <Search className="mx-auto size-7 text-muted-foreground" />
-                <h3 className="mt-3 text-sm font-semibold text-foreground">没有匹配的资料</h3>
-                <p className="mt-1 text-xs text-muted-foreground">请调整搜索关键词。</p>
-                <button type="button" className="mt-3 text-xs font-medium text-primary hover:underline" onClick={() => setSearch("")}>清除搜索</button>
+                <h3 className="mt-3 text-sm font-semibold text-foreground">
+                  没有匹配的资料
+                </h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  请调整搜索关键词。
+                </p>
+                <button
+                  type="button"
+                  className="mt-3 text-xs font-medium text-primary hover:underline"
+                  onClick={() => setSearch("")}
+                >
+                  清除搜索
+                </button>
               </div>
             </div>
           ) : null}
@@ -540,15 +579,15 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
             <DocumentTable
               documents={filteredDocuments}
               pendingAction={pendingAction}
-              onDownload={(document, version) => void download(document, version)}
+              onDownload={(document, version) =>
+                void download(document, version)
+              }
               onVersions={setVersionDocument}
               onUploadVersion={openVersionUpload}
               onReindex={(document, version) => void reindex(document, version)}
-              onVisibility={(document, visibility) =>
-                void changeVisibility(document, visibility)
+              onLifecycle={(document, kind) =>
+                setConfirmAction({ document, kind })
               }
-              onLifecycle={(document, kind) => setConfirmAction({ document, kind })}
-              onGrant={setGrantDocument}
             />
           ) : null}
         </section>
@@ -584,19 +623,6 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         onConfirm={() => void confirmLifecycleAction()}
       />
 
-      {grantDocument ? (
-        <DocumentGrantDialog
-          key={grantDocument.id}
-          projectId={project.id}
-          document={grantDocument}
-          onCancel={() => setGrantDocument(null)}
-          onCreated={async () => {
-            setGrantDocument(null);
-            toast("文件授权规则已保存", "success");
-            await loadDocuments({ background: true });
-          }}
-        />
-      ) : null}
     </div>
   );
 }
@@ -624,7 +650,11 @@ function DocumentsEmpty({
     <div className="grid min-h-80 place-items-center px-6 text-center">
       <div>
         <span className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground">
-          {archived ? <FolderArchive className="size-5" /> : <Inbox className="size-5" />}
+          {archived ? (
+            <FolderArchive className="size-5" />
+          ) : (
+            <Inbox className="size-5" />
+          )}
         </span>
         <h3 className="mt-4 text-sm font-semibold text-foreground">
           {archived ? "暂无归档资料" : "暂无项目资料"}
@@ -638,7 +668,8 @@ function DocumentsEmpty({
         </p>
         {!archived && canUpload ? (
           <Button type="button" size="sm" className="mt-4" onClick={onUpload}>
-            <Upload className="size-3.5" />上传第一份资料
+            <Upload className="size-3.5" />
+            上传第一份资料
           </Button>
         ) : null}
       </div>
@@ -653,25 +684,24 @@ function DocumentTable({
   onVersions,
   onUploadVersion,
   onReindex,
-  onVisibility,
   onLifecycle,
-  onGrant,
 }: {
   documents: ProjectDocumentDto[];
   pendingAction: string | null;
-  onDownload: (document: ProjectDocumentDto, version: ProjectDocumentVersionDto) => void;
+  onDownload: (
+    document: ProjectDocumentDto,
+    version: ProjectDocumentVersionDto,
+  ) => void;
   onVersions: (document: ProjectDocumentDto) => void;
   onUploadVersion: (document: ProjectDocumentDto) => void;
   onReindex: (
     document: ProjectDocumentDto,
     version: ProjectDocumentVersionDto,
   ) => void;
-  onVisibility: (
+  onLifecycle: (
     document: ProjectDocumentDto,
-    visibility: ProjectDocumentDto["visibility"],
+    kind: "archive" | "restore",
   ) => void;
-  onLifecycle: (document: ProjectDocumentDto, kind: "archive" | "restore") => void;
-  onGrant: (document: ProjectDocumentDto) => void;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -683,7 +713,7 @@ function DocumentTable({
             <th className="px-3 py-3">当前版本</th>
             <th className="px-3 py-3">文件大小</th>
             <th className="px-3 py-3">存储状态</th>
-            <th className="px-3 py-3">可见范围</th>
+            <th className="px-3 py-3">可用于 AI</th>
             <th className="px-3 py-3">解析与索引</th>
             <th className="px-3 py-3">上传者</th>
             <th className="px-3 py-3">更新时间</th>
@@ -696,69 +726,95 @@ function DocumentTable({
             const status = statusPresentation(document);
             const ingestion = ingestionPresentation(version);
             const canDownload =
-              document.permissions.canDownload && version?.storageStatus === "stored";
+              document.permissions.canDownload &&
+              version?.storageStatus === "stored";
             const busy = Boolean(pendingAction?.endsWith(`:${document.id}`));
             return (
-              <tr key={document.id} className="transition-colors hover:bg-muted/30">
+              <tr
+                key={document.id}
+                className="transition-colors hover:bg-muted/30"
+              >
                 <td className="px-4 py-3.5">
                   <div className="flex min-w-0 items-center gap-3">
                     <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
                       <FileText className="size-4" />
                     </span>
                     <div className="min-w-0">
-                      <p className="max-w-xs truncate text-sm font-medium text-foreground" title={document.displayName}>{document.displayName}</p>
-                      <p className="mt-0.5 max-w-xs truncate text-[10px] text-muted-foreground" title={version?.originalFilename}>{version?.originalFilename ?? "尚无可用文件版本"}</p>
+                      <p
+                        className="max-w-xs truncate text-sm font-medium text-foreground"
+                        title={document.displayName}
+                      >
+                        {document.displayName}
+                      </p>
+                      <p
+                        className="mt-0.5 max-w-xs truncate text-[10px] text-muted-foreground"
+                        title={version?.originalFilename}
+                      >
+                        {version?.originalFilename ?? "尚无可用文件版本"}
+                      </p>
                     </div>
                   </div>
                 </td>
-                <td className="px-3 py-3.5 text-xs text-foreground">{version?.extension.toUpperCase() ?? "—"}</td>
+                <td className="px-3 py-3.5 text-xs text-foreground">
+                  {version?.extension.toUpperCase() ?? "—"}
+                </td>
                 <td className="px-3 py-3.5">
                   {version ? (
                     <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                       <FileCheck2 className="size-3" />v{version.versionNumber}
                     </span>
-                  ) : <span className="text-xs text-muted-foreground">等待可用版本</span>}
-                </td>
-                <td className="px-3 py-3.5 text-xs tabular-nums text-foreground">{version ? formatBytes(version.sizeBytes) : "—"}</td>
-                <td className="px-3 py-3.5"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}>{status.label}</span></td>
-                <td className="px-3 py-3.5">
-                  {document.permissions.canArchive && document.status === "active" ? (
-                    <select
-                      aria-label={`设置 ${document.displayName} 的可见范围`}
-                      value={document.visibility}
-                      disabled={Boolean(pendingAction)}
-                      onChange={(event) =>
-                        onVisibility(
-                          document,
-                          event.target.value as ProjectDocumentDto["visibility"],
-                        )
-                      }
-                      className="h-8 rounded-md border bg-background px-2 text-[10px]"
-                    >
-                      <option value="private">项目私有</option>
-                      <option value="department_shared">部门共享</option>
-                      <option value="organization_shared">公司共享</option>
-                      <option value="restricted">受限授权</option>
-                    </select>
                   ) : (
-                    <span className="text-[10px] text-muted-foreground">
-                      {{
-                        private: "项目私有",
-                        department_shared: "部门共享",
-                        organization_shared: "公司共享",
-                        restricted: "受限授权",
-                      }[document.visibility]}
+                    <span className="text-xs text-muted-foreground">
+                      等待可用版本
                     </span>
                   )}
                 </td>
-                <td className="px-3 py-3.5">
-                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}>{ingestion.label}</span>
-                  <p className="mt-1 max-w-52 text-[9px] text-muted-foreground">{ingestion.detail}</p>
+                <td className="px-3 py-3.5 text-xs tabular-nums text-foreground">
+                  {version ? formatBytes(version.sizeBytes) : "—"}
                 </td>
-                <td className="px-3 py-3.5 text-xs text-foreground">{version?.uploadedBy.displayName ?? document.createdBy.displayName}</td>
-                <td className="px-3 py-3.5 text-xs text-muted-foreground">{formatDate(document.updatedAt)}</td>
+                <td className="px-3 py-3.5">
+                  <span
+                    className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}
+                  >
+                    {status.label}
+                  </span>
+                </td>
+                <td className="px-3 py-3.5">
+                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${document.status === "active" && version?.ingestion.status === "succeeded" ? "border-success/20 bg-success-soft text-success" : "border-border bg-muted text-muted-foreground"}`}>
+                    {document.status === "active" && version?.ingestion.status === "succeeded" ? "是" : "否"}
+                  </span>
+                </td>
+                <td className="px-3 py-3.5">
+                  <span
+                    className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}
+                  >
+                    {ingestion.label}
+                  </span>
+                  <p className="mt-1 max-w-52 text-[9px] text-muted-foreground">
+                    {ingestion.detail}
+                  </p>
+                </td>
+                <td className="px-3 py-3.5 text-xs text-foreground">
+                  {version?.uploadedBy.displayName ??
+                    document.createdBy.displayName}
+                </td>
+                <td className="px-3 py-3.5 text-xs text-muted-foreground">
+                  {formatDate(document.updatedAt)}
+                </td>
                 <td className="px-4 py-3.5">
                   <div className="flex items-center justify-end gap-1">
+                    {canDownload && version ? (
+                      <a
+                        href={withBasePath(`/api/projects/${document.projectId}/documents/${document.id}/versions/${version.id}/download?preview=true`)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                        aria-label={`预览 ${document.displayName}`}
+                        title="预览当前版本"
+                      >
+                        <Eye className="size-3.5" />
+                      </a>
+                    ) : null}
                     {canDownload && version ? (
                       <Button
                         type="button"
@@ -774,23 +830,18 @@ function DocumentTable({
                         <Download className="size-3.5" />
                       </Button>
                     ) : null}
-                    <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`查看 ${document.displayName} 的版本历史`} title="版本历史" disabled={Boolean(pendingAction)} onClick={() => onVersions(document)}>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      aria-label={`查看 ${document.displayName} 的版本历史`}
+                      title="版本历史"
+                      disabled={Boolean(pendingAction)}
+                      onClick={() => onVersions(document)}
+                    >
                       <History className="size-3.5" />
                     </Button>
-                    {document.permissions.canManagePermissions ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        aria-label={`管理 ${document.displayName} 的文件授权`}
-                        title="文件授权"
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => onGrant(document)}
-                      >
-                        <KeyRound className="size-3.5" />
-                      </Button>
-                    ) : null}
                     {version &&
                     document.permissions.canReindex &&
                     document.status === "active" &&
@@ -809,18 +860,54 @@ function DocumentTable({
                         <RefreshCw className="size-3.5" />
                       </Button>
                     ) : null}
-                    {document.permissions.canUploadVersion && document.status === "active" ? (
-                      <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`为 ${document.displayName} 上传新版本`} title="上传新版本" disabled={Boolean(pendingAction)} onClick={() => onUploadVersion(document)}>
+                    {document.permissions.canUploadVersion &&
+                    document.status === "active" ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label={`为 ${document.displayName} 上传新版本`}
+                        title="上传新版本"
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => onUploadVersion(document)}
+                      >
                         <Upload className="size-3.5" />
                       </Button>
                     ) : null}
-                    {document.status === "active" && document.permissions.canArchive ? (
-                      <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`归档 ${document.displayName}`} title="归档资料" loading={busy && pendingAction === `archive:${document.id}`} disabled={Boolean(pendingAction)} onClick={() => onLifecycle(document, "archive")}>
+                    {document.status === "active" &&
+                    document.permissions.canArchive ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label={`归档 ${document.displayName}`}
+                        title="归档资料"
+                        loading={
+                          busy && pendingAction === `archive:${document.id}`
+                        }
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => onLifecycle(document, "archive")}
+                      >
                         <Archive className="size-3.5" />
                       </Button>
                     ) : null}
-                    {document.status === "archived" && document.permissions.canRestore ? (
-                      <Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`恢复 ${document.displayName}`} title="恢复资料" loading={busy && pendingAction === `restore:${document.id}`} disabled={Boolean(pendingAction)} onClick={() => onLifecycle(document, "restore")}>
+                    {document.status === "archived" &&
+                    document.permissions.canRestore ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-8"
+                        aria-label={`恢复 ${document.displayName}`}
+                        title="恢复资料"
+                        loading={
+                          busy && pendingAction === `restore:${document.id}`
+                        }
+                        disabled={Boolean(pendingAction)}
+                        onClick={() => onLifecycle(document, "restore")}
+                      >
                         <ArchiveRestore className="size-3.5" />
                       </Button>
                     ) : null}
@@ -835,7 +922,7 @@ function DocumentTable({
   );
 }
 
-function DocumentGrantDialog({
+export function DocumentGrantDialog({
   projectId,
   document,
   onCancel,
@@ -929,18 +1016,25 @@ function DocumentGrantDialog({
         <section className="mt-4 rounded-lg border bg-muted/30 p-3">
           <h3 className="text-xs font-semibold">当前显式规则</h3>
           {loadingGrants ? (
-            <p className="mt-2 text-xs text-muted-foreground">正在加载授权规则…</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              正在加载授权规则…
+            </p>
           ) : grants.length ? (
             <div className="mt-2 max-h-28 space-y-1.5 overflow-y-auto">
               {grants.map((grant) => (
-                <p key={grant.id} className="font-mono text-[10px] text-muted-foreground">
-                  {grant.effect.toUpperCase()} · {grant.permission} · {grant.subjectType}:
-                  {grant.subjectId}
+                <p
+                  key={grant.id}
+                  className="font-mono text-[10px] text-muted-foreground"
+                >
+                  {grant.effect.toUpperCase()} · {grant.permission} ·{" "}
+                  {grant.subjectType}:{grant.subjectId}
                 </p>
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-muted-foreground">暂无显式规则，未匹配时默认拒绝。</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              暂无显式规则，未匹配时默认拒绝。
+            </p>
           )}
         </section>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -999,7 +1093,9 @@ function DocumentGrantDialog({
             效果
             <select
               value={effect}
-              onChange={(event) => setEffect(event.target.value as typeof effect)}
+              onChange={(event) =>
+                setEffect(event.target.value as typeof effect)
+              }
               className="h-10 w-full rounded-lg border bg-background px-3 text-sm"
             >
               <option value="allow">允许</option>
@@ -1013,7 +1109,12 @@ function DocumentGrantDialog({
           </p>
         ) : null}
         <div className="mt-6 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            disabled={submitting}
+          >
             取消
           </Button>
           <Button type="submit" loading={submitting} disabled={submitting}>
@@ -1039,13 +1140,32 @@ function ConfirmLifecycleDialog({
   if (!action) return null;
   const archive = action.kind === "archive";
   return (
-    <div className="fixed inset-0 z-[90] grid place-items-center px-4" role="dialog" aria-modal="true" aria-labelledby="document-lifecycle-title">
-      <button type="button" className="absolute inset-0 bg-[var(--overlay)]" aria-label="关闭确认窗口" onClick={onCancel} />
+    <div
+      className="fixed inset-0 z-[90] grid place-items-center px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="document-lifecycle-title"
+    >
+      <button
+        type="button"
+        className="absolute inset-0 bg-[var(--overlay)]"
+        aria-label="关闭确认窗口"
+        onClick={onCancel}
+      />
       <section className="relative w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-float)]">
-        <span className={`grid size-10 place-items-center rounded-xl ${archive ? "bg-warning-soft text-warning" : "bg-success-soft text-success"}`}>
-          {archive ? <Archive className="size-5" /> : <ArchiveRestore className="size-5" />}
+        <span
+          className={`grid size-10 place-items-center rounded-xl ${archive ? "bg-warning-soft text-warning" : "bg-success-soft text-success"}`}
+        >
+          {archive ? (
+            <Archive className="size-5" />
+          ) : (
+            <ArchiveRestore className="size-5" />
+          )}
         </span>
-        <h2 id="document-lifecycle-title" className="mt-4 text-base font-semibold text-foreground">
+        <h2
+          id="document-lifecycle-title"
+          className="mt-4 text-base font-semibold text-foreground"
+        >
           {archive ? "归档项目资料" : "恢复项目资料"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
@@ -1054,8 +1174,20 @@ function ConfirmLifecycleDialog({
             : `恢复“${action.document.displayName}”后，它会重新出现在有效资料列表中。`}
         </p>
         <div className="mt-5 flex justify-end gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel} disabled={pending}>取消</Button>
-          <Button type="button" variant={archive ? "danger" : "primary"} onClick={onConfirm} loading={pending}>
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={onCancel}
+            disabled={pending}
+          >
+            取消
+          </Button>
+          <Button
+            type="button"
+            variant={archive ? "danger" : "primary"}
+            onClick={onConfirm}
+            loading={pending}
+          >
             {archive ? "确认归档" : "确认恢复"}
           </Button>
         </div>

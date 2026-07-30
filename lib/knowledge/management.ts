@@ -752,8 +752,16 @@ export async function listUploadableKnowledgeSpaces(input: {
       and(
         eq(knowledgeSpace.organizationId, target.organizationId),
         eq(knowledgeSpace.isActive, true),
-        inArray(knowledgeSpace.type, ["department", "project"]),
+        inArray(
+          knowledgeSpace.type,
+          input.principal.user.productRole !== "member"
+            ? ["organization", "department", "project"]
+            : ["department", "project"],
+        ),
         or(
+          input.principal.user.productRole !== "member"
+            ? eq(knowledgeSpace.type, "organization")
+            : sql`false`,
           eq(knowledgeSpace.type, "department"),
           eq(knowledgeSpace.projectId, target.id),
         ),

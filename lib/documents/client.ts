@@ -274,6 +274,7 @@ export type UploadProjectDocumentInput = {
   documentId?: string;
   file: File;
   displayName?: string;
+  versionNote?: string;
   knowledgeSpaceId?: string;
   temporaryWorkflowId?: string;
   idempotencyKey: string;
@@ -349,6 +350,7 @@ export function uploadProjectDocument(
     const form = new FormData();
     form.set("file", input.file, input.file.name);
     if (input.displayName?.trim()) form.set("displayName", input.displayName.trim());
+    if (input.versionNote?.trim()) form.set("versionNote", input.versionNote.trim());
     if (!input.documentId && input.knowledgeSpaceId) {
       form.set("knowledgeSpaceId", input.knowledgeSpaceId);
     }

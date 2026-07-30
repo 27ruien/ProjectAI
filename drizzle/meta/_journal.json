@@ -176,6 +176,13 @@
       "when": 1784874000000,
       "tag": "0024_restore_authorization_deny_priority",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1785398400000,
+      "tag": "0025_focused_internal_mvp",
+      "breakpoints": true
     }
   ]
 }

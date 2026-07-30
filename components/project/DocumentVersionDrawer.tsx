@@ -303,6 +303,9 @@ export function DocumentVersionDrawer({
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${processing.classes}`}>{processing.label}</span>
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground">{version.originalFilename}</p>
+                      {version.versionNote ? (
+                        <p className="mt-1 text-xs text-foreground">{version.versionNote}</p>
+                      ) : null}
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         {version.extension.toUpperCase()} · {formatBytes(version.sizeBytes)} · {version.uploadedBy.displayName} · {formatDate(version.storedAt ?? version.createdAt)}
                       </p>

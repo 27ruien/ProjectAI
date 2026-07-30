@@ -10,6 +10,7 @@ export function fileRouteErrorResponse(error: unknown): Response {
 export async function readUploadForm(request: Request): Promise<{
   file: File;
   displayName: string | null;
+  versionNote: string | null;
   knowledgeSpaceId: string | null;
   temporaryWorkflowId: string | null;
 }> {
@@ -28,6 +29,7 @@ export async function readUploadForm(request: Request): Promise<{
   }
   const file = form.get("file");
   const displayName = form.get("displayName");
+  const versionNote = form.get("versionNote");
   const knowledgeSpaceId = form.get("knowledgeSpaceId");
   const temporaryWorkflowId = form.get("temporaryWorkflowId");
   if (!(file instanceof File)) {
@@ -35,6 +37,12 @@ export async function readUploadForm(request: Request): Promise<{
   }
   if (displayName !== null && typeof displayName !== "string") {
     throw new FileOperationError(400, "INVALID_REQUEST", "资料名称无效");
+  }
+  if (
+    versionNote !== null &&
+    (typeof versionNote !== "string" || versionNote.trim().length > 500)
+  ) {
+    throw new FileOperationError(400, "INVALID_REQUEST", "版本说明不能超过 500 个字符");
   }
   if (
     knowledgeSpaceId !== null &&
@@ -51,7 +59,15 @@ export async function readUploadForm(request: Request): Promise<{
   ) {
     throw new FileOperationError(400, "INVALID_REQUEST", "临时工作流标识无效");
   }
-  return { file, displayName, knowledgeSpaceId, temporaryWorkflowId };
+  return {
+    file,
+    displayName,
+    versionNote: typeof versionNote === "string" && versionNote.trim()
+      ? versionNote.trim()
+      : null,
+    knowledgeSpaceId,
+    temporaryWorkflowId,
+  };
 }
 
 export function idempotencyKeyFrom(request: Request): string {

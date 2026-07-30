@@ -26,6 +26,7 @@ export const projectStatusEnum = pgEnum("project_status", [
   "completed",
   "cancelled",
   "at_risk",
+  "archived",
 ]);
 
 export const projectStageEnum = pgEnum("project_stage", [

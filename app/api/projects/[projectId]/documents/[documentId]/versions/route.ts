@@ -89,7 +89,7 @@ export async function POST(
       request.headers,
       "manage_versions",
     );
-    const { file, knowledgeSpaceId } = await readUploadForm(request);
+    const { file, versionNote, knowledgeSpaceId } = await readUploadForm(request);
     if (knowledgeSpaceId) {
       throw new FileOperationError(
         400,
@@ -105,6 +105,7 @@ export async function POST(
       idempotencyKey: idempotencyKeyFrom(request),
       file,
       displayName: null,
+      versionNote,
     });
     const versions = await listProjectDocumentVersions(projectId, documentId);
     return jsonResponse(

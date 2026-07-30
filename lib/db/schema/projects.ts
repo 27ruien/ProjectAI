@@ -1,4 +1,5 @@
 import {
+  boolean,
   date,
   index,
   pgTable,
@@ -24,6 +25,7 @@ export const project = pgTable(
     name: varchar("name", { length: 200 }).notNull(),
     clientName: varchar("client_name", { length: 200 }).notNull(),
     description: text("description").notNull().default(""),
+    isInternal: boolean("is_internal").notNull().default(false),
     status: projectStatusEnum("status").notNull().default("planning"),
     stage: projectStageEnum("stage").notNull().default("discovery"),
     health: projectHealthEnum("health").notNull().default("healthy"),

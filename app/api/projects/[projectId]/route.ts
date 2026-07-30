@@ -13,8 +13,10 @@ import { getDb } from "@/lib/db/client";
 import { getPostgresErrorCode } from "@/lib/db/errors";
 import { updateProject } from "@/lib/db/repositories/project-repository";
 import { serializeAuthorizedProject } from "@/lib/projects/serialization";
-import { department } from "@/lib/db/schema";
+import { department, project } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
+import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
+import { getRequestAuditContext } from "@/lib/auth/request-context";
 
 type ProjectRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -24,7 +26,7 @@ const projectPatchSchema = z
     clientName: z.string().trim().min(2).max(200).optional(),
     description: z.string().trim().max(4_000).optional(),
     status: z
-      .enum(["planning", "active", "paused", "completed", "cancelled", "at_risk"])
+      .enum(["planning", "active", "completed", "archived"])
       .optional(),
     stage: z
       .enum([
@@ -166,6 +168,37 @@ export async function PATCH(
         { error: { code: "INVALID_JSON", message: "请求格式无效" } },
         { status: 400 },
       );
+    }
+    return authorizationErrorResponse(error);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: ProjectRouteContext,
+): Promise<Response> {
+  try {
+    requireTrustedMutationRequest(request);
+    const { projectId } = await context.params;
+    const principal = await requireApiPrincipal(request.headers);
+    const deleted = await getDb().transaction(async (tx) => {
+      await requireProjectRole(principal, projectId, ["project_manager"], request.headers, { db: tx, lockForUpdate: true });
+      await writeAuditEvent({
+        actorUserId: principal.user.id,
+        projectId,
+        eventType: "project_deleted",
+        entityType: "project",
+        entityId: projectId,
+        result: "succeeded",
+        ...getRequestAuditContext(request.headers),
+      }, tx);
+      const [record] = await tx.delete(project).where(eq(project.id, projectId)).returning({ id: project.id });
+      return record;
+    });
+    return deleted ? new Response(null, { status: 204 }) : jsonResponse({ error: { code: "NOT_FOUND", message: "项目不存在" } }, { status: 404 });
+  } catch (error) {
+    if (getPostgresErrorCode(error) === "23503") {
+      return jsonResponse({ error: { code: "PROJECT_NOT_EMPTY", message: "项目已有资料、需求或对话记录，请先关闭项目而不是删除" } }, { status: 409 });
     }
     return authorizationErrorResponse(error);
   }
