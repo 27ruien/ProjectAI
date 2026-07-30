@@ -50,7 +50,7 @@ export function DashboardPage({ viewer }: { viewer: ViewerContext }) {
             </Link>
           ) : null}
           {editableProject ? (
-            <Link href={`/workflows/requirement-extraction?project=${editableProject.id}`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
+            <Link href={`/workflows/requirement-framework?projectId=${editableProject.id}`} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90">
               <Sparkles className="size-4" />运行 AI 工作流
             </Link>
           ) : null}

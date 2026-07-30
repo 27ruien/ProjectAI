@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notExists, sql } from "drizzle-orm";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
 import { getDb, type DatabaseExecutor } from "@/lib/db/client";
@@ -12,10 +12,12 @@ import {
   project,
   projectMember,
   user,
+  testFixture,
 } from "@/lib/db/schema";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { resolveProjectPermissions } from "@/lib/auth/authorization";
 import { KnowledgeManagementError } from "./errors";
+import { includeTestFixturesInProductQueries } from "@/lib/test-fixtures/service";
 
 type SpaceAccess = "view" | "edit";
 
@@ -38,6 +40,45 @@ async function kivisenseOrganization(db: DatabaseExecutor = getDb()) {
 export async function listProductKnowledgeSpaces(principal: AuthenticatedPrincipal) {
   const db = getDb();
   const currentOrganization = await kivisenseOrganization(db);
+  const includeFixtures = includeTestFixturesInProductQueries();
+  const projectIsNotFixture = includeFixtures ? sql`true` : notExists(
+    db
+      .select({ id: testFixture.id })
+      .from(testFixture)
+      .where(
+        and(
+          eq(testFixture.entityType, "project"),
+          eq(testFixture.entityId, project.id),
+          eq(testFixture.isTestFixture, true),
+        ),
+      ),
+  );
+  const spaceIsNotFixture = includeFixtures ? sql`true` : and(
+    notExists(
+      db
+        .select({ id: testFixture.id })
+        .from(testFixture)
+        .where(
+          and(
+            eq(testFixture.entityType, "knowledge_space"),
+            eq(testFixture.entityId, knowledgeSpace.id),
+            eq(testFixture.isTestFixture, true),
+          ),
+        ),
+    ),
+    notExists(
+      db
+        .select({ id: testFixture.id })
+        .from(testFixture)
+        .where(
+          and(
+            eq(testFixture.entityType, "project"),
+            eq(testFixture.entityId, knowledgeSpace.projectId),
+            eq(testFixture.isTestFixture, true),
+          ),
+        ),
+    ),
+  );
   const [organizationMembership, departments, spaces, projects, departmentMemberships, projectMemberships, directMemberships] = await Promise.all([
     db
       .select({ id: organizationMember.id })
@@ -56,12 +97,12 @@ export async function listProductKnowledgeSpaces(principal: AuthenticatedPrincip
     db
       .select()
       .from(knowledgeSpace)
-      .where(and(eq(knowledgeSpace.organizationId, currentOrganization.id), eq(knowledgeSpace.isActive, true)))
+      .where(and(eq(knowledgeSpace.organizationId, currentOrganization.id), eq(knowledgeSpace.isActive, true), spaceIsNotFixture))
       .orderBy(asc(knowledgeSpace.name)),
     db
       .select()
       .from(project)
-      .where(eq(project.organizationId, currentOrganization.id))
+      .where(and(eq(project.organizationId, currentOrganization.id), projectIsNotFixture))
       .orderBy(asc(project.name)),
     db
       .select()

@@ -33,6 +33,19 @@ x-embedding-environment: &embedding-environment
   AI_EMBEDDING_DAILY_TOKEN_LIMIT: ${AI_EMBEDDING_DAILY_TOKEN_LIMIT:-5000000}
   AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS: ${AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS:-25000}
 
+x-timesheet-ai-environment: &timesheet-ai-environment
+  PM_DAILY_REPORT_ENABLED: ${PM_DAILY_REPORT_ENABLED:-false}
+  PM_DAILY_REPORT_CONFIDENCE_THRESHOLD: ${PM_DAILY_REPORT_CONFIDENCE_THRESHOLD:-0.85}
+  TIMESHEET_AI_WORKER_POLL_MS: ${TIMESHEET_AI_WORKER_POLL_MS:-1000}
+  TIMESHEET_AI_WORKER_LEASE_SECONDS: ${TIMESHEET_AI_WORKER_LEASE_SECONDS:-180}
+
+x-workflow-environment: &workflow-environment
+  WORKFLOW_WORKER_POLL_MS: ${WORKFLOW_WORKER_POLL_MS:-1000}
+  WORKFLOW_WORKER_LEASE_SECONDS: ${WORKFLOW_WORKER_LEASE_SECONDS:-300}
+  AUDIO_TRANSCRIPTION_PROVIDER: ${AUDIO_TRANSCRIPTION_PROVIDER:-alibaba-model-studio}
+  AUDIO_PROVIDER_PUBLIC_BASE_URL: ${AUDIO_PROVIDER_PUBLIC_BASE_URL:-https://gridworks.cn/tool/projectai-staging}
+  AUDIO_DOWNLOAD_SIGNING_KEY_FILE: /run/secrets/audio_download_signing_key
+
 services:
   projectai-postgres:
     image: ${STAGING_POSTGRES_IMAGE:-pgvector/pgvector:0.8.1-pg17}
@@ -163,7 +176,7 @@ services:
       context: .
       target: db-tools
     environment:
-      <<: [*document-processing-environment, *embedding-environment]
+      <<: [*document-processing-environment, *embedding-environment, *timesheet-ai-environment]
       NODE_ENV: production
       NEXT_PUBLIC_APP_ENV: staging
       PROJECTAI_SEED_ENVIRONMENT: ${PROJECTAI_SEED_ENVIRONMENT:-}
@@ -494,7 +507,7 @@ services:
     env_file:
       - /srv/projectai-staging/.env.ai
     environment:
-      <<: [*document-processing-environment, *embedding-environment]
+      <<: [*document-processing-environment, *embedding-environment, *workflow-environment]
       NODE_ENV: production
       PORT: 3000
       HOST: 0.0.0.0
@@ -529,6 +542,7 @@ services:
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
     secrets:
       - qwen_api_key
+      - audio_download_signing_key
     depends_on:
       projectai-postgres:
         condition: service_healthy
@@ -662,6 +676,114 @@ services:
       retries: 5
       start_period: 30s
 
+  projectai-timesheet-worker:
+    image: ${STAGING_TIMESHEET_WORKER_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    container_name: project-ai-os-staging-timesheet-worker
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    cpus: 0.75
+    mem_limit: 512m
+    pids_limit: 192
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    env_file:
+      - /srv/projectai-staging/.env.ai
+    environment:
+      <<: *timesheet-ai-environment
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      NEXT_PUBLIC_APP_ENV: staging
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.8.0-staging}
+      NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
+      NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
+    secrets:
+      - qwen_api_key
+    command:
+      - npm
+      - run
+      - worker:timesheets
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+    networks:
+      - projectai-staging-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs');const age=Date.now()-fs.statSync('/tmp/projectai-timesheet-ai-worker-heartbeat').mtimeMs;if(age>60000)process.exit(1)"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  projectai-workflow-worker:
+    image: ${STAGING_WORKFLOW_WORKER_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
+    container_name: project-ai-os-staging-workflow-worker
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    env_file:
+      - /srv/projectai-staging/.env.ai
+    environment:
+      <<: *workflow-environment
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:?OBJECT_STORAGE_ENDPOINT is required}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:?OBJECT_STORAGE_REGION is required}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:?OBJECT_STORAGE_BUCKET is required}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:?OBJECT_STORAGE_ACCESS_KEY is required}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:?OBJECT_STORAGE_SECRET_KEY is required}
+      OBJECT_STORAGE_FORCE_PATH_STYLE: ${OBJECT_STORAGE_FORCE_PATH_STYLE:?OBJECT_STORAGE_FORCE_PATH_STYLE is required}
+      OBJECT_STORAGE_USE_SSL: ${OBJECT_STORAGE_USE_SSL:?OBJECT_STORAGE_USE_SSL is required}
+      NEXT_PUBLIC_APP_ENV: staging
+      NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.8.0-staging}
+      NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
+      NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
+    secrets:
+      - qwen_api_key
+      - audio_download_signing_key
+    command:
+      - npm
+      - run
+      - worker:workflows
+    depends_on:
+      projectai-postgres:
+        condition: service_healthy
+      projectai-minio:
+        condition: service_healthy
+      projectai-minio-init:
+        condition: service_completed_successfully
+    networks:
+      - projectai-staging-internal
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "const fs=require('node:fs');const age=Date.now()-fs.statSync('/tmp/projectai-workflow-worker-heartbeat').mtimeMs;if(age>60000)process.exit(1)"
+        ]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
 volumes:
   projectai-staging-postgres:
     name: projectai-staging-postgres
@@ -676,3 +798,5 @@ networks:
 secrets:
   qwen_api_key:
     file: /srv/projectai-staging/secrets/qwen_api_key
+  audio_download_signing_key:
+    file: /srv/projectai-staging/secrets/audio_download_signing_key

@@ -22,7 +22,8 @@ const createSchema = z
 export async function GET(request: Request): Promise<Response> {
   try {
     const principal = await requireApiPrincipal(request.headers);
-    return jsonResponse(await listKnowledgeAdministration(principal));
+    const activeOnly = new URL(request.url).searchParams.get("activeOnly") === "true";
+    return jsonResponse(await listKnowledgeAdministration(principal, { activeOnly }));
   } catch (error) {
     return knowledgeManagementErrorResponse(error);
   }

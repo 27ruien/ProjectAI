@@ -158,10 +158,10 @@ test.describe.serial("Grounded Qwen 项目助手", () => {
   }) => {
     await uploadGroundingFixture(page);
     await page.goto(appPath(`/projects/${projectA}/knowledge`));
+    managerThreadId = await createThreadInUi(page);
     await expect(page.getByTestId("ai-assistant-empty")).toBeVisible();
     await screenshot(page, "ai-assistant-empty.png");
 
-    managerThreadId = await createThreadInUi(page);
     await askInUi(page, "客户要求什么时候上线？");
     const assistant = page
       .locator('[data-message-role="assistant"]')
@@ -199,7 +199,7 @@ test.describe.serial("Grounded Qwen 项目助手", () => {
     await askInUi(page, "火星发射窗口是什么？");
     const insufficient = page
       .locator('[data-message-role="assistant"]')
-      .filter({ hasText: "现有项目资料中没有足够信息支持明确结论" })
+      .filter({ hasText: "当前授权范围内未检索到足以支持结论的有效资料" })
       .last();
     await expect(insufficient).toBeVisible();
     await expect(insufficient.getByTestId("assistant-citations")).toHaveCount(0);

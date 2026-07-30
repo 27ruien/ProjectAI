@@ -161,6 +161,13 @@ export const documentSection = pgTable(
     sectionIndex: integer("section_index").notNull(),
     heading: varchar("heading", { length: 500 }),
     headingPath: jsonb("heading_path").$type<string[]>().notNull().default([]),
+    chunkType: varchar("chunk_type", { length: 32 }).notNull().default("text_block"),
+    parentContent: text("parent_content"),
+    parentContentSha256: varchar("parent_content_sha256", { length: 64 }),
+    parseQualityBps: integer("parse_quality_bps").notNull().default(10_000),
+    keywords: jsonb("keywords").$type<string[]>().notNull().default([]),
+    summary: text("summary"),
+    embeddingStatus: varchar("embedding_status", { length: 24 }).notNull().default("unknown"),
     pageNumber: integer("page_number"),
     slideNumber: integer("slide_number"),
     sheetName: varchar("sheet_name", { length: 255 }),
@@ -244,6 +251,12 @@ export const documentSection = pgTable(
       "document_sections_locator_check",
       sql`jsonb_typeof(${table.sourceLocator}) = 'object'`,
     ),
+    check("document_sections_v3_structure_check", sql`
+      ${table.chunkType} in ('heading', 'paragraph_group', 'table', 'sheet_range', 'slide', 'notes', 'text_block', 'code_block', 'list', 'page')
+      and ${table.parseQualityBps} between 0 and 10000
+      and (${table.parentContentSha256} is null or ${table.parentContentSha256} ~ '^[0-9a-f]{64}$')
+      and ${table.embeddingStatus} in ('unknown', 'pending', 'current', 'failed', 'disabled')
+    `),
     check("document_sections_positions_check", sql`
       (${table.pageNumber} is null or ${table.pageNumber} > 0)
       and (${table.slideNumber} is null or ${table.slideNumber} > 0)
@@ -283,6 +296,13 @@ export const documentChunk = pgTable(
     characterCount: integer("character_count").notNull(),
     estimatedTokenCount: integer("estimated_token_count").notNull(),
     headingPath: jsonb("heading_path").$type<string[]>().notNull().default([]),
+    chunkType: varchar("chunk_type", { length: 32 }).notNull().default("text_block"),
+    parentContent: text("parent_content"),
+    parentContentSha256: varchar("parent_content_sha256", { length: 64 }),
+    parseQualityBps: integer("parse_quality_bps").notNull().default(10_000),
+    keywords: jsonb("keywords").$type<string[]>().notNull().default([]),
+    summary: text("summary"),
+    embeddingStatus: varchar("embedding_status", { length: 24 }).notNull().default("unknown"),
     sourceLocator: jsonb("source_locator")
       .$type<Record<string, unknown>>()
       .notNull(),
@@ -358,6 +378,12 @@ export const documentChunk = pgTable(
       "document_chunks_locator_check",
       sql`jsonb_typeof(${table.sourceLocator}) = 'object'`,
     ),
+    check("document_chunks_v3_structure_check", sql`
+      ${table.chunkType} in ('heading', 'paragraph_group', 'table', 'sheet_range', 'slide', 'notes', 'text_block', 'code_block', 'list', 'page')
+      and ${table.parseQualityBps} between 0 and 10000
+      and (${table.parentContentSha256} is null or ${table.parentContentSha256} ~ '^[0-9a-f]{64}$')
+      and ${table.embeddingStatus} in ('unknown', 'pending', 'current', 'failed', 'disabled')
+    `),
   ],
 );
 

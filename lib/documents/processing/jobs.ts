@@ -21,6 +21,10 @@ import {
 } from "@/lib/db/schema";
 import type { DeterministicChunk, ParsedSection } from "./types";
 import {
+  normalizedDocumentText,
+  structuredKeywords,
+} from "./chunker";
+import {
   getDocumentProcessingConfig,
   type DocumentProcessingConfig,
 } from "./config";
@@ -399,34 +403,49 @@ function sectionRows(
   job: DocumentIngestionJobRecord,
   sections: ParsedSection[],
 ): NewDocumentSectionRecord[] {
-  return sections.map((section, sectionIndex) => ({
-    id: crypto.randomUUID(),
-    projectId: job.projectId,
-    documentId: job.documentId,
-    versionId: job.versionId,
-    ingestionJobId: job.id,
-    generation: job.generation,
-    sectionType: section.sectionType,
-    sectionIndex,
-    heading: section.heading ?? null,
-    headingPath: section.headingPath,
-    pageNumber: section.pageNumber ?? null,
-    slideNumber: section.slideNumber ?? null,
-    sheetName: section.sheetName ?? null,
-    columnStart: section.columnStart ?? null,
-    columnEnd: section.columnEnd ?? null,
-    rowStart: section.rowStart ?? null,
-    rowEnd: section.rowEnd ?? null,
-    lineStart: section.lineStart ?? null,
-    lineEnd: section.lineEnd ?? null,
-    paragraphStart: section.paragraphStart ?? null,
-    paragraphEnd: section.paragraphEnd ?? null,
-    sourceLocator: section.sourceLocator,
-    content: section.content,
-    contentSha256: createHash("sha256").update(section.content).digest("hex"),
-    characterCount: section.content.length,
-    parserVersion: job.parserVersion,
-  }));
+  return sections.map((section, sectionIndex) => {
+    const parentContent = normalizedDocumentText(section.content);
+    const parentContentSha256 = createHash("sha256")
+      .update(parentContent)
+      .digest("hex");
+    return {
+      id: crypto.randomUUID(),
+      projectId: job.projectId,
+      documentId: job.documentId,
+      versionId: job.versionId,
+      ingestionJobId: job.id,
+      generation: job.generation,
+      sectionType: section.sectionType,
+      sectionIndex,
+      heading: section.heading ?? null,
+      headingPath: section.headingPath,
+      chunkType: section.sectionType,
+      parentContent,
+      parentContentSha256,
+      parseQualityBps: parentContent.length ? 10_000 : 0,
+      keywords: structuredKeywords(
+        [...section.headingPath, parentContent].join("\n"),
+      ),
+      summary: parentContent.slice(0, 500),
+      embeddingStatus: "disabled",
+      pageNumber: section.pageNumber ?? null,
+      slideNumber: section.slideNumber ?? null,
+      sheetName: section.sheetName ?? null,
+      columnStart: section.columnStart ?? null,
+      columnEnd: section.columnEnd ?? null,
+      rowStart: section.rowStart ?? null,
+      rowEnd: section.rowEnd ?? null,
+      lineStart: section.lineStart ?? null,
+      lineEnd: section.lineEnd ?? null,
+      paragraphStart: section.paragraphStart ?? null,
+      paragraphEnd: section.paragraphEnd ?? null,
+      sourceLocator: section.sourceLocator,
+      content: section.content,
+      contentSha256: createHash("sha256").update(section.content).digest("hex"),
+      characterCount: section.content.length,
+      parserVersion: job.parserVersion,
+    };
+  });
 }
 
 export async function completeIngestionJob(input: {
@@ -500,6 +519,13 @@ export async function completeIngestionJob(input: {
       characterCount: chunk.characterCount,
       estimatedTokenCount: chunk.estimatedTokenCount,
       headingPath: chunk.headingPath,
+      chunkType: chunk.chunkType,
+      parentContent: chunk.parentContent,
+      parentContentSha256: chunk.parentContentSha256,
+      parseQualityBps: chunk.parseQualityBps,
+      keywords: chunk.keywords,
+      summary: chunk.summary,
+      embeddingStatus: "pending",
       sourceLocator: chunk.sourceLocator,
       parserVersion: job.parserVersion,
       chunkerVersion: job.chunkerVersion,

@@ -21,6 +21,7 @@ export type AiGatewayResult = {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  costUsdMicros?: number | null;
   providerRequestId: string | null;
   latencyMs: number;
 };
@@ -29,6 +30,7 @@ export type ProjectAssistantGatewayInput = {
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
+  maxOutputTokens?: number;
 };
 
 function responseFormatForPurpose(
@@ -42,6 +44,12 @@ function responseFormatForPurpose(
     "weekly_report",
     "timesheet_generation",
     "timesheet_repair",
+    "workflow_artifact",
+    "workflow_artifact_repair",
+    "meeting_summary",
+    "meeting_summary_repair",
+    "query_rewrite",
+    "rerank",
   ].includes(purpose)
     ? "json_object"
     : "text";
@@ -87,6 +95,12 @@ export class ProjectAssistantGateway {
         );
       } catch (error) {
         primaryFailure = error;
+        if (
+          error instanceof AiProviderError &&
+          error.code === "FORBIDDEN"
+        ) {
+          break;
+        }
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
         }
@@ -116,7 +130,7 @@ export class ProjectAssistantGateway {
       responseFormat: responseFormatForPurpose(input.purpose),
       timeoutMs: this.config.timeoutMs,
       temperature: this.config.temperature,
-      maxOutputTokens: this.config.maxOutputTokens,
+      maxOutputTokens: Math.min(4_096, Math.max(64, input.maxOutputTokens ?? this.config.maxOutputTokens)),
     });
   }
 
@@ -133,6 +147,7 @@ export class ProjectAssistantGateway {
       inputTokens: providerResult.inputTokens,
       outputTokens: providerResult.outputTokens,
       totalTokens: providerResult.totalTokens,
+      costUsdMicros: null,
       providerRequestId: providerResult.providerRequestId,
       latencyMs: providerResult.latencyMs,
     };

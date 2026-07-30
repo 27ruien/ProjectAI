@@ -7,6 +7,7 @@ import { normalizeApplicationCookieName } from "../scripts/lib/cookie-name.mjs";
 
 const execFileAsync = promisify(execFile);
 const deployScript = new URL("../scripts/deploy-staging.sh", import.meta.url);
+const v3PromotionScript = new URL("../scripts/promote-v3-staging.sh", import.meta.url);
 const stagingCompose = new URL("../docker-compose.staging.yml", import.meta.url);
 const productionCompose = new URL("../docker-compose.prod.yml", import.meta.url);
 const productionRolloutCompose = new URL(
@@ -69,6 +70,29 @@ test("Staging PostgreSQL readiness checks the final TCP listener", async () => {
     script,
     /PGPASSWORD="\$POSTGRES_PASSWORD" psql \\\n+\s+--host=127\.0\.0\.1/,
   );
+});
+
+test("V3 Staging promotion is exact-head, rollback guarded, and Production read-only", async () => {
+  const script = await readFile(v3PromotionScript, "utf8");
+  assert.match(script, /origin\/\$\{EXPECTED_BRANCH\}/);
+  assert.match(script, /x-projectai-commit-sha/);
+  assert.match(script, /\.staging-deploy-lock/);
+  assert.match(script, /\.v3-staging-promotion-in-progress/);
+  assert.match(script, /\.env\.ai\.v3-promotion-backup/);
+  assert.match(script, /AI_EMBEDDING_ENABLED=true/);
+  assert.match(script, /set_mode shadow/);
+  assert.match(script, /set_mode hybrid/);
+  assert.match(script, /npm run ai:probe:qwen/);
+  assert.match(script, /npm run embeddings:probe/);
+  assert.match(script, /npm run retrieval:evaluate/);
+  assert.match(script, /npm run retrieval:probe/);
+  assert.match(script, /project-ai-os-staging-workflow-worker/);
+  assert.match(script, /STAGING_AUTH_MODE=mock-wecom/);
+  assert.doesNotMatch(script, /SEED_(?:MANAGER|VIEWER)_[A-Z_]*PASSWORD=/);
+  assert.match(script, /PRODUCTION_BEFORE/);
+  assert.match(script, /production_after.*PRODUCTION_BEFORE/);
+  assert.doesNotMatch(script, /docker compose down|printenv|\.Config\.Env/);
+  await execFileAsync("bash", ["-n", v3PromotionScript.pathname]);
 });
 
 test("B3-C2A Production Compose is private, immutable, scoped, and never uses compose down", async () => {
@@ -164,6 +188,14 @@ test("pre-migration PostgreSQL backup streams and validates a custom archive", a
   assert.match(dumpBlock, /--host=127\.0\.0\.1/);
   assert.doesNotMatch(dumpBlock, /--file(?:=|\s)/);
   assert.match(script, /pg_restore --list/);
+  assert.match(
+    script,
+    /sudo sh -c 'docker exec --interactive "\$1" pg_restore --list < "\$2"'/,
+  );
+  assert.doesNotMatch(
+    script,
+    /sudo cat "\$partial_backup"[\s\\]+\| sudo docker exec[^\n]+pg_restore --list/,
+  );
   assert.match(script, /chmod 600 "\$host_backup"/);
 });
 
@@ -510,6 +542,67 @@ test("Staging document Worker is isolated, bounded, healthy, and uses the immuta
   assert.match(dockerfile, /USER node/);
 });
 
+test("Staging timesheet AI Worker is immutable, least-privileged, and deployment-gated", async () => {
+  const [compose, script] = await Promise.all([
+    readFile(stagingCompose, "utf8"),
+    readFile(deployScript, "utf8"),
+  ]);
+  const worker = serviceBlock(
+    compose,
+    "projectai-timesheet-worker",
+    "projectai-workflow-worker",
+  );
+  assert.match(worker, /STAGING_TIMESHEET_WORKER_IMAGE/);
+  assert.match(worker, /worker:timesheets/);
+  assert.match(worker, /qwen_api_key/);
+  assert.match(worker, /projectai-staging-internal/);
+  assert.match(worker, /projectai-timesheet-ai-worker-heartbeat/);
+  assert.match(worker, /restart: unless-stopped/);
+  assert.doesNotMatch(worker, /^\s+ports:/m);
+  assert.doesNotMatch(worker, /OBJECT_STORAGE_|MINIO_ROOT_/);
+  assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
+  assert.match(script, /up --detach --no-build --pull never projectai-timesheet-worker/);
+  assert.match(script, /timesheet_worker_container_name="project-ai-os-staging-timesheet-worker"/);
+  assert.match(script, /eq \.Destination "\/run\/secrets\/qwen_api_key"/);
+  assert.match(script, /OBJECT_STORAGE_ACCESS_KEY OBJECT_STORAGE_SECRET_KEY/);
+  assert.match(script, /if printenv "\$key" >\/dev\/null 2>&1; then exit 1; fi/);
+  assert.match(script, /docker port "\$timesheet_worker_container_name"/);
+});
+
+test("Product V2 Staging deploy accepts the reviewed agent branch and owns the daily-report Worker lifecycle", async () => {
+  const script = await readFile(
+    new URL("../scripts/deploy-product-v2-staging.sh", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    script,
+    /PROJECTAI_STAGING_DEPLOY_BRANCH:-\$DEFAULT_EXPECTED_BRANCH/,
+  );
+  assert.match(
+    script,
+    /"\$EXPECTED_BRANCH" == agent\/\* \|\| "\$EXPECTED_BRANCH" == "main"/,
+  );
+  assert.match(script, /STAGING_TIMESHEET_WORKER_IMAGE=\$app_image_ref/);
+  assert.match(
+    script,
+    /up --detach --no-build --pull never projectai-document-worker projectai-embedding-worker projectai-timesheet-worker projectai-staging/,
+  );
+  assert.match(
+    script,
+    /up --detach --no-deps --force-recreate --no-build --pull never \\\n\s+projectai-timesheet-worker projectai-workflow-worker projectai-staging/,
+  );
+  assert.match(
+    script,
+    /docker inspect --format '\{\{if \.State\.Health\}\}\{\{\.State\.Health\.Status\}\}\{\{else\}\}\{\{\.State\.Status\}\}\{\{end\}\}' project-ai-os-staging-timesheet-worker/,
+  );
+  assert.match(script, /project-ai-os-staging-timesheet-worker/);
+  assert.match(script, /docker port project-ai-os-staging-timesheet-worker/);
+  assert.match(script, /minimum_available_bytes=\$\(\(12 \* 1024 \* 1024 \* 1024\)\)/);
+  assert.match(script, /docker info --format '\{\{\.DockerRootDir\}\}'/);
+  assert.match(script, /df --output=avail -B1 "\$capacity_path"/);
+  assert.match(script, /before backup, image transfer, or migration/);
+});
+
 test("Staging deploy runs the complete Phase 1 HTTP verification in a scoped operations service", async () => {
   const [script, compose, verifier] = await Promise.all([
     readFile(deployScript, "utf8"),
@@ -546,9 +639,11 @@ test("Staging Qwen Secret is limited to the App and dedicated Embedding Worker",
     "projectai-document-worker",
     "projectai-embedding-worker",
   );
-  const embeddingWorker = compose.match(
-    /\n  projectai-embedding-worker:\n([\s\S]*?)\nvolumes:/,
-  )?.[1];
+  const embeddingWorker = serviceBlock(
+    compose,
+    "projectai-embedding-worker",
+    "projectai-timesheet-worker",
+  );
   assert.ok(embeddingWorker);
   assert.match(app, /env_file:\n\s+- \/srv\/projectai-staging\/\.env\.ai/);
   assert.match(app, /secrets:\n\s+- qwen_api_key/);
@@ -703,6 +798,8 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
   assert.match(script, /"assistantRetrievalMode":"hybrid"/);
   assert.match(script, /"hybridRetrievalReady":true/);
   assert.match(script, /retrieval_evaluation_digest/);
+  assert.match(script, /result\.queryCount < 60/);
+  assert.doesNotMatch(script, /"queryCount":60/);
   assert.match(script, /npm run retrieval:probe/);
   assert.match(script, /npm run retrieval:status/);
   assert.match(script, /project_scope_leakage_count/);
@@ -710,6 +807,14 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
   assert.match(groundedVerifier, /total_latency_ms <= 8_000/);
   assert.match(groundedVerifier, /vectorSqlP95Ms <= 1_500/);
   assert.match(groundedVerifier, /retrievalP95Ms <= 8_000/);
+  assert.match(
+    groundedVerifier,
+    /sourceDocumentIds:\s*string\[\]\s*=\s*\[\]/,
+  );
+  assert.match(
+    groundedVerifier,
+    /groundedKey,\s*\[uploaded\.document\.id\]/,
+  );
   assert.match(workflow, /npm run retrieval:migration-upgrade/);
   assert.match(workflow, /npm run test:retrieval-integration/);
   assert.match(workflow, /npm run retrieval:evaluate/);
@@ -719,9 +824,10 @@ test("B3-B2 deployment enforces lexical, shadow, then quality-gated hybrid App p
 test("Staging banner states the B3-B2 retrieval boundary accurately", async () => {
   const banner = await readFile(environmentBanner, "utf8");
   assert.match(banner, /v0\.8 评测驱动的 Hybrid Retrieval/);
-  assert.match(banner, /Query Embedding、精确向量检索与 RRF/);
+  assert.match(banner, /Query Embedding、精确向量检索、RRF 与受控 Rerank/);
   assert.match(banner, /知识搜索仍为词法检索/);
-  assert.match(banner, /ANN 与 Rerank 尚未启用/);
+  assert.match(banner, /OCR 与 ANN 尚未启用/);
+  assert.doesNotMatch(banner, /Rerank 尚未启用/);
   assert.doesNotMatch(banner, /AI 综合回答尚未启用/);
 });
 

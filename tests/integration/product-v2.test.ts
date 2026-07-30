@@ -10,6 +10,7 @@ import {
   GET as listProjects,
   POST as createProject,
 } from "../../app/api/projects/route";
+import { DELETE as deleteFixtureProject } from "../../app/api/test-fixtures/projects/route";
 import {
   GET as getProject,
   PATCH as patchProject,
@@ -18,11 +19,24 @@ import {
   POST as addProjectMember,
 } from "../../app/api/projects/[projectId]/members/route";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
-import { project, projectMember } from "../../lib/db/schema";
+import { knowledgeSpace, project, projectMember, testFixture } from "../../lib/db/schema";
 import { resetAuthForTests } from "../../lib/auth/config";
+import {
+  setObjectStorageForTests,
+  type ObjectStorage,
+  type StoredObjectMetadata,
+} from "../../lib/files/object-storage";
 
 const origin = "http://127.0.0.1:3200";
 const basePath = "/tool/projectai";
+
+class EmptyObjectStorage implements ObjectStorage {
+  async putObject(): Promise<StoredObjectMetadata> { throw new Error("unexpected object write"); }
+  async getObject(): Promise<never> { throw new Error("unexpected object read"); }
+  async headObject(): Promise<StoredObjectMetadata | null> { return null; }
+  async deleteObject(): Promise<void> {}
+  async listObjects() { return []; }
+}
 
 function cookie(response: Response): string {
   return response.headers.getSetCookie().map((value) => value.split(";", 1)[0]).join("; ");
@@ -69,14 +83,66 @@ before(() => {
   assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required");
   process.env.AUTH_PROVIDER = "mock-wecom";
   process.env.ALLOW_MOCK_WECOM_AUTH = "true";
+  setObjectStorageForTests(new EmptyObjectStorage());
   resetAuthForTests();
 });
 
 after(async () => {
+  setObjectStorageForTests(undefined);
   await closeDatabasePool();
 });
 
 describe("Product V2 database-backed identity and ACL", () => {
+  it("physically removes an exactly registered Project fixture and its default space", async () => {
+    const superCookie = await login("super-admin");
+    const fixtureRunId = `uat-product-v2-integration-${crypto.randomUUID()}`;
+    const fixtureExpiresAt = new Date(Date.now() + 60_000).toISOString();
+    const createdResponse = await createProject(request("/api/projects", superCookie, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-projectai-fixture-run-id": fixtureRunId,
+        "x-projectai-fixture-expires-at": fixtureExpiresAt,
+      },
+      body: JSON.stringify({
+        name: `Product V2 ACL UAT ${crypto.randomUUID().slice(0, 8)}`,
+        clientName: "Fictional Client",
+        departmentId: "kivisense-dept-product-management",
+      }),
+    }));
+    assert.equal(createdResponse.status, 201);
+    const created = await createdResponse.json() as { project: { id: string }; knowledgeSpaceId: string };
+    assert.equal((await getDb().select().from(testFixture).where(eq(testFixture.entityId, created.project.id))).length, 1);
+
+    await assert.rejects(
+      () => deleteFixtureProject(request("/api/test-fixtures/projects", superCookie, {
+        method: "DELETE",
+        headers: {
+          "content-type": "application/json",
+          "x-projectai-fixture-run-id": fixtureRunId,
+          "x-projectai-fixture-expires-at": new Date(Date.now() + 30_000).toISOString(),
+        },
+        body: JSON.stringify({ projectId: created.project.id }),
+      })),
+      /TEST_FIXTURE_NOT_REGISTERED/,
+    );
+    assert.equal((await getDb().select().from(project).where(eq(project.id, created.project.id))).length, 1);
+
+    const deleted = await deleteFixtureProject(request("/api/test-fixtures/projects", superCookie, {
+      method: "DELETE",
+      headers: {
+        "content-type": "application/json",
+        "x-projectai-fixture-run-id": fixtureRunId,
+        "x-projectai-fixture-expires-at": fixtureExpiresAt,
+      },
+      body: JSON.stringify({ projectId: created.project.id }),
+    }));
+    assert.equal(deleted.status, 200);
+    assert.equal((await getDb().select().from(project).where(eq(project.id, created.project.id))).length, 0);
+    assert.equal((await getDb().select().from(knowledgeSpace).where(eq(knowledgeSpace.id, created.knowledgeSpaceId))).length, 0);
+    assert.equal((await getDb().select().from(testFixture).where(eq(testFixture.fixtureRunId, fixtureRunId))).length, 0);
+  });
+
   it("creates sanitized Mock WeCom sessions and reserves organization management for Super Admin", async () => {
     const [superCookie, adminCookie, memberCookie] = await Promise.all([
       login("super-admin"),

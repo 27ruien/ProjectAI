@@ -6,8 +6,8 @@ This runbook is Staging-only. It must never be pointed at `/srv/projectai`, the 
 
 Before deployment:
 
-1. The branch is exactly `agent/projectai-product-architecture-v2` and the worktree contains no ProjectAI changes.
-2. Local Head equals `origin/agent/projectai-product-architecture-v2` and exact-head CI is green.
+1. The branch is exactly `agent/projectai-workflows-knowledge-v3` and the worktree contains no ProjectAI changes.
+2. Local Head equals `origin/agent/projectai-workflows-knowledge-v3` and exact-head CI is green.
 3. The existing Staging lock and Product V2 marker are absent or have been manually reviewed.
 4. Protected Staging auth, AI, embedding, and Qwen secret files are regular non-symlink files with mode 600. Values are never printed.
 5. Production is checked read-only before and after the operation and must remain unchanged.
@@ -18,7 +18,7 @@ Run the dedicated deployer:
 ./scripts/deploy-product-v2-staging.sh
 ```
 
-The deployer creates and validates a PostgreSQL custom dump and protected configuration backups before synchronizing the release tree. It then applies committed migrations through 0024, runs insert-only Product V2 Seed, starts the immutable App/Worker image with AI disabled, executes the real Qwen provider probe, recreates only the Staging App with AI enabled, and runs the sanitized Product V2 smoke. Failure enters the Staging-only database/config/image recovery path. It never runs a Production command.
+The deployer creates and validates a PostgreSQL custom dump and protected configuration backups before synchronizing the release tree. It then applies all committed migrations through the current ledger, runs insert-only non-production Seed, starts the immutable App/Worker image with guarded AI settings, executes the real provider probes, and runs the sanitized smoke. Any later retrieval-mode change recreates only the Staging App with `--no-deps`. Failure enters the Staging-only database/config/image recovery path. It never runs a Production command.
 
 The public `/login` page must expose the explicit `进入测试环境` button only after all reviewed Staging settings match. Clicking it sends an empty POST to the fixed Staging endpoint, selects only the existing Admin Seed on the server, creates the normal database Session and scoped HttpOnly Cookie, and redirects to `/daily-report`. Do not inject cookies or identity parameters. The Auth gate must also exercise UI logout and confirm the old Session can no longer access a protected API.
 
@@ -55,4 +55,4 @@ Stop and retain the Draft PR if any of the following occurs:
 - real Qwen is not configured, no citation is produced from the fictional authorized document, or evidence is synthetic;
 - Production read-only state differs before and after Staging work.
 
-Passing local tests or Mock AI is not equivalent to Staging real-AI acceptance. The PR stays Draft until current-head CI, all nine browser gates, Reviewer approval, and the PR evidence summary are complete.
+Passing local tests or Mock AI is not equivalent to Staging real-AI/ASR acceptance. The PR stays Draft until current-head CI, all Product V2 browser gates, all Workflow and Knowledge V3 gates, independent review, fixture cleanup, Production read-only invariance, and the PR evidence summary are complete.

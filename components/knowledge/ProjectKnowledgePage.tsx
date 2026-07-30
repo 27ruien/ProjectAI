@@ -37,6 +37,7 @@ import type {
 } from "@/types/knowledge-search";
 import { ProjectAssistantPanel } from "./ProjectAssistantPanel";
 import { ProjectKnowledgeSourcesPanel } from "./ProjectKnowledgeSourcesPanel";
+import { KnowledgeChunkManagementPanel } from "./KnowledgeChunkManagementPanel";
 
 interface ProjectKnowledgePageProps {
   project: AuthorizedProjectSummary;
@@ -215,6 +216,11 @@ export function ProjectKnowledgePage({
 
         <ProjectAssistantPanel project={project} />
 
+        <KnowledgeChunkManagementPanel
+          projectId={project.id}
+          documents={documents}
+        />
+
         <section className="mt-5 rounded-xl border border-border bg-card p-5">
           <form onSubmit={submit} className="space-y-3">
             <div className="flex flex-col gap-3 lg:flex-row">
@@ -390,10 +396,10 @@ export function ProjectKnowledgePage({
             <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
             <div>
               <h3 className="text-xs font-semibold text-foreground">
-                其他项目管理模块仍为 Mock
+                文档知识检索边界
               </h3>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                当前项目的需求、Scope、Action 和风险共 {mockRecordCount} 条演示记录仍不参与真实检索或 AI 回答；项目助手只读取 B2 文档知识索引，也不会写入这些正式业务模块。
+                当前项目的需求、Scope、Action 和风险共 {mockRecordCount} 条记录不参与文档知识检索或项目助手回答；项目助手只读取已授权、当前有效的文档知识索引，也不会写入这些正式业务模块。
               </p>
             </div>
           </div>

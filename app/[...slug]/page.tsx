@@ -24,9 +24,6 @@ export default async function CatchAllPage({ params }: CatchAllPageProps) {
   const legacyRegression = isLegacyCredentialAuthEnabled();
   if (!legacyRegression) {
     if (section === "dashboard") redirect("/daily-report");
-    if (section === "projects") {
-      redirect(entityId && entityId !== "new" ? `/knowledge?projectId=${encodeURIComponent(entityId)}` : "/knowledge");
-    }
     if (section === "reviews" || section === "skills") redirect("/workflows");
     if (section === "analytics") redirect("/knowledge");
   }

@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { DashboardPage } from "@/components/dashboard/DashboardPage";
 import { AppShell } from "@/components/layout";
 import { CreateProjectPage } from "@/components/project/CreateProjectPage";
@@ -10,19 +9,18 @@ import { ProjectOverviewPage } from "@/components/project/ProjectOverviewPage";
 import { ProjectsPage } from "@/components/project/ProjectsPage";
 import { ProjectKnowledgePage } from "@/components/knowledge/ProjectKnowledgePage";
 import { RequirementsPage } from "@/components/requirement";
-import { WorkflowsPage, RequirementExtractionPage } from "@/components/workflow";
-import { ReviewsPage } from "@/components/review";
+import { MeetingMinutesPage, RequirementFrameworkPage, WorkflowsPage } from "@/components/workflow";
 import { ScopePage } from "@/components/scope";
 import { ActionsPage } from "@/components/action-plan";
 import { MeetingsPage } from "@/components/meeting";
 import { RisksPage } from "@/components/risk";
 import { WeeklyReportsPage } from "@/components/report";
 import { ProjectAuditPage } from "@/components/audit";
-import { SkillsPage } from "@/components/skill";
 import { AIModelsPage } from "@/components/model-management";
 import { AccessDeniedPage, AnalyticsPage, GlobalKnowledgePage, NotFoundPage, SettingsPage } from "@/components/system";
 import { DailyReportPage } from "@/components/timesheet";
 import { OrganizationPage } from "@/components/organization";
+import { GlobalSearchPage } from "@/components/search";
 import type {
   AuthorizedProjectSummary,
   ProjectMockPayload,
@@ -56,7 +54,6 @@ export interface WorkspaceProps {
 }
 
 export function Workspace({ route, viewer, currentProject, projectData, workspaceData, featureFlags }: WorkspaceProps) {
-  const router = useRouter();
   const [section = "dashboard", entityId, child] = route;
   const path = `/${route.join("/")}`;
   const isProjectDetail = section === "projects" && Boolean(entityId) && entityId !== "new";
@@ -83,11 +80,12 @@ export function Workspace({ route, viewer, currentProject, projectData, workspac
   else if (exactProject && exactProjectData && child === "audit" && exactProject.permissions.canViewAudit) page = <ProjectSection project={exactProject} tab="audit"><ProjectAuditPage project={exactProject} /></ProjectSection>;
   else if (exactProject && exactProjectData && child === "audit") page = <AccessDeniedPage obscureResource />;
   else if (section === "workflows" && !canUseWriteWorkflows) page = <StandardPage><AccessDeniedPage /></StandardPage>;
-  else if (section === "workflows" && entityId === "requirement-extraction" && editableProject) page = <StandardPage><RequirementExtractionPage editableProject={editableProject} onBack={() => router.push("/workflows")} onOpenReviews={() => router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
-  else if (section === "workflows") page = <StandardPage><WorkflowsPage data={workspaceData} editableProject={editableProject} onOpenReviews={() => editableProject && router.push(`/projects/${editableProject.id}/requirements`)} /></StandardPage>;
-  else if (section === "reviews") page = <StandardPage flush><ReviewsPage data={workspaceData} projects={viewer.projects} /></StandardPage>;
-  else if (section === "skills") page = <StandardPage><SkillsPage data={workspaceData} initialSkillId={entityId} /></StandardPage>;
+  else if (section === "workflows" && entityId === "requirement-framework") page = <StandardPage><RequirementFrameworkPage projects={viewer.projects} initialRunId={child} /></StandardPage>;
+  else if (section === "workflows" && entityId === "meeting-minutes") page = <StandardPage><MeetingMinutesPage projects={viewer.projects} initialRunId={child} /></StandardPage>;
+  else if (section === "workflows") page = <StandardPage><WorkflowsPage projects={viewer.projects} /></StandardPage>;
+  else if (section === "reviews" || section === "skills") page = <StandardPage><NotFoundPage path={path} /></StandardPage>;
   else if (section === "knowledge") page = <StandardPage><GlobalKnowledgePage viewer={viewer} /></StandardPage>;
+  else if (section === "search") page = <StandardPage><GlobalSearchPage viewer={viewer} /></StandardPage>;
   else if (section === "organization" && viewer.user.productRole === "super_admin") page = <StandardPage><OrganizationPage /></StandardPage>;
   else if (section === "daily-report" && featureFlags.pmDailyReport) page = <StandardPage><DailyReportPage viewer={viewer} wecomSyncEnabled={featureFlags.wecomTimesheetSync} aiMode={featureFlags.timesheetAiMode} aiProvider={featureFlags.timesheetAiProvider} aiProviderConfigured={featureFlags.timesheetAiProviderConfigured} aiModelProfileId={featureFlags.timesheetAiModelProfileId} syncProvider={featureFlags.timesheetSyncProvider} /></StandardPage>;
   else if (section === "analytics") page = <StandardPage><AnalyticsPage projects={viewer.projects} /></StandardPage>;

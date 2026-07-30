@@ -138,6 +138,62 @@ type SyncBatch = {
   items: SyncItem[];
 };
 
+type TimesheetAiJobStatus =
+  | "queued"
+  | "reading_notes"
+  | "matching_projects"
+  | "merging_duplicates"
+  | "generating_draft"
+  | "validating_result"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+type TimesheetAiJob = {
+  id: string;
+  requestId: string;
+  status: TimesheetAiJobStatus;
+  reportDate: string;
+  sourceCount: number;
+  outputCount: number | null;
+  attemptCount: number;
+  failureCode: string | null;
+  failureStage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancellationRequestedAt: string | null;
+};
+
+const ACTIVE_AI_JOB_STATUSES = new Set<TimesheetAiJobStatus>([
+  "queued",
+  "reading_notes",
+  "matching_projects",
+  "merging_duplicates",
+  "generating_draft",
+  "validating_result",
+]);
+
+const AI_JOB_STAGE_LABELS: Record<TimesheetAiJobStatus, string> = {
+  queued: "等待后台处理",
+  reading_notes: "读取今日随记",
+  matching_projects: "匹配已授权项目",
+  merging_duplicates: "合并重复事项",
+  generating_draft: "生成工时草稿",
+  validating_result: "校验字段和来源",
+  completed: "整理完成",
+  failed: "整理失败",
+  cancelled: "已取消",
+};
+
+function elapsedLabel(job: TimesheetAiJob, now: number): string {
+  const end = job.completedAt ? Date.parse(job.completedAt) : now;
+  const seconds = Math.max(0, Math.floor((end - Date.parse(job.createdAt)) / 1_000));
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes} 分 ${seconds % 60} 秒`;
+}
+
 type ExtensionMessage = {
   source?: unknown;
   type?: unknown;
@@ -345,8 +401,11 @@ export function DailyReportPage({
     version: string | null;
   }>({ connected: false, version: null });
   const [activeBatch, setActiveBatch] = useState<SyncBatch | null>(null);
+  const [aiJob, setAiJob] = useState<TimesheetAiJob | null>(null);
+  const [elapsedNow, setElapsedNow] = useState(() => Date.now());
   const statusWriteQueue = useRef<Promise<void>>(Promise.resolve());
   const confirmationInFlight = useRef(false);
+  const handledCompletedJob = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     if (!organizationId) {
@@ -356,7 +415,7 @@ export function DailyReportPage({
     setPhase("loading");
     try {
       const query = requestQuery(organizationId, reportDate);
-      const [recordPayload, draftPayload, syncPayload] = await Promise.all([
+      const [recordPayload, draftPayload, syncPayload, aiJobPayload] = await Promise.all([
         timesheetRequest<{ records: WorkLog[] }>(`/api/timesheets/work-logs?${query}`),
         timesheetRequest<{ draft: Draft | null }>(`/api/timesheets/drafts?${query}`),
         wecomSyncEnabled
@@ -364,11 +423,15 @@ export function DailyReportPage({
               `/api/timesheets/sync-batches?${requestQuery(organizationId)}`,
             )
           : Promise.resolve({ batches: [] as SyncBatch[] }),
+        timesheetRequest<{ job: TimesheetAiJob | null }>(
+          `/api/timesheets/ai-jobs?${query}`,
+        ),
       ]);
       setRecords(recordPayload.records);
       setDraft(draftPayload.draft);
       setTasks(draftPayload.draft?.tasks ?? []);
       setBatches(syncPayload.batches);
+      setAiJob(aiJobPayload.job);
       setActiveBatch(
         syncPayload.batches.find((batch) =>
           [
@@ -397,11 +460,68 @@ export function DailyReportPage({
     }
   }, [organizationId, reportDate, wecomSyncEnabled]);
 
+  const refreshAiJob = useCallback(async () => {
+    if (!organizationId) return null;
+    const payload = await timesheetRequest<{ job: TimesheetAiJob | null }>(
+      `/api/timesheets/ai-jobs?${requestQuery(organizationId, reportDate)}`,
+    );
+    setAiJob(payload.job);
+    return payload.job;
+  }, [organizationId, reportDate]);
+
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    handledCompletedJob.current = null;
+  }, [organizationId, reportDate]);
+
+  useEffect(() => {
+    if (!aiJob || !ACTIVE_AI_JOB_STATUSES.has(aiJob.status)) return;
+    const elapsedTimer = window.setInterval(() => setElapsedNow(Date.now()), 1_000);
+    const pollTimer = window.setInterval(() => {
+      void refreshAiJob().catch((error: unknown) => {
+        setNotice(error instanceof Error ? error.message : "AI 任务状态刷新失败");
+        setNoticeTone("error");
+      });
+    }, 1_500);
+    return () => {
+      window.clearInterval(elapsedTimer);
+      window.clearInterval(pollTimer);
+    };
+  }, [aiJob, refreshAiJob]);
+
+  useEffect(() => {
+    if (!aiJob || handledCompletedJob.current === aiJob.id) return;
+    const timer = window.setTimeout(() => {
+      if (aiJob.status === "completed") {
+        handledCompletedJob.current = aiJob.id;
+        setNotice(
+          `AI 工时草稿已生成 ${aiJob.outputCount ?? 0} 条，请查看并整批确认`,
+        );
+        setNoticeTone("success");
+        void load();
+        return;
+      }
+      if (aiJob.status === "failed") {
+        handledCompletedJob.current = aiJob.id;
+        setNotice(
+          `AI 整理在“${AI_JOB_STAGE_LABELS[(aiJob.failureStage as TimesheetAiJobStatus) ?? "failed"] ?? aiJob.failureStage ?? "未知阶段"}”失败。请求编号：${aiJob.requestId}`,
+        );
+        setNoticeTone("error");
+        return;
+      }
+      if (aiJob.status === "cancelled") {
+        handledCompletedJob.current = aiJob.id;
+        setNotice("AI 整理已取消，原始随记保持不变");
+        setNoticeTone("info");
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [aiJob, load]);
 
   useEffect(() => {
     if (!wecomSyncEnabled || syncProvider !== "wecom_extension") return;
@@ -561,17 +681,77 @@ export function DailyReportPage({
       setNoticeTone("info");
       return;
     }
-    await run(async () => {
-      const payload = await timesheetMutation<{ draft: Draft }>(
+    setNotice("已提交 AI 整理任务，正在进入后台队列…");
+    setNoticeTone("info");
+    setPhase("working");
+    try {
+      const payload = await timesheetMutation<{
+        job: TimesheetAiJob;
+        created: boolean;
+      }>(
         "/api/timesheets/drafts/generate",
         "POST",
         { organizationId, reportDate, timezone: "Asia/Shanghai" },
       );
-      setDraft(payload.draft);
-      setTasks(payload.draft.tasks);
-      setDirty(false);
-      await load();
-    }, `AI 工时草稿已生成（${aiMode === "real" ? "真实 AI" : "Mock AI"}），请整批核对后确认`);
+      setAiJob(payload.job);
+      setElapsedNow(Date.now());
+      setNotice(
+        payload.created
+          ? "AI 整理已在后台开始；可以离开本页面，返回后会恢复进度"
+          : "已有同一日报的 AI 整理任务，已恢复现有进度",
+      );
+      setNoticeTone("info");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "AI 整理任务创建失败");
+      setNoticeTone("error");
+    } finally {
+      setPhase("ready");
+    }
+  };
+
+  const cancelAiJob = async () => {
+    if (!aiJob || !ACTIVE_AI_JOB_STATUSES.has(aiJob.status)) return;
+    try {
+      const payload = await timesheetMutation<{ job: TimesheetAiJob }>(
+        `/api/timesheets/ai-jobs/${encodeURIComponent(aiJob.id)}/cancel`,
+        "POST",
+        { organizationId },
+      );
+      setAiJob(payload.job);
+      setNotice(
+        payload.job.status === "cancelled"
+          ? "AI 整理已取消，原始随记保持不变"
+          : "已请求取消；当前模型调用结束后不会保存半成品草稿",
+      );
+      setNoticeTone("info");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "取消 AI 任务失败");
+      setNoticeTone("error");
+    }
+  };
+
+  const retryAiJob = async () => {
+    if (!aiJob || !["failed", "cancelled"].includes(aiJob.status)) return;
+    setNotice("正在重新提交 AI 整理任务…");
+    setNoticeTone("info");
+    try {
+      const payload = await timesheetMutation<{
+        job: TimesheetAiJob;
+        created: boolean;
+      }>(
+        `/api/timesheets/ai-jobs/${encodeURIComponent(aiJob.id)}/retry`,
+        "POST",
+        { organizationId },
+      );
+      handledCompletedJob.current = null;
+      setAiJob(payload.job);
+      setElapsedNow(Date.now());
+      setNotice("重试任务已进入后台队列");
+      setNoticeTone("info");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "重试 AI 任务失败");
+      setNoticeTone("error");
+    }
   };
 
   const changeTask = (index: number, changes: Partial<DraftTask>) => {
@@ -974,6 +1154,9 @@ export function DailyReportPage({
     : null;
   const effectiveDraftStatus =
     dirty && draft?.status === "confirmed" ? "needs_review" : draft?.status;
+  const activeAiJob = aiJob && ACTIVE_AI_JOB_STATUSES.has(aiJob.status)
+    ? aiJob
+    : null;
   const taskError = (taskIndex: number, field: TaskField) =>
     confirmationErrors.find(
       (issue) => issue.taskIndex === taskIndex && issue.field === field,
@@ -1172,23 +1355,90 @@ export function DailyReportPage({
             {aiMode === "real" && !aiProviderConfigured ? <p className="mt-1 text-xs text-danger">真实 AI Provider 尚未配置；日报随记仍可使用，AI 整理暂不可用。</p> : null}
           </div>
           <button
-            disabled={!aiProviderConfigured || !records.some((record) => record.consumptionStatus !== "submitted") || phase === "working"}
+            disabled={!aiProviderConfigured || !records.some((record) => record.consumptionStatus !== "submitted") || phase === "working" || Boolean(activeAiJob)}
             onClick={() => void generate()}
             data-testid="ai-generate"
-            data-state={phase === "working" ? "submitting" : "idle"}
+            data-state={activeAiJob ? "running" : phase === "working" ? "submitting" : "idle"}
             className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-medium text-white disabled:opacity-40"
           >
-            {phase === "working" ? <LoaderCircle className="size-4 animate-spin" /> : <Bot className="size-4" />}
-            AI 整理今日工时
+            {phase === "working" || activeAiJob ? <LoaderCircle className="size-4 animate-spin" /> : <Bot className="size-4" />}
+            {activeAiJob ? "后台整理中" : "AI 整理今日工时"}
           </button>
         </div>
         {!records.length ? (
           <p className="mt-3 text-xs text-warning" data-testid="ai-disabled-reason">请先添加至少一条今日随记，AI 整理才会启用。</p>
         ) : null}
+        {aiJob ? (
+          <div
+            className={`mt-4 rounded-lg border p-4 ${
+              aiJob.status === "completed"
+                ? "border-success/20 bg-success-soft"
+                : aiJob.status === "failed"
+                  ? "border-danger/20 bg-danger-soft"
+                  : aiJob.status === "cancelled"
+                    ? "border-border bg-muted/30"
+                    : "border-info/20 bg-info-soft"
+            }`}
+            data-testid="ai-job-status"
+            data-state={aiJob.status}
+            aria-live="polite"
+          >
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">{AI_JOB_STAGE_LABELS[aiJob.status]}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  已等待 {elapsedLabel(aiJob, elapsedNow)} · 正在处理 {aiJob.sourceCount} 条随记
+                </p>
+                {activeAiJob ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    任务仍在后台处理中，可以离开本页面，完成后会在日报中显示结果。
+                  </p>
+                ) : null}
+                {aiJob.status === "failed" ? (
+                  <p className="mt-1 text-xs text-danger">
+                    失败阶段：{aiJob.failureStage ?? "未知"} · 请求编号：{aiJob.requestId}
+                  </p>
+                ) : null}
+                {aiJob.status === "completed" ? (
+                  <p className="mt-1 text-xs text-success">
+                    已生成 {aiJob.outputCount ?? 0} 条；总工时和待确认项见下方草稿。
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {activeAiJob ? (
+                  <button
+                    onClick={() => void cancelAiJob()}
+                    disabled={Boolean(aiJob.cancellationRequestedAt)}
+                    className="rounded-lg border border-border px-3 py-2 text-xs disabled:opacity-40"
+                  >
+                    {aiJob.cancellationRequestedAt ? "正在取消" : "取消"}
+                  </button>
+                ) : null}
+                {["failed", "cancelled"].includes(aiJob.status) ? (
+                  <button
+                    onClick={() => void retryAiJob()}
+                    className="rounded-lg border border-border px-3 py-2 text-xs"
+                  >
+                    重试
+                  </button>
+                ) : null}
+                {aiJob.status === "completed" && draft ? (
+                  <button
+                    onClick={() => document.getElementById("daily-draft-review")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    className="rounded-lg bg-primary px-3 py-2 text-xs text-white"
+                  >
+                    查看并确认
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {draft ? (
-        <section className="space-y-4">
+        <section className="space-y-4" id="daily-draft-review">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold">本次待提交</h2>

@@ -9,12 +9,17 @@ import { createTextFixture } from "../tests/helpers/file-fixtures";
 import {
   assert,
   cleanupDocumentVerification,
+  createVerificationProject,
+  deleteVerificationProject,
   documentVerificationEnvironment,
+  findVerificationProjects,
   requiredEnvironment,
   responseJson,
   signIn,
+  signInMockWeCom,
   signOut,
   uploadVerificationDocument,
+  type VerificationProjectFixture,
   type VerificationSession,
 } from "./lib/staging-document-verification";
 
@@ -26,19 +31,88 @@ assert(
   "Select exactly one Embedding smoke mode.",
 );
 
-const environment = documentVerificationEnvironment();
+let environment = documentVerificationEnvironment();
 const runId = requiredEnvironment("EMBEDDING_SMOKE_RUN_ID");
 assert(/^[0-9a-f-]{36}$/i.test(runId), "Embedding smoke Run ID is invalid.");
+const mockWeComVerification =
+  process.env.STAGING_AUTH_MODE?.trim() === "mock-wecom";
+const fixtureRunId = `uat-embedding-${runId}`;
 const displayNamePrefix = `B3-B1 虚构 Staging 向量验收 ${runId}`;
 const managerAUserAgent = `projectai-staging-embedding-manager-a/0.7/${runId}`;
 const managerBUserAgent = `projectai-staging-embedding-manager-b/0.7/${runId}`;
-const managerAEmail = requiredEnvironment("SEED_MANAGER_A_EMAIL");
-const managerAPassword = requiredEnvironment("SEED_MANAGER_A_PASSWORD");
-const managerBEmail = requiredEnvironment("SEED_MANAGER_B_EMAIL");
-const managerBPassword = requiredEnvironment("SEED_MANAGER_B_PASSWORD");
+const managerAEmail = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_A_EMAIL");
+const managerAPassword = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_A_PASSWORD");
+const managerBEmail = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_B_EMAIL");
+const managerBPassword = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_B_PASSWORD");
 
 let managerA: VerificationSession | null = null;
 let managerB: VerificationSession | null = null;
+let fixtureProjects: VerificationProjectFixture[] = [];
+
+async function prepareMockWeComVerificationProjects(
+  create: boolean,
+): Promise<void> {
+  managerA = await signInMockWeCom({
+    environment,
+    identity: "super-admin",
+    userAgent: managerAUserAgent,
+  });
+  managerB = await signInMockWeCom({
+    environment,
+    identity: "admin",
+    userAgent: managerBUserAgent,
+  });
+  if (create) {
+    const suffix = runId.replaceAll("-", "");
+    fixtureProjects.push(
+      await createVerificationProject({
+        environment,
+        session: managerA,
+        fixtureRunId,
+        nameSuffix: suffix.slice(0, 8),
+      }),
+    );
+    fixtureProjects.push(
+      await createVerificationProject({
+        environment,
+        session: managerA,
+        fixtureRunId,
+        nameSuffix: suffix.slice(-8),
+      }),
+    );
+  } else {
+    fixtureProjects = await findVerificationProjects(fixtureRunId);
+  }
+  assert(
+    fixtureProjects.length === 2,
+    "Embedding verification fixture Projects are incomplete.",
+  );
+  environment = {
+    ...environment,
+    projectAId: fixtureProjects[0]!.projectId,
+    projectBId: fixtureProjects[1]!.projectId,
+  };
+}
+
+async function cleanupFixtureProjects(): Promise<void> {
+  if (!managerA) return;
+  while (fixtureProjects.length > 0) {
+    const fixture = fixtureProjects.at(-1)!;
+    await deleteVerificationProject({
+      environment,
+      fixture,
+    });
+    fixtureProjects.pop();
+  }
+}
 
 async function cleanupAll() {
   const first = await cleanupDocumentVerification({
@@ -161,28 +235,36 @@ async function fixtureRows() {
 
 let verificationError: unknown;
 try {
+  if (mockWeComVerification) {
+    await prepareMockWeComVerificationProjects(prepare || live);
+  }
   if (prepare) {
-    await cleanupAll();
-    managerA = await signIn({
-      environment,
-      email: managerAEmail,
-      password: managerAPassword,
-      userAgent: managerAUserAgent,
-    });
-    managerB = await signIn({
-      environment,
-      email: managerBEmail,
-      password: managerBPassword,
-      userAgent: managerBUserAgent,
-    });
+    if (!mockWeComVerification) {
+      await cleanupAll();
+      managerA = await signIn({
+        environment,
+        email: managerAEmail!,
+        password: managerAPassword!,
+        userAgent: managerAUserAgent,
+      });
+      managerB = await signIn({
+        environment,
+        email: managerBEmail!,
+        password: managerBPassword!,
+        userAgent: managerBUserAgent,
+      });
+    }
+    assert(managerA && managerB, "Embedding verification Sessions are unavailable.");
+    const preparationManagerA = managerA;
+    const preparationManagerB = managerB;
     const first = await uploadFixture({
-      session: managerA,
+      session: preparationManagerA,
       projectId: environment.projectAId,
       label: "Project-A-Chinese",
       text: "这是完全虚构的向量验收资料：灯塔计划的里程碑日期是十月十五日。",
     });
     const second = await uploadFixture({
-      session: managerB,
+      session: preparationManagerB,
       projectId: environment.projectBId,
       label: "Project-B-Mixed",
       text: "Project AI 虚构 mixed-language 验收：beta milestone 是 November 20，状态为 ready ✅。",
@@ -210,27 +292,32 @@ try {
     );
   } else {
     if (live) {
-      await cleanupAll();
-      managerA = await signIn({
-        environment,
-        email: managerAEmail,
-        password: managerAPassword,
-        userAgent: managerAUserAgent,
-      });
-      managerB = await signIn({
-        environment,
-        email: managerBEmail,
-        password: managerBPassword,
-        userAgent: managerBUserAgent,
-      });
+      if (!mockWeComVerification) {
+        await cleanupAll();
+        managerA = await signIn({
+          environment,
+          email: managerAEmail!,
+          password: managerAPassword!,
+          userAgent: managerAUserAgent,
+        });
+        managerB = await signIn({
+          environment,
+          email: managerBEmail!,
+          password: managerBPassword!,
+          userAgent: managerBUserAgent,
+        });
+      }
+      assert(managerA && managerB, "Embedding verification Sessions are unavailable.");
+      const liveManagerA = managerA;
+      const liveManagerB = managerB;
       const first = await uploadFixture({
-        session: managerA,
+        session: liveManagerA,
         projectId: environment.projectAId,
         label: "Project-A-Chinese",
         text: "这是完全虚构的向量验收资料：灯塔计划的里程碑日期是十月十五日。",
       });
       const second = await uploadFixture({
-        session: managerB,
+        session: liveManagerB,
         projectId: environment.projectBId,
         label: "Project-B-Mixed",
         text: "Project AI 虚构 mixed-language 验收：beta milestone 是 November 20，状态为 ready ✅。",
@@ -336,17 +423,19 @@ try {
       `select count(*)::int as count from document_embedding_batches where job_id = $1`,
       [jobA.id],
     );
-    const manager = await getPool().query<{ id: string }>(
-      "select id from users where email = $1",
-      [managerAEmail],
-    );
-    assert(manager.rows[0]?.id, "Manager identity is unavailable.");
+    const managerUserId = managerA?.userId ?? (
+      await getPool().query<{ id: string }>(
+        "select id from users where email = $1",
+        [managerAEmail],
+      )
+    ).rows[0]?.id;
+    assert(managerUserId, "Manager identity is unavailable.");
     assert(
       (await ensureEmbeddingJob({
         projectId: projectA.project_id,
         documentId: projectA.document_id,
         versionId: projectA.version_id,
-        createdBy: manager.rows[0]!.id,
+        createdBy: managerUserId,
         reason: "backfill",
       })) === null,
       "Same-hash Embedding replay created a duplicate Job.",
@@ -383,8 +472,8 @@ try {
 
     managerA ??= await signIn({
       environment,
-      email: managerAEmail,
-      password: managerAPassword,
+      email: managerAEmail!,
+      password: managerAPassword!,
       userAgent: managerAUserAgent,
     });
     const versionTwo = await uploadFixture({
@@ -429,10 +518,6 @@ try {
       batchCountAfter.rows[0]?.count === batchCountBefore.rows[0]?.count,
       "Same-hash replay duplicated the original Provider billing record.",
     );
-    await signOut(environment, managerA);
-    managerA = null;
-    await signOut(environment, managerB);
-    managerB = null;
     const cleanup = await cleanupAll();
     const pending = await getPool().query<{ count: number }>(
       `select count(*)::int as count
@@ -441,6 +526,11 @@ try {
     );
     const cleanupComplete = pending.rows[0]?.count === 0;
     assert(cleanupComplete, "Embedding queue is not idle after cleanup.");
+    if (mockWeComVerification) await cleanupFixtureProjects();
+    await signOut(environment, managerA);
+    managerA = null;
+    await signOut(environment, managerB);
+    managerB = null;
     const realProviderJobs = [jobA, jobB, incremental].filter(
       (job) => job.provider_call_count > 0,
     ).length;
@@ -470,12 +560,6 @@ try {
 } catch (error) {
   verificationError = error;
 } finally {
-  try {
-    await signOut(environment, managerA);
-    await signOut(environment, managerB);
-  } catch (error) {
-    verificationError ??= error;
-  }
   if (verificationError) {
     try {
       await cleanupAll();
@@ -485,6 +569,24 @@ try {
         "Embedding verification and cleanup failed.",
       );
     }
+  }
+  if (mockWeComVerification && (verificationError || !prepare)) {
+    try {
+      await cleanupFixtureProjects();
+    } catch (cleanupError) {
+      verificationError = verificationError
+        ? new AggregateError(
+            [verificationError, cleanupError],
+            "Embedding verification and fixture cleanup failed.",
+          )
+        : cleanupError;
+    }
+  }
+  try {
+    await signOut(environment, managerA);
+    await signOut(environment, managerB);
+  } catch (error) {
+    verificationError ??= error;
   }
   await closeDatabasePool();
 }

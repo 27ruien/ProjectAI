@@ -29,7 +29,13 @@ type Space = {
   type: "organization" | "department" | "project" | "restricted";
   visibility: string;
 };
-type Department = { id: string; organizationId: string; name: string };
+type Department = {
+  id: string;
+  organizationId: string;
+  name: string;
+  status: "active" | "inactive";
+  isActive: boolean;
+};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(withBasePath(path), {
@@ -75,13 +81,16 @@ export function ProjectKnowledgeSourcesPanel({
           `/api/projects/${encodeURIComponent(project.id)}/knowledge-sources`,
         ),
         request<{ knowledgeSpaces: Space[] }>("/api/knowledge-spaces"),
-        request<{ departments: Department[] }>("/api/organizations"),
+        request<{ departments: Department[] }>("/api/organizations?activeOnly=true"),
       ]);
       setSources(sourceResponse.sources);
       setSpaces(spaceResponse.knowledgeSpaces);
       setDepartments(
         administrationResponse.departments.filter(
-          (item) => item.organizationId === project.organizationId,
+          (item) =>
+            item.organizationId === project.organizationId &&
+            item.status === "active" &&
+            item.isActive,
         ),
       );
     } catch (caught) {

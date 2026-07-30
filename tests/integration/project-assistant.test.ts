@@ -8,15 +8,18 @@ import {
   aiMessage,
   aiMessageCitation,
   aiRetrievalCandidate,
+  aiRetrievalProviderCall,
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
   aiThread,
   auditEvent,
   documentChunk,
+  documentGrant,
   documentIngestionJob,
   documentSection,
   projectDocument,
   projectDocumentVersion,
+  testFixture,
   user,
 } from "../../lib/db/schema";
 import { findUserByEmail } from "../../lib/db/repositories/user-repository";
@@ -30,6 +33,7 @@ import {
 } from "../../lib/ai/project-assistant";
 import { retrieveProjectEvidence } from "../../lib/documents/processing/search-service";
 import { GET as listThreadsRoute } from "../../app/api/projects/[projectId]/ai/threads/route";
+import { finalizeSuccessfulExecution } from "../../lib/ai/project-assistant/repository";
 
 type SeedUser = NonNullable<Awaited<ReturnType<typeof findUserByEmail>>>;
 
@@ -70,11 +74,18 @@ async function clearAssistantState(): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(aiMessageCitation);
     await tx.delete(aiRetrievalCandidate);
+    await tx.delete(aiRetrievalProviderCall);
     await tx.delete(aiRetrievalQueryEmbeddingCall);
     await tx.delete(aiRetrievalRun);
     await tx.delete(aiExecution);
     await tx.delete(aiMessage);
     await tx.delete(aiThread);
+    await tx
+      .delete(testFixture)
+      .where(sql`${testFixture.id} like ${`${fixturePrefix}%`}`);
+    await tx
+      .delete(documentGrant)
+      .where(sql`${documentGrant.id} like ${`${fixturePrefix}%`}`);
     await tx
       .delete(documentChunk)
       .where(sql`${documentChunk.id} like ${`${fixturePrefix}%`}`);
@@ -216,6 +227,7 @@ async function ask(
   question: string,
   key: string = randomUUID(),
   modelProfileId: string = "qwen-project-assistant-cn-v1",
+  sourceDocumentIds: string[] = [],
 ) {
   return askProjectAssistant({
     principal: principal(actor),
@@ -226,6 +238,7 @@ async function ask(
     body: {
       question,
       modelProfileId,
+      sourceDocumentIds,
     },
   });
 }
@@ -512,6 +525,75 @@ describe("project assistant permissions and persistence", () => {
     );
   });
 
+  it("keeps an authorized exact fixture Citation readable while product lists hide the fixture", async () => {
+    const fixture = await seedEvidence(projectA, managerA);
+    const thread = await createThread(managerA);
+    const result = await ask(managerA, thread.id, "客户要求什么时候上线？");
+    assert.equal(result.assistantMessage.citations.length, 1);
+
+    await getDb().insert(testFixture).values({
+      id: `${fixturePrefix}project-citation`,
+      entityType: "project",
+      entityId: projectA,
+      fixtureRunId: `${fixturePrefix}citation-readback`,
+      environment: "test",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const reloaded = await getProjectAssistantThread({
+      principal: principal(managerA),
+      projectId: projectA,
+      threadId: thread.id,
+      requestHeaders: headers,
+    });
+    const answer = reloaded.messages.find(
+      (message) => message.id === result.assistantMessage.id,
+    );
+    assert.equal(answer?.status, "completed");
+    assert.equal(answer?.citations.length, 1);
+    assert.equal(answer?.citations[0]?.documentId, fixture.documentId);
+  });
+
+  it("accepts an explicitly selected authorized fixture source but rejects a cross-project source", async () => {
+    const fixture = await seedEvidence(projectA, managerA);
+    const crossProjectFixture = await seedEvidence(projectB, managerB);
+    await getDb().insert(testFixture).values({
+      id: `${fixturePrefix}project-source-selection`,
+      entityType: "project",
+      entityId: projectA,
+      fixtureRunId: `${fixturePrefix}source-selection`,
+      environment: "test",
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    const thread = await createThread(managerA);
+
+    const selected = await ask(
+      managerA,
+      thread.id,
+      "客户要求什么时候上线？",
+      randomUUID(),
+      "qwen-project-assistant-cn-v1",
+      [fixture.documentId],
+    );
+    assert.equal(selected.execution.status, "succeeded");
+    assert.equal(selected.assistantMessage.citations[0]?.documentId, fixture.documentId);
+
+    await assert.rejects(
+      ask(
+        managerA,
+        thread.id,
+        "跨项目来源不应可用",
+        randomUUID(),
+        "qwen-project-assistant-cn-v1",
+        [crossProjectFixture.documentId],
+      ),
+      (error: unknown) =>
+        error instanceof ProjectAssistantError &&
+        error.code === "AI_SOURCE_NOT_FOUND" &&
+        error.status === 404,
+    );
+  });
+
   it("does not call the Provider when Evidence is insufficient", async () => {
     const thread = await createThread(managerA);
     const result = await ask(
@@ -557,6 +639,136 @@ describe("project assistant permissions and persistence", () => {
 });
 
 describe("grounding, repair, retries and idempotency", () => {
+  it("revalidates the exact current effective Chunk and content hash before final Citation persistence", async () => {
+    const seeded = await seedEvidence(projectA, managerA);
+    const [chunk] = await getDb().select().from(documentChunk).where(eq(documentChunk.id, seeded.chunkId));
+    assert.ok(chunk);
+    const evidence = {
+      label: "E1",
+      chunkId: seeded.chunkId,
+      documentId: seeded.documentId,
+      versionId: seeded.versionId,
+      displayName: "虚构 B3-A 项目范围 project-001",
+      versionNumber: 1,
+      mimeType: "text/plain",
+      content: chunk.content,
+      contentSha256: chunk.contentSha256,
+      headingPath: ["上线计划"],
+      source: { type: "text_lines" as const, lineStart: 1, lineEnd: 7 },
+      score: 1,
+      knowledgeSpaceId: "__project_default__",
+      sourceScope: "project" as const,
+    };
+    const revokeGrantId = `${fixturePrefix}citation-final-deny`;
+    const cases = [
+      {
+        mutate: () => getDb().update(documentChunk).set({ isEffective: false }).where(eq(documentChunk.id, seeded.chunkId)),
+        restore: () => getDb().update(documentChunk).set({ isEffective: true }).where(eq(documentChunk.id, seeded.chunkId)),
+      },
+      {
+        mutate: () => getDb().update(documentChunk).set({ contentSha256: "b".repeat(64) }).where(eq(documentChunk.id, seeded.chunkId)),
+        restore: () => getDb().update(documentChunk).set({ contentSha256: chunk.contentSha256 }).where(eq(documentChunk.id, seeded.chunkId)),
+      },
+      {
+        mutate: () => getDb().update(projectDocumentVersion).set({ isCurrent: false }).where(eq(projectDocumentVersion.id, seeded.versionId)),
+        restore: () => getDb().update(projectDocumentVersion).set({ isCurrent: true }).where(eq(projectDocumentVersion.id, seeded.versionId)),
+      },
+      {
+        mutate: () => getDb().update(documentIngestionJob).set({ status: "cancelled" }).where(eq(documentIngestionJob.versionId, seeded.versionId)),
+        restore: () => getDb().update(documentIngestionJob).set({ status: "succeeded" }).where(eq(documentIngestionJob.versionId, seeded.versionId)),
+      },
+      {
+        mutate: () => getDb().update(projectDocument).set({ status: "archived", archivedBy: managerA.id, archivedAt: new Date() }).where(eq(projectDocument.id, seeded.documentId)),
+        restore: () => getDb().update(projectDocument).set({ status: "active", archivedBy: null, archivedAt: null }).where(eq(projectDocument.id, seeded.documentId)),
+      },
+      {
+        mutate: () => getDb().insert(documentGrant).values({
+          id: revokeGrantId,
+          organizationId: "org-legacy-default",
+          projectId: projectA,
+          documentId: seeded.documentId,
+          subjectType: "user",
+          subjectId: managerA.id,
+          permission: "view",
+          effect: "deny",
+          createdBy: managerA.id,
+        }),
+        restore: () => getDb().delete(documentGrant).where(eq(documentGrant.id, revokeGrantId)),
+      },
+    ];
+    for (const [index, current] of cases.entries()) {
+      const fixture = await insertExecutionFixture({ actorId: managerA.id, status: "reserved" });
+      const [execution] = await getDb().select().from(aiExecution).where(eq(aiExecution.id, fixture.executionId));
+      assert.ok(execution);
+      await current.mutate();
+      try {
+        await assert.rejects(
+          finalizeSuccessfulExecution({
+            execution,
+            answer: { text: `精确来源复核 ${index + 1} [1]`, citations: [{ index: 1, evidence }] },
+            gateway: {
+              provider: "fake",
+              requestedModel: "qwen3.7-plus",
+              actualModel: "qwen3.7-plus",
+              fallbackUsed: false,
+              text: "",
+              inputTokens: 10,
+              outputTokens: 5,
+              totalTokens: 15,
+              costUsdMicros: null,
+              providerRequestId: `citation-revalidation-${index + 1}`,
+              latencyMs: 1,
+            },
+            evidenceCount: 1,
+            requestHeaders: headers,
+          }),
+          (error: unknown) => error instanceof ProjectAssistantError && error.code === "AI_CITATION_VALIDATION_FAILED",
+        );
+      } finally {
+        await current.restore();
+      }
+    }
+    assert.equal((await getDb().select().from(aiMessageCitation)).length, 0);
+    const successfulFixture = await insertExecutionFixture({
+      actorId: managerA.id,
+      status: "reserved",
+    });
+    const [successfulExecution] = await getDb()
+      .select()
+      .from(aiExecution)
+      .where(eq(aiExecution.id, successfulFixture.executionId));
+    assert.ok(successfulExecution);
+    await finalizeSuccessfulExecution({
+      execution: successfulExecution,
+      answer: {
+        text: "精确来源复核通过 [1]",
+        citations: [{ index: 1, evidence }],
+      },
+      gateway: {
+        provider: "fake",
+        requestedModel: "qwen3.7-plus",
+        actualModel: "qwen3.7-plus",
+        fallbackUsed: false,
+        text: "",
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+        costUsdMicros: 19,
+        providerRequestId: "citation-revalidation-success",
+        latencyMs: 1,
+      },
+      evidenceCount: 1,
+      requestHeaders: headers,
+    });
+    const [persistedExecution] = await getDb()
+      .select()
+      .from(aiExecution)
+      .where(eq(aiExecution.id, successfulFixture.executionId));
+    assert.equal(persistedExecution?.status, "succeeded");
+    assert.equal(persistedExecution?.costUsdMicros, 19);
+    assert.equal((await getDb().select().from(aiMessageCitation)).length, 1);
+  });
+
   it("repairs [E99] once and persists only the legal server citation", async () => {
     await seedEvidence(projectA, managerA);
     const thread = await createThread(managerA);

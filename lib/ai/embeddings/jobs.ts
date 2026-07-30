@@ -4,6 +4,7 @@ import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import {
   aiEmbeddingProfile,
+  documentChunk,
   documentChunkEmbedding,
   documentEmbeddingBatch,
   documentEmbeddingJob,
@@ -154,7 +155,7 @@ export async function ensureEmbeddingJob(input: {
   documentId: string;
   versionId: string;
   createdBy: string;
-  reason: "ingestion_succeeded" | "current_version" | "restored" | "backfill" | "profile_upgrade";
+  reason: "ingestion_succeeded" | "current_version" | "restored" | "backfill" | "profile_upgrade" | "manual_regeneration";
   db?: DatabaseExecutor;
   config?: EmbeddingRuntimeConfig;
 }): Promise<DocumentEmbeddingJobRecord | null> {
@@ -1031,6 +1032,10 @@ export async function commitEmbeddingBatch(input: {
           updatedAt: sql`now()`,
         },
       });
+    await tx.update(documentChunk).set({ embeddingStatus: "current" }).where(and(
+      eq(documentChunk.projectId, job.projectId),
+      inArray(documentChunk.id, input.chunks.map((chunk) => chunk.id)),
+    ));
     await tx
       .update(documentEmbeddingJob)
       .set({

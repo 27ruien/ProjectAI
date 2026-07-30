@@ -4,6 +4,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 import {
@@ -39,6 +40,12 @@ export const project = pgTable(
       .defaultNow(),
   },
   (table) => [
+    uniqueIndex("projects_id_organization_uidx").on(table.id, table.organizationId),
+    uniqueIndex("projects_id_organization_department_uidx").on(
+      table.id,
+      table.organizationId,
+      table.departmentId,
+    ),
     index("projects_organization_idx").on(table.organizationId, table.status),
     index("projects_department_idx").on(table.departmentId, table.status),
     index("projects_status_idx").on(table.status),

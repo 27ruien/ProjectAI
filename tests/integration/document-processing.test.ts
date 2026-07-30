@@ -20,6 +20,11 @@ import {
 import { uploadDocument, setDocumentArchived } from "../../lib/files/document-service";
 import { getObjectStorage } from "../../lib/files/object-storage";
 import {
+  KnowledgeChunkManagementError,
+  listManagedKnowledgeChunks,
+  mutateManagedKnowledgeChunk,
+} from "../../lib/knowledge/chunk-management";
+import {
   claimIngestionJob,
   completeIngestionJob,
   ensureIngestionJob,
@@ -64,6 +69,7 @@ let memberUser: UserRecord;
 let viewerUser: UserRecord;
 let projectAId = "";
 let projectBId = "";
+let fuzzyDocumentId = "";
 
 async function upload(file: File, documentId?: string) {
   return uploadDocument({
@@ -205,7 +211,6 @@ after(async () => {
 
 describe("document processing queue, parsers, and lexical search", () => {
   it("creates durable jobs and indexes every supported format with source locations", async () => {
-    let fuzzyDocumentId = "";
     const cases = [
       {
         file: createSearchablePdfFixture(),
@@ -269,7 +274,11 @@ describe("document processing queue, parsers, and lexical search", () => {
         .select()
         .from(documentIngestionJob)
         .where(eq(documentIngestionJob.versionId, stored.version.id));
-      assert.equal(completed?.status, "succeeded");
+      assert.equal(
+        completed?.status,
+        "succeeded",
+        `${testCase.file.name}: ${completed?.failureCode ?? "no failure code"} ${completed?.failureMessage ?? ""}`,
+      );
       const summary = (
         await ingestionSummariesForVersions([stored.version.id])
       ).get(stored.version.id);
@@ -400,6 +409,71 @@ describe("document processing queue, parsers, and lexical search", () => {
       requestHeaders: headers(),
     });
     assert.equal((await search(viewerUser, "BETA")).results.length, 1);
+  });
+
+  it("restricts chunk management to managers and disables or restores only the current hashed chunk", async () => {
+    assert.ok(fuzzyDocumentId);
+    const listed = await listManagedKnowledgeChunks({
+      principal: principal(managerUser),
+      projectId: projectAId,
+      documentId: fuzzyDocumentId,
+      requestHeaders: headers(),
+    });
+    assert.ok(listed.chunks.length > 0);
+    assert.ok(listed.chunks.every((chunk) => chunk.parentContent));
+    await assert.rejects(
+      listManagedKnowledgeChunks({
+        principal: principal(viewerUser),
+        projectId: projectAId,
+        documentId: fuzzyDocumentId,
+        requestHeaders: headers(),
+      }),
+      (error: unknown) =>
+        error instanceof AuthorizationError && error.status === 403,
+    );
+    const chunk = listed.chunks[0]!;
+    await assert.rejects(
+      mutateManagedKnowledgeChunk({
+        principal: principal(managerUser),
+        projectId: projectAId,
+        documentId: fuzzyDocumentId,
+        chunkId: chunk.id,
+        requestHeaders: headers(),
+        body: {
+          action: "disable",
+          expectedContentSha256: "0".repeat(64),
+        },
+      }),
+      (error: unknown) =>
+        error instanceof KnowledgeChunkManagementError &&
+        error.code === "CHUNK_VERSION_CONFLICT",
+    );
+    const disabled = await mutateManagedKnowledgeChunk({
+      principal: principal(managerUser),
+      projectId: projectAId,
+      documentId: fuzzyDocumentId,
+      chunkId: chunk.id,
+      requestHeaders: headers(),
+      body: {
+        action: "disable",
+        expectedContentSha256: chunk.contentSha256,
+      },
+    });
+    assert.equal(disabled.chunk.isEffective, false);
+    assert.equal(disabled.chunk.embeddingStatus, "disabled");
+    const enabled = await mutateManagedKnowledgeChunk({
+      principal: principal(managerUser),
+      projectId: projectAId,
+      documentId: fuzzyDocumentId,
+      chunkId: chunk.id,
+      requestHeaders: headers(),
+      body: {
+        action: "enable",
+        expectedContentSha256: chunk.contentSha256,
+      },
+    });
+    assert.equal(enabled.chunk.isEffective, true);
+    assert.equal(enabled.chunk.embeddingStatus, "disabled");
   });
 
   it("uses SKIP LOCKED, recovers expired leases, blocks stale workers, and enforces search permissions", async () => {

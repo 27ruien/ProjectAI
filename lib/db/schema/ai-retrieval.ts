@@ -13,7 +13,7 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
-import { aiExecution, aiMessage, aiThread } from "./ai-assistant";
+import { aiExecution, aiMessage, aiModelProfile, aiThread } from "./ai-assistant";
 import { aiEmbeddingProfile } from "./document-embeddings";
 import { documentChunk } from "./document-ingestion";
 import {
@@ -46,6 +46,12 @@ export const aiRetrievalRun = pgTable(
     effectiveMode: aiRetrievalModeEnum("effective_mode"),
     status: aiRetrievalRunStatusEnum("status").notNull().default("running"),
     querySha256: varchar("query_sha256", { length: 64 }).notNull(),
+    normalizedQuerySha256: varchar("normalized_query_sha256", { length: 64 }),
+    rewrittenQueryCount: integer("rewritten_query_count").notNull().default(0),
+    queryProcessingLatencyMs: integer("query_processing_latency_ms").notNull().default(0),
+    rerankLatencyMs: integer("rerank_latency_ms").notNull().default(0),
+    contextExpansionLatencyMs: integer("context_expansion_latency_ms").notNull().default(0),
+    rerankFallbackReason: varchar("rerank_fallback_reason", { length: 80 }),
     lexicalCandidateCount: integer("lexical_candidate_count").notNull().default(0),
     vectorCandidateCount: integer("vector_candidate_count").notNull().default(0),
     fusedCandidateCount: integer("fused_candidate_count").notNull().default(0),
@@ -108,8 +114,13 @@ export const aiRetrievalRun = pgTable(
       and ${table.queryEmbeddingLatencyMs} >= 0
       and ${table.vectorLatencyMs} >= 0
       and ${table.fusionLatencyMs} >= 0
+      and ${table.queryProcessingLatencyMs} >= 0
+      and ${table.rerankLatencyMs} >= 0
+      and ${table.contextExpansionLatencyMs} >= 0
+      and ${table.rewrittenQueryCount} between 0 and 4
       and ${table.totalLatencyMs} >= 0
     `),
+    check("ai_retrieval_runs_normalized_query_hash_check", sql`${table.normalizedQuerySha256} is null or ${table.normalizedQuerySha256} ~ '^[0-9a-f]{64}$'`),
     check("ai_retrieval_runs_status_check", sql`
       (
         ${table.status} = 'running'
@@ -234,6 +245,101 @@ export const aiRetrievalQueryEmbeddingCall = pgTable(
   ],
 );
 
+export const aiRetrievalProviderCall = pgTable(
+  "ai_retrieval_provider_calls",
+  {
+    id: text("id").primaryKey(),
+    retrievalRunId: text("retrieval_run_id").notNull(),
+    aiExecutionId: text("ai_execution_id").notNull(),
+    projectId: text("project_id").notNull(),
+    actorUserId: text("actor_user_id").notNull(),
+    purpose: varchar("purpose", { length: 32 }).notNull(),
+    skillId: varchar("skill_id", { length: 120 }).notNull(),
+    modelProfileId: text("model_profile_id")
+      .notNull()
+      .references(() => aiModelProfile.id, { onDelete: "restrict" }),
+    status: varchar("status", { length: 24 }).notNull().default("reserved"),
+    provider: varchar("provider", { length: 32 }),
+    actualModel: varchar("actual_model", { length: 120 }),
+    reservedTokenCount: integer("reserved_token_count").notNull(),
+    inputTokenCount: integer("input_token_count"),
+    outputTokenCount: integer("output_token_count"),
+    totalTokenCount: integer("total_token_count"),
+    costUsdMicros: integer("cost_usd_micros"),
+    latencyMs: integer("latency_ms").notNull().default(0),
+    providerRequestId: varchar("provider_request_id", { length: 240 }),
+    failureCode: varchar("failure_code", { length: 80 }),
+    startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("ai_retrieval_provider_calls_run_purpose_uidx").on(
+      table.retrievalRunId,
+      table.purpose,
+    ),
+    index("ai_retrieval_provider_calls_budget_idx").on(
+      table.createdAt,
+      table.actorUserId,
+      table.projectId,
+      table.status,
+    ),
+    foreignKey({
+      name: "ai_retrieval_provider_calls_run_scope_fk",
+      columns: [table.retrievalRunId, table.projectId, table.actorUserId],
+      foreignColumns: [
+        aiRetrievalRun.id,
+        aiRetrievalRun.projectId,
+        aiRetrievalRun.actorUserId,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "ai_retrieval_provider_calls_execution_scope_fk",
+      columns: [table.aiExecutionId, table.projectId],
+      foreignColumns: [aiExecution.id, aiExecution.projectId],
+    }).onDelete("restrict"),
+    check(
+      "ai_retrieval_provider_calls_purpose_check",
+      sql`${table.purpose} in ('query_rewrite', 'rerank')`,
+    ),
+    check("ai_retrieval_provider_calls_usage_check", sql`
+      ${table.reservedTokenCount} between 1 and 100000
+      and (${table.inputTokenCount} is null or ${table.inputTokenCount} >= 0)
+      and (${table.outputTokenCount} is null or ${table.outputTokenCount} >= 0)
+      and (${table.totalTokenCount} is null or ${table.totalTokenCount} >= 0)
+      and (
+        ${table.inputTokenCount} is null
+        or ${table.outputTokenCount} is null
+        or ${table.totalTokenCount} is null
+        or ${table.totalTokenCount} = ${table.inputTokenCount} + ${table.outputTokenCount}
+      )
+      and (${table.costUsdMicros} is null or ${table.costUsdMicros} >= 0)
+      and ${table.latencyMs} >= 0
+    `),
+    check("ai_retrieval_provider_calls_status_check", sql`
+      (
+        ${table.status} = 'reserved'
+        and ${table.completedAt} is null
+        and ${table.failureCode} is null
+      ) or (
+        ${table.status} = 'succeeded'
+        and ${table.completedAt} is not null
+        and ${table.failureCode} is null
+        and ${table.provider} is not null
+        and ${table.actualModel} is not null
+      ) or (
+        ${table.status} = 'unknown'
+        and ${table.completedAt} is not null
+        and ${table.failureCode} = 'PROVIDER_RESULT_UNKNOWN'
+      )
+    `),
+  ],
+);
+
 export const aiRetrievalCandidate = pgTable(
   "ai_retrieval_candidates",
   {
@@ -298,4 +404,6 @@ export const aiRetrievalCandidate = pgTable(
 export type AiRetrievalRunRecord = typeof aiRetrievalRun.$inferSelect;
 export type AiRetrievalQueryEmbeddingCallRecord =
   typeof aiRetrievalQueryEmbeddingCall.$inferSelect;
+export type AiRetrievalProviderCallRecord =
+  typeof aiRetrievalProviderCall.$inferSelect;
 export type AiRetrievalCandidateRecord = typeof aiRetrievalCandidate.$inferSelect;

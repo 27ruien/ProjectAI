@@ -84,11 +84,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...init?.headers,
     },
   });
-  const body = (await response.json().catch(() => null)) as T | { error?: { message?: string } } | null;
+  const body = (await response.json().catch(() => null)) as T | { error?: { code?: string; message?: string } } | null;
   if (!response.ok) {
-    throw new Error((body as { error?: { message?: string } } | null)?.error?.message ?? "请求失败");
+    const error = (body as { error?: { code?: string; message?: string } } | null)?.error;
+    throw new Error(`${error?.message ?? "请求失败"}（${error?.code ?? `HTTP_${response.status}`}）`);
   }
   return body as T;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
 }
 
 export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
@@ -97,6 +102,7 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
   const [index, setIndex] = useState<KnowledgeIndex | null>(null);
   const [selectedSpaceId, setSelectedSpaceId] = useState("");
   const [documentsByProject, setDocumentsByProject] = useState<Record<string, ProjectDocumentListResponse>>({});
+  const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -107,6 +113,7 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
   const [editOpen, setEditOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const projectRequest = useRef<AbortController | null>(null);
 
   const selectedSpace = index?.knowledgeSpaces.find((item) => item.id === selectedSpaceId) ?? index?.knowledgeSpaces[0];
   const selectedProject = viewer.projects.find((item) => item.id === selectedSpace?.projectContextId);
@@ -120,9 +127,14 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
     return next;
   }, []);
 
-  const loadProject = useCallback(async (projectId: string) => {
-    const payload = await listProjectDocuments(projectId, "active");
+  const loadProject = useCallback(async (projectId: string, signal?: AbortSignal) => {
+    const payload = await listProjectDocuments(projectId, "active", signal);
     setDocumentsByProject((current) => ({ ...current, [projectId]: payload }));
+    setDocumentErrors((current) => {
+      const next = { ...current };
+      delete next[projectId];
+      return next;
+    });
     return payload;
   }, []);
 
@@ -139,18 +151,30 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
         );
       })
       .catch((caught) => {
-        if (!(caught instanceof DOMException && caught.name === "AbortError")) setError(caught instanceof Error ? caught.message : "知识库加载失败");
+        if (!isAbortError(caught)) setError(caught instanceof Error ? caught.message : "知识库加载失败");
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
     return () => controller.abort();
   }, [requestedProjectId]);
 
   useEffect(() => {
     const projectId = selectedSpace?.projectContextId;
     if (!projectId || documentsByProject[projectId]) return;
-    void listProjectDocuments(projectId, "active")
+    projectRequest.current?.abort();
+    const controller = new AbortController();
+    projectRequest.current = controller;
+    void listProjectDocuments(projectId, "active", controller.signal)
       .then((payload) => setDocumentsByProject((current) => ({ ...current, [projectId]: payload })))
-      .catch((caught) => setError(documentErrorMessage(caught)));
+      .catch((caught) => {
+        if (isAbortError(caught)) return;
+        setDocumentErrors((current) => ({
+          ...current,
+          [projectId]: documentErrorMessage(caught),
+        }));
+      });
+    return () => controller.abort();
   }, [documentsByProject, selectedSpace?.projectContextId]);
 
   useEffect(() => {
@@ -161,7 +185,11 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
     const missing = [...new Set(relevant.map((item) => item.projectContextId).filter((id): id is string => Boolean(id)))]
       .filter((id) => !documentsByProject[id]);
     if (!missing.length) return;
-    void Promise.all(missing.map(loadProject)).catch((caught) => setError(documentErrorMessage(caught)));
+    void Promise.allSettled(missing.map((projectId) => loadProject(projectId))).then((results) => {
+      if (results.some((result) => result.status === "rejected")) {
+        setFeedback("部分辅助知识空间暂时不可用；当前空间文件列表仍可继续使用。");
+      }
+    });
   }, [documentsByProject, index, loadProject, scope, selectedSpace?.departmentId]);
 
   const visibleSpaceIds = useMemo(() => {
@@ -220,6 +248,9 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
   const selectedCanUpload = selectedSpace?.type === "project"
     ? Boolean(selectedSpace.permissions?.canUploadDocuments)
     : Boolean(selectedSpace?.canUpload);
+  const selectedProjectError = selectedSpace?.projectContextId
+    ? documentErrors[selectedSpace.projectContextId]
+    : null;
 
   return (
     <div className="space-y-6">
@@ -255,7 +286,7 @@ export function GlobalKnowledgePage({ viewer }: { viewer: ViewerContext }) {
             </header>
             <div className="divide-y">
               {documents.map((document) => <DocumentRow key={document.id} document={document} onError={setError} />)}
-              {!documents.length ? <div className="px-5 py-12 text-center"><p className="text-sm font-medium">当前范围没有可见文件</p><p className="mt-1 text-xs text-muted-foreground">可切换空间、调整搜索范围，或在有编辑权限的空间上传文件。</p></div> : null}
+              {selectedProjectError ? <div className="px-5 py-10 text-center"><p className="text-sm font-medium text-danger">文件列表加载失败</p><p className="mt-1 text-xs text-muted-foreground">{selectedProjectError}</p><button type="button" onClick={() => { const projectId = selectedSpace?.projectContextId; if (!projectId) return; setDocumentErrors((current) => { const next = { ...current }; delete next[projectId]; return next; }); void loadProject(projectId).catch((caught) => setDocumentErrors((current) => ({ ...current, [projectId]: documentErrorMessage(caught) }))); }} className="mt-3 rounded-lg border px-3 py-2 text-xs">重试</button></div> : !documents.length ? <div className="px-5 py-12 text-center"><p className="text-sm font-medium">当前范围没有可见文件</p><p className="mt-1 text-xs text-muted-foreground">可切换空间、调整搜索范围，或在有编辑权限的空间上传文件。</p></div> : null}
             </div>
           </section>
           <section className="rounded-2xl border bg-surface p-1">

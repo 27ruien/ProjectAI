@@ -7,6 +7,11 @@ import {
   getOrganizationTree,
   updateOrganizationDepartment,
 } from "@/lib/organization/service";
+import {
+  deleteRegisteredFixtureDepartment,
+  fixtureCleanupContextFromHeaders,
+  fixtureContextFromHeaders,
+} from "@/lib/test-fixtures/service";
 
 const createSchema = z.object({
   parentDepartmentId: z.string().min(1).max(200).nullable(),
@@ -48,6 +53,7 @@ export async function POST(request: Request): Promise<Response> {
       department: await createOrganizationDepartment({
         principal,
         ...parsed.data,
+        fixture: fixtureContextFromHeaders(request.headers),
         requestHeaders: request.headers,
       }),
     }, { status: 201 });
@@ -69,6 +75,26 @@ export async function PATCH(request: Request): Promise<Response> {
         principal,
         ...parsed.data,
         requestHeaders: request.headers,
+      }),
+    });
+  } catch (error) {
+    return knowledgeManagementErrorResponse(error);
+  }
+}
+
+export async function DELETE(request: Request): Promise<Response> {
+  try {
+    requireTrustedMutationRequest(request);
+    const principal = await requireApiPrincipal(request.headers);
+    const fixture = fixtureCleanupContextFromHeaders(request.headers);
+    const parsed = z.object({ departmentId: z.string().min(1).max(200) }).strict().safeParse(await request.json());
+    if (principal.user.productRole !== "super_admin" || !fixture || !parsed.success) {
+      return jsonResponse({ error: { code: "RESOURCE_NOT_FOUND", message: "页面不存在" } }, { status: 404 });
+    }
+    return jsonResponse({
+      deleted: await deleteRegisteredFixtureDepartment({
+        ...fixture,
+        departmentId: parsed.data.departmentId,
       }),
     });
   } catch (error) {

@@ -57,6 +57,10 @@ export type SearchRow = {
   raw_score: number | string;
   knowledge_space_id: string;
   source_scope: "organization" | "department" | "project" | "restricted";
+  section_id: string;
+  chunk_index: number;
+  chunk_type: string;
+  parent_content: string | null;
 };
 
 export type ProjectKnowledgeEvidence = {
@@ -74,6 +78,10 @@ export type ProjectKnowledgeEvidence = {
   score: number;
   knowledgeSpaceId: string;
   sourceScope: "organization" | "department" | "project" | "restricted";
+  sectionId?: string;
+  chunkIndex?: number;
+  chunkType?: string;
+  parentContent?: string | null;
 };
 
 export async function queryProjectKnowledgeRows(input: {
@@ -106,6 +114,10 @@ export async function queryProjectKnowledgeRows(input: {
           c.content_sha256,
           c.heading_path,
           c.source_locator,
+          c.section_id,
+          c.chunk_index,
+          c.chunk_type,
+          c.parent_content,
           authorized.knowledge_space_id,
           authorized.source_scope,
           (
@@ -206,6 +218,10 @@ export async function retrieveLexicalProjectCandidates(input: {
         score: normalizedScore(row.raw_score),
         knowledgeSpaceId: row.knowledge_space_id,
         sourceScope: row.source_scope,
+        sectionId: row.section_id,
+        chunkIndex: Number(row.chunk_index),
+        chunkType: row.chunk_type,
+        parentContent: row.parent_content,
       },
     }));
 }
@@ -238,6 +254,51 @@ export function selectBoundedProjectEvidence(input: {
     if (evidence.length >= input.evidenceLimit) break;
   }
   return evidence;
+}
+
+export async function expandAuthorizedEvidenceContext(input: {
+  actorUserId: string;
+  projectId: string;
+  evidence: ProjectKnowledgeEvidence[];
+  adjacentWindow?: number;
+  maxChars: number;
+}): Promise<ProjectKnowledgeEvidence[]> {
+  if (!input.evidence.length) return [];
+  const adjacentWindow = Math.min(Math.max(input.adjacentWindow ?? 1, 0), 2);
+  const result = await getDb().execute<{ anchor_id: string; content: string; chunk_index: number }>(sql`
+    with anchors as (
+      select c.id, c.project_id, c.document_id, c.version_id, c.section_id, c.chunk_index
+      from document_chunks c
+      inner join projectai_authorized_documents(${input.actorUserId}, ${input.projectId}, 'view'::knowledge_permission) authorized
+        on authorized.document_id = c.document_id and authorized.source_project_id = c.project_id
+      inner join project_documents d on d.id = c.document_id and d.project_id = c.project_id and d.document_status = 'active'
+      inner join project_document_versions v on v.id = c.version_id and v.document_id = c.document_id and v.project_id = c.project_id and v.is_current and v.storage_status = 'stored'
+      where c.id in (${sql.join(input.evidence.map((item) => sql`${item.chunkId}`), sql`, `)}) and c.is_effective
+    )
+    select anchor.id as anchor_id, neighbor.content, neighbor.chunk_index
+    from anchors anchor
+    inner join document_chunks neighbor
+      on neighbor.project_id = anchor.project_id and neighbor.document_id = anchor.document_id
+      and neighbor.version_id = anchor.version_id and neighbor.section_id = anchor.section_id
+      and neighbor.is_effective and abs(neighbor.chunk_index - anchor.chunk_index) <= ${adjacentWindow}
+    order by anchor.id, neighbor.chunk_index
+  `);
+  const adjacentByAnchor = new Map<string, string[]>();
+  for (const row of result.rows) {
+    const values = adjacentByAnchor.get(row.anchor_id) ?? [];
+    values.push(row.content);
+    adjacentByAnchor.set(row.anchor_id, values);
+  }
+  let remaining = input.maxChars;
+  return input.evidence.map((evidence) => {
+    const parts: string[] = [];
+    if (evidence.parentContent && evidence.parentContent !== evidence.content) parts.push(`上级章节：\n${evidence.parentContent.slice(0, 3_000)}`);
+    const adjacent = adjacentByAnchor.get(evidence.chunkId) ?? [evidence.content];
+    parts.push(`命中段落及相邻上下文：\n${adjacent.join("\n\n")}`);
+    const content = parts.join("\n\n").slice(0, Math.max(0, remaining));
+    remaining -= content.length;
+    return { ...evidence, content };
+  }).filter((item) => item.content.trim().length > 0);
 }
 
 export async function retrieveProjectEvidence(input: {

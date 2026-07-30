@@ -181,5 +181,5 @@ v0.5 当时的开发分支为 `agent/document-processing-index`、版本为 `0.5
 - Exact Vector SQL 必须用 `embedding <=> query_vector` 并绑定精确项目、Active Document、Current/Stored Version、Succeeded Ingestion、Effective Chunk、内容 Hash 和 Embedding Profile；禁止 ANN。
 - `lexical` 不调用 Query Embedding；`shadow` 记录 Hybrid 但向 Prompt 交付 Lexical；`hybrid` 交付 RRF Evidence。所有异常均回退原 Lexical，Lexical 为空则保持 Evidence Insufficient 且不调用 Answer Model。
 - Query Embedding 走 Provider-neutral Gateway，1024 维，向量只驻留请求内存；调用使用 UTC 日预算、硬预留、真实 Usage 结算和发送后 `unknown` 不自动重试。
-- 上线门禁为 60 条虚构 Query 的安全、整体质量、语义提升、精确事实、无答案和性能指标。Staging 必须按 lexical→shadow→hybrid；Production 保持不变。
+- 上线门禁为至少 60 条虚构 Query 的安全、整体质量、语义提升、精确事实、无答案和性能指标。评测集可以扩充但不得低于下限；Staging 必须按 lexical→shadow→hybrid；Production 保持不变。
 - 本轮不实现 Rerank、`qwen3-rerank`、HNSW、IVFFlat、其他 ANN、B3-B3 或正式业务写入。

@@ -5,12 +5,18 @@ import {
   aiExecution,
   aiRetrievalCandidate,
   aiRetrievalProfile,
+  aiRetrievalProviderCall,
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
   type AiExecutionRecord,
   type AiRetrievalMode,
   type AiRetrievalQueryEmbeddingCallRecord,
 } from "@/lib/db/schema";
+import {
+  PROJECT_ASSISTANT_PROFILE_ID,
+  PROJECT_ASSISTANT_USAGE_LIMITS,
+} from "@/lib/ai/project-assistant/config";
+import type { AiGatewayResult } from "@/lib/ai/project-assistant/gateway";
 import {
   HYBRID_RETRIEVAL_PROFILE,
   HYBRID_RETRIEVAL_VERSION,
@@ -54,6 +60,9 @@ export async function retrievalProfileState(): Promise<{
 export async function createRetrievalRun(input: {
   execution: AiExecutionRecord;
   querySha256: string;
+  normalizedQuerySha256: string;
+  rewrittenQueryCount: number;
+  queryProcessingLatencyMs: number;
   requestedMode: AiRetrievalMode;
 }): Promise<string> {
   const id = crypto.randomUUID();
@@ -68,9 +77,145 @@ export async function createRetrievalRun(input: {
     requestedMode: input.requestedMode,
     status: "running",
     querySha256: input.querySha256,
+    normalizedQuerySha256: input.normalizedQuerySha256,
+    rewrittenQueryCount: input.rewrittenQueryCount,
+    queryProcessingLatencyMs: input.queryProcessingLatencyMs,
     retrievalVersion: HYBRID_RETRIEVAL_VERSION,
   });
   return id;
+}
+
+export type RetrievalProviderPurpose = "query_rewrite" | "rerank";
+
+export async function reserveRetrievalProviderCall(input: {
+  retrievalRunId: string;
+  execution: AiExecutionRecord;
+  purpose: RetrievalProviderPurpose;
+  skillId: string;
+  reservedTokenCount: number;
+}): Promise<
+  | { reserved: true; callId: string }
+  | {
+      reserved: false;
+      reason:
+        | "AI_USER_DAILY_LIMIT_REACHED"
+        | "AI_PROJECT_DAILY_LIMIT_REACHED";
+    }
+> {
+  return getDb().transaction(async (tx) => {
+    await tx.execute(sql`
+      select pg_advisory_xact_lock(
+        hashtextextended(
+          'assistant-provider-daily-token-budget:' ||
+          (current_timestamp at time zone 'UTC')::date::text,
+          0
+        )
+      )
+    `);
+    const dayBoundary = new Date();
+    dayBoundary.setUTCHours(0, 0, 0, 0);
+    const usage = await tx.execute<{
+      user_tokens: string | number;
+      project_tokens: string | number;
+    }>(sql`
+      with durable_usage as (
+        select actor_user_id, project_id, total_token_count as tokens
+        from ai_executions
+        where created_at >= ${dayBoundary}
+          and total_token_count is not null
+        union all
+        select actor_user_id, project_id,
+          case
+            when status = 'succeeded' and total_token_count is not null
+              then total_token_count
+            else reserved_token_count
+          end as tokens
+        from ai_retrieval_provider_calls
+        where created_at >= ${dayBoundary}
+          and status in ('reserved', 'succeeded', 'unknown')
+      )
+      select
+        coalesce(sum(tokens) filter (
+          where actor_user_id = ${input.execution.actorUserId}
+        ), 0) as user_tokens,
+        coalesce(sum(tokens) filter (
+          where project_id = ${input.execution.projectId}
+        ), 0) as project_tokens
+      from durable_usage
+    `);
+    const totals = usage.rows[0];
+    if (
+      Number(totals?.user_tokens ?? 0) + input.reservedTokenCount >
+      PROJECT_ASSISTANT_USAGE_LIMITS.userDailyTokens
+    ) {
+      return { reserved: false, reason: "AI_USER_DAILY_LIMIT_REACHED" } as const;
+    }
+    if (
+      Number(totals?.project_tokens ?? 0) + input.reservedTokenCount >
+      PROJECT_ASSISTANT_USAGE_LIMITS.projectDailyTokens
+    ) {
+      return { reserved: false, reason: "AI_PROJECT_DAILY_LIMIT_REACHED" } as const;
+    }
+    const id = crypto.randomUUID();
+    await tx.insert(aiRetrievalProviderCall).values({
+      id,
+      retrievalRunId: input.retrievalRunId,
+      aiExecutionId: input.execution.id,
+      projectId: input.execution.projectId,
+      actorUserId: input.execution.actorUserId,
+      purpose: input.purpose,
+      skillId: input.skillId,
+      modelProfileId: PROJECT_ASSISTANT_PROFILE_ID,
+      status: "reserved",
+      reservedTokenCount: input.reservedTokenCount,
+    });
+    return { reserved: true, callId: id } as const;
+  });
+}
+
+export async function finalizeRetrievalProviderCallSucceeded(input: {
+  callId: string;
+  result: AiGatewayResult;
+}): Promise<void> {
+  const [updated] = await getDb()
+    .update(aiRetrievalProviderCall)
+    .set({
+      status: "succeeded",
+      provider: input.result.provider,
+      actualModel: input.result.actualModel,
+      inputTokenCount: input.result.inputTokens,
+      outputTokenCount: input.result.outputTokens,
+      totalTokenCount: input.result.totalTokens,
+      costUsdMicros: input.result.costUsdMicros ?? null,
+      latencyMs: input.result.latencyMs,
+      providerRequestId: input.result.providerRequestId,
+      failureCode: null,
+      completedAt: new Date(),
+    })
+    .where(and(
+      eq(aiRetrievalProviderCall.id, input.callId),
+      eq(aiRetrievalProviderCall.status, "reserved"),
+    ))
+    .returning({ id: aiRetrievalProviderCall.id });
+  if (!updated) throw new EmbeddingPipelineError("SERVER_ERROR", false);
+}
+
+export async function finalizeRetrievalProviderCallUnknown(
+  callId: string,
+): Promise<void> {
+  const [updated] = await getDb()
+    .update(aiRetrievalProviderCall)
+    .set({
+      status: "unknown",
+      failureCode: "PROVIDER_RESULT_UNKNOWN",
+      completedAt: new Date(),
+    })
+    .where(and(
+      eq(aiRetrievalProviderCall.id, callId),
+      eq(aiRetrievalProviderCall.status, "reserved"),
+    ))
+    .returning({ id: aiRetrievalProviderCall.id });
+  if (!updated) throw new EmbeddingPipelineError("SERVER_ERROR", false);
 }
 
 export async function reserveQueryEmbeddingCall(input: {
@@ -224,6 +369,8 @@ export async function finalizeQueryEmbeddingCallFailed(input: {
 export async function finalizeRetrievalRun(input: {
   retrievalRunId: string;
   executionId: string;
+  normalizedQuerySha256: string;
+  rewrittenQueryCount: number;
   effectiveMode: "lexical" | "hybrid";
   fallbackReason: string | null;
   insufficientEvidence: boolean;
@@ -232,6 +379,10 @@ export async function finalizeRetrievalRun(input: {
   queryEmbeddingLatencyMs: number;
   vectorLatencyMs: number;
   fusionLatencyMs: number;
+  queryProcessingLatencyMs: number;
+  rerankLatencyMs: number;
+  contextExpansionLatencyMs: number;
+  rerankFallbackReason: string | null;
   totalLatencyMs: number;
   lexicalCandidateCount: number;
   vectorCandidateCount: number;
@@ -276,6 +427,8 @@ export async function finalizeRetrievalRun(input: {
     const [updatedRun] = await tx
       .update(aiRetrievalRun)
       .set({
+        normalizedQuerySha256: input.normalizedQuerySha256,
+        rewrittenQueryCount: input.rewrittenQueryCount,
         effectiveMode: input.effectiveMode,
         status,
         lexicalCandidateCount: input.lexicalCandidateCount,
@@ -287,6 +440,10 @@ export async function finalizeRetrievalRun(input: {
         queryEmbeddingLatencyMs: input.queryEmbeddingLatencyMs,
         vectorLatencyMs: input.vectorLatencyMs,
         fusionLatencyMs: input.fusionLatencyMs,
+        queryProcessingLatencyMs: input.queryProcessingLatencyMs,
+        rerankLatencyMs: input.rerankLatencyMs,
+        contextExpansionLatencyMs: input.contextExpansionLatencyMs,
+        rerankFallbackReason: input.rerankFallbackReason,
         totalLatencyMs: input.totalLatencyMs,
         fallbackReason: input.fallbackReason,
         completedAt,
@@ -323,6 +480,17 @@ export async function finalizeFailedRetrievalRunForExecution(
       .for("update", { of: aiRetrievalRun });
     if (!run || run.status !== "running") return;
     const completedAt = new Date();
+    await tx
+      .update(aiRetrievalProviderCall)
+      .set({
+        status: "unknown",
+        failureCode: "PROVIDER_RESULT_UNKNOWN",
+        completedAt,
+      })
+      .where(and(
+        eq(aiRetrievalProviderCall.retrievalRunId, run.id),
+        eq(aiRetrievalProviderCall.status, "reserved"),
+      ));
     await tx
       .update(aiRetrievalRun)
       .set({

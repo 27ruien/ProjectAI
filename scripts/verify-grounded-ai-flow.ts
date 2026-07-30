@@ -11,20 +11,27 @@ import type {
 } from "../types/project-assistant";
 import { createTextFixture } from "../tests/helpers/file-fixtures";
 import {
+  addVerificationProjectMember,
   assert,
   authenticatedFetch,
   cleanupDocumentVerification,
+  createVerificationProject,
+  deleteVerificationProject,
   documentVerificationEnvironment,
   requiredEnvironment,
   responseJson,
   signIn,
+  signInMockWeCom,
   signOut,
   uploadVerificationDocument,
+  type VerificationProjectFixture,
   type VerificationSession,
 } from "./lib/staging-document-verification";
 
-const environment = documentVerificationEnvironment();
+let environment = documentVerificationEnvironment();
 const runId = randomUUID();
+const mockWeComVerification =
+  process.env.STAGING_AUTH_MODE?.trim() === "mock-wecom";
 const displayNamePrefix = "B3-A 虚构 Staging 助手验收 ";
 const expectedRetrievalMode = process.env.EXPECTED_RETRIEVAL_MODE?.trim() || "";
 assert(
@@ -37,10 +44,18 @@ const viewerAgentPrefix = "projectai-staging-assistant-viewer/0.6/";
 const managerUserAgent = `${managerAgentPrefix}${runId}`;
 const viewerUserAgent = `${viewerAgentPrefix}${runId}`;
 const modelProfileId = "qwen-project-assistant-cn-v1";
-const managerEmail = requiredEnvironment("SEED_MANAGER_A_EMAIL");
-const managerPassword = requiredEnvironment("SEED_MANAGER_A_PASSWORD");
-const viewerEmail = requiredEnvironment("SEED_VIEWER_A_EMAIL");
-const viewerPassword = requiredEnvironment("SEED_VIEWER_A_PASSWORD");
+const managerEmail = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_A_EMAIL");
+const managerPassword = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_MANAGER_A_PASSWORD");
+const viewerEmail = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_VIEWER_A_EMAIL");
+const viewerPassword = mockWeComVerification
+  ? null
+  : requiredEnvironment("SEED_VIEWER_A_PASSWORD");
 const trackedThreadIds = new Set<string>();
 
 type RetrievalPerformance = {
@@ -61,7 +76,20 @@ type RetrievalPerformance = {
 
 let manager: VerificationSession | null = null;
 let viewer: VerificationSession | null = null;
+const fixtureProjects: VerificationProjectFixture[] = [];
 let retrievalPerformance: RetrievalPerformance | null = null;
+
+async function cleanupFixtureProjects(): Promise<void> {
+  if (!manager) return;
+  while (fixtureProjects.length > 0) {
+    const fixture = fixtureProjects.at(-1)!;
+    await deleteVerificationProject({
+      environment,
+      fixture,
+    });
+    fixtureProjects.pop();
+  }
+}
 
 function threadPath(
   projectId: string,
@@ -240,8 +268,16 @@ async function ask(
   threadId: string,
   question: string,
   key: string = randomUUID(),
+  sourceDocumentIds: string[] = [],
 ): Promise<ProjectAssistantMessageResponse> {
-  const response = await askResponse(session, threadId, question, key);
+  const response = await askResponse(
+    session,
+    threadId,
+    question,
+    key,
+    modelProfileId,
+    sourceDocumentIds,
+  );
   assert(response.status === 200, `Assistant ask returned ${response.status}.`);
   return responseJson(response, "Assistant ask");
 }
@@ -252,6 +288,7 @@ async function askResponse(
   question: string,
   key: string,
   profileId = modelProfileId,
+  sourceDocumentIds: string[] = [],
 ): Promise<Response> {
   return authenticatedFetch(
     environment,
@@ -263,7 +300,11 @@ async function askResponse(
         "content-type": "application/json",
         "idempotency-key": key,
       },
-      body: JSON.stringify({ question, modelProfileId: profileId }),
+      body: JSON.stringify({
+        question,
+        modelProfileId: profileId,
+        sourceDocumentIds,
+      }),
     },
   );
 }
@@ -279,7 +320,10 @@ async function waitForIngestion(documentId: string, versionId: string) {
         environment.projectAId,
       )}/documents/${encodeURIComponent(documentId)}/versions`,
     );
-    assert(response.status === 200, "Version list failed.");
+    assert(
+      response.status === 200,
+      `Version list returned ${response.status}.`,
+    );
     const result = await responseJson<ProjectDocumentVersionsResponse>(
       response,
       "Version list",
@@ -334,19 +378,61 @@ async function waitForEmbeddingCoverage(documentId: string, versionId: string) {
 
 let verificationError: unknown;
 try {
-  await cleanupAll();
-  manager = await signIn({
-    environment,
-    email: managerEmail,
-    password: managerPassword,
-    userAgent: managerUserAgent,
-  });
-  viewer = await signIn({
-    environment,
-    email: viewerEmail,
-    password: viewerPassword,
-    userAgent: viewerUserAgent,
-  });
+  if (mockWeComVerification) {
+    manager = await signInMockWeCom({
+      environment,
+      identity: "super-admin",
+      userAgent: managerUserAgent,
+    });
+    viewer = await signInMockWeCom({
+      environment,
+      identity: "member",
+      userAgent: viewerUserAgent,
+    });
+    const suffix = runId.replaceAll("-", "");
+    const fixtureRunId = `uat-ai-${runId}`;
+    const projectA = await createVerificationProject({
+      environment,
+      session: manager,
+      fixtureRunId,
+      nameSuffix: suffix.slice(0, 8),
+    });
+    fixtureProjects.push(projectA);
+    const projectB = await createVerificationProject({
+      environment,
+      session: manager,
+      fixtureRunId,
+      nameSuffix: suffix.slice(-8),
+    });
+    fixtureProjects.push(projectB);
+    environment = {
+      ...environment,
+      projectAId: projectA.projectId,
+      projectBId: projectB.projectId,
+    };
+    assert(viewer.email, "Mock WeCom Viewer email is unavailable.");
+    await addVerificationProjectMember({
+      environment,
+      owner: manager,
+      projectId: projectA.projectId,
+      email: viewer.email,
+      role: "viewer",
+    });
+  } else {
+    await cleanupAll();
+    manager = await signIn({
+      environment,
+      email: managerEmail!,
+      password: managerPassword!,
+      userAgent: managerUserAgent,
+    });
+    viewer = await signIn({
+      environment,
+      email: viewerEmail!,
+      password: viewerPassword!,
+      userAgent: viewerUserAgent,
+    });
+  }
 
   const fixtureText = [
     "客户要求什么时候上线？客户要求在 2026 年 10 月 15 日上线。",
@@ -383,6 +469,7 @@ try {
     managerThread.thread.id,
     groundedQuestion,
     groundedKey,
+    [uploaded.document.id],
   );
   assert(grounded.execution.status === "succeeded", "Grounded ask did not succeed.");
   assert(
@@ -412,6 +499,8 @@ try {
       fallback_reason: string | null;
       vector_candidate_count: number;
       query_calls: number;
+      query_call_states: string;
+      embedding_coverage_bps: number;
       vector_latency_ms: number;
       total_latency_ms: number;
     }>(
@@ -419,11 +508,15 @@ try {
         r.requested_mode::text as requested_retrieval_mode,
         r.effective_mode::text as effective_retrieval_mode,
         r.fallback_reason,
+        r.embedding_coverage_bps,
         r.vector_candidate_count,
         r.vector_latency_ms,
         r.total_latency_ms,
         (select count(*)::int from ai_retrieval_query_embedding_calls q
-          where q.retrieval_run_id = r.id and q.status = 'succeeded') as query_calls
+          where q.retrieval_run_id = r.id and q.status = 'succeeded') as query_calls,
+        (select coalesce(string_agg(q.status::text, ',' order by q.status::text), 'none')
+          from ai_retrieval_query_embedding_calls q
+          where q.retrieval_run_id = r.id) as query_call_states
        from ai_retrieval_runs r where r.ai_execution_id = $1`,
       [grounded.execution.id],
     );
@@ -431,7 +524,14 @@ try {
     assert(
       run?.requested_retrieval_mode === expectedRetrievalMode &&
         run.vector_candidate_count > 0 && run.query_calls === 1,
-      "The expected Retrieval mode did not produce one successful Query Embedding and Vector candidates.",
+      `The expected Retrieval mode did not produce one successful Query Embedding and Vector candidates ` +
+        `(requested=${run?.requested_retrieval_mode ?? "missing"}, ` +
+        `effective=${run?.effective_retrieval_mode ?? "missing"}, ` +
+        `fallback=${run?.fallback_reason ?? "none"}, ` +
+        `coverageBps=${run?.embedding_coverage_bps ?? -1}, ` +
+        `vectorCandidates=${run?.vector_candidate_count ?? -1}, ` +
+        `queryCalls=${run?.query_calls ?? -1}, ` +
+        `queryStates=${run?.query_call_states ?? "missing"}).`,
     );
     assert(
       run.vector_latency_ms <= 1_500 && run.total_latency_ms <= 8_000,
@@ -452,6 +552,8 @@ try {
         manager,
         managerThread.thread.id,
         "这项工作计划在哪一天正式投产？",
+        randomUUID(),
+        [uploaded.document.id],
       );
       assert(
         semantic.execution.status === "succeeded" &&
@@ -468,6 +570,7 @@ try {
     managerThread.thread.id,
     groundedQuestion,
     groundedKey,
+    [uploaded.document.id],
   );
   assert(
     replay.execution.id === grounded.execution.id &&
@@ -488,6 +591,8 @@ try {
     managerThread.thread.id,
     `${titlePrefix}${runId}：这是不同的问题`,
     groundedKey,
+    modelProfileId,
+    [uploaded.document.id],
   );
   assert(
     conflictResponse.status === 409,
@@ -525,12 +630,16 @@ try {
       concurrentThread.thread.id,
       `${titlePrefix}${runId} 并发 A：客户要求什么时候上线？`,
       concurrentKey,
+      modelProfileId,
+      [uploaded.document.id],
     ),
     askResponse(
       manager,
       concurrentThread.thread.id,
       `${titlePrefix}${runId} 并发 B：客户上线日期是什么？`,
       concurrentKey,
+      modelProfileId,
+      [uploaded.document.id],
     ),
   ]);
   assert(
@@ -575,11 +684,12 @@ try {
     "Concurrent conflict created more than one Execution or Message pair.",
   );
 
-  const managerUser = await pool.query<{ id: string }>(
-    "select id from users where email = $1",
-    [managerEmail],
-  );
-  const managerUserId = managerUser.rows[0]?.id;
+  const managerUserId = manager.userId ?? (
+    await pool.query<{ id: string }>(
+      "select id from users where email = $1",
+      [managerEmail],
+    )
+  ).rows[0]?.id;
   assert(managerUserId, "Manager identity was not found for stale verification.");
   const staleFixtures = ["reserved", "calling_provider", "validating"].map(
     (status, index) => ({
@@ -780,6 +890,8 @@ try {
     viewer,
     viewerThread.thread.id,
     `${titlePrefix}${runId} Viewer：客户要求什么时候上线？`,
+    randomUUID(),
+    [uploaded.document.id],
   );
   assert(
     viewerAnswer.execution.status === "succeeded" &&
@@ -992,10 +1104,6 @@ try {
     );
   }
 
-  await signOut(environment, manager);
-  await signOut(environment, viewer);
-  manager = null;
-  viewer = null;
   const cleanup = await cleanupAll();
   const running = await pool.query<{ count: number }>(
     `select count(*)::int as count
@@ -1004,6 +1112,11 @@ try {
   );
   assert(running.rows[0]?.count === 0, "Staging retains a running AI Execution.");
 
+  await cleanupFixtureProjects();
+  await signOut(environment, manager);
+  await signOut(environment, viewer);
+  manager = null;
+  viewer = null;
   process.stdout.write(
     `${JSON.stringify({
       ok: true,
@@ -1034,17 +1147,31 @@ try {
   verificationError = error;
   throw error;
 } finally {
+  const cleanupErrors: unknown[] = [];
+  try {
+    await cleanupAll();
+  } catch (cleanupError) {
+    cleanupErrors.push(cleanupError);
+  }
+  try {
+    await cleanupFixtureProjects();
+  } catch (cleanupError) {
+    cleanupErrors.push(cleanupError);
+  }
   try {
     await signOut(environment, manager);
     await signOut(environment, viewer);
   } catch (cleanupError) {
-    if (!verificationError) throw cleanupError;
-  }
-  try {
-    await cleanupAll();
-  } catch (cleanupError) {
-    if (!verificationError) throw cleanupError;
+    cleanupErrors.push(cleanupError);
   } finally {
     await closeDatabasePool();
+  }
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError(
+      verificationError
+        ? [verificationError, ...cleanupErrors]
+        : cleanupErrors,
+      "Grounded AI verification cleanup failed.",
+    );
   }
 }

@@ -1,0 +1,7 @@
+ALTER TABLE "workflow_runs" DROP CONSTRAINT "workflow_runs_status_check";--> statement-breakpoint
+ALTER TABLE "workflow_artifacts" ADD COLUMN "published_document_id" text;--> statement-breakpoint
+ALTER TABLE "workflow_artifacts" ADD COLUMN "published_document_version_id" text;--> statement-breakpoint
+ALTER TABLE "workflow_artifacts" ADD COLUMN "published_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "workflow_artifacts" ADD CONSTRAINT "workflow_artifacts_published_document_id_project_documents_id_fk" FOREIGN KEY ("published_document_id") REFERENCES "public"."project_documents"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_artifacts" ADD CONSTRAINT "workflow_artifacts_published_document_version_id_project_document_versions_id_fk" FOREIGN KEY ("published_document_version_id") REFERENCES "public"."project_document_versions"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_status_check" CHECK ("workflow_runs"."status" in ('legacy_read_only', 'queued', 'validating_sources', 'parsing_sources', 'extracting_facts', 'identifying_gaps', 'generating_overview', 'generating_requirements', 'generating_ga4', 'generating_action_plan', 'checking_consistency', 'uploading', 'uploaded', 'transcribing', 'diarizing', 'normalizing', 'summarizing', 'awaiting_review', 'publishing', 'published', 'failed', 'cancelled'));

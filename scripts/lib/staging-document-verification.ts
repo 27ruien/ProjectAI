@@ -1,10 +1,24 @@
 import { getPool } from "../../lib/db/client";
 import { getObjectStorage } from "../../lib/files/object-storage";
+import { deleteRegisteredFixtureProject } from "../../lib/test-fixtures/service";
 import { fetchWithPublicHost } from "./fetch-with-public-host";
 
 export type VerificationSession = {
   cookie: string;
   userAgent: string;
+  userId?: string;
+  email?: string;
+};
+
+export type MockWeComVerificationIdentity =
+  | "super-admin"
+  | "admin"
+  | "member";
+
+export type VerificationProjectFixture = {
+  projectId: string;
+  fixtureRunId: string;
+  expiresAt: string;
 };
 
 export type DocumentVerificationEnvironment = {
@@ -94,6 +108,201 @@ export async function signIn(input: {
   const cookie = cookies.map((value) => value.split(";", 1)[0]).join("; ");
   assert(cookie, "Staging login did not create a Session.");
   return { cookie, userAgent: input.userAgent };
+}
+
+export async function signInMockWeCom(input: {
+  environment: DocumentVerificationEnvironment;
+  identity: MockWeComVerificationIdentity;
+  userAgent: string;
+}): Promise<VerificationSession> {
+  const response = await stagingFetch(
+    input.environment,
+    "api/auth/sign-in/mock-wecom",
+    {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        "content-type": "application/json",
+        origin: input.environment.requestOrigin,
+        "user-agent": input.userAgent,
+      },
+      body: JSON.stringify({ identity: input.identity }),
+    },
+  );
+  assert(
+    response.status === 200,
+    `Staging Mock WeCom login returned ${response.status}.`,
+  );
+  const body = await responseJson<{ authenticated?: boolean }>(
+    response,
+    "Staging Mock WeCom login",
+  );
+  assert(
+    body.authenticated === true && !("token" in body),
+    "Staging Mock WeCom login returned an unsafe response.",
+  );
+  const cookies = response.headers.getSetCookie?.() ?? [];
+  const cookie = cookies.map((value) => value.split(";", 1)[0]).join("; ");
+  assert(cookie, "Staging Mock WeCom login did not create a Session.");
+
+  const sessionResponse = await stagingFetch(
+    input.environment,
+    "api/auth/get-session",
+    {
+      headers: {
+        cookie,
+        "user-agent": input.userAgent,
+      },
+    },
+  );
+  assert(
+    sessionResponse.status === 200,
+    `Staging Mock WeCom Session lookup returned ${sessionResponse.status}.`,
+  );
+  const session = await responseJson<{
+    user?: { id?: string; email?: string };
+  }>(sessionResponse, "Staging Mock WeCom Session lookup");
+  assert(
+    Boolean(session.user?.id && session.user.email),
+    "Staging Mock WeCom Session identity is incomplete.",
+  );
+  assert(
+    !("token" in session) && !JSON.stringify(session).match(/sessionToken/i),
+    "Staging Mock WeCom Session lookup exposed a token.",
+  );
+  return {
+    cookie,
+    userAgent: input.userAgent,
+    userId: session.user!.id,
+    email: session.user!.email,
+  };
+}
+
+function fixtureHeaders(fixture: {
+  fixtureRunId: string;
+  expiresAt: string;
+}): Record<string, string> {
+  return {
+    "x-projectai-fixture-run-id": fixture.fixtureRunId,
+    "x-projectai-fixture-expires-at": fixture.expiresAt,
+  };
+}
+
+export async function createVerificationProject(input: {
+  environment: DocumentVerificationEnvironment;
+  session: VerificationSession;
+  fixtureRunId: string;
+  nameSuffix: string;
+}): Promise<VerificationProjectFixture> {
+  assert(
+    /^[a-f0-9]{8}$/.test(input.nameSuffix),
+    "Staging verification Project suffix is invalid.",
+  );
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+  const response = await authenticatedFetch(
+    input.environment,
+    input.session,
+    "api/projects",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...fixtureHeaders({ fixtureRunId: input.fixtureRunId, expiresAt }),
+      },
+      body: JSON.stringify({
+        name: `Product V2 ACL UAT ${input.nameSuffix}`,
+        clientName: "Fictional ProjectAI Verification",
+        description: "Synthetic Staging verification fixture.",
+        status: "active",
+        stage: "testing",
+        health: "healthy",
+        departmentId: "kivisense-dept-product-management",
+      }),
+    },
+  );
+  assert(
+    response.status === 201,
+    `Staging verification Project create returned ${response.status}.`,
+  );
+  const body = await responseJson<{ project?: { id?: string } }>(
+    response,
+    "Staging verification Project create",
+  );
+  assert(body.project?.id, "Staging verification Project ID is missing.");
+  return {
+    projectId: body.project.id,
+    fixtureRunId: input.fixtureRunId,
+    expiresAt,
+  };
+}
+
+export async function findVerificationProjects(
+  fixtureRunId: string,
+): Promise<VerificationProjectFixture[]> {
+  const result = await getPool().query<{
+    entity_id: string;
+    expires_at: Date;
+  }>(
+    `select entity_id, expires_at
+     from test_fixtures
+     where fixture_run_id = $1
+       and environment = 'staging'
+       and entity_type = 'project'
+       and is_test_fixture = true
+     order by created_at, entity_id`,
+    [fixtureRunId],
+  );
+  return result.rows.map((row) => ({
+    projectId: row.entity_id,
+    fixtureRunId,
+    expiresAt: row.expires_at.toISOString(),
+  }));
+}
+
+export async function addVerificationProjectMember(input: {
+  environment: DocumentVerificationEnvironment;
+  owner: VerificationSession;
+  projectId: string;
+  email: string;
+  role: "project_manager" | "project_member" | "viewer";
+}): Promise<void> {
+  const response = await authenticatedFetch(
+    input.environment,
+    input.owner,
+    `api/projects/${encodeURIComponent(input.projectId)}/members`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: input.email, role: input.role }),
+    },
+  );
+  assert(
+    response.status === 201,
+    `Staging verification Project member create returned ${response.status}.`,
+  );
+}
+
+export async function deleteVerificationProject(input: {
+  environment: DocumentVerificationEnvironment;
+  fixture: VerificationProjectFixture;
+}): Promise<void> {
+  assert(
+    process.env.NEXT_PUBLIC_APP_ENV === "staging" &&
+      new URL(input.environment.baseUrl).pathname.startsWith(
+        "/tool/projectai-staging",
+      ),
+    "Verification fixture cleanup is Staging-only.",
+  );
+  const deleted = await deleteRegisteredFixtureProject({
+    fixtureRunId: input.fixture.fixtureRunId,
+    environment: "staging",
+    expiresAt: new Date(input.fixture.expiresAt),
+    projectId: input.fixture.projectId,
+  });
+  assert(
+    deleted.projects === 1,
+    "Staging verification Project cleanup did not delete its exact fixture.",
+  );
 }
 
 export function authenticatedFetch(

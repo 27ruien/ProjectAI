@@ -10,7 +10,7 @@ function sha256(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function normalizedText(value: string): string {
+export function normalizedDocumentText(value: string): string {
   return value
     .normalize("NFKC")
     .replace(/\r\n?/g, "\n")
@@ -18,6 +18,15 @@ function normalizedText(value: string): string {
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export function structuredKeywords(value: string): string[] {
+  const counts = new Map<string, number>();
+  for (const token of value.normalize("NFKC").toLocaleLowerCase().match(/[\p{L}\p{N}_-]{2,32}/gu) ?? []) {
+    if (/^\d+$/.test(token)) continue;
+    counts.set(token, (counts.get(token) ?? 0) + 1);
+  }
+  return [...counts].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0])).slice(0, 12).map(([token]) => token);
 }
 
 function boundaries(value: string): string[] {
@@ -56,7 +65,7 @@ function chunksForSection(
   section: ParsedSection,
   config: DocumentProcessingConfig,
 ): string[] {
-  const content = normalizedText(section.content);
+  const content = normalizedDocumentText(section.content);
   if (content.length <= config.chunkTargetChars) return [content];
   const units = boundaries(content).flatMap((unit) =>
     unit.length > config.chunkTargetChars
@@ -100,6 +109,8 @@ export function createDeterministicChunks(
   const output: DeterministicChunk[] = [];
   for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex += 1) {
     const section = sections[sectionIndex]!;
+    const parentContent = normalizedDocumentText(section.content);
+    const parentContentSha256 = sha256(parentContent);
     for (const content of chunksForSection(section, config)) {
       if (!content.trim()) continue;
       if (output.length >= config.maxChunks) {
@@ -108,7 +119,7 @@ export function createDeterministicChunks(
           "Document chunk count exceeds the processing limit.",
         );
       }
-      const searchText = normalizedText(
+      const searchText = normalizedDocumentText(
         [...section.headingPath, content].filter(Boolean).join("\n"),
       );
       output.push({
@@ -120,6 +131,12 @@ export function createDeterministicChunks(
         characterCount: content.length,
         estimatedTokenCount: Math.max(1, Math.ceil(content.length / 4)),
         headingPath: [...section.headingPath],
+        chunkType: section.sectionType,
+        parentContent,
+        parentContentSha256,
+        parseQualityBps: parentContent.length ? 10_000 : 0,
+        keywords: structuredKeywords([...section.headingPath, content].join("\n")),
+        summary: content.slice(0, 240),
         sourceLocator: section.sourceLocator,
       });
     }

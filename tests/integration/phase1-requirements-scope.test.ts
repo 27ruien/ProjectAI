@@ -122,10 +122,17 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
     const outcomes = await Promise.allSettled([extractRequirementDrafts(input), extractRequirementDrafts(input)]);
     const fulfilled = outcomes.filter((outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof extractRequirementDrafts>>> => outcome.status === "fulfilled");
     const rejected = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
-    assert.equal(fulfilled.length, 1);
-    assert.equal(rejected.length, 1);
-    assert.equal((rejected[0]!.reason as { code?: string }).code, "WORKFLOW_ALREADY_RUNNING");
-    const first = fulfilled[0]!.value;
+    const original = fulfilled.filter((outcome) => outcome.value.replayed === false);
+    const replays = fulfilled.filter((outcome) => outcome.value.replayed === true);
+    assert.equal(original.length, 1);
+    assert.equal(replays.length + rejected.length, 1);
+    if (rejected.length) {
+      assert.equal((rejected[0]!.reason as { code?: string }).code, "WORKFLOW_ALREADY_RUNNING");
+    }
+    const first = original[0]!.value;
+    if (replays.length) {
+      assert.equal(replays[0]!.value.run.id, first.run.id);
+    }
     const storedRuns = await getDb().select().from(requirementExtractionRun).where(eq(requirementExtractionRun.idempotencyKeyHash, first.run.idempotencyKeyHash));
     const storedDrafts = await getDb().select().from(requirementDraft).where(eq(requirementDraft.extractionRunId, first.run.id));
     const formal = await getDb().select().from(requirement).where(eq(requirement.projectId, projectId));

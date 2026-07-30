@@ -229,7 +229,7 @@
 
 - 状态：Accepted。
 - 决策：`hybrid-rrf-v1` 使用原 Lexical Top 30、exact cosine Vector Top 30 与确定性 RRF（K=60、权重 1:1），而不是在本轮引入 ANN 或 Reranker。
-- 参数：Fused Top 30、Evidence Top 10、最大距离 0.55、Coverage 9800 bps；参数由 60 条虚构 Query 的距离分布和完整质量门禁冻结。任何调整创建 v2，不原地修改 v1。
+- 参数：Fused Top 30、Evidence Top 10、最大距离 0.55、Coverage 9800 bps；参数由至少 60 条虚构 Query 的距离分布和完整质量门禁冻结。评测集可以只增不减，任何检索参数调整创建 v2，不原地修改 v1。
 - 原因：先得到可复现、可解释、无近似索引变量的质量和延迟基线；只有真实规模证明 exact scan 不足时，后续 ADR 才能评估 ANN。
 
 ## ADR-036：Shadow 必须先于 Hybrid，所有失败回退 Lexical
@@ -259,7 +259,7 @@
 - 决策：B3-C2A 只开发 Rollout Executor，不执行 Production。formal Authorization 使用 Ed25519 签名并绑定 Session/SHA/App 与 db-tools Image/Baseline/Go-No-Go/Phase/Action/过期时间；Action 固定为 `apply`、`resume`、`rollback`、`finalize`、`lock-clear` 或 `image-transfer`，本阶段不生成 formal Authorization。
 - 执行：Phase 0–6 独立调用、独立报告、非零观察窗口和前置报告；状态保存在原子 Lock 与 Digest Journal，支持 Status/Resume/Rollback，禁止一键全阶段和 `docker compose down`。
 - 原因：JSON 布尔值和可重算 Digest 不能代表独立操作授权；签名、短有效期、阶段范围和实时基线共同降低误操作与重放风险。
-- 范围：C1/C2/D 冻结；Rerank、ANN、OCR、Tool Calling、Agent Execution 未开始。正式变更属于 B3-C2B。
+- 历史范围：该 B3-C2A 决策冻结 C1/C2/D，并禁止在当轮引入 Rerank、ANN、OCR、Tool Calling 或 Agent Execution。后续 Workflow and Knowledge V3 另行实现了 ACL 后、Candidate 集合内的受控 Rerank；Production 执行器和 B3-C2B 授权边界不变。
 
 ## DEC-022 — Production Trust、Verification 与 Egress 必须独立固定
 

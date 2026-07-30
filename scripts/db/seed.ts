@@ -223,16 +223,28 @@ async function main(): Promise<void> {
 
   await getDb()
     .insert(aiModelProfile)
-    .values({
-      id: "qwen-project-assistant-cn-v1",
-      provider: "qwen",
-      purpose: "project_assistant",
-      primaryModel: "qwen3.7-plus",
-      fallbackModel: "qwen3.6-flash",
-      region: "cn-beijing",
-      enabled: true,
-      gatewayVersion: "1",
-    })
+    .values([
+      {
+        id: "qwen-project-assistant-cn-v1",
+        provider: "qwen",
+        purpose: "project_assistant",
+        primaryModel: "qwen3.7-plus",
+        fallbackModel: "qwen3.6-flash",
+        region: "cn-beijing",
+        enabled: true,
+        gatewayVersion: "1",
+      },
+      {
+        id: "qwen-meeting-transcription-cn-v1",
+        provider: "alibaba-model-studio",
+        purpose: "audio_transcription",
+        primaryModel: "paraformer-v2",
+        fallbackModel: "paraformer-v2",
+        region: "cn-beijing",
+        enabled: true,
+        gatewayVersion: "1",
+      },
+    ])
     .onConflictDoNothing({ target: aiModelProfile.id });
 
   const userIds = new Map<SeedUserKey, string>();

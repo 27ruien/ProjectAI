@@ -13,6 +13,10 @@ import {
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
 import { KnowledgeManagementError } from "@/lib/knowledge/errors";
+import {
+  registerTestFixture,
+  type FixtureContext,
+} from "@/lib/test-fixtures/service";
 
 async function requireKivisenseSuperAdmin(
   principal: AuthenticatedPrincipal,
@@ -66,7 +70,10 @@ export async function getOrganizationTree(principal: AuthenticatedPrincipal) {
     db
       .select()
       .from(department)
-      .where(eq(department.organizationId, currentOrganization.id))
+      .where(and(
+        eq(department.organizationId, currentOrganization.id),
+        eq(department.status, "active"),
+      ))
       .orderBy(asc(department.level), asc(department.sortOrder), asc(department.name)),
     db
       .select({ id: user.id, displayName: user.displayName, productRole: user.productRole })
@@ -91,6 +98,7 @@ export async function createOrganizationDepartment(input: {
   code: string;
   headUserIds: string[];
   sortOrder: number;
+  fixture?: FixtureContext | null;
   requestHeaders: Headers;
 }) {
   return getDb().transaction(async (tx) => {
@@ -138,8 +146,9 @@ export async function createOrganizationDepartment(input: {
         createdBy: input.principal.user.id,
       })
       .returning();
+    const knowledgeSpaceId = `ks-department-${id}`;
     await tx.insert(knowledgeSpace).values({
-      id: `ks-department-${id}`,
+      id: knowledgeSpaceId,
       organizationId: currentOrganization.id,
       departmentId: id,
       type: "department",
@@ -148,6 +157,20 @@ export async function createOrganizationDepartment(input: {
       description: "部门默认共享知识空间",
       createdBy: input.principal.user.id,
     });
+    if (input.fixture) {
+      await registerTestFixture(
+        { ...input.fixture, entityType: "department", entityId: id },
+        tx,
+      );
+      await registerTestFixture(
+        {
+          ...input.fixture,
+          entityType: "knowledge_space",
+          entityId: knowledgeSpaceId,
+        },
+        tx,
+      );
+    }
     await writeAuditEvent(
       {
         actorUserId: input.principal.user.id,
