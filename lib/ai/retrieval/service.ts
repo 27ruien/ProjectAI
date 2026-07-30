@@ -9,7 +9,12 @@ import {
 import { controlledEmbeddingError } from "@/lib/ai/embeddings/errors";
 import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
 import { requireAiAssistantEnabled } from "@/lib/ai/project-assistant/config";
-import { createProjectAssistantGateway, type ProjectAssistantGateway } from "@/lib/ai/project-assistant/gateway";
+import { ProjectAssistantError } from "@/lib/ai/project-assistant/errors";
+import {
+  createProjectAssistantGateway,
+  type ProjectAssistantGateway,
+  type ProjectAssistantGatewayInput,
+} from "@/lib/ai/project-assistant/gateway";
 import { getDb } from "@/lib/db/client";
 import type { AiExecutionRecord } from "@/lib/db/schema";
 import {
@@ -27,10 +32,13 @@ import {
 } from "./config";
 import {
   createRetrievalRun,
+  finalizeRetrievalProviderCallSucceeded,
+  finalizeRetrievalProviderCallUnknown,
   finalizeQueryEmbeddingCallFailed,
   finalizeQueryEmbeddingCallSucceeded,
   finalizeRetrievalRun,
   markQueryEmbeddingCallDispatched,
+  reserveRetrievalProviderCall,
   reserveQueryEmbeddingCall,
   retrievalProfileState,
 } from "./repository";
@@ -404,6 +412,79 @@ function vectorFailureReason(error: unknown): RetrievalFallbackReason {
   return code === "57014" ? "VECTOR_RETRIEVAL_TIMEOUT" : "VECTOR_RETRIEVAL_FAILED";
 }
 
+function mergeLexicalCandidateLists(
+  lists: RankedProjectKnowledgeEvidence[][],
+): RankedProjectKnowledgeEvidence[] {
+  const byChunk = new Map<string, RankedProjectKnowledgeEvidence>();
+  for (const candidate of lists.flat()) {
+    const previous = byChunk.get(candidate.evidence.chunkId);
+    if (!previous || candidate.evidence.score > previous.evidence.score) {
+      byChunk.set(candidate.evidence.chunkId, candidate);
+    }
+  }
+  return [...byChunk.values()]
+    .sort(
+      (left, right) =>
+        right.evidence.score - left.evidence.score ||
+        left.evidence.chunkId.localeCompare(right.evidence.chunkId),
+    )
+    .slice(0, HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit)
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+}
+
+function durableRetrievalGateway(input: {
+  gateway: ProjectAssistantGateway;
+  retrievalRunId: string;
+  execution: AiExecutionRecord;
+}): Pick<ProjectAssistantGateway, "generate"> {
+  return {
+    async generate(request: ProjectAssistantGatewayInput) {
+      if (request.purpose !== "query_rewrite" && request.purpose !== "rerank") {
+        throw new Error("Unsupported durable retrieval Provider purpose.");
+      }
+      const reservedTokenCount = Math.max(
+        1,
+        Math.min(
+          100_000,
+          request.systemPrompt.length +
+            request.userPrompt.length +
+            Math.max(64, request.maxOutputTokens ?? 4_096),
+        ),
+      );
+      const reservation = await reserveRetrievalProviderCall({
+        retrievalRunId: input.retrievalRunId,
+        execution: input.execution,
+        purpose: request.purpose,
+        skillId: `retrieval.${request.purpose}`,
+        reservedTokenCount,
+      });
+      if (!reservation.reserved) {
+        throw new ProjectAssistantError(
+          429,
+          reservation.reason,
+          reservation.reason === "AI_USER_DAILY_LIMIT_REACHED"
+            ? "今日个人 AI 用量已达上限"
+            : "今日项目 AI 用量已达上限",
+        );
+      }
+      let result;
+      try {
+        result = await input.gateway.generate(request);
+      } catch (error) {
+        await finalizeRetrievalProviderCallUnknown(reservation.callId).catch(
+          () => undefined,
+        );
+        throw error;
+      }
+      await finalizeRetrievalProviderCallSucceeded({
+        callId: reservation.callId,
+        result,
+      });
+      return result;
+    },
+  };
+}
+
 export async function retrieveProjectEvidence(input: {
   principal: AuthenticatedPrincipal;
   projectId: string;
@@ -420,14 +501,14 @@ export async function retrieveProjectEvidence(input: {
     throw new Error("Server retrieval configuration mismatch.");
   }
   const totalStarted = performance.now();
-  let gateway: ProjectAssistantGateway | undefined;
+  let providerGateway: ProjectAssistantGateway | undefined;
   if (await isAiProviderConfigured()) {
-    try { gateway = createProjectAssistantGateway(requireAiAssistantEnabled()); } catch { gateway = undefined; }
+    try { providerGateway = createProjectAssistantGateway(requireAiAssistantEnabled()); } catch { providerGateway = undefined; }
   }
   const processingStarted = performance.now();
-  const processed = await processBoundedQuery({ query: input.query, gateway });
-  const queryProcessingLatencyMs = elapsed(processingStarted);
-  const query = processed.normalizedQuery;
+  let processed = await processBoundedQuery({ query: input.query });
+  let queryProcessingLatencyMs = elapsed(processingStarted);
+  let query = processed.normalizedQuery;
   const retrievalRunId = await createRetrievalRun({
     execution: input.execution,
     querySha256: createHash("sha256").update(processed.originalQuery).digest("hex"),
@@ -436,17 +517,40 @@ export async function retrieveProjectEvidence(input: {
     queryProcessingLatencyMs,
     requestedMode: input.mode,
   });
-
   const lexicalStarted = performance.now();
-  const lexicalLists = await Promise.all(processed.rewrittenQueries.map((rewrittenQuery) => retrieveLexicalProjectCandidates({ actorUserId: input.principal.user.id, projectId: input.projectId, query: rewrittenQuery, limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit, documentIds: input.sourceDocumentIds })));
-  const lexicalByChunk = new Map<string, RankedProjectKnowledgeEvidence>();
-  for (const candidate of lexicalLists.flat()) {
-    const previous = lexicalByChunk.get(candidate.evidence.chunkId);
-    if (!previous || candidate.evidence.score > previous.evidence.score) lexicalByChunk.set(candidate.evidence.chunkId, candidate);
+  let lexicalLists = [await retrieveLexicalProjectCandidates({
+    actorUserId: input.principal.user.id,
+    projectId: input.projectId,
+    query,
+    limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit,
+    documentIds: input.sourceDocumentIds,
+  })];
+  let lexicalLatencyMs = elapsed(lexicalStarted);
+  let lexical = mergeLexicalCandidateLists(lexicalLists);
+  let lexicalEvidence = selectLexicalEvidence(lexical);
+  const retrievalGateway = providerGateway
+    ? durableRetrievalGateway({
+        gateway: providerGateway,
+        retrievalRunId,
+        execution: input.execution,
+      })
+    : undefined;
+  if (retrievalGateway && lexicalEvidence.length > 0) {
+    const rewriteStarted = performance.now();
+    processed = await processBoundedQuery({
+      query: input.query,
+      gateway: retrievalGateway,
+    });
+    queryProcessingLatencyMs += elapsed(rewriteStarted);
+    query = processed.normalizedQuery;
+    if (processed.rewriteUsed) {
+      const rewrittenLexicalStarted = performance.now();
+      lexicalLists = await Promise.all(processed.rewrittenQueries.map((rewrittenQuery) => retrieveLexicalProjectCandidates({ actorUserId: input.principal.user.id, projectId: input.projectId, query: rewrittenQuery, limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit, documentIds: input.sourceDocumentIds })));
+      lexicalLatencyMs += elapsed(rewrittenLexicalStarted);
+      lexical = mergeLexicalCandidateLists(lexicalLists);
+      lexicalEvidence = selectLexicalEvidence(lexical);
+    }
   }
-  const lexical = [...lexicalByChunk.values()].sort((left, right) => right.evidence.score - left.evidence.score || left.evidence.chunkId.localeCompare(right.evidence.chunkId)).slice(0, HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit).map((candidate, index) => ({ ...candidate, rank: index + 1 }));
-  const lexicalLatencyMs = elapsed(lexicalStarted);
-  const lexicalEvidence = selectLexicalEvidence(lexical);
   let coverageBps = 0;
   let queryEmbeddingLatencyMs = 0;
   let vectorLatencyMs = 0;
@@ -523,7 +627,7 @@ export async function retrieveProjectEvidence(input: {
                 candidate.finalRank !== null,
             );
             fusionLatencyMs = elapsed(fusionStarted);
-            const reranked = await rerankAuthorizedCandidates({ query, candidates: fused, gateway });
+            const reranked = await rerankAuthorizedCandidates({ query, candidates: fused, gateway: retrievalGateway });
             rerankLatencyMs = reranked.latencyMs;
             rerankFallbackReason = reranked.fallbackReason;
             fused = reranked.candidates.map((candidate, index) => ({ ...candidate, finalRank: index + 1 }));
@@ -554,6 +658,8 @@ export async function retrieveProjectEvidence(input: {
   await finalizeRetrievalRun({
     retrievalRunId,
     executionId: input.execution.id,
+    normalizedQuerySha256: createHash("sha256").update(query).digest("hex"),
+    rewrittenQueryCount: processed.rewrittenQueries.length,
     effectiveMode,
     fallbackReason,
     insufficientEvidence: evidence.length === 0,

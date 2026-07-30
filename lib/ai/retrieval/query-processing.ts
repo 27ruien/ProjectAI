@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { ProjectAssistantGateway } from "@/lib/ai/project-assistant/gateway";
+import { ProjectAssistantError } from "@/lib/ai/project-assistant/errors";
 
 const rewriteSchema = z.object({
   normalizedQuery: z.string().trim().min(2).max(2_000),
@@ -34,7 +35,7 @@ export function requiresQueryRewrite(value: string): boolean {
   return query.length >= 80 || /(?:以及|同时|分别|对比|综合|归纳|为什么|影响|and|compare|across|synthesi)/i.test(query);
 }
 
-export async function processBoundedQuery(input: { query: string; gateway?: ProjectAssistantGateway }): Promise<ProcessedQuery> {
+export async function processBoundedQuery(input: { query: string; gateway?: Pick<ProjectAssistantGateway, "generate"> }): Promise<ProcessedQuery> {
   const originalQuery = normalize(input.query);
   const fallback: ProcessedQuery = {
     originalQuery,
@@ -57,7 +58,8 @@ export async function processBoundedQuery(input: { query: string; gateway?: Proj
     if (!parsed.success) return { ...fallback, fallbackReason: "QUERY_REWRITE_INVALID" };
     const rewrittenQueries = [...new Set([parsed.data.normalizedQuery, ...parsed.data.rewrittenQueries].map(normalize))].filter((item) => item.length >= 2).slice(0, 3);
     return { ...parsed.data, originalQuery, rewrittenQueries, language: language(originalQuery), rewriteUsed: true, fallbackReason: null };
-  } catch {
+  } catch (error) {
+    if (error instanceof ProjectAssistantError && error.status === 429) throw error;
     return { ...fallback, fallbackReason: "QUERY_REWRITE_UNAVAILABLE" };
   }
 }

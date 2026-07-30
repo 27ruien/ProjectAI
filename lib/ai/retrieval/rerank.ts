@@ -1,12 +1,13 @@
 import { z } from "zod";
 import type { ProjectAssistantGateway } from "@/lib/ai/project-assistant/gateway";
+import { ProjectAssistantError } from "@/lib/ai/project-assistant/errors";
 
 const resultSchema = z.object({ ranking: z.array(z.string().min(1).max(200)).max(30) }).strict();
 
 export async function rerankAuthorizedCandidates<T extends { chunkId: string; value: { content: string } }>(input: {
   query: string;
   candidates: T[];
-  gateway?: ProjectAssistantGateway;
+  gateway?: Pick<ProjectAssistantGateway, "generate">;
 }): Promise<{ candidates: T[]; fallbackReason: string | null; latencyMs: number }> {
   if (!input.gateway || input.candidates.length < 2) return { candidates: input.candidates, fallbackReason: input.gateway ? null : "RERANK_NOT_CONFIGURED", latencyMs: 0 };
   const started = performance.now();
@@ -23,7 +24,8 @@ export async function rerankAuthorizedCandidates<T extends { chunkId: string; va
     }
     const byId = new Map(input.candidates.map((candidate) => [candidate.chunkId, candidate]));
     return { candidates: parsed.data.ranking.map((id) => byId.get(id)!), fallbackReason: null, latencyMs: Math.max(0, Math.round(performance.now() - started)) };
-  } catch {
+  } catch (error) {
+    if (error instanceof ProjectAssistantError && error.status === 429) throw error;
     return { candidates: input.candidates, fallbackReason: "RERANK_UNAVAILABLE", latencyMs: Math.max(0, Math.round(performance.now() - started)) };
   }
 }

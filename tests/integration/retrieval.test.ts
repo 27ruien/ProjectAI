@@ -8,12 +8,15 @@ import {
   askProjectAssistant,
   createProjectAssistantThread,
 } from "../../lib/ai/project-assistant";
+import { ProjectAssistantError } from "../../lib/ai/project-assistant/errors";
+import { finalizeRetrievalProviderCallSucceeded } from "../../lib/ai/retrieval/repository";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   aiExecution,
   aiMessage,
   aiMessageCitation,
   aiRetrievalCandidate,
+  aiRetrievalProviderCall,
   aiRetrievalProfile,
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
@@ -80,6 +83,7 @@ async function clearState(): Promise<void> {
   await getDb().transaction(async (tx) => {
     await tx.delete(aiMessageCitation);
     await tx.delete(aiRetrievalCandidate);
+    await tx.delete(aiRetrievalProviderCall);
     await tx.delete(aiRetrievalQueryEmbeddingCall);
     await tx.delete(aiRetrievalRun);
     await tx.delete(aiExecution);
@@ -351,6 +355,168 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
     const [candidate] = await getDb().select().from(aiRetrievalCandidate);
     assert.equal(candidate?.candidateSource, "vector");
     assert.equal(candidate?.selectedAsEvidence, true);
+    assert.equal(
+      (await getDb().select().from(aiRetrievalProviderCall)).some(
+        (call) => call.purpose === "query_rewrite",
+      ),
+      false,
+    );
+  });
+
+  it("persists bounded Rewrite and Rerank calls with profile, usage, cost, and status", async () => {
+    const query = "虚构综合检查";
+    const vector = await vectorFor(query);
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "durable-provider-a",
+      content: "虚构综合检查来源一：发布日期 2031-04-09，预算待确认。",
+      vector,
+    });
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "durable-provider-b",
+      content: "虚构综合检查来源二：验收责任人待确认，发布日期 2031-04-09。",
+      vector,
+    });
+    const { result } = await ask(query);
+    assert.equal(result.execution.status, "succeeded");
+    const calls = await getDb().select().from(aiRetrievalProviderCall);
+    assert.deepEqual(calls.map((call) => call.purpose).sort(), ["query_rewrite", "rerank"]);
+    assert.equal(calls.every((call) => call.status === "succeeded"), true);
+    assert.equal(calls.every((call) => call.modelProfileId === "qwen-project-assistant-cn-v1"), true);
+    assert.equal(calls.every((call) => call.skillId === `retrieval.${call.purpose}`), true);
+    assert.equal(calls.every((call) => (call.totalTokenCount ?? 0) > 0), true);
+    assert.equal(calls.every((call) => call.costUsdMicros === null), true);
+    assert.equal(calls.every((call) => call.completedAt !== null), true);
+    const settled = calls[0]!;
+    await assert.rejects(
+      finalizeRetrievalProviderCallSucceeded({
+        callId: settled.id,
+        result: {
+          provider: "fake",
+          requestedModel: "qwen3.7-plus",
+          actualModel: "qwen3.7-plus",
+          fallbackUsed: false,
+          text: "{}",
+          inputTokens: 1,
+          outputTokens: 1,
+          totalTokens: 2,
+          costUsdMicros: 1,
+          providerRequestId: "duplicate-settlement",
+          latencyMs: 1,
+        },
+      }),
+    );
+    await assert.rejects(
+      getDb()
+        .update(aiRetrievalProviderCall)
+        .set({ latencyMs: settled.latencyMs + 1 })
+        .where(eq(aiRetrievalProviderCall.id, settled.id)),
+      (error: unknown) => postgresErrorCode(error) === "P0001",
+    );
+    const [unchanged] = await getDb()
+      .select()
+      .from(aiRetrievalProviderCall)
+      .where(eq(aiRetrievalProviderCall.id, settled.id));
+    assert.equal(unchanged?.providerRequestId, settled.providerRequestId);
+    assert.equal(unchanged?.totalTokenCount, settled.totalTokenCount);
+  });
+
+  it("falls back from one unknown Rewrite call without replaying or losing the Answer", async () => {
+    const query = "FAKE_QUERY_REWRITE_TIMEOUT 综合核对虚构范围";
+    const vector = await vectorFor(query);
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "rewrite-timeout-a",
+      content: `${query} 的第一条受控词法证据。`,
+      vector,
+    });
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "rewrite-timeout-b",
+      content: `${query} 的第二条受控词法证据。`,
+      vector,
+    });
+    const { result } = await ask(query);
+    assert.equal(result.execution.status, "succeeded");
+    const calls = await getDb().select().from(aiRetrievalProviderCall);
+    const rewriteCalls = calls.filter((call) => call.purpose === "query_rewrite");
+    assert.equal(rewriteCalls.length, 1);
+    assert.equal(rewriteCalls[0]?.status, "unknown");
+    assert.equal(rewriteCalls[0]?.failureCode, "PROVIDER_RESULT_UNKNOWN");
+    assert.equal(calls.filter((call) => call.purpose === "rerank").length, 1);
+  });
+
+  it("falls back from one unknown Rerank call without replaying or losing the Answer", async () => {
+    const query = "FAKE_RERANK_TIMEOUT";
+    const vector = await vectorFor(query);
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "rerank-timeout-a",
+      content: `${query} 第一条虚构证据。`,
+      vector,
+    });
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "rerank-timeout-b",
+      content: `${query} 第二条虚构证据。`,
+      vector,
+    });
+    const { result } = await ask(query);
+    assert.equal(result.execution.status, "succeeded");
+    const [run] = await getDb().select().from(aiRetrievalRun);
+    assert.equal(run?.rerankFallbackReason, "RERANK_UNAVAILABLE");
+    const calls = await getDb().select().from(aiRetrievalProviderCall);
+    const rerankCalls = calls.filter((call) => call.purpose === "rerank");
+    assert.equal(rerankCalls.length, 1);
+    assert.equal(rerankCalls[0]?.status, "unknown");
+    assert.equal(rerankCalls[0]?.failureCode, "PROVIDER_RESULT_UNKNOWN");
+  });
+
+  it("stops before a new Provider call when durable usage exhausts the user budget", async () => {
+    const query = "预算占位验证";
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "provider-budget",
+      content: `${query} 的虚构证据。`,
+      vector: await vectorFor(query),
+    });
+    const { result } = await ask(query);
+    const [run] = await getDb().select().from(aiRetrievalRun);
+    assert.ok(run);
+    await getDb().insert(aiRetrievalProviderCall).values({
+      id: randomUUID(),
+      retrievalRunId: run.id,
+      aiExecutionId: result.execution.id,
+      projectId: projectA,
+      actorUserId: managerA.id,
+      purpose: "query_rewrite",
+      skillId: "retrieval.query_rewrite",
+      modelProfileId: "qwen-project-assistant-cn-v1",
+      status: "unknown",
+      reservedTokenCount: 100_000,
+      latencyMs: 0,
+      failureCode: "PROVIDER_RESULT_UNKNOWN",
+      completedAt: new Date(),
+    });
+    const callCountBefore = (await getDb().select().from(aiRetrievalProviderCall)).length;
+    await assert.rejects(
+      ask("预算耗尽后不得继续调用"),
+      (error: unknown) =>
+        error instanceof ProjectAssistantError &&
+        error.code === "AI_USER_DAILY_LIMIT_REACHED",
+    );
+    assert.equal(
+      (await getDb().select().from(aiRetrievalProviderCall)).length,
+      callCountBefore,
+    );
   });
 
   it("never admits a more similar cross-project, old-version, or archived chunk", async () => {

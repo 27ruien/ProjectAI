@@ -19,6 +19,7 @@ import {
   aiExecution,
   aiMessage,
   aiMessageCitation,
+  aiRetrievalProviderCall,
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
   aiThread,
@@ -36,6 +37,7 @@ import {
   PROJECT_ASSISTANT_PRIMARY_MODEL,
   PROJECT_ASSISTANT_PROMPT_VERSION,
   PROJECT_ASSISTANT_RETRIEVAL_VERSION,
+  PROJECT_ASSISTANT_USAGE_LIMITS,
 } from "./config";
 import { ProjectAssistantError } from "./errors";
 import { requireProjectAssistantProfile } from "./profiles";
@@ -54,12 +56,7 @@ const RUNNING_EXECUTION_STATUSES = [
   "validating",
 ] as const;
 
-const limits = {
-  perUserMinute: 6,
-  userDailyTokens: 100_000,
-  projectDailyTokens: 500_000,
-  globalConcurrent: 3,
-} as const;
+const limits = PROJECT_ASSISTANT_USAGE_LIMITS;
 
 function titleFrom(question: string): string {
   return question.replace(/\s+/g, " ").trim().slice(0, 80) || "新对话";
@@ -615,16 +612,35 @@ export async function reserveAssistantExecution(input: {
       user_tokens: string | number;
       project_tokens: string | number;
     }>(sql`
+      with durable_usage as (
+        select
+          actor_user_id,
+          project_id,
+          total_token_count as tokens
+        from ai_executions
+        where created_at >= ${dayBoundary}
+          and total_token_count is not null
+        union all
+        select
+          actor_user_id,
+          project_id,
+          case
+            when status = 'succeeded' and total_token_count is not null
+              then total_token_count
+            else reserved_token_count
+          end as tokens
+        from ai_retrieval_provider_calls
+        where created_at >= ${dayBoundary}
+          and status in ('reserved', 'succeeded', 'unknown')
+      )
       select
-        coalesce(sum(total_token_count) filter (
+        coalesce(sum(tokens) filter (
           where actor_user_id = ${input.principal.user.id}
         ), 0) as user_tokens,
-        coalesce(sum(total_token_count) filter (
+        coalesce(sum(tokens) filter (
           where project_id = ${input.projectId}
         ), 0) as project_tokens
-      from ai_executions
-      where created_at >= ${dayBoundary}
-        and total_token_count is not null
+      from durable_usage
     `);
     const usage = dailyUsage.rows[0];
     if (!limitCode && Number(usage?.user_tokens ?? 0) >= limits.userDailyTokens) {
@@ -690,6 +706,19 @@ export async function reserveAssistantExecution(input: {
         .limit(1)
         .for("update", { of: aiRetrievalRun });
       if (staleRetrievalRun?.status === "running") {
+        await tx
+          .update(aiRetrievalProviderCall)
+          .set({
+            status: "unknown",
+            failureCode: "PROVIDER_RESULT_UNKNOWN",
+            completedAt: recoveredAt,
+          })
+          .where(
+            and(
+              eq(aiRetrievalProviderCall.retrievalRunId, staleRetrievalRun.id),
+              eq(aiRetrievalProviderCall.status, "reserved"),
+            ),
+          );
         await tx
           .update(aiRetrievalQueryEmbeddingCall)
           .set({
@@ -1008,22 +1037,58 @@ export async function finalizeSuccessfulExecution(input: {
     if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) {
       return;
     }
-    const expectedDocumentIds = [
-      ...new Set(input.answer.citations.map(({ evidence }) => evidence.documentId)),
-    ];
-    const authorizedResult = await tx.execute<{ document_id: string }>(sql`
-      select document_id
-      from projectai_authorized_documents(
+    const expectedCitations = input.answer.citations.map(({ evidence }) => ({
+      chunkId: evidence.chunkId,
+      documentId: evidence.documentId,
+      versionId: evidence.versionId,
+      contentSha256: evidence.contentSha256,
+    }));
+    const authorizedResult = await tx.execute<{ chunk_id: string }>(sql`
+      with expected(chunk_id, document_id, version_id, content_sha256) as (
+        values ${sql.join(
+          expectedCitations.map((citation) => sql`(
+            ${citation.chunkId},
+            ${citation.documentId},
+            ${citation.versionId},
+            ${citation.contentSha256}
+          )`),
+          sql`, `,
+        )}
+      )
+      select expected.chunk_id
+      from expected
+      inner join document_chunks chunk
+        on chunk.id = expected.chunk_id
+        and chunk.document_id = expected.document_id
+        and chunk.version_id = expected.version_id
+        and chunk.content_sha256 = expected.content_sha256
+        and chunk.is_effective = true
+      inner join document_ingestion_jobs ingestion
+        on ingestion.id = chunk.ingestion_job_id
+        and ingestion.project_id = chunk.project_id
+        and ingestion.document_id = chunk.document_id
+        and ingestion.version_id = chunk.version_id
+        and ingestion.generation = chunk.generation
+        and ingestion.status = 'succeeded'
+      inner join project_document_versions version
+        on version.id = chunk.version_id
+        and version.document_id = chunk.document_id
+        and version.project_id = chunk.project_id
+        and version.is_current = true
+        and version.storage_status = 'stored'
+      inner join project_documents document
+        on document.id = chunk.document_id
+        and document.project_id = chunk.project_id
+        and document.document_status = 'active'
+      inner join projectai_authorized_documents(
         ${locked.actorUserId},
         ${locked.projectId},
         'view'::knowledge_permission
-      )
-      where document_id in (${sql.join(
-        expectedDocumentIds.map((documentId) => sql`${documentId}`),
-        sql`, `,
-      )})
+      ) authorized
+        on authorized.document_id = chunk.document_id
+        and authorized.source_project_id = chunk.project_id
     `);
-    if (authorizedResult.rows.length !== expectedDocumentIds.length) {
+    if (authorizedResult.rows.length !== expectedCitations.length) {
       throw new ProjectAssistantError(
         409,
         "AI_CITATION_VALIDATION_FAILED",
@@ -1070,6 +1135,7 @@ export async function finalizeSuccessfulExecution(input: {
         inputTokenCount: input.gateway.inputTokens,
         outputTokenCount: input.gateway.outputTokens,
         totalTokenCount: input.gateway.totalTokens,
+        costUsdMicros: input.gateway.costUsdMicros ?? null,
         latencyMs: input.gateway.latencyMs,
         providerRequestId: input.gateway.providerRequestId,
         failureCode: null,
@@ -1098,6 +1164,7 @@ export async function finalizeSuccessfulExecution(input: {
           inputTokenCount: input.gateway.inputTokens,
           outputTokenCount: input.gateway.outputTokens,
           totalTokenCount: input.gateway.totalTokens,
+          costUsdMicros: input.gateway.costUsdMicros ?? null,
           latencyMs: input.gateway.latencyMs,
         },
         ...getRequestAuditContext(input.requestHeaders),
@@ -1149,6 +1216,9 @@ export async function finalizeFailedExecution(input: {
         totalTokenCount: input.gateway
           ? input.gateway.totalTokens
           : locked.totalTokenCount,
+        costUsdMicros: input.gateway
+          ? input.gateway.costUsdMicros ?? null
+          : locked.costUsdMicros,
         latencyMs: input.gateway?.latencyMs ?? locked.latencyMs,
         providerRequestId:
           input.gateway?.providerRequestId ?? locked.providerRequestId,
@@ -1177,6 +1247,7 @@ export async function finalizeFailedExecution(input: {
           inputTokenCount: input.gateway?.inputTokens ?? null,
           outputTokenCount: input.gateway?.outputTokens ?? null,
           totalTokenCount: input.gateway?.totalTokens ?? null,
+          costUsdMicros: input.gateway?.costUsdMicros ?? null,
           latencyMs: input.gateway?.latencyMs ?? null,
         },
         ...getRequestAuditContext(input.requestHeaders),

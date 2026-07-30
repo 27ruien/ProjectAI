@@ -251,6 +251,10 @@ export function combineTimesheetGatewayResults(
     inputTokens: add(first.inputTokens, second.inputTokens),
     outputTokens: add(first.outputTokens, second.outputTokens),
     totalTokens: add(first.totalTokens, second.totalTokens),
+    costUsdMicros: add(
+      first.costUsdMicros ?? null,
+      second.costUsdMicros ?? null,
+    ),
     providerRequestId: second.providerRequestId,
     latencyMs: first.latencyMs + second.latencyMs,
   };

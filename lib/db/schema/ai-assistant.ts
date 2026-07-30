@@ -200,6 +200,7 @@ export const aiExecution = pgTable(
     inputTokenCount: integer("input_token_count"),
     outputTokenCount: integer("output_token_count"),
     totalTokenCount: integer("total_token_count"),
+    costUsdMicros: integer("cost_usd_micros"),
     latencyMs: integer("latency_ms"),
     providerRequestId: varchar("provider_request_id", { length: 240 }),
     questionSha256: varchar("question_sha256", { length: 64 }).notNull(),
@@ -236,6 +237,10 @@ export const aiExecution = pgTable(
       table.id,
       table.projectId,
       table.threadId,
+    ),
+    unique("ai_executions_id_project_unique").on(
+      table.id,
+      table.projectId,
     ),
     index("ai_executions_actor_created_idx").on(
       table.actorUserId,
@@ -291,6 +296,7 @@ export const aiExecution = pgTable(
         or ${table.totalTokenCount} is null
         or ${table.totalTokenCount} = ${table.inputTokenCount} + ${table.outputTokenCount}
       )
+      and (${table.costUsdMicros} is null or ${table.costUsdMicros} >= 0)
       and (${table.latencyMs} is null or ${table.latencyMs} >= 0)
     `),
     check("ai_executions_succeeded_check", sql`

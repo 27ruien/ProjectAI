@@ -17,6 +17,7 @@ import { projectDocument, projectDocumentVersion } from "./project-documents";
 import { project } from "./projects";
 import { requirementExtractionRun } from "./requirements-scope";
 import { user } from "./users";
+import { aiModelProfile } from "./ai-assistant";
 
 export type WorkflowType = "requirement_framework" | "meeting_minutes";
 export type WorkflowArtifactKind =
@@ -261,8 +262,8 @@ export const workflowArtifact = pgTable(
     status: varchar("status", { length: 24 }).notNull().default("draft"),
     currentVersion: integer("current_version").notNull().default(1),
     contentDigest: varchar("content_digest", { length: 64 }).notNull(),
-    publishedDocumentId: text("published_document_id").references(() => projectDocument.id, { onDelete: "restrict" }),
-    publishedDocumentVersionId: text("published_document_version_id").references(() => projectDocumentVersion.id, { onDelete: "restrict" }),
+    publishedDocumentId: text("published_document_id"),
+    publishedDocumentVersionId: text("published_document_version_id"),
     publishedAt: timestamp("published_at", { withTimezone: true, mode: "date" }),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
@@ -278,6 +279,24 @@ export const workflowArtifact = pgTable(
       foreignColumns: [workflowRun.id, workflowRun.projectId],
       name: "workflow_artifacts_run_project_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.publishedDocumentId, table.projectId],
+      foreignColumns: [projectDocument.id, projectDocument.projectId],
+      name: "workflow_artifacts_published_document_project_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [
+        table.publishedDocumentVersionId,
+        table.publishedDocumentId,
+        table.projectId,
+      ],
+      foreignColumns: [
+        projectDocumentVersion.id,
+        projectDocumentVersion.documentId,
+        projectDocumentVersion.projectId,
+      ],
+      name: "workflow_artifacts_published_version_document_project_fk",
+    }).onDelete("restrict"),
     uniqueIndex("workflow_artifacts_run_kind_uidx").on(
       table.runId,
       table.artifactKind,
@@ -292,6 +311,17 @@ export const workflowArtifact = pgTable(
     ),
     check("workflow_artifacts_version_check", sql`${table.currentVersion} > 0`),
     check("workflow_artifacts_digest_check", sql`${table.contentDigest} ~ '^[0-9a-f]{64}$'`),
+    check(
+      "workflow_artifacts_published_link_check",
+      sql`(
+        ${table.publishedDocumentId} is null
+        and ${table.publishedDocumentVersionId} is null
+        and ${table.publishedAt} is null
+      ) or (
+        ${table.publishedDocumentId} is not null
+        and ${table.publishedDocumentVersionId} is not null
+      )`,
+    ),
   ],
 );
 
@@ -374,11 +404,17 @@ export const workflowExecution = pgTable(
     step: integer("step").notNull(),
     attempt: integer("attempt").notNull().default(1),
     status: varchar("status", { length: 24 }).notNull().default("running"),
+    skillId: varchar("skill_id", { length: 120 }).notNull(),
+    modelProfileId: text("model_profile_id")
+      .notNull()
+      .references(() => aiModelProfile.id, { onDelete: "restrict" }),
     provider: varchar("provider", { length: 40 }),
     actualModel: varchar("actual_model", { length: 120 }),
     latencyMs: integer("latency_ms"),
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
+    totalTokens: integer("total_tokens"),
+    costUsdMicros: integer("cost_usd_micros"),
     failureCode: varchar("failure_code", { length: 80 }),
     resultDigest: varchar("result_digest", { length: 64 }),
     startedAt: timestamp("started_at", { withTimezone: true, mode: "date" })
@@ -402,6 +438,25 @@ export const workflowExecution = pgTable(
     check(
       "workflow_executions_status_check",
       sql`${table.status} in ('running', 'succeeded', 'failed', 'cancelled')`,
+    ),
+    check(
+      "workflow_executions_usage_check",
+      sql`(
+        ${table.inputTokens} is null or ${table.inputTokens} >= 0
+      ) and (
+        ${table.outputTokens} is null or ${table.outputTokens} >= 0
+      ) and (
+        ${table.totalTokens} is null or ${table.totalTokens} >= 0
+      ) and (
+        ${table.inputTokens} is null
+        or ${table.outputTokens} is null
+        or ${table.totalTokens} is null
+        or ${table.totalTokens} = ${table.inputTokens} + ${table.outputTokens}
+      ) and (
+        ${table.costUsdMicros} is null or ${table.costUsdMicros} >= 0
+      ) and (
+        ${table.latencyMs} is null or ${table.latencyMs} >= 0
+      )`,
     ),
   ],
 );

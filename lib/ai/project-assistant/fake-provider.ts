@@ -82,6 +82,18 @@ export class FakeProjectAssistantProvider
       throw new AiProviderError("SERVER_ERROR", true);
     }
     if (
+      request.purpose === "query_rewrite" &&
+      request.userPrompt.includes("FAKE_QUERY_REWRITE_TIMEOUT")
+    ) {
+      throw new AiProviderError("TIMEOUT", true);
+    }
+    if (
+      request.purpose === "rerank" &&
+      request.userPrompt.includes("FAKE_RERANK_TIMEOUT")
+    ) {
+      throw new AiProviderError("TIMEOUT", true);
+    }
+    if (
       (request.userPrompt.includes("FAKE_PRIMARY_FAILURE") ||
         currentQuestion.includes("备用模型验证")) &&
       request.model === "qwen3.7-plus"

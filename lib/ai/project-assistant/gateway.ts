@@ -21,6 +21,7 @@ export type AiGatewayResult = {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  costUsdMicros?: number | null;
   providerRequestId: string | null;
   latencyMs: number;
 };
@@ -146,6 +147,7 @@ export class ProjectAssistantGateway {
       inputTokens: providerResult.inputTokens,
       outputTokens: providerResult.outputTokens,
       totalTokens: providerResult.totalTokens,
+      costUsdMicros: null,
       providerRequestId: providerResult.providerRequestId,
       latencyMs: providerResult.latencyMs,
     };

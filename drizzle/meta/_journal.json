@@ -253,6 +253,13 @@
       "when": 1785169748652,
       "tag": "0035_slow_big_bertha",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1785231356650,
+      "tag": "0036_brief_wolverine",
+      "breakpoints": true
     }
   ]
 }
