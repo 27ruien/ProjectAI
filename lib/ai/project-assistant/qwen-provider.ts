@@ -72,7 +72,13 @@ export class QwenProjectAssistantProvider
             max_tokens: request.maxOutputTokens,
             stream: false,
             ...(request.responseFormat === "json_object"
-              ? { response_format: { type: "json_object" } }
+              ? {
+                  // DashScope rejects JSON mode while Qwen thinking is enabled.
+                  // Requirement generation needs deterministic structured output,
+                  // so disable thinking only for JSON responses.
+                  enable_thinking: false,
+                  response_format: { type: "json_object" },
+                }
               : {}),
           }),
           signal: controller.signal,

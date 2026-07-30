@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { APIResponse, Download, Page } from "@playwright/test";
+import pg from "pg";
 import type { ProjectDocumentVersionsResponse } from "@/types/documents";
 import { expect, test } from "./fixtures";
 import { appPath } from "./support/app-url";
@@ -119,6 +120,29 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
   await expect(page.getByText(/项目资料 1 份 · 公司规范 [1-9]\d* 份/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "1. 文档信息与版本", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "17. 来源", exact: true })).toBeVisible();
+  const requirementList = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
+  const requirementBody = await json<{ documents: Array<{ id: string; status: string }> }>(requirementList);
+  const generatedRequirement = requirementBody.documents.find((item) => item.status === "draft");
+  expect(generatedRequirement).toBeTruthy();
+  const database = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await database.connect();
+  try {
+    const execution = await database.query(
+      `select status, skill_id, source_count, output_count
+       from project_management_ai_executions
+       where id = $1 and project_id = $2`,
+      [generatedRequirement!.id, projectId],
+    );
+    expect(execution.rows).toHaveLength(1);
+    expect(execution.rows[0]).toMatchObject({
+      status: "succeeded",
+      skill_id: "generate_project_requirement_document",
+      output_count: 17,
+    });
+    expect(Number(execution.rows[0].source_count)).toBeGreaterThanOrEqual(2);
+  } finally {
+    await database.end();
+  }
   const firstSection = page.locator("textarea").first();
   await firstSection.fill(`${await firstSection.inputValue()}\n- [TBD] 由项目经理补充发布负责人。`);
   await page.getByRole("button", { name: "保存草稿", exact: true }).click();
@@ -137,6 +161,52 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
   await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[公司资料]", { timeout: 45_000 });
+
+  await page.goto(appPath(`/projects/${projectId}/documents`));
+  await page.getByRole("button", { name: "上传资料", exact: true }).click();
+  const failureUpload = page.getByRole("dialog", { name: "上传项目资料" });
+  const failureFileName = `focused-provider-failure-${suffix}.txt`;
+  await failureUpload.getByLabel("选择上传文件").setInputFiles(fictitiousText(
+    failureFileName,
+    "FAKE_401：仅用于验证 Provider 失败后需求 execution 会被标记为 failed。",
+  ));
+  await failureUpload.getByRole("button", { name: "开始上传", exact: true }).click();
+  await expect(failureUpload.getByText("项目资料上传成功", { exact: true })).toBeVisible();
+  await failureUpload.getByRole("button", { name: "关闭", exact: true }).last().click();
+  const failureDocumentList = await page.request.get(appPath(`/api/projects/${projectId}/documents?status=active`));
+  const failureDocumentBody = await json<{ documents: Array<{ id: string; displayName: string }> }>(failureDocumentList);
+  const failureDocument = failureDocumentBody.documents.find((item) => item.displayName === failureFileName.replace(/\.txt$/, ""));
+  expect(failureDocument).toBeTruthy();
+  await waitUntilParsed(page, projectId, failureDocument!.id);
+
+  await page.goto(appPath(`/projects/${projectId}/requirements`));
+  await page.getByRole("button", { name: "生成新版本", exact: true }).click();
+  let failedRequirementId = "";
+  await expect.poll(async () => {
+    const response = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
+    const body = await json<{ documents: Array<{ id: string; versionNumber: number; status: string; failureCode: string | null }> }>(response);
+    const failed = body.documents.find((item) => item.versionNumber === 2);
+    failedRequirementId = failed?.id ?? "";
+    return failed ? `${failed.status}:${failed.failureCode}` : "missing";
+  }, { timeout: 60_000, intervals: [250, 500, 1_000] }).toBe("failed:REQUIREMENT_PROVIDER_FAILED");
+  await expect(page.getByText("AI 服务暂时无法生成需求文档，请稍后重试。", { exact: true })).toBeVisible();
+  const failureDatabase = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await failureDatabase.connect();
+  try {
+    const failedExecution = await failureDatabase.query(
+      `select status, skill_id, failure_code
+       from project_management_ai_executions
+       where id = $1 and project_id = $2`,
+      [failedRequirementId, projectId],
+    );
+    expect(failedExecution.rows).toEqual([{
+      status: "failed",
+      skill_id: "generate_project_requirement_document",
+      failure_code: "REQUIREMENT_PROVIDER_FAILED",
+    }]);
+  } finally {
+    await failureDatabase.end();
+  }
 
   const outsiderContext = await browser.newContext();
   const outsiderPage = await outsiderContext.newPage();

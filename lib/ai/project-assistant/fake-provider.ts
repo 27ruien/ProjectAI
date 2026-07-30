@@ -102,6 +102,9 @@ export class FakeProjectAssistantProvider
     ) {
       const labels = taggedJsonValue(request.userPrompt, "evidence_labels_json");
       const label = Array.isArray(labels) && typeof labels[0] === "string" ? labels[0] : "E1";
+      const companyLabel = request.userPrompt.match(
+        /<evidence id="(E(?:[1-9]|[12][0-9]|30))" scope="organization"/,
+      )?.[1];
       const definitions = [
         ["document_info", "文档信息与版本"],
         ["project_background", "项目背景"],
@@ -127,8 +130,14 @@ export class FakeProjectAssistantProvider
           title,
           content: key === "open_items"
             ? "- [TBD] 请由项目经理确认当前资料未覆盖的事项。"
-            : `- [Fact] 根据当前有效项目资料整理的${title}。`,
-          citationLabels: key === "open_items" ? [] : [label],
+            : key === "sources" && companyLabel
+              ? "- [Company Standard] 本需求文档同时参考已发布的公司项目管理规范。"
+              : `- [Fact] 根据当前有效项目资料整理的${title}。`,
+          citationLabels: key === "open_items"
+            ? []
+            : key === "sources" && companyLabel
+              ? [companyLabel]
+              : [label],
         })),
       });
     } else if (

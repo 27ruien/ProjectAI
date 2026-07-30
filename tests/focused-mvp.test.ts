@@ -5,11 +5,16 @@ import { resolveProjectPermissions } from "../lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "../lib/auth/session";
 import { FakeProjectAssistantProvider } from "../lib/ai/project-assistant/fake-provider";
 import { buildGroundedUserPrompt } from "../lib/ai/project-assistant/grounding";
+import { QwenProjectAssistantProvider } from "../lib/ai/project-assistant/qwen-provider";
+import { ProjectAssistantError } from "../lib/ai/project-assistant/errors";
 import { requirementDocx } from "../lib/focused-mvp/requirement-export";
 import {
+  REQUIREMENT_SKILL_ID,
+  requirementGenerationFailure,
   requirementMarkdown,
   requirementSectionDefinitions,
 } from "../lib/focused-mvp/requirement-documents";
+import { ProjectManagementError } from "../lib/project-management/errors";
 import type { ProjectKnowledgeEvidence } from "../lib/documents/processing/search-service";
 
 const root = new URL("../", import.meta.url);
@@ -79,6 +84,62 @@ describe("focused MVP product surface", () => {
 });
 
 describe("focused requirement document", () => {
+  it("uses the fixed internal skill and maps safe actionable failure codes", () => {
+    assert.equal(REQUIREMENT_SKILL_ID, "generate_project_requirement_document");
+    assert.deepEqual(
+      requirementGenerationFailure(new ProjectAssistantError(503, "AI_PROVIDER_UNAVAILABLE", "hidden")),
+      {
+        status: 503,
+        code: "REQUIREMENT_PROVIDER_FAILED",
+        message: "AI 服务暂时无法生成需求文档，请稍后重试。",
+      },
+    );
+    assert.equal(
+      requirementGenerationFailure(new ProjectAssistantError(503, "AI_CONFIGURATION_INVALID", "hidden")).code,
+      "REQUIREMENT_MODEL_PROFILE_NOT_CONFIGURED",
+    );
+    assert.equal(
+      requirementGenerationFailure(new ProjectManagementError(409, "PROJECT_SOURCE_REQUIRED", "hidden")).code,
+      "NO_ELIGIBLE_PROJECT_SOURCES",
+    );
+  });
+
+  it("disables Qwen thinking for JSON structured output", async () => {
+    const previous = process.env.QWEN_API_KEY;
+    process.env.QWEN_API_KEY = "focused-test-key";
+    let requestBody: Record<string, unknown> | null = null;
+    try {
+      const provider = new QwenProjectAssistantProvider(
+        "https://example.invalid/compatible-mode/v1",
+        async (_input, init) => {
+          requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+          return new Response(JSON.stringify({
+            id: "focused-test-response",
+            model: "qwen3.7-plus",
+            choices: [{ message: { content: "{\"sections\":[]}" } }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        },
+      );
+      await provider.generate({
+        model: "qwen3.7-plus",
+        systemPrompt: "请输出 JSON",
+        userPrompt: "请输出 JSON",
+        purpose: "requirement_document",
+        responseFormat: "json_object",
+        timeoutMs: 1_000,
+        temperature: 0.2,
+        maxOutputTokens: 1_800,
+      });
+      const captured = requestBody as unknown as Record<string, unknown>;
+      assert.equal(captured.enable_thinking, false);
+      assert.deepEqual(captured.response_format, { type: "json_object" });
+    } finally {
+      if (previous === undefined) delete process.env.QWEN_API_KEY;
+      else process.env.QWEN_API_KEY = previous;
+    }
+  });
+
   it("uses the exact 17-section template and classified fake output", async () => {
     assert.deepEqual(requirementSectionDefinitions.map(([, title]) => title), expectedTemplate);
     const provider = new FakeProjectAssistantProvider();
@@ -97,6 +158,24 @@ describe("focused requirement document", () => {
     assert.equal(parsed.sections.length, 17);
     for (const section of parsed.sections) assert.match(section.content, /\[(?:Fact|Company Standard|AI Inference|TBD)\]/);
     assert.equal(parsed.sections.find((item) => item.title === "待确认事项")?.citationLabels.length, 0);
+  });
+
+  it("keeps project and company citations distinct in deterministic output", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const result = await provider.generate({
+      model: "qwen3.7-plus",
+      systemPrompt: "focused requirement test",
+      userPrompt: '<evidence_labels_json>["E1","E2"]</evidence_labels_json>\n<evidence_set>\n<evidence id="E1" scope="project">项目资料</evidence>\n<evidence id="E2" scope="organization">公司规范</evidence>\n</evidence_set>',
+      purpose: "requirement_document",
+      responseFormat: "json_object",
+      timeoutMs: 1_000,
+      temperature: 0.2,
+      maxOutputTokens: 4_000,
+    });
+    const parsed = JSON.parse(result.text) as { sections: Array<{ content: string; citationLabels: string[] }> };
+    assert.equal(parsed.sections.some((item) => item.citationLabels.includes("E1")), true);
+    assert.equal(parsed.sections.some((item) => item.citationLabels.includes("E2")), true);
+    assert.equal(parsed.sections.some((item) => item.content.includes("[Company Standard]")), true);
   });
 
   it("creates real Markdown and DOCX bytes", async () => {
@@ -126,6 +205,9 @@ describe("focused requirement document", () => {
     assert.match(service, /companySourceCount/);
     assert.match(service, /sourceSnapshotAt/);
     assert.match(service, /category = 'project_management'/);
+    assert.ok(service.indexOf("beginRequirementAiExecution") < service.indexOf("gateway.generate"));
+    assert.match(service, /REQUIREMENT_PROVIDER_FAILED/);
+    assert.match(service, /REQUIREMENT_EXECUTION_CREATE_FAILED/);
     assert.match(page, /status === "generating"/);
     assert.match(page, /window\.setInterval/);
     assert.match(page, /重试生成新版本/);

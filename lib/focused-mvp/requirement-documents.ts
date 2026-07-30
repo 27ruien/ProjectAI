@@ -4,13 +4,20 @@ import { z } from "zod";
 import { requireProjectAccess, requireProjectRole } from "@/lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
-import { createProjectAssistantGateway, requireAiAssistantEnabled } from "@/lib/ai/project-assistant";
+import {
+  createProjectAssistantGateway,
+  ProjectAssistantError,
+  requireAiAssistantEnabled,
+  type AiGatewayResult,
+  type AiRuntimeConfig,
+} from "@/lib/ai/project-assistant";
 import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import {
   focusedRequirementCitation,
   focusedRequirementDocument,
   knowledgeSpace,
+  projectManagementAiExecution,
   projectDocument,
   projectDocumentVersion,
   type FocusedRequirementSection,
@@ -20,6 +27,21 @@ import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 import { ProjectManagementError } from "@/lib/project-management/errors";
 import { publishedCompanySourceFilter } from "./company-source-filter";
 import { listCompanyKnowledge } from "./company-knowledge";
+
+export const REQUIREMENT_SKILL_ID = "generate_project_requirement_document";
+
+export type RequirementGenerationFailure = {
+  status: 409 | 422 | 503;
+  code:
+    | "NO_ELIGIBLE_PROJECT_SOURCES"
+    | "REQUIREMENT_MODEL_PROFILE_NOT_CONFIGURED"
+    | "REQUIREMENT_EXECUTION_CREATE_FAILED"
+    | "REQUIREMENT_PROVIDER_FAILED"
+    | "REQUIREMENT_OUTPUT_INVALID"
+    | "REQUIREMENT_CITATION_VALIDATION_FAILED"
+    | "REQUIREMENT_SOURCE_CHANGED";
+  message: string;
+};
 
 export const requirementSectionDefinitions = [
   ["document_info", "文档信息与版本"],
@@ -71,7 +93,130 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function normalizedGenerated(value: unknown, allowedLabels: Set<string>): FocusedRequirementSection[] {
+export function requirementGenerationFailure(error: unknown): RequirementGenerationFailure {
+  if (error instanceof ProjectManagementError) {
+    if (error.code === "PROJECT_SOURCE_REQUIRED") {
+      return {
+        status: 409,
+        code: "NO_ELIGIBLE_PROJECT_SOURCES",
+        message: "当前项目没有可用于 AI 的资料，请先上传并等待解析完成。",
+      };
+    }
+    if (error.code === "AI_OUTPUT_INVALID") {
+      return {
+        status: 422,
+        code: "REQUIREMENT_OUTPUT_INVALID",
+        message: "AI 返回的需求文档格式无效，请重新生成。",
+      };
+    }
+    if (error.code === "AI_CITATION_INVALID") {
+      return {
+        status: 422,
+        code: "REQUIREMENT_CITATION_VALIDATION_FAILED",
+        message: "AI 返回的需求文档引用无效，请重新生成。",
+      };
+    }
+    if (error.code === "SOURCE_CHANGED") {
+      return {
+        status: 409,
+        code: "REQUIREMENT_SOURCE_CHANGED",
+        message: "资料在生成期间发生变化，请重新生成。",
+      };
+    }
+    if (error.code === "REQUIREMENT_EXECUTION_CREATE_FAILED") {
+      return {
+        status: 503,
+        code: "REQUIREMENT_EXECUTION_CREATE_FAILED",
+        message: "需求文档生成任务登记失败，请稍后重试。",
+      };
+    }
+  }
+  if (error instanceof ProjectAssistantError) {
+    if ([
+      "AI_ASSISTANT_DISABLED",
+      "AI_CONFIGURATION_INVALID",
+      "AI_MODEL_PROFILE_NOT_FOUND",
+      "AI_MODEL_PROFILE_DISABLED",
+    ].includes(error.code)) {
+      return {
+        status: 503,
+        code: "REQUIREMENT_MODEL_PROFILE_NOT_CONFIGURED",
+        message: "需求文档使用的 AI Model Profile 尚未正确配置。",
+      };
+    }
+    return {
+      status: 503,
+      code: "REQUIREMENT_PROVIDER_FAILED",
+      message: "AI 服务暂时无法生成需求文档，请稍后重试。",
+    };
+  }
+  return {
+    status: 503,
+    code: "REQUIREMENT_PROVIDER_FAILED",
+    message: "AI 服务暂时无法生成需求文档，请稍后重试。",
+  };
+}
+
+function requireRequirementAiConfig(): AiRuntimeConfig {
+  try {
+    return requireAiAssistantEnabled();
+  } catch (error) {
+    const controlled = requirementGenerationFailure(error);
+    throw new ProjectManagementError(
+      controlled.status,
+      controlled.code,
+      controlled.message,
+    );
+  }
+}
+
+async function beginRequirementAiExecution(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  requirementId: string;
+  modelProfileId: string;
+  sourceDigest: string;
+  sourceCount: number;
+  requestHeaders: Headers;
+}): Promise<void> {
+  try {
+    await getDb().transaction(async (tx) => {
+      await requireProjectRole(
+        input.principal,
+        input.projectId,
+        ["project_manager", "project_member"],
+        input.requestHeaders,
+        { db: tx, lockForUpdate: true },
+      );
+      await tx.insert(projectManagementAiExecution).values({
+        id: input.requirementId,
+        projectId: input.projectId,
+        actorUserId: input.principal.user.id,
+        skillId: REQUIREMENT_SKILL_ID,
+        modelProfileId: input.modelProfileId,
+        sourceSelectionDigest: input.sourceDigest,
+        sourceCount: input.sourceCount,
+      });
+    });
+  } catch {
+    throw new ProjectManagementError(
+      503,
+      "REQUIREMENT_EXECUTION_CREATE_FAILED",
+      "需求文档生成任务登记失败，请稍后重试。",
+    );
+  }
+}
+
+function normalizedGenerated(
+  value: unknown,
+  evidenceOrAllowedLabels: Evidence[] | Set<string>,
+): FocusedRequirementSection[] {
+  const evidence = Array.isArray(evidenceOrAllowedLabels)
+    ? evidenceOrAllowedLabels
+    : null;
+  const allowedLabels: Set<string> = evidence
+    ? new Set(evidence.map((item) => item.label))
+    : evidenceOrAllowedLabels as Set<string>;
   const parsed = generatedSchema.safeParse(value);
   if (!parsed.success) throw new ProjectManagementError(422, "AI_OUTPUT_INVALID", "AI 需求文档格式无效");
   const keys = parsed.data.sections.map((item) => item.key);
@@ -86,6 +231,20 @@ function normalizedGenerated(value: unknown, allowedLabels: Set<string>): Focuse
   }
   if (parsed.data.sections.some((section) => section.citationLabels.some((label) => !allowedLabels.has(label)))) {
     throw new ProjectManagementError(422, "AI_CITATION_INVALID", "AI 需求文档引用无效");
+  }
+  if (evidence) {
+    const usedLabels = new Set(parsed.data.sections.flatMap((section) => section.citationLabels));
+    const projectLabels = new Set(evidence.filter((item) => item.sourceScope === "project").map((item) => item.label));
+    const companyLabels = new Set(evidence.filter((item) => item.sourceScope === "organization").map((item) => item.label));
+    if (![...usedLabels].some((label) => projectLabels.has(label))) {
+      throw new ProjectManagementError(422, "AI_CITATION_INVALID", "AI 需求文档缺少项目资料引用");
+    }
+    if (companyLabels.size > 0 && ![...usedLabels].some((label) => companyLabels.has(label))) {
+      throw new ProjectManagementError(422, "AI_CITATION_INVALID", "AI 需求文档缺少公司规范引用");
+    }
+    if (companyLabels.size > 0 && !parsed.data.sections.some((section) => section.content.includes("[Company Standard]"))) {
+      throw new ProjectManagementError(422, "AI_OUTPUT_INVALID", "AI 需求文档缺少公司规范结论");
+    }
   }
   return parsed.data.sections;
 }
@@ -255,7 +414,7 @@ export async function reserveRequirementDocument(input: {
   requestHeaders: Headers;
 }) {
   await requireProjectRole(input.principal, input.projectId, ["project_manager", "project_member"], input.requestHeaders);
-  const config = requireAiAssistantEnabled();
+  const config = requireRequirementAiConfig();
   const id = crypto.randomUUID();
   return getDb().transaction(async (tx) => {
     await requireProjectRole(input.principal, input.projectId, ["project_manager", "project_member"], input.requestHeaders, { db: tx, lockForUpdate: true });
@@ -266,6 +425,7 @@ export async function reserveRequirementDocument(input: {
       projectId: input.projectId,
       versionNumber,
       sourceDigest: sha256(`pending:${id}`),
+      skillId: REQUIREMENT_SKILL_ID,
       modelProfileId: config.profileId,
       createdBy: input.principal.user.id,
       updatedBy: input.principal.user.id,
@@ -281,6 +441,8 @@ export async function generateRequirementDocument(input: {
   requestHeaders: Headers;
 }) {
   const id = input.requirementId;
+  let executionCreated = false;
+  let observedResult: AiGatewayResult | null = null;
   try {
     const access = await requireProjectRole(input.principal, input.projectId, ["project_manager", "project_member"], input.requestHeaders);
     const [reserved] = await getDb().select().from(focusedRequirementDocument).where(and(
@@ -294,7 +456,7 @@ export async function generateRequirementDocument(input: {
     const projectSourceCount = new Set(evidence.filter((item) => item.sourceScope === "project").map((item) => item.documentId)).size;
     const companySourceCount = new Set(evidence.filter((item) => item.sourceScope === "organization").map((item) => item.documentId)).size;
     const sourceSnapshotAt = new Date();
-    const config = requireAiAssistantEnabled();
+    const config = requireRequirementAiConfig();
     await getDb().update(focusedRequirementDocument).set({
       sourceDigest,
       projectSourceCount,
@@ -305,12 +467,23 @@ export async function generateRequirementDocument(input: {
       eq(focusedRequirementDocument.id, id),
       eq(focusedRequirementDocument.status, "generating"),
     ));
+    await beginRequirementAiExecution({
+      principal: input.principal,
+      projectId: input.projectId,
+      requirementId: id,
+      modelProfileId: config.profileId,
+      sourceDigest,
+      sourceCount: evidence.length,
+      requestHeaders: input.requestHeaders,
+    });
+    executionCreated = true;
     const gateway = createProjectAssistantGateway(config);
     const prompt = generationPrompt(evidence);
     let result = await gateway.generate({ ...prompt, purpose: "requirement_document" });
+    observedResult = result;
     let sections: FocusedRequirementSection[];
     try {
-      sections = normalizedGenerated(parseJson(result.text), new Set(evidence.map((item) => item.label)));
+      sections = normalizedGenerated(parseJson(result.text), evidence);
     } catch (firstError) {
       const repaired = await gateway.generate({
         systemPrompt: `${prompt.systemPrompt}\n你正在修复无效 JSON，只能输出完整、合规 JSON。`,
@@ -324,7 +497,8 @@ export async function generateRequirementDocument(input: {
         totalTokens: (result.totalTokens ?? 0) + (repaired.totalTokens ?? 0),
         latencyMs: result.latencyMs + repaired.latencyMs,
       };
-      sections = normalizedGenerated(parseJson(repaired.text), new Set(evidence.map((item) => item.label)));
+      observedResult = result;
+      sections = normalizedGenerated(parseJson(repaired.text), evidence);
       void firstError;
     }
     const latestEvidence = await collectEvidence(input);
@@ -341,7 +515,7 @@ export async function generateRequirementDocument(input: {
     });
     const usedLabels = new Set(sections.flatMap((section) => section.citationLabels));
     const citations = evidence.filter((item) => usedLabels.has(item.label));
-    const [completed] = await getDb().transaction(async (tx) => {
+    const completed = await getDb().transaction(async (tx) => {
       await requireProjectRole(input.principal, input.projectId, ["project_manager", "project_member"], input.requestHeaders, { db: tx, lockForUpdate: true });
       if (citations.length) {
         await tx.insert(focusedRequirementCitation).values(citations.map((item) => ({
@@ -360,7 +534,7 @@ export async function generateRequirementDocument(input: {
           contentSha256: item.contentSha256,
         })));
       }
-      return tx.update(focusedRequirementDocument).set({
+      const [updated] = await tx.update(focusedRequirementDocument).set({
         status: "draft",
         sections,
         markdown,
@@ -374,6 +548,23 @@ export async function generateRequirementDocument(input: {
         latencyMs: result.latencyMs,
         updatedAt: new Date(),
       }).where(and(eq(focusedRequirementDocument.id, id), eq(focusedRequirementDocument.status, "generating"))).returning();
+      if (!updated) {
+        throw new ProjectManagementError(409, "SOURCE_CHANGED", "生成任务状态已变化，请重新生成");
+      }
+      await tx.update(projectManagementAiExecution).set({
+        status: "succeeded",
+        provider: result.provider,
+        actualModel: result.actualModel,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        latencyMs: result.latencyMs,
+        outputCount: sections.length,
+        completedAt: new Date(),
+      }).where(and(
+        eq(projectManagementAiExecution.id, id),
+        eq(projectManagementAiExecution.status, "running"),
+      ));
+      return updated;
     });
     await writeAuditEvent({
       actorUserId: input.principal.user.id,
@@ -382,14 +573,64 @@ export async function generateRequirementDocument(input: {
       entityType: "focused_requirement_document",
       entityId: id,
       result: "succeeded",
-      metadata: { executionId: id, skillId: "focused-requirement-document-v1", modelProfileId: config.profileId, sourceCount: citations.length, latencyMs: result.latencyMs, totalTokens: result.totalTokens },
+      metadata: { executionId: id, skillId: REQUIREMENT_SKILL_ID, modelProfileId: config.profileId, sourceCount: citations.length, latencyMs: result.latencyMs, totalTokens: result.totalTokens },
       ...getRequestAuditContext(input.requestHeaders),
     });
     return completed;
   } catch (error) {
-    const failureCode = error instanceof ProjectManagementError ? error.code : "REQUIREMENT_GENERATION_FAILED";
-    await getDb().update(focusedRequirementDocument).set({ status: "failed", failureCode, updatedAt: new Date() }).where(eq(focusedRequirementDocument.id, id));
-    throw error;
+    const controlled = requirementGenerationFailure(error);
+    await getDb().transaction(async (tx) => {
+      await tx.update(focusedRequirementDocument).set({
+        status: "failed",
+        failureCode: controlled.code,
+        ...(observedResult ? {
+          provider: observedResult.provider,
+          requestedModel: observedResult.requestedModel,
+          actualModel: observedResult.actualModel,
+          inputTokens: observedResult.inputTokens,
+          outputTokens: observedResult.outputTokens,
+          totalTokens: observedResult.totalTokens,
+          latencyMs: observedResult.latencyMs,
+        } : {}),
+        updatedAt: new Date(),
+      }).where(eq(focusedRequirementDocument.id, id));
+      if (executionCreated) {
+        await tx.update(projectManagementAiExecution).set({
+          status: "failed",
+          failureCode: controlled.code,
+          ...(observedResult ? {
+            provider: observedResult.provider,
+            actualModel: observedResult.actualModel,
+            inputTokens: observedResult.inputTokens,
+            outputTokens: observedResult.outputTokens,
+            latencyMs: observedResult.latencyMs,
+          } : {}),
+          completedAt: new Date(),
+        }).where(and(
+          eq(projectManagementAiExecution.id, id),
+          eq(projectManagementAiExecution.status, "running"),
+        ));
+      }
+    });
+    await writeAuditEvent({
+      actorUserId: input.principal.user.id,
+      projectId: input.projectId,
+      eventType: "focused_requirement_generation_failed",
+      entityType: "focused_requirement_document",
+      entityId: id,
+      result: "failed",
+      metadata: {
+        executionId: executionCreated ? id : null,
+        skillId: REQUIREMENT_SKILL_ID,
+        failureCode: controlled.code,
+      },
+      ...getRequestAuditContext(input.requestHeaders),
+    });
+    throw new ProjectManagementError(
+      controlled.status,
+      controlled.code,
+      controlled.message,
+    );
   }
 }
 

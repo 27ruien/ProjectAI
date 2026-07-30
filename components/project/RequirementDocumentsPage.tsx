@@ -43,6 +43,27 @@ type RequirementDocument = {
   publishedAt: string | null;
 };
 
+const failureMessages: Record<string, string> = {
+  NO_ELIGIBLE_PROJECT_SOURCES:
+    "当前项目没有可用于 AI 的资料，请先上传并等待解析完成。",
+  NO_PUBLISHED_PROJECT_STANDARD:
+    "当前没有已发布的公司项目管理规范。",
+  REQUIREMENT_SKILL_NOT_CONFIGURED:
+    "需求文档生成能力尚未配置。",
+  REQUIREMENT_MODEL_PROFILE_NOT_CONFIGURED:
+    "需求文档使用的 AI Model Profile 尚未正确配置。",
+  REQUIREMENT_EXECUTION_CREATE_FAILED:
+    "需求文档生成任务登记失败，请稍后重试。",
+  REQUIREMENT_PROVIDER_FAILED:
+    "AI 服务暂时无法生成需求文档，请稍后重试。",
+  REQUIREMENT_OUTPUT_INVALID:
+    "AI 返回的需求文档格式无效，请重新生成。",
+  REQUIREMENT_CITATION_VALIDATION_FAILED:
+    "AI 返回的来源引用无效，请重新生成。",
+  REQUIREMENT_SOURCE_CHANGED:
+    "资料在生成期间发生变化，请重新生成。",
+};
+
 export function RequirementDocumentsPage({
   project,
 }: {
@@ -275,6 +296,10 @@ export function RequirementDocumentsPage({
                   <RefreshCw className="mx-auto size-8 text-destructive" />
                   <p className="mt-3 text-sm font-medium">生成失败</p>
                   <p className="mt-1 text-xs text-muted-foreground">
+                    {failureMessages[selected.failureCode ?? ""] ??
+                      "需求文档生成失败，请稍后重试。"}
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
                     失败码：{selected.failureCode ?? "UNKNOWN"}
                   </p>
                   {canEdit ? (
@@ -309,6 +334,11 @@ export function RequirementDocumentsPage({
                         "zh-CN",
                       )}
                     </p>
+                    {selected.companySourceCount === 0 ? (
+                      <p className="mt-1 text-[11px] text-muted-foreground">
+                        本次未使用公司规范，仅基于项目资料生成。
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {selected.status !== "generating" ? (
