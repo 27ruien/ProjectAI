@@ -1,583 +1,84 @@
 "use client";
 
-import {
-  Download,
-  FileUp,
-  Library,
-  LoaderCircle,
-  Search,
-  Upload,
-} from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Library, LoaderCircle, MoreHorizontal, Search, Upload } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
-import type {
-  ProjectDocumentDto,
-  ProjectDocumentVersionDto,
-} from "@/types/documents";
+import type { ProjectDocumentDto, ProjectDocumentVersionDto } from "@/types/documents";
+import { useToast } from "@/components/common/toast";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 
-type Category =
-  | "charter"
-  | "hr"
-  | "project_management"
-  | "security"
-  | "finance"
-  | "template"
-  | "other";
-type CompanyDocument = ProjectDocumentDto & {
-  category: Category;
-  lifecycleStatus: "draft" | "published" | "expired" | "archived";
-  audience: "organization" | "department" | "admin";
-  departmentId: string | null;
-  publishedAt: string | null;
-  expiresAt: string | null;
-};
+type Category = "charter" | "hr" | "project_management" | "security" | "finance" | "template" | "other";
+type Lifecycle = "draft" | "published" | "expired" | "archived";
+type Audience = "organization" | "department" | "admin";
+type CompanyDocument = ProjectDocumentDto & { category: Category; lifecycleStatus: Lifecycle; audience: Audience; departmentId: string | null; publishedAt: string | null; expiresAt: string | null };
 type Department = { id: string; name: string };
-const categoryLabels: Record<Category, string> = {
-  charter: "公司章程",
-  hr: "人事制度",
-  project_management: "项目管理规范",
-  security: "信息安全",
-  finance: "财务与采购",
-  template: "标准模板",
-  other: "其他",
-};
+
+const categoryLabels: Record<Category, string> = { charter: "公司章程", hr: "人事制度", project_management: "项目管理规范", security: "信息安全", finance: "财务与采购", template: "标准模板", other: "其他" };
+const lifecycleLabels: Record<Lifecycle, string> = { draft: "草稿", published: "已发布", expired: "已失效", archived: "已归档" };
+const lifecycleClasses: Record<Lifecycle, string> = { draft: "bg-muted text-muted-foreground", published: "border-success/20 bg-success-soft text-success", expired: "border-warning/25 bg-warning-soft text-warning", archived: "bg-muted text-muted-foreground" };
+const audienceLabels: Record<Audience, string> = { organization: "全公司", department: "指定部门", admin: "仅管理员" };
 
 export function CompanyKnowledgePage() {
+  const { toast } = useToast();
   const [documents, setDocuments] = useState<CompanyDocument[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState<"all" | Category>("all");
+  const [status, setStatus] = useState<"all" | Lifecycle>("all");
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploadVersionNote, setUploadVersionNote] = useState("");
-  const [uploadCategory, setUploadCategory] =
-    useState<Category>("project_management");
-  const [audience, setAudience] = useState<
-    "organization" | "department" | "admin"
-  >("organization");
+  const [uploadCategory, setUploadCategory] = useState<Category>("project_management");
+  const [audience, setAudience] = useState<Audience>("organization");
   const [departmentId, setDepartmentId] = useState("");
   const [departments, setDepartments] = useState<Department[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<{
-    document: CompanyDocument;
-    versions: ProjectDocumentVersionDto[];
-  } | null>(null);
+  const [history, setHistory] = useState<{ document: CompanyDocument; versions: ProjectDocumentVersionDto[] } | null>(null);
   const [versionTarget, setVersionTarget] = useState<CompanyDocument | null>(null);
   const [versionFile, setVersionFile] = useState<File | null>(null);
   const [versionNote, setVersionNote] = useState("");
-  const load = useCallback(async () => {
-    const response = await fetch(withBasePath("/api/company-knowledge"), {
-      credentials: "include",
-      cache: "no-store",
-    });
-    const body = (await response.json()) as {
-      documents?: CompanyDocument[];
-      canManage?: boolean;
-      error?: { message?: string };
-    };
-    if (!response.ok)
-      throw new Error(body.error?.message ?? "公司知识库加载失败");
-    setDocuments(body.documents ?? []);
-    setCanManage(Boolean(body.canManage));
-  }, []);
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void load().catch((caught) =>
-        setError(
-          caught instanceof Error ? caught.message : "公司知识库加载失败",
-        ),
-      );
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-  useEffect(() => {
-    if (!canManage) return;
-    void fetch(withBasePath("/api/projects/creation-context"), {
-      credentials: "include",
-    })
-      .then(
-        async (response) =>
-          response.json() as Promise<{ departments?: Department[] }>,
-      )
-      .then((body) => setDepartments(body.departments ?? []))
-      .catch(() => undefined);
-  }, [canManage]);
-  const filtered = useMemo(() => {
-    const keyword = query.trim().toLocaleLowerCase("zh-CN");
-    return documents.filter(
-      (item) =>
-        (category === "all" || item.category === category) &&
-        (!keyword ||
-          item.displayName.toLocaleLowerCase("zh-CN").includes(keyword)),
-    );
-  }, [category, documents, query]);
-  const upload = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!file) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.set("file", file);
-      form.set("displayName", file.name.replace(/\.[^.]+$/, ""));
-      form.set("category", uploadCategory);
-      form.set("audience", audience);
-      if (uploadVersionNote.trim()) form.set("versionNote", uploadVersionNote.trim());
-      if (audience === "department") form.set("departmentId", departmentId);
-      const response = await fetch(withBasePath("/api/company-knowledge"), {
-        method: "POST",
-        credentials: "include",
-        headers: { "idempotency-key": crypto.randomUUID() },
-        body: form,
-      });
-      const body = (await response.json()) as { error?: { message?: string } };
-      if (!response.ok) throw new Error(body.error?.message ?? "上传失败");
-      setUploadOpen(false);
-      setFile(null);
-      setUploadVersionNote("");
-      await load();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "上传失败");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const changeLifecycle = async (
-    document: CompanyDocument,
-    lifecycleStatus: CompanyDocument["lifecycleStatus"],
-  ) => {
-    setError(null);
-    const response = await fetch(
-      withBasePath(`/api/company-knowledge/${document.id}`),
-      {
-        method: "PATCH",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ lifecycleStatus }),
-      },
-    );
-    if (!response.ok) {
-      const body = (await response.json()) as { error?: { message?: string } };
-      setError(body.error?.message ?? "状态更新失败");
-      return;
-    }
-    await response.json();
-    await load();
-  };
-  const newVersion = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!versionTarget || !versionFile) return;
-    const form = new FormData();
-    form.set("file", versionFile);
-    if (versionNote.trim()) form.set("versionNote", versionNote.trim());
-    setBusy(true);
-    const response = await fetch(
-      withBasePath(`/api/company-knowledge/${versionTarget.id}/versions`),
-      {
-        method: "POST",
-        credentials: "include",
-        headers: { "idempotency-key": crypto.randomUUID() },
-        body: form,
-      },
-    );
-    if (!response.ok) {
-      const body = (await response.json()) as { error?: { message?: string } };
-      setError(body.error?.message ?? "新版本上传失败");
-    } else {
-      setVersionTarget(null);
-      setVersionFile(null);
-      setVersionNote("");
-      await load();
-    }
-    setBusy(false);
-  };
-  const openHistory = async (document: CompanyDocument) => {
-    const response = await fetch(
-      withBasePath(`/api/company-knowledge/${document.id}/versions`),
-      { credentials: "include", cache: "no-store" },
-    );
-    const body = (await response.json()) as {
-      versions?: ProjectDocumentVersionDto[];
-      error?: { message?: string };
-    };
-    if (!response.ok) {
-      setError(body.error?.message ?? "版本历史加载失败");
-      return;
-    }
-    setHistory({ document, versions: body.versions ?? [] });
-  };
-  return (
-    <main className="min-h-full px-5 py-6 lg:px-8 lg:py-7">
-      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="mb-1 text-sm text-muted-foreground">公司级有效知识</p>
-          <h1 className="text-2xl font-semibold tracking-tight">公司知识库</h1>
-          <p className="mt-1.5 text-sm text-muted-foreground">
-            只有已发布且未失效的资料可以进入普通成员的 AI 检索。
-          </p>
-        </div>
-        {canManage ? (
-          <button
-            onClick={() => setUploadOpen(true)}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3.5 text-sm font-medium text-primary-foreground"
-          >
-            <Upload className="size-4" />
-            上传公司资料
-          </button>
-        ) : null}
-      </header>
-      {error ? (
-        <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive-soft p-3 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-      <section className="rounded-xl border bg-card">
-        <div className="flex flex-wrap gap-2 border-b p-4">
-          <label className="relative min-w-64 flex-1">
-            <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索公司资料"
-              className="h-9 w-full rounded-lg border bg-background pl-9 pr-3 text-sm"
-            />
-          </label>
-          <select
-            value={category}
-            onChange={(event) =>
-              setCategory(event.target.value as typeof category)
-            }
-            className="h-9 rounded-lg border bg-background px-3 text-sm"
-          >
-            <option value="all">全部类别</option>
-            {Object.entries(categoryLabels).map(([value, label]) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </div>
-        {filtered.length ? (
-          <div className="divide-y">
-            {filtered.map((document) => (
-              <article
-                key={document.id}
-                className="flex flex-wrap items-center gap-4 px-4 py-4"
-              >
-                <span className="grid size-10 place-items-center rounded-lg bg-primary/8 text-primary">
-                  <Library className="size-5" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-semibold">
-                    {document.displayName}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {categoryLabels[document.category]} · v
-                    {document.currentVersion?.versionNumber ?? "—"} ·{" "}
-                    {document.audience === "organization"
-                      ? "全公司"
-                      : document.audience === "department"
-                        ? "指定部门"
-                        : "仅管理员"}{" "}
-                    ·{" "}
-                    {
-                      {
-                        draft: "草稿",
-                        published: "已发布",
-                        expired: "已失效",
-                        archived: "已归档",
-                      }[document.lifecycleStatus]
-                    }
-                  </p>
-                </div>
-                {document.currentVersion ? (
-                  <>
-                    <a
-                      target="_blank"
-                      rel="noreferrer"
-                      href={withBasePath(
-                        `/api/company-knowledge/${document.id}/versions/${document.currentVersion.id}/download?preview=true`,
-                      )}
-                      className="inline-flex h-8 items-center rounded-lg border px-3 text-xs font-medium hover:bg-muted"
-                    >
-                      预览
-                    </a>
-                    <a
-                      href={withBasePath(
-                        `/api/company-knowledge/${document.id}/versions/${document.currentVersion.id}/download`,
-                      )}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-muted"
-                    >
-                      <Download className="size-3.5" />
-                      下载
-                    </a>
-                  </>
-                ) : null}
-                <button
-                  onClick={() => void openHistory(document)}
-                  className="h-8 rounded-lg border px-3 text-xs font-medium hover:bg-muted"
-                >
-                  版本历史
-                </button>
-                {canManage ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setVersionTarget(document)}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium hover:bg-muted"
-                    >
-                      <FileUp className="size-3.5" />
-                      新版本
-                    </button>
-                    {document.lifecycleStatus !== "published" ? (
-                      <button
-                        onClick={() =>
-                          void changeLifecycle(document, "published")
-                        }
-                        className="h-8 rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground"
-                      >
-                        发布
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() =>
-                          void changeLifecycle(document, "expired")
-                        }
-                        className="h-8 rounded-lg border px-3 text-xs font-medium hover:bg-muted"
-                      >
-                        设为失效
-                      </button>
-                    )}
-                    <button
-                      onClick={() => void changeLifecycle(document, "archived")}
-                      className="h-8 rounded-lg border px-3 text-xs font-medium text-muted-foreground hover:bg-muted"
-                    >
-                      归档
-                    </button>
-                  </>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        ) : (
-          <div className="grid min-h-72 place-items-center text-center">
-            <div>
-              <Library className="mx-auto size-9 text-muted-foreground" />
-              <p className="mt-3 text-sm font-medium">暂无可见公司资料</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                管理员上传并发布后，资料才会对相应成员可见。
-              </p>
-            </div>
-          </div>
-        )}
-      </section>
-      {uploadOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--overlay)] p-4">
-          <form
-            onSubmit={upload}
-            className="w-full max-w-lg rounded-xl border bg-card p-5 shadow-xl"
-          >
-            <h2 className="text-lg font-semibold">上传公司资料</h2>
-            <div className="mt-5 space-y-4">
-              <label className="block text-sm font-medium">
-                文件
-                <input
-                  required
-                  type="file"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-                  className="mt-2 block w-full text-sm"
-                />
-              </label>
-              <label className="block text-sm font-medium">
-                类别
-                <select
-                  value={uploadCategory}
-                  onChange={(event) =>
-                    setUploadCategory(event.target.value as Category)
-                  }
-                  className="mt-2 h-10 w-full rounded-lg border bg-background px-3"
-                >
-                  {Object.entries(categoryLabels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block text-sm font-medium">
-                可见范围
-                <select
-                  value={audience}
-                  onChange={(event) =>
-                    setAudience(event.target.value as typeof audience)
-                  }
-                  className="mt-2 h-10 w-full rounded-lg border bg-background px-3"
-                >
-                  <option value="organization">全公司</option>
-                  <option value="department">指定部门</option>
-                  <option value="admin">仅管理员</option>
-                </select>
-              </label>
-              {audience === "department" ? (
-                <label className="block text-sm font-medium">
-                  部门
-                  <select
-                    required
-                    value={departmentId}
-                    onChange={(event) => setDepartmentId(event.target.value)}
-                    className="mt-2 h-10 w-full rounded-lg border bg-background px-3"
-                  >
-                    <option value="">请选择</option>
-                    {departments.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
-              <label className="block text-sm font-medium">
-                版本说明（可选）
-                <textarea
-                  value={uploadVersionNote}
-                  maxLength={500}
-                  rows={3}
-                  onChange={(event) => setUploadVersionNote(event.target.value)}
-                  className="mt-2 w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm"
-                />
-              </label>
-              <p className="rounded-lg bg-warning-soft p-3 text-xs text-warning">
-                新上传和新版本默认是草稿，不会进入普通成员的 AI
-                检索；请人工检查后再发布。
-              </p>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setUploadOpen(false)}
-                className="h-9 rounded-lg border px-3 text-sm"
-              >
-                取消
-              </button>
-              <button
-                disabled={busy || !file}
-                className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
-              >
-                {busy ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                上传草稿
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-      {versionTarget ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--overlay)] p-4">
-          <form
-            onSubmit={newVersion}
-            className="w-full max-w-lg rounded-xl border bg-card p-5 shadow-xl"
-          >
-            <h2 className="text-lg font-semibold">上传新版本</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {versionTarget.displayName}
-            </p>
-            <div className="mt-5 space-y-4">
-              <label className="block text-sm font-medium">
-                文件
-                <input
-                  required
-                  type="file"
-                  onChange={(event) =>
-                    setVersionFile(event.target.files?.[0] ?? null)
-                  }
-                  className="mt-2 block w-full text-sm"
-                />
-              </label>
-              <label className="block text-sm font-medium">
-                版本说明（可选）
-                <textarea
-                  value={versionNote}
-                  maxLength={500}
-                  rows={3}
-                  onChange={(event) => setVersionNote(event.target.value)}
-                  className="mt-2 w-full resize-none rounded-lg border bg-background px-3 py-2 text-sm"
-                />
-              </label>
-              <p className="rounded-lg bg-warning-soft p-3 text-xs text-warning">
-                新版本默认回到草稿，人工检查并发布后才进入 AI 检索。
-              </p>
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setVersionTarget(null);
-                  setVersionFile(null);
-                  setVersionNote("");
-                }}
-                className="h-9 rounded-lg border px-3 text-sm"
-              >
-                取消
-              </button>
-              <button
-                disabled={busy || !versionFile}
-                className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground disabled:opacity-50"
-              >
-                {busy ? <LoaderCircle className="size-4 animate-spin" /> : null}
-                上传新版本
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
-      {history ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[var(--overlay)] p-4">
-          <section className="w-full max-w-lg rounded-xl border bg-card p-5 shadow-xl">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">版本历史</h2>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {history.document.displayName}
-                </p>
-              </div>
-              <button
-                onClick={() => setHistory(null)}
-                className="h-8 rounded-lg border px-3 text-xs"
-              >
-                关闭
-              </button>
-            </div>
-            <div className="mt-4 divide-y rounded-lg border">
-              {history.versions.map((version) => (
-                <div key={version.id} className="flex items-center gap-3 p-3">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">
-                      v{version.versionNumber}
-                      {version.isCurrent ? " · 当前" : ""}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {new Date(version.createdAt).toLocaleString("zh-CN")}
-                    </p>
-                    {version.versionNote ? (
-                      <p className="mt-1 text-xs text-foreground">
-                        {version.versionNote}
-                      </p>
-                    ) : null}
-                  </div>
-                  <a
-                    href={withBasePath(
-                      `/api/company-knowledge/${history.document.id}/versions/${version.id}/download`,
-                    )}
-                    className="text-xs font-medium text-primary hover:underline"
-                  >
-                    下载
-                  </a>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-      ) : null}
-    </main>
-  );
+
+  const load = useCallback(async () => { const response = await fetch(withBasePath("/api/company-knowledge"), { credentials: "include", cache: "no-store" }); const body = await response.json() as { documents?: CompanyDocument[]; canManage?: boolean; error?: { message?: string } }; if (!response.ok) throw new Error(body.error?.message ?? "公司知识库加载失败"); setDocuments(body.documents ?? []); setCanManage(Boolean(body.canManage)); }, []);
+  useEffect(() => { const timer = window.setTimeout(() => { void load().catch((caught) => setError(caught instanceof Error ? caught.message : "公司知识库加载失败")); }, 0); return () => window.clearTimeout(timer); }, [load]);
+  useEffect(() => { if (!canManage) return; void fetch(withBasePath("/api/projects/creation-context"), { credentials: "include" }).then(async (response) => response.json() as Promise<{ departments?: Department[] }>).then((body) => setDepartments(body.departments ?? [])).catch(() => undefined); }, [canManage]);
+  const filtered = useMemo(() => { const keyword = query.trim().toLocaleLowerCase("zh-CN"); return documents.filter((item) => (category === "all" || item.category === category) && (status === "all" || item.lifecycleStatus === status) && (!keyword || item.displayName.toLocaleLowerCase("zh-CN").includes(keyword))); }, [category, documents, query, status]);
+
+  const upload = async (event: FormEvent) => { event.preventDefault(); if (!file) return; setBusy(true); setError(null); try { const form = new FormData(); form.set("file", file); form.set("displayName", file.name.replace(/\.[^.]+$/, "")); form.set("category", uploadCategory); form.set("audience", audience); if (uploadVersionNote.trim()) form.set("versionNote", uploadVersionNote.trim()); if (audience === "department") form.set("departmentId", departmentId); const response = await fetch(withBasePath("/api/company-knowledge"), { method: "POST", credentials: "include", headers: { "idempotency-key": crypto.randomUUID() }, body: form }); const body = await response.json() as { error?: { message?: string } }; if (!response.ok) throw new Error(body.error?.message ?? "上传失败"); setUploadOpen(false); setFile(null); setUploadVersionNote(""); await load(); toast("公司资料已上传为草稿"); } catch (caught) { setError(caught instanceof Error ? caught.message : "上传失败"); } finally { setBusy(false); } };
+  const changeLifecycle = async (document: CompanyDocument, lifecycleStatus: Lifecycle) => { setError(null); const response = await fetch(withBasePath(`/api/company-knowledge/${document.id}`), { method: "PATCH", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ lifecycleStatus }) }); if (!response.ok) { const body = await response.json() as { error?: { message?: string } }; setError(body.error?.message ?? "状态更新失败"); return; } await response.json(); await load(); toast(`“${document.displayName}”已更新为${lifecycleLabels[lifecycleStatus]}`); };
+  const newVersion = async (event: FormEvent) => { event.preventDefault(); if (!versionTarget || !versionFile) return; const form = new FormData(); form.set("file", versionFile); if (versionNote.trim()) form.set("versionNote", versionNote.trim()); setBusy(true); setError(null); try { const response = await fetch(withBasePath(`/api/company-knowledge/${versionTarget.id}/versions`), { method: "POST", credentials: "include", headers: { "idempotency-key": crypto.randomUUID() }, body: form }); if (!response.ok) { const body = await response.json() as { error?: { message?: string } }; throw new Error(body.error?.message ?? "新版本上传失败"); } setVersionTarget(null); setVersionFile(null); setVersionNote(""); await load(); toast("新版本已上传为草稿"); } catch (caught) { setError(caught instanceof Error ? caught.message : "新版本上传失败"); } finally { setBusy(false); } };
+  const openHistory = async (document: CompanyDocument) => { const response = await fetch(withBasePath(`/api/company-knowledge/${document.id}/versions`), { credentials: "include", cache: "no-store" }); const body = await response.json() as { versions?: ProjectDocumentVersionDto[]; error?: { message?: string } }; if (!response.ok) { setError(body.error?.message ?? "版本历史加载失败"); return; } setHistory({ document, versions: body.versions ?? [] }); };
+
+  return <main className="min-h-full px-5 py-7 sm:px-6 lg:px-8" data-testid="company-knowledge-page">
+    <header className="mb-6 flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">公司知识库</h1><p className="mt-1.5 text-sm text-muted-foreground">维护公司级规范和模板；只有已发布且未失效的资料可用于 AI。</p></div>{canManage ? <Button onClick={() => setUploadOpen(true)}><Upload />上传公司资料</Button> : null}</header>
+    {error ? <Alert variant="destructive" className="mb-4"><AlertDescription>{error}</AlertDescription></Alert> : null}
+    <div className="mb-4 flex flex-wrap gap-2"><label className="relative min-w-56 flex-1 sm:max-w-sm"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索公司资料" className="pl-9" /></label><Select value={category} onValueChange={(value) => setCategory(value as typeof category)}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部类别</SelectItem>{Object.entries(categoryLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select><Select value={status} onValueChange={(value) => setStatus(value as typeof status)}><SelectTrigger className="w-32"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">全部状态</SelectItem>{Object.entries(lifecycleLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></div>
+    <section className="overflow-hidden rounded-lg border bg-card">{filtered.length ? <div className="overflow-x-auto"><Table className="min-w-[850px]"><TableHeader><TableRow><TableHead>文件名</TableHead><TableHead>分类</TableHead><TableHead>当前版本</TableHead><TableHead>可见范围</TableHead><TableHead>状态</TableHead><TableHead>更新时间</TableHead><TableHead className="w-12"><span className="sr-only">操作</span></TableHead></TableRow></TableHeader><TableBody>{filtered.map((document) => <TableRow key={document.id}><TableCell><div className="flex items-center gap-2.5"><span className="grid size-8 place-items-center rounded-lg bg-muted text-muted-foreground"><Library className="size-4" /></span><span className="max-w-60 truncate font-medium">{document.displayName}</span></div></TableCell><TableCell>{categoryLabels[document.category]}</TableCell><TableCell>v{document.currentVersion?.versionNumber ?? "—"}</TableCell><TableCell>{audienceLabels[document.audience]}</TableCell><TableCell><Badge variant="outline" className={lifecycleClasses[document.lifecycleStatus]}>{lifecycleLabels[document.lifecycleStatus]}</Badge></TableCell><TableCell className="whitespace-nowrap text-muted-foreground">{new Date(document.updatedAt).toLocaleString("zh-CN")}</TableCell><TableCell><DocumentActions document={document} canManage={canManage} onHistory={() => void openHistory(document)} onVersion={() => setVersionTarget(document)} onLifecycle={(next) => void changeLifecycle(document, next)} /></TableCell></TableRow>)}</TableBody></Table></div> : <div className="grid min-h-72 place-items-center text-center"><div><Library className="mx-auto size-9 text-muted-foreground" /><h2 className="mt-3 text-sm font-medium">暂无可见公司资料</h2><p className="mt-1 text-xs text-muted-foreground">管理员上传并发布后，资料才会对相应成员可见。</p>{canManage ? <Button className="mt-4" onClick={() => setUploadOpen(true)}><Upload />上传公司资料</Button> : null}</div></div>}</section>
+
+    <KnowledgeUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} busy={busy} file={file} onFile={setFile} category={uploadCategory} onCategory={setUploadCategory} audience={audience} onAudience={setAudience} departmentId={departmentId} onDepartment={setDepartmentId} departments={departments} note={uploadVersionNote} onNote={setUploadVersionNote} onSubmit={(event) => void upload(event)} />
+    <VersionUploadDialog target={versionTarget} busy={busy} file={versionFile} onFile={setVersionFile} note={versionNote} onNote={setVersionNote} onClose={() => { setVersionTarget(null); setVersionFile(null); setVersionNote(""); }} onSubmit={(event) => void newVersion(event)} />
+    <Sheet open={Boolean(history)} onOpenChange={(open) => { if (!open) setHistory(null); }}><SheetContent className="w-full sm:max-w-lg"><SheetHeader><SheetTitle>版本历史</SheetTitle><SheetDescription>{history?.document.displayName}</SheetDescription></SheetHeader><div className="space-y-2 overflow-y-auto px-4 pb-6">{history?.versions.map((version) => <div key={version.id} className="flex items-center gap-3 rounded-lg border p-3"><div className="min-w-0 flex-1"><p className="text-sm font-medium">v{version.versionNumber}{version.isCurrent ? " · 当前" : ""}</p><p className="mt-1 text-xs text-muted-foreground">{new Date(version.createdAt).toLocaleString("zh-CN")}</p>{version.versionNote ? <p className="mt-1 text-xs">{version.versionNote}</p> : null}</div><Button variant="link" size="sm" asChild><a href={history ? withBasePath(`/api/company-knowledge/${history.document.id}/versions/${version.id}/download`) : undefined}>下载</a></Button></div>)}</div></SheetContent></Sheet>
+  </main>;
+}
+
+function DocumentActions({ document, canManage, onHistory, onVersion, onLifecycle }: { document: CompanyDocument; canManage: boolean; onHistory: () => void; onVersion: () => void; onLifecycle: (status: Lifecycle) => void }) {
+  const version = document.currentVersion;
+  return <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label={`${document.displayName} 操作`}><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{version ? <><DropdownMenuItem asChild><a target="_blank" rel="noreferrer" href={withBasePath(`/api/company-knowledge/${document.id}/versions/${version.id}/download?preview=true`)}>预览</a></DropdownMenuItem><DropdownMenuItem asChild><a href={withBasePath(`/api/company-knowledge/${document.id}/versions/${version.id}/download`)}>下载</a></DropdownMenuItem></> : null}<DropdownMenuItem onSelect={onHistory}>查看版本历史</DropdownMenuItem>{canManage ? <><DropdownMenuItem onSelect={onVersion}>上传新版本</DropdownMenuItem><DropdownMenuSeparator />{document.lifecycleStatus !== "published" ? <DropdownMenuItem onSelect={() => onLifecycle("published")}>发布</DropdownMenuItem> : <DropdownMenuItem onSelect={() => onLifecycle("expired")}>标记失效</DropdownMenuItem>}<DropdownMenuItem onSelect={() => onLifecycle("archived")}>归档</DropdownMenuItem><DropdownMenuItem disabled>权限设置（由可见范围控制）</DropdownMenuItem></> : null}</DropdownMenuContent></DropdownMenu>;
+}
+
+function KnowledgeUploadDialog({ open, onOpenChange, busy, file, onFile, category, onCategory, audience, onAudience, departmentId, onDepartment, departments, note, onNote, onSubmit }: { open: boolean; onOpenChange: (open: boolean) => void; busy: boolean; file: File | null; onFile: (file: File | null) => void; category: Category; onCategory: (value: Category) => void; audience: Audience; onAudience: (value: Audience) => void; departmentId: string; onDepartment: (value: string) => void; departments: Department[]; note: string; onNote: (value: string) => void; onSubmit: (event: FormEvent) => void }) {
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg" data-testid="company-upload-dialog"><DialogHeader><DialogTitle>上传公司资料</DialogTitle><DialogDescription>新资料先保存为草稿，人工检查后再发布。</DialogDescription></DialogHeader><form onSubmit={onSubmit} className="space-y-4"><label className="grid gap-1.5 text-sm font-medium">文件<Input required type="file" onChange={(event) => onFile(event.target.files?.[0] ?? null)} /></label><label className="grid gap-1.5 text-sm font-medium">分类<Select value={category} onValueChange={(value) => onCategory(value as Category)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(categoryLabels).map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1.5 text-sm font-medium">可见范围<Select value={audience} onValueChange={(value) => onAudience(value as Audience)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="organization">全公司</SelectItem><SelectItem value="department">指定部门</SelectItem><SelectItem value="admin">仅管理员</SelectItem></SelectContent></Select></label>{audience === "department" ? <label className="grid gap-1.5 text-sm font-medium">部门<Select value={departmentId} onValueChange={onDepartment}><SelectTrigger className="w-full"><SelectValue placeholder="请选择部门" /></SelectTrigger><SelectContent>{departments.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label> : null}<label className="grid gap-1.5 text-sm font-medium">版本说明（可选）<Textarea value={note} onChange={(event) => onNote(event.target.value)} rows={3} maxLength={500} /></label><label className="grid gap-1.5 text-sm font-medium">发布状态<Input value="草稿（上传后人工发布）" disabled /></label><DialogFooter><Button type="button" variant="outline" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy || !file}>{busy ? <LoaderCircle className="animate-spin" /> : null}上传草稿</Button></DialogFooter></form></DialogContent></Dialog>;
+}
+
+function VersionUploadDialog({ target, busy, file, onFile, note, onNote, onClose, onSubmit }: { target: CompanyDocument | null; busy: boolean; file: File | null; onFile: (file: File | null) => void; note: string; onNote: (value: string) => void; onClose: () => void; onSubmit: (event: FormEvent) => void }) {
+  return <Dialog open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className="sm:max-w-lg"><DialogHeader><DialogTitle>上传新版本</DialogTitle><DialogDescription>{target?.displayName} · 新版本默认回到草稿。</DialogDescription></DialogHeader><form onSubmit={onSubmit} className="space-y-4"><label className="grid gap-1.5 text-sm font-medium">文件<Input required type="file" onChange={(event) => onFile(event.target.files?.[0] ?? null)} /></label><label className="grid gap-1.5 text-sm font-medium">版本说明（可选）<Textarea value={note} onChange={(event) => onNote(event.target.value)} rows={3} maxLength={500} /></label><DialogFooter><Button type="button" variant="outline" onClick={onClose}>取消</Button><Button type="submit" disabled={busy || !file}>{busy ? <LoaderCircle className="animate-spin" /> : null}上传新版本</Button></DialogFooter></form></DialogContent></Dialog>;
 }

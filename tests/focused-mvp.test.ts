@@ -210,7 +210,7 @@ describe("focused requirement document", () => {
     assert.match(service, /REQUIREMENT_EXECUTION_CREATE_FAILED/);
     assert.match(page, /status === "generating"/);
     assert.match(page, /window\.setInterval/);
-    assert.match(page, /重试生成新版本/);
+    assert.match(page, /重新生成/);
   });
 });
 

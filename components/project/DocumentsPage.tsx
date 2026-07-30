@@ -12,15 +12,12 @@ import {
   AlertCircle,
   Archive,
   ArchiveRestore,
-  Download,
-  Eye,
   FileCheck2,
   FileText,
   FolderArchive,
-  History,
   Inbox,
-  Info,
   KeyRound,
+  MoreHorizontal,
   RefreshCw,
   Search,
   Upload,
@@ -55,6 +52,8 @@ import {
 } from "./DocumentUploadDrawer";
 import { DocumentVersionDrawer } from "./DocumentVersionDrawer";
 import { ProjectContextHeader } from "./ProjectContextHeader";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 interface DocumentsPageProps {
   project: AuthorizedProjectSummary;
@@ -73,13 +72,6 @@ const defaultPolicy: DocumentUploadPolicyDto = {
 };
 
 const emptyCounts: DocumentListCountsDto = { active: 0, archived: 0 };
-
-function formatBytes(value: number): string {
-  if (!Number.isFinite(value) || value < 0) return "—";
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / 1024 / 1024).toFixed(1)} MB`;
-}
 
 function formatDate(value: string | null | undefined): string {
   if (!value) return "—";
@@ -164,8 +156,8 @@ function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
       classes: "border-info/20 bg-info-soft text-info",
     },
     succeeded: {
-      label: "知识索引已建立",
-      detail: `${version.ingestion.sectionCount} Section · ${version.ingestion.chunkCount} Chunk`,
+      label: "可用于 AI",
+      detail: "解析与索引已完成",
       classes: "border-success/20 bg-success-soft text-success",
     },
     failed: {
@@ -417,14 +409,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           ) : null}
         </div>
 
-        <aside className="mt-4 flex items-start gap-2 rounded-xl border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">
-          <Info className="mt-0.5 size-4 shrink-0" />
-          <p>
-            <strong className="font-semibold">文件已真实存储；</strong>
-            当前有效版本会由独立 Worker
-            异步解析并建立全文知识索引，项目助手只使用服务端授权的有效来源。
-          </p>
-        </aside>
+        <aside className="mt-4 rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">文件上传后会自动解析；状态变为“可用于 AI”后即可参与问答和文档生成。</aside>
 
         {!canUpload && phase === "ready" ? (
           <aside className="mt-3 rounded-lg border border-border bg-card px-3 py-2.5 text-xs text-muted-foreground">
@@ -451,7 +436,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         ) : null}
 
         <section
-          className="mt-5 overflow-hidden rounded-xl border border-border bg-card"
+          className="mt-5 overflow-hidden rounded-lg border border-border bg-card"
           aria-busy={phase === "loading" || refreshing}
         >
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -703,24 +688,9 @@ function DocumentTable({
     kind: "archive" | "restore",
   ) => void;
 }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[1040px] text-left">
-        <thead className="border-b border-border bg-surface">
-          <tr className="text-[11px] font-semibold text-muted-foreground">
-            <th className="px-4 py-3">资料名称</th>
-            <th className="px-3 py-3">文件类型</th>
-            <th className="px-3 py-3">当前版本</th>
-            <th className="px-3 py-3">文件大小</th>
-            <th className="px-3 py-3">存储状态</th>
-            <th className="px-3 py-3">可用于 AI</th>
-            <th className="px-3 py-3">解析与索引</th>
-            <th className="px-3 py-3">上传者</th>
-            <th className="px-3 py-3">更新时间</th>
-            <th className="px-4 py-3 text-right">操作</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
+  return <div className="overflow-x-auto"><Table className="min-w-[900px]"><TableHeader><TableRow>
+    <TableHead>文件名称</TableHead><TableHead>类型</TableHead><TableHead>当前版本</TableHead><TableHead>上传人</TableHead><TableHead>更新时间</TableHead><TableHead>解析状态</TableHead><TableHead className="w-12"><span className="sr-only">操作</span></TableHead>
+  </TableRow></TableHeader><TableBody>
           {documents.map((document) => {
             const version = document.currentVersion;
             const status = statusPresentation(document);
@@ -730,18 +700,15 @@ function DocumentTable({
               version?.storageStatus === "stored";
             const busy = Boolean(pendingAction?.endsWith(`:${document.id}`));
             return (
-              <tr
-                key={document.id}
-                className="transition-colors hover:bg-muted/30"
-              >
-                <td className="px-4 py-3.5">
+              <TableRow key={document.id}>
+                <TableCell>
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground">
                       <FileText className="size-4" />
                     </span>
                     <div className="min-w-0">
                       <p
-                        className="max-w-xs truncate text-sm font-medium text-foreground"
+                        className="max-w-xs truncate font-medium text-foreground"
                         title={document.displayName}
                       >
                         {document.displayName}
@@ -754,13 +721,11 @@ function DocumentTable({
                       </p>
                     </div>
                   </div>
-                </td>
-                <td className="px-3 py-3.5 text-xs text-foreground">
-                  {version?.extension.toUpperCase() ?? "—"}
-                </td>
-                <td className="px-3 py-3.5">
+                </TableCell>
+                <TableCell>{version?.extension.toUpperCase() ?? "—"}</TableCell>
+                <TableCell>
                   {version ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-primary">
                       <FileCheck2 className="size-3" />v{version.versionNumber}
                     </span>
                   ) : (
@@ -768,158 +733,33 @@ function DocumentTable({
                       等待可用版本
                     </span>
                   )}
-                </td>
-                <td className="px-3 py-3.5 text-xs tabular-nums text-foreground">
-                  {version ? formatBytes(version.sizeBytes) : "—"}
-                </td>
-                <td className="px-3 py-3.5">
+                </TableCell>
+                <TableCell>{version?.uploadedBy.displayName ?? document.createdBy.displayName}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{formatDate(document.updatedAt)}</TableCell>
+                <TableCell>
                   <span
-                    className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}
+                    className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${document.status === "archived" ? status.classes : ingestion.classes}`}
                   >
-                    {status.label}
+                    {document.status === "archived" ? status.label : ingestion.label}
                   </span>
-                </td>
-                <td className="px-3 py-3.5">
-                  <span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${document.status === "active" && version?.ingestion.status === "succeeded" ? "border-success/20 bg-success-soft text-success" : "border-border bg-muted text-muted-foreground"}`}>
-                    {document.status === "active" && version?.ingestion.status === "succeeded" ? "是" : "否"}
-                  </span>
-                </td>
-                <td className="px-3 py-3.5">
-                  <span
-                    className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}
-                  >
-                    {ingestion.label}
-                  </span>
-                  <p className="mt-1 max-w-52 text-[9px] text-muted-foreground">
-                    {ingestion.detail}
-                  </p>
-                </td>
-                <td className="px-3 py-3.5 text-xs text-foreground">
-                  {version?.uploadedBy.displayName ??
-                    document.createdBy.displayName}
-                </td>
-                <td className="px-3 py-3.5 text-xs text-muted-foreground">
-                  {formatDate(document.updatedAt)}
-                </td>
-                <td className="px-4 py-3.5">
-                  <div className="flex items-center justify-end gap-1">
-                    {canDownload && version ? (
-                      <a
-                        href={withBasePath(`/api/projects/${document.projectId}/documents/${document.id}/versions/${version.id}/download?preview=true`)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                        aria-label={`预览 ${document.displayName}`}
-                        title="预览当前版本"
-                      >
-                        <Eye className="size-3.5" />
-                      </a>
-                    ) : null}
-                    {canDownload && version ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        aria-label={`下载 ${document.displayName}`}
-                        title="下载当前版本"
-                        loading={pendingAction === `download:${version.id}`}
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => onDownload(document, version)}
-                      >
-                        <Download className="size-3.5" />
-                      </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="size-8"
-                      aria-label={`查看 ${document.displayName} 的版本历史`}
-                      title="版本历史"
-                      disabled={Boolean(pendingAction)}
-                      onClick={() => onVersions(document)}
-                    >
-                      <History className="size-3.5" />
-                    </Button>
-                    {version &&
-                    document.permissions.canReindex &&
-                    document.status === "active" &&
-                    version.storageStatus === "stored" ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        aria-label={`重新解析 ${document.displayName}`}
-                        title="重新解析"
-                        loading={pendingAction === `reindex:${version.id}`}
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => onReindex(document, version)}
-                      >
-                        <RefreshCw className="size-3.5" />
-                      </Button>
-                    ) : null}
-                    {document.permissions.canUploadVersion &&
-                    document.status === "active" ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        aria-label={`为 ${document.displayName} 上传新版本`}
-                        title="上传新版本"
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => onUploadVersion(document)}
-                      >
-                        <Upload className="size-3.5" />
-                      </Button>
-                    ) : null}
-                    {document.status === "active" &&
-                    document.permissions.canArchive ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        aria-label={`归档 ${document.displayName}`}
-                        title="归档资料"
-                        loading={
-                          busy && pendingAction === `archive:${document.id}`
-                        }
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => onLifecycle(document, "archive")}
-                      >
-                        <Archive className="size-3.5" />
-                      </Button>
-                    ) : null}
-                    {document.status === "archived" &&
-                    document.permissions.canRestore ? (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="size-8"
-                        aria-label={`恢复 ${document.displayName}`}
-                        title="恢复资料"
-                        loading={
-                          busy && pendingAction === `restore:${document.id}`
-                        }
-                        disabled={Boolean(pendingAction)}
-                        onClick={() => onLifecycle(document, "restore")}
-                      >
-                        <ArchiveRestore className="size-3.5" />
-                      </Button>
-                    ) : null}
-                  </div>
-                </td>
-              </tr>
+                  <p className="mt-1 max-w-52 text-[10px] text-muted-foreground">{document.status === "archived" ? "已从有效资料中移除" : ingestion.detail}</p>
+                </TableCell>
+                <TableCell>
+                  <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`${document.displayName} 操作`} disabled={Boolean(pendingAction)}><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
+                    {canDownload && version ? <DropdownMenuItem asChild><a href={withBasePath(`/api/projects/${document.projectId}/documents/${document.id}/versions/${version.id}/download?preview=true`)} target="_blank" rel="noreferrer">预览</a></DropdownMenuItem> : null}
+                    {canDownload && version ? <DropdownMenuItem onSelect={() => onDownload(document, version)}>下载</DropdownMenuItem> : null}
+                    {document.permissions.canUploadVersion && document.status === "active" ? <DropdownMenuItem onSelect={() => onUploadVersion(document)}>上传新版本</DropdownMenuItem> : null}
+                    <DropdownMenuItem onSelect={() => onVersions(document)}>查看版本历史</DropdownMenuItem>
+                    {version && document.permissions.canReindex && document.status === "active" && version.storageStatus === "stored" ? <DropdownMenuItem onSelect={() => onReindex(document, version)}>重新解析</DropdownMenuItem> : null}
+                    {(document.permissions.canArchive || document.permissions.canRestore) ? <DropdownMenuSeparator /> : null}
+                    {document.status === "active" && document.permissions.canArchive ? <DropdownMenuItem variant="destructive" onSelect={() => onLifecycle(document, "archive")}>{busy ? "处理中…" : "归档"}</DropdownMenuItem> : null}
+                    {document.status === "archived" && document.permissions.canRestore ? <DropdownMenuItem onSelect={() => onLifecycle(document, "restore")}>{busy ? "处理中…" : "恢复"}</DropdownMenuItem> : null}
+                  </DropdownMenuContent></DropdownMenu>
+                </TableCell>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
-    </div>
-  );
+        </TableBody></Table></div>;
 }
 
 export function DocumentGrantDialog({

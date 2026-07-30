@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { APIResponse, Download, Page } from "@playwright/test";
+import { mkdir } from "node:fs/promises";
+import { join } from "node:path";
+import type { APIResponse, Download, Locator, Page } from "@playwright/test";
 import pg from "pg";
 import type { ProjectDocumentVersionsResponse } from "@/types/documents";
 import { expect, test } from "./fixtures";
@@ -7,7 +9,25 @@ import { appPath } from "./support/app-url";
 import { loginByApi } from "./support/auth";
 import { fictitiousText } from "./support/file-fixtures";
 
-test.use({ authenticatedAs: "admin", trace: "off", video: "off" });
+test.use({ authenticatedAs: "admin", trace: "off", video: "off", viewport: { width: 1440, height: 1000 } });
+
+const evidenceDirectory = process.env.FOCUSED_UI_EVIDENCE_DIR?.trim();
+async function evidence(page: Page, filename: string) {
+  if (!evidenceDirectory) return;
+  await mkdir(evidenceDirectory, { recursive: true });
+  await page.screenshot({ path: join(evidenceDirectory, filename), fullPage: true });
+}
+
+async function settleAnimations(locator: Locator) {
+  await expect(locator).toBeVisible();
+  await locator.evaluate(async (element) => {
+    await Promise.all(element.getAnimations().map((animation) => animation.finished));
+  });
+}
+
+async function expectNoPageOverflow(page: Page) {
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+}
 
 async function json<T>(response: APIResponse): Promise<T> {
   return response.json() as Promise<T>;
@@ -33,11 +53,11 @@ async function waitUntilCompanyParsed(page: Page, documentId: string) {
 
 async function expectDownload(
   page: Page,
-  triggerName: "Markdown" | "DOCX",
+  triggerName: "下载 Markdown" | "下载 DOCX",
   extension: ".md" | ".docx",
   allowAbortedRequestOnce: (pathname: string) => void,
 ) {
-  const link = page.getByRole("link", { name: triggerName, exact: true });
+  const link = page.getByRole("menuitem", { name: triggerName, exact: true });
   const href = await link.getAttribute("href");
   expect(href).toBeTruthy();
   allowAbortedRequestOnce(new URL(href!, page.url()).pathname);
@@ -68,12 +88,19 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
 
   await page.goto(appPath("/projects"));
   await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "创建项目", exact: true }).click();
+  await expectNoPageOverflow(page);
+  await evidence(page, "01-project-list.png");
+  await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await page.getByLabel("项目名称").fill(projectName);
   await page.getByLabel("项目描述").fill("仅用于聚焦 MVP 自动化验收的虚构项目，不含客户信息。");
-  await page.getByLabel("状态").selectOption("active");
+  await page.getByLabel("项目状态").click();
+  await page.getByRole("option", { name: "进行中", exact: true }).click();
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await page.waitForURL(/\/projects\/project-[^/]+(?:\/overview)?$/);
+  await evidence(page, "02-project-overview.png");
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await expectNoPageOverflow(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   const projectId = new URL(page.url()).pathname.split("/").filter(Boolean).at(-2)?.startsWith("project-")
     ? new URL(page.url()).pathname.split("/").filter(Boolean).at(-2)!
     : new URL(page.url()).pathname.split("/").filter(Boolean).at(-1)!;
@@ -94,10 +121,14 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
   expect(projectDocument).toBeTruthy();
   await waitUntilParsed(page, projectId, projectDocument!.id);
   await page.reload();
-  await expect(page.getByText("知识索引已建立", { exact: true })).toBeVisible();
+  await expect(page.getByText("可用于 AI", { exact: true })).toBeVisible();
+  await evidence(page, "03-project-files.png");
 
   await page.getByRole("link", { name: "公司知识库", exact: true }).click();
-  await page.getByRole("button", { name: "上传公司资料", exact: true }).click();
+  await evidence(page, "10-company-knowledge.png");
+  await page.getByRole("button", { name: "上传公司资料", exact: true }).first().click();
+  await settleAnimations(page.getByTestId("company-upload-dialog"));
+  await evidence(page, "11-company-upload-dialog.png");
   const companyUploadResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/api/company-knowledge"),
   );
@@ -105,21 +136,28 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
     companyFileName,
     "公司项目管理规范：需求文档发布前必须由项目负责人确认，并保留来源引用。",
   ));
-  await page.getByLabel("类别").selectOption("project_management");
+  await page.getByLabel("分类").click();
+  await page.getByRole("option", { name: "项目管理规范", exact: true }).click();
   await page.getByRole("button", { name: "上传草稿", exact: true }).click();
   const uploadedCompany = (await (await companyUploadResponse).json()) as { documentId: string };
   await expect(page.getByText(companyDisplayName, { exact: true })).toBeVisible();
   await waitUntilCompanyParsed(page, uploadedCompany.documentId);
-  const companyRow = page.getByRole("article").filter({ hasText: companyDisplayName });
-  await companyRow.getByRole("button", { name: "发布", exact: true }).click();
+  const companyRow = page.getByRole("row").filter({ hasText: companyDisplayName });
+  await companyRow.getByRole("button", { name: `${companyDisplayName} 操作`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "发布", exact: true }).click();
   await expect(companyRow.getByText("已发布", { exact: false })).toBeVisible();
 
   await page.goto(appPath(`/projects/${projectId}/requirements`));
-  await page.getByRole("button", { name: "生成新版本", exact: true }).click();
-  await expect(page.getByText("版本 v1", { exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(/项目资料 1 份 · 公司规范 [1-9]\d* 份/)).toBeVisible();
+  await evidence(page, "04-requirement-empty.png");
+  await page.getByRole("button", { name: "基于最新资料生成新版本", exact: true }).click();
+  await expect(page.getByTestId("requirement-generating")).toBeVisible();
+  await evidence(page, "05-requirement-generating.png");
+  await expect(page.getByText("需求文档 v1", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(/项目资料：1 份/)).toBeVisible();
+  await expect(page.getByText(/公司规范：[1-9]\d* 份/)).toBeVisible();
   await expect(page.getByRole("heading", { name: "1. 文档信息与版本", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "17. 来源", exact: true })).toBeVisible();
+  await evidence(page, "06-requirement-success-local-fake.png");
   const requirementList = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
   const requirementBody = await json<{ documents: Array<{ id: string; status: string }> }>(requirementList);
   const generatedRequirement = requirementBody.documents.find((item) => item.status === "draft");
@@ -143,26 +181,49 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
   } finally {
     await database.end();
   }
+  await page.getByRole("button", { name: "编辑", exact: true }).click();
   const firstSection = page.locator("textarea").first();
   await firstSection.fill(`${await firstSection.inputValue()}\n- [TBD] 由项目经理补充发布负责人。`);
   await page.getByRole("button", { name: "保存草稿", exact: true }).click();
-  await expectDownload(page, "Markdown", ".md", runtimeMonitor.allowAbortedRequestOnce);
-  await expectDownload(page, "DOCX", ".docx", runtimeMonitor.allowAbortedRequestOnce);
+  await page.getByRole("button", { name: "下载", exact: true }).click();
+  await expectDownload(page, "下载 Markdown", ".md", runtimeMonitor.allowAbortedRequestOnce);
+  await page.getByRole("button", { name: "下载", exact: true }).click();
+  await expectDownload(page, "下载 DOCX", ".docx", runtimeMonitor.allowAbortedRequestOnce);
 
   await page.goto(appPath("/chat"));
-  await page.getByLabel("当前项目").selectOption({ label: projectName });
-  await page.getByRole("button", { name: "项目资料", exact: true }).click();
+  await page.getByLabel("当前项目").click();
+  await page.getByRole("option", { name: projectName, exact: true }).click();
+  await page.getByRole("switch", { name: "公司资料", exact: true }).click();
   await page.getByLabel("向项目 AI 助手提问").fill("项目资料中 2026 年 10 月 15 日的内部上线事实是什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("2026 年 10 月 15 日", { timeout: 45_000 });
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[项目资料]");
+  await evidence(page, "08-ai-conversation.png");
 
-  await page.getByRole("button", { name: "公司资料", exact: true }).click();
+  await page.getByRole("switch", { name: "项目资料", exact: true }).click();
+  await page.getByRole("switch", { name: "公司资料", exact: true }).click();
   await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[公司资料]", { timeout: 45_000 });
 
-  await page.goto(appPath(`/projects/${projectId}/documents`));
+  const threadResponse = await page.request.get(appPath(`/api/projects/${projectId}/ai/threads`));
+  const threadBody = await json<{ threads: Array<{ id: string; status: string }> }>(threadResponse);
+  const activeThread = threadBody.threads.find((item) => item.status === "active");
+  expect(activeThread).toBeTruthy();
+  runtimeMonitor.allowHttpStatusOnce({
+    status: 503,
+    pathname: appPath(`/api/projects/${projectId}/ai/threads/${activeThread!.id}/messages`),
+  });
+  runtimeMonitor.allowConsoleErrorOnce({
+    message: "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
+    pathname: appPath(`/api/projects/${projectId}/ai/threads/${activeThread!.id}/messages`),
+  });
+  await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？FAKE_401");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await expect(page.getByText("AI 服务当前不可用。项目资料和公司资料未发生变化，请联系管理员检查模型访问权限。", { exact: true })).toBeVisible();
+  await evidence(page, "09-ai-provider-failure.png");
+
+  await page.goto(appPath(`/projects/${projectId}/files`));
   await page.getByRole("button", { name: "上传资料", exact: true }).click();
   const failureUpload = page.getByRole("dialog", { name: "上传项目资料" });
   const failureFileName = `focused-provider-failure-${suffix}.txt`;
@@ -180,7 +241,7 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
   await waitUntilParsed(page, projectId, failureDocument!.id);
 
   await page.goto(appPath(`/projects/${projectId}/requirements`));
-  await page.getByRole("button", { name: "生成新版本", exact: true }).click();
+  await page.getByRole("button", { name: "基于最新资料生成新版本", exact: true }).click();
   let failedRequirementId = "";
   await expect.poll(async () => {
     const response = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
@@ -189,7 +250,8 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
     failedRequirementId = failed?.id ?? "";
     return failed ? `${failed.status}:${failed.failureCode}` : "missing";
   }, { timeout: 60_000, intervals: [250, 500, 1_000] }).toBe("failed:REQUIREMENT_PROVIDER_FAILED");
-  await expect(page.getByText("AI 服务暂时无法生成需求文档，请稍后重试。", { exact: true })).toBeVisible();
+  await expect(page.getByText("当前项目资料已完整保留，但 AI 服务账号暂时没有模型访问权限，因此本次未生成需求文档。请联系管理员检查 Staging 的模型凭据和访问权限。", { exact: true })).toBeVisible();
+  await expect(page.getByText("REQUIREMENT_PROVIDER_FAILED", { exact: true })).toHaveCount(0);
   const failureDatabase = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await failureDatabase.connect();
   try {
@@ -217,4 +279,12 @@ test("创建项目到需求文档与双范围 AI 对话的唯一 Happy Path", as
   } finally {
     await outsiderContext.close();
   }
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.goto(appPath("/projects"));
+  await page.getByRole("button", { name: "打开导航", exact: true }).click();
+  const mobileNavigation = page.getByRole("dialog", { name: "主导航" });
+  await settleAnimations(mobileNavigation);
+  await expectNoPageOverflow(page);
+  await evidence(page, "12-mobile-navigation-375.png");
 });

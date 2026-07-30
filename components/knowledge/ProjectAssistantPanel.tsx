@@ -9,7 +9,10 @@ import {
   Download,
   LoaderCircle,
   MessageSquarePlus,
+  MoreHorizontal,
+  PanelLeft,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
@@ -34,6 +37,10 @@ import type {
   ProjectAssistantThreadDto,
   ProjectAssistantThreadSummaryDto,
 } from "@/types/project-assistant";
+import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 type PanelPhase =
   | "loading"
@@ -67,7 +74,7 @@ function assistantErrorMessage(error: unknown): string {
       AI_PROJECT_DAILY_LIMIT_REACHED: "今日项目 AI 用量已达上限。",
       AI_CONCURRENCY_LIMIT_REACHED: "AI 服务繁忙，请稍后重试。",
       AI_PROVIDER_TIMEOUT: "AI 服务响应超时，请重试。",
-      AI_PROVIDER_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
+      AI_PROVIDER_UNAVAILABLE: "AI 服务当前不可用。项目资料和公司资料未发生变化，请联系管理员检查模型访问权限。",
       AI_CITATION_VALIDATION_FAILED: "回答未通过来源校验，请重试。",
       AI_THREAD_NOT_FOUND: "对话不存在或无权访问。",
     };
@@ -101,11 +108,14 @@ export function ProjectAssistantPanel({
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [availableSources, setAvailableSources] = useState<Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>>([]);
-  const [sourceMode, setSourceMode] = useState<"project" | "organization" | "both">("both");
+  const [projectSourcesEnabled, setProjectSourcesEnabled] = useState(true);
+  const [organizationSourcesEnabled, setOrganizationSourcesEnabled] = useState(true);
+  const [threadSearch, setThreadSearch] = useState("");
   const selectedSourceIds = useMemo(
-    () => availableSources.filter((item) => sourceMode === "both" || item.sourceScope === sourceMode).map((item) => item.id),
-    [availableSources, sourceMode],
+    () => availableSources.filter((item) => item.sourceScope === "project" ? projectSourcesEnabled : organizationSourcesEnabled).map((item) => item.id),
+    [availableSources, organizationSourcesEnabled, projectSourcesEnabled],
   );
+  const visibleThreads = useMemo(() => { const query = threadSearch.trim().toLocaleLowerCase("zh-CN"); return query ? threads.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(query)) : threads; }, [threadSearch, threads]);
 
   const loadThread = useCallback(
     async (threadId: string, signal?: AbortSignal) => {
@@ -202,7 +212,7 @@ export function ProjectAssistantPanel({
       return;
     }
     if (selectedSourceIds.length === 0) {
-      setError(sourceMode === "organization" ? "当前没有已发布且可访问的公司资料。" : "当前没有可用于回答的有效资料。");
+      setError("当前选择的范围内没有可用于回答的有效资料。");
       return;
     }
     setSending(true);
@@ -279,6 +289,11 @@ export function ProjectAssistantPanel({
     }
   };
 
+  const historyPanel = <div className="flex h-full min-h-0 flex-col">
+    <div className="border-b p-3"><Button type="button" className="w-full" onClick={() => void createThread()} loading={creating}><MessageSquarePlus className="size-3.5" />新建对话</Button><label className="relative mt-3 block"><Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={threadSearch} onChange={(event) => setThreadSearch(event.target.value)} placeholder="搜索会话" className="pl-8" /></label></div>
+    <div className="min-h-0 flex-1 overflow-y-auto p-2">{visibleThreads.length === 0 ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{threads.length ? "没有匹配的会话" : "还没有对话"}</p> : visibleThreads.map((item) => <button key={item.id} type="button" onClick={() => void loadThread(item.id)} className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${thread?.id === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Bot className="size-3.5 shrink-0" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{item.title}</span><span className="mt-0.5 block text-[10px]">{item.messageCount} 条消息{item.status === "archived" ? " · 已归档" : ""}</span></span><ChevronRight className="size-3 shrink-0" /></button>)}</div>
+  </div>;
+
   if (phase === "disabled") {
     return (
       <section className="mt-5 rounded-xl border border-border bg-card p-6" data-testid="ai-assistant-disabled">
@@ -314,19 +329,12 @@ export function ProjectAssistantPanel({
     <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant" data-focused={focused ? "true" : "false"}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">AI 对话</h3>
-            <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
-              Qwen · Grounded
-            </span>
-          </div>
+          <h3 className="text-sm font-semibold text-foreground">AI 对话</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             每次提问都会重新检索当前有效资料，并在返回前校验引用。
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => void createThread()} loading={creating}>
-          <MessageSquarePlus className="size-3.5" />新建对话
-        </Button>
+        <Sheet><SheetTrigger asChild><Button type="button" variant="outline" size="sm" className="lg:hidden"><PanelLeft className="size-3.5" />会话历史</Button></SheetTrigger><SheetContent side="left" className="w-[min(88vw,320px)] p-0"><SheetHeader className="sr-only"><SheetTitle>会话历史</SheetTitle><SheetDescription>搜索并打开私人会话</SheetDescription></SheetHeader>{historyPanel}</SheetContent></Sheet>
       </header>
 
       {error ? (
@@ -341,59 +349,10 @@ export function ProjectAssistantPanel({
         </div>
       ) : null}
 
-      <div className="border-b border-border bg-muted/10 px-5 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-semibold text-foreground">本次回答的知识来源</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">公司资料仅包含已发布、未失效且当前用户可见的版本。</p>
-          </div>
-          <div className="flex rounded-lg border bg-background p-0.5">{([
-            ["project", "项目资料"],
-            ["organization", "公司资料"],
-            ["both", "两者"],
-          ] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setSourceMode(value)} className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${sourceMode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
-        </div>
-        <div className="mt-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto">
-          {availableSources.filter((item) => sourceMode === "both" || item.sourceScope === sourceMode).map((document) => <span key={document.id} className="inline-flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary"><span className="max-w-48 truncate">{document.displayName}</span><span className="rounded bg-background px-1.5 py-0.5 text-[9px]">{document.sourceScope === "organization" ? "公司资料" : "项目资料"}</span></span>)}
-          {selectedSourceIds.length === 0 ? <p className="text-[11px] text-warning">该范围暂无有效资料。</p> : null}
-        </div>
-      </div>
+      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-x-6 gap-y-3"><span className="text-xs font-medium">检索范围</span><label className="flex items-center gap-2 text-xs"><Switch checked={projectSourcesEnabled} onCheckedChange={setProjectSourcesEnabled} />项目资料</label><label className="flex items-center gap-2 text-xs"><Switch checked={organizationSourcesEnabled} onCheckedChange={setOrganizationSourcesEnabled} />公司资料</label><span className="text-[10px] text-muted-foreground">已选择 {selectedSourceIds.length} 份有效资料</span>{selectedSourceIds.length === 0 ? <span className="text-[11px] text-warning">该范围暂无有效资料</span> : null}</div></div>
 
-      <div className="grid min-h-[560px] lg:grid-cols-[260px_1fr]">
-        <aside className="border-b border-border bg-muted/20 lg:border-b-0 lg:border-r">
-          <div className="border-b border-border px-4 py-3 text-[11px] font-medium text-muted-foreground">
-            我的对话 · 默认仅自己可见
-          </div>
-          <div className="max-h-[500px] overflow-y-auto p-2">
-            {threads.length === 0 ? (
-              <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                还没有对话
-              </p>
-            ) : (
-              threads.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => void loadThread(item.id)}
-                  className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${
-                    thread?.id === item.id
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-card/70 hover:text-foreground"
-                  }`}
-                >
-                  <Bot className="size-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">{item.title}</span>
-                    <span className="mt-0.5 block text-[10px]">
-                      {item.messageCount} 条消息{item.status === "archived" ? " · 已归档" : ""}
-                    </span>
-                  </span>
-                  <ChevronRight className="size-3 shrink-0" />
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
+      <div className="grid min-h-[560px] lg:grid-cols-[280px_1fr]">
+        <aside className="hidden border-r bg-muted/20 lg:block">{historyPanel}</aside>
 
         <div className="flex min-w-0 flex-col">
           {thread ? (
@@ -404,7 +363,7 @@ export function ProjectAssistantPanel({
                   {thread.status === "active" ? "进行中" : "已归档"} · {thread.messageCount} 条消息
                 </p>
               </div>
-              <div className="flex items-center gap-3">{thread.status === "active" ? <button type="button" onClick={() => void archive()} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"><Archive className="size-3.5" />归档</button> : null}<button type="button" onClick={() => void removeThread()} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" />删除</button></div>
+              <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label="会话操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{thread.status === "active" ? <DropdownMenuItem onSelect={() => void archive()}><Archive />归档会话</DropdownMenuItem> : null}{thread.status === "active" ? <DropdownMenuSeparator /> : null}<DropdownMenuItem variant="destructive" onSelect={() => void removeThread()}><Trash2 />删除会话</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
             </div>
           ) : null}
 
@@ -428,12 +387,12 @@ export function ProjectAssistantPanel({
                 <article key={message.id} className={message.role === "user" ? "ml-auto max-w-2xl" : "max-w-3xl"} data-message-role={message.role}>
                   <div className={`rounded-xl px-4 py-3 text-sm leading-6 ${
                     message.role === "user"
-                      ? "bg-primary text-primary-foreground"
+                      ? "border border-primary/10 bg-accent text-foreground"
                       : message.status === "failed"
                         ? "border border-destructive/20 bg-destructive-soft text-destructive"
                         : message.status === "insufficient_evidence"
                           ? "border border-warning/20 bg-warning-soft text-foreground"
-                          : "border border-border bg-background text-foreground"
+                        : "bg-card text-foreground"
                   }`}>
                     {message.status === "pending" ? (
                       <span className="inline-flex items-center gap-2 text-muted-foreground">
@@ -443,11 +402,6 @@ export function ProjectAssistantPanel({
                       <p className="whitespace-pre-wrap">{message.content}</p>
                     )}
                   </div>
-                  {message.role === "assistant" && message.fallbackUsed ? (
-                    <p className="mt-1.5 text-[10px] text-warning">
-                      主模型暂时不可用，本次回答由备用模型完成。
-                    </p>
-                  ) : null}
                   {message.citations.length ? (
                     <div className="mt-2 space-y-2" data-testid="assistant-citations">
                       {message.citations.map((citation) => (

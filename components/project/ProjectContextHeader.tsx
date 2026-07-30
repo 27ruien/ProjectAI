@@ -1,28 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight, Eye, Users } from "lucide-react";
+import { Eye } from "lucide-react";
+import type { ReactNode } from "react";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
-import { dateLabel, statusClasses, statusLabel } from "./mock-view";
+import { statusClasses, statusLabel } from "./mock-view";
+import { Badge } from "@/components/ui/badge";
+import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 
 export type ProjectTab = "overview" | "files" | "requirements" | "members";
-
 const tabs: { id: ProjectTab; label: string; path: string }[] = [
-  { id: "overview", label: "概览", path: "overview" },
-  { id: "files", label: "项目资料", path: "files" },
-  { id: "requirements", label: "需求文档", path: "requirements" },
-  { id: "members", label: "成员与权限", path: "members" },
+  { id: "overview", label: "概览", path: "overview" }, { id: "files", label: "项目资料", path: "files" }, { id: "requirements", label: "需求文档", path: "requirements" }, { id: "members", label: "成员与权限", path: "members" },
 ];
 
-export function ProjectContextHeader({ project, activeTab }: { project: AuthorizedProjectSummary; activeTab: ProjectTab }) {
-  return <div className="border-b border-border bg-card">
-    <div className="px-5 pb-0 pt-5 lg:px-8">
-      <div className="mb-4 min-w-0">
-        <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground"><Link href="/projects" className="hover:text-foreground">项目</Link><ChevronRight className="size-3.5" /><span className="truncate">{project.name}</span></div>
-        <div className="flex flex-wrap items-center gap-2.5"><h1 className="text-xl font-semibold tracking-tight lg:text-2xl">{project.name}</h1><span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${statusClasses(project.status)}`}>{statusLabel(project.status)}</span>{!project.permissions.canEditProject ? <span className="inline-flex items-center gap-1 rounded-full border border-info/20 bg-info-soft px-2 py-0.5 text-xs font-medium text-info"><Eye className="size-3" />只读</span> : null}</div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground"><span>项目经理：{project.managerDisplayName ?? "待分配"}</span><span>更新：{dateLabel(project.updatedAt)}</span><span className="flex items-center gap-1.5"><Users className="size-3.5" />{project.memberCount} 位成员</span></div>
-      </div>
-      <nav className="flex gap-1 overflow-x-auto" aria-label="项目详情导航">{tabs.map((tab) => <Link key={tab.id} href={tab.id === "overview" ? `/projects/${project.id}` : `/projects/${project.id}/${tab.path}`} className={`relative whitespace-nowrap px-3 py-3 text-sm font-medium transition-colors ${activeTab === tab.id ? "text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{tab.label}</Link>)}</nav>
+export function ProjectContextHeader({ project, activeTab, actions }: { project: AuthorizedProjectSummary; activeTab: ProjectTab; actions?: ReactNode }) {
+  return <div className="border-b bg-card">
+    <div className="px-5 pt-5 sm:px-6 lg:px-8">
+      <Breadcrumb className="mb-3"><BreadcrumbList className="text-xs"><BreadcrumbItem><BreadcrumbLink asChild><Link href="/projects">项目</Link></BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{project.name}</BreadcrumbPage></BreadcrumbItem></BreadcrumbList></Breadcrumb>
+      <div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2.5"><h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1><Badge variant="outline" className={statusClasses(project.status)}>{statusLabel(project.status)}</Badge>{!project.permissions.canEditProject ? <Badge variant="outline" className="border-info/20 bg-info-soft text-info"><Eye />只读</Badge> : null}</div><p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">{project.description || "暂无项目描述"}</p></div>{actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}</div>
+      <nav className="mt-5 flex gap-1 overflow-x-auto" aria-label="项目详情导航">{tabs.map((tab) => <Link key={tab.id} href={tab.id === "overview" ? `/projects/${project.id}` : `/projects/${project.id}/${tab.path}`} className={`relative whitespace-nowrap px-3 py-3 text-sm font-medium transition-colors ${activeTab === tab.id ? "text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{tab.label}</Link>)}</nav>
     </div>
   </div>;
 }

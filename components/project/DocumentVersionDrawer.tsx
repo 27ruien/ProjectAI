@@ -76,7 +76,7 @@ function ingestionStatus(version: ProjectDocumentVersionDto) {
     pending: { label: "等待解析", classes: "bg-info-soft text-info" },
     running: { label: "正在解析", classes: "bg-info-soft text-info" },
     succeeded: {
-      label: "知识索引已建立",
+      label: "可用于 AI",
       classes: "bg-success-soft text-success",
     },
     failed: {
@@ -311,7 +311,7 @@ export function DocumentVersionDrawer({
                       </p>
                       <p className="mt-1 text-[10px] text-muted-foreground">
                         {version.ingestion.status === "succeeded"
-                          ? `${version.ingestion.sectionCount} Section · ${version.ingestion.chunkCount} Chunk · 索引于 ${formatDate(version.ingestion.lastIndexedAt)}`
+                          ? `解析与索引已完成 · ${formatDate(version.ingestion.lastIndexedAt)}`
                           : version.ingestion.status === "needs_ocr"
                             ? "该 PDF 可下载，但本阶段不执行 OCR"
                             : version.ingestion.failureCode ?? "解析任务状态会自动刷新"}

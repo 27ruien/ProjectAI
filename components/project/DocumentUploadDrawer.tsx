@@ -9,7 +9,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import { Button } from "@/components/common/button";
-import { Drawer } from "@/components/common/drawer";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DocumentApiError,
   documentErrorMessage,
@@ -366,51 +366,9 @@ export function DocumentUploadDrawer({
   };
 
   return (
-    <Drawer
-      open={open}
-      onClose={requestClose}
-      title={isVersionUpload ? "上传新版本" : "上传项目资料"}
-      description={
-        isVersionUpload
-          ? `为“${target?.displayName ?? "项目资料"}”创建不可覆盖的新版本。`
-          : "文件将保存到当前项目的私有对象存储。"
-      }
-      width="max-w-lg"
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={requestClose}
-            disabled={phase === "uploading"}
-          >
-            {phase === "success" ? "关闭" : "取消"}
-          </Button>
-          {phase !== "success" ? (
-            <Button
-              type="button"
-              onClick={() => void submit()}
-              loading={phase === "uploading"}
-              disabled={
-                !file ||
-                (!isVersionUpload && (!displayName.trim() || !knowledgeSpaceId))
-              }
-            >
-              {phase === "error" ? (
-                <RotateCw className="size-4" />
-              ) : (
-                <UploadCloud className="size-4" />
-              )}
-              {phase === "error"
-                ? "重试上传"
-                : isVersionUpload
-                  ? "上传新版本"
-                  : "开始上传"}
-            </Button>
-          ) : null}
-        </div>
-      }
-    >
+    <Dialog open={open} onOpenChange={(next) => { if (!next) requestClose(); }}>
+      <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-lg" data-testid="project-upload-dialog">
+        <DialogHeader><DialogTitle>{isVersionUpload ? "上传新版本" : "上传项目资料"}</DialogTitle><DialogDescription>{isVersionUpload ? `为“${target?.displayName ?? "项目资料"}”创建不可覆盖的新版本。` : "文件将安全保存到当前项目。"}</DialogDescription></DialogHeader>
       <div className="space-y-5">
         <div
           className="rounded-xl border border-dashed border-border bg-surface px-5 py-7 text-center"
@@ -553,11 +511,13 @@ export function DocumentUploadDrawer({
           </div>
         ) : null}
 
-        <p className="rounded-lg border border-info/15 bg-info-soft px-3 py-2.5 text-xs leading-5 text-info">
-          文件安全存储后会进入独立 Worker
-          的异步解析队列；只有当前有效且授权通过的 Chunk 才能参与检索。
-        </p>
+        <p className="rounded-lg border border-info/15 bg-info-soft px-3 py-2.5 text-xs leading-5 text-info">文件安全存储后会自动进入解析流程；状态变为“可用于 AI”后即可参与问答和文档生成。</p>
       </div>
-    </Drawer>
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={requestClose} disabled={phase === "uploading"}>{phase === "success" ? "关闭" : "取消"}</Button>
+        {phase !== "success" ? <Button type="button" onClick={() => void submit()} loading={phase === "uploading"} disabled={!file || (!isVersionUpload && (!displayName.trim() || !knowledgeSpaceId))}>{phase === "error" ? <RotateCw className="size-4" /> : <UploadCloud className="size-4" />}{phase === "error" ? "重试上传" : isVersionUpload ? "上传新版本" : "开始上传"}</Button> : null}
+      </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

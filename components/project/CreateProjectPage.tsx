@@ -1,15 +1,21 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowLeft, LoaderCircle } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LoaderCircle, Plus } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 type Department = { id: string; name: string };
 
-export function CreateProjectPage({ managerName }: { managerName: string }) {
+export function CreateProjectDialog({ managerName, trigger, defaultOpen = false }: { managerName: string; trigger?: React.ReactNode; defaultOpen?: boolean }) {
   const router = useRouter();
+  const [open, setOpen] = useState(defaultOpen);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -17,26 +23,50 @@ export function CreateProjectPage({ managerName }: { managerName: string }) {
   const [status, setStatus] = useState("planning");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
-    void fetch(withBasePath("/api/projects/creation-context"), { credentials: "include", cache: "no-store" })
-      .then(async (response) => response.json() as Promise<{ departments?: Department[] }>)
-      .then((payload) => { setDepartments(payload.departments ?? []); setDepartmentId(payload.departments?.[0]?.id ?? ""); })
-      .catch(() => setError("部门列表加载失败"));
+    const controller = new AbortController();
+    void fetch(withBasePath("/api/projects/creation-context"), { credentials: "include", cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json() as { departments?: Department[]; error?: { message?: string } };
+        if (!response.ok) throw new Error(payload.error?.message ?? "部门列表加载失败");
+        return payload;
+      })
+      .then((payload) => { setDepartments(payload.departments ?? []); setDepartmentId((current) => current || payload.departments?.[0]?.id || ""); })
+      .catch((caught: unknown) => { if (!(caught instanceof DOMException && caught.name === "AbortError")) setError("部门列表加载失败"); });
+    return () => controller.abort();
   }, []);
+
   const submit = async (event: FormEvent) => {
     event.preventDefault(); setSaving(true); setError(null);
     try {
       const response = await fetch(withBasePath("/api/projects"), { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, clientName: "内部项目", description, departmentId, status, stage: "discovery", health: "healthy", targetLaunchDate: null }) });
       const payload = await response.json() as { project?: { id: string }; error?: { message?: string } };
       if (!response.ok || !payload.project) throw new Error(payload.error?.message ?? "创建项目失败");
+      setOpen(false);
       router.push(`/projects/${payload.project.id}`);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "创建项目失败"); setSaving(false); }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "创建项目失败"); } finally { setSaving(false); }
   };
-  return <main className="mx-auto max-w-3xl px-5 py-7 lg:px-8"><Link href="/projects" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" />返回项目</Link><div className="mt-5 rounded-xl border bg-card p-6"><h1 className="text-xl font-semibold">创建项目</h1><p className="mt-1 text-sm text-muted-foreground">只填写启动内部 MVP 所需的最少信息。</p><form onSubmit={submit} className="mt-6 space-y-5">
-    <label className="block text-sm font-medium">项目名称<input required minLength={2} maxLength={200} value={name} onChange={(event) => setName(event.target.value)} className="mt-2 h-10 w-full rounded-lg border bg-background px-3 outline-none focus:border-primary" /></label>
-    <label className="block text-sm font-medium">项目描述<textarea maxLength={4000} rows={5} value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 w-full rounded-lg border bg-background px-3 py-2 outline-none focus:border-primary" /></label>
-    <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-medium">所属部门<select required value={departmentId} onChange={(event) => setDepartmentId(event.target.value)} className="mt-2 h-10 w-full rounded-lg border bg-background px-3"><option value="">请选择部门</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label><label className="block text-sm font-medium">状态<select value={status} onChange={(event) => setStatus(event.target.value)} className="mt-2 h-10 w-full rounded-lg border bg-background px-3"><option value="planning">规划中</option><option value="active">进行中</option><option value="completed">已完成</option><option value="archived">已归档</option></select></label></div>
-    <label className="block text-sm font-medium">项目经理<input readOnly value={managerName} className="mt-2 h-10 w-full rounded-lg border bg-muted px-3 text-muted-foreground" /><span className="mt-1 block text-xs font-normal text-muted-foreground">创建者自动成为项目经理。</span></label>
-    {error ? <p className="rounded-lg border border-destructive/20 bg-destructive-soft p-3 text-sm text-destructive">{error}</p> : null}<div className="flex justify-end"><button disabled={saving || !departmentId} className="inline-flex h-10 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50">{saving ? <LoaderCircle className="size-4 animate-spin" /> : null}创建项目</button></div>
-  </form></div></main>;
+
+  return <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next && defaultOpen) router.push("/projects"); }}>
+    {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
+    <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-xl" data-testid="create-project-dialog">
+      <DialogHeader><DialogTitle>创建项目</DialogTitle><DialogDescription>填写启动内部项目所需的最少信息。</DialogDescription></DialogHeader>
+      <form onSubmit={submit} className="space-y-4">
+        <label className="grid gap-1.5 text-sm font-medium">项目名称<Input required minLength={2} maxLength={200} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
+        <label className="grid gap-1.5 text-sm font-medium">项目描述<Textarea maxLength={4000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="grid gap-1.5 text-sm font-medium">所属部门<Select value={departmentId} onValueChange={setDepartmentId}><SelectTrigger className="w-full"><SelectValue placeholder="请选择部门" /></SelectTrigger><SelectContent>{departments.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
+          <label className="grid gap-1.5 text-sm font-medium">项目状态<Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="planning">规划中</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="completed">已完成</SelectItem><SelectItem value="archived">已归档</SelectItem></SelectContent></Select></label>
+        </div>
+        <label className="grid gap-1.5 text-sm font-medium">项目负责人<Input readOnly value={managerName} className="bg-muted text-muted-foreground" /></label>
+        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+        <DialogFooter><Button type="button" variant="outline" onClick={() => setOpen(false)}>取消</Button><Button type="submit" disabled={saving || !departmentId}>{saving ? <LoaderCircle className="animate-spin" /> : null}创建项目</Button></DialogFooter>
+      </form>
+    </DialogContent>
+  </Dialog>;
+}
+
+export function CreateProjectPage({ managerName }: { managerName: string }) {
+  return <main className="min-h-[70vh]"><CreateProjectDialog managerName={managerName} defaultOpen trigger={<Button className="sr-only"><Plus />创建项目</Button>} /></main>;
 }
