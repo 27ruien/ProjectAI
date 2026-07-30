@@ -125,3 +125,27 @@ test("project-scoped worker writes retain compound ownership keys", async () => 
   assert.match(timesheetWorker, /eq\(timesheetAiExecution\.organizationId, job\.organizationId\)/u);
   assert.match(timesheetWorker, /eq\(timesheetAiExecution\.userId, job\.userId\)/u);
 });
+
+test("meeting transcription only reaches the concrete ASR provider through the audio gateway and records controlled execution audit", async () => {
+  const [worker, gateway, schema, migration, meetingPage] = await Promise.all([
+    read("lib/workflows/worker.ts"),
+    read("lib/workflows/audio-gateway.ts"),
+    read("lib/db/schema/workflows.ts"),
+    read("drizzle/0036_brief_wolverine.sql"),
+    read("components/workflow/meeting-minutes-page.tsx"),
+  ]);
+  assert.match(worker, /from "\.\/audio-gateway"/u);
+  assert.match(worker, /audioGateway\.submit\(providerUrl\)/u);
+  assert.match(worker, /audioGateway\.poll\(taskId\)/u);
+  assert.doesNotMatch(worker, /createAudioTranscriptionProvider|audioProvider\.(?:submit|poll)/u);
+  assert.match(gateway, /createAudioTranscriptionProvider\(\)/u);
+  assert.match(gateway, /qwen-meeting-transcription-cn-v1/u);
+  assert.match(gateway, /workflow\.meeting_minutes\.transcription/u);
+  for (const marker of ["skillId", "modelProfileId", "totalTokens", "costUsdMicros"]) {
+    assert.match(schema, new RegExp(marker));
+  }
+  assert.match(migration, /WORKFLOW_AUDIO_MODEL_PROFILE_CONFLICT/u);
+  assert.match(migration, /workflow_executions.*skill_id[\s\S]+SET NOT NULL/u);
+  assert.match(migration, /workflow_executions.*model_profile_id[\s\S]+SET NOT NULL/u);
+  assert.match(meetingPage, /action: "cancel"/u);
+});

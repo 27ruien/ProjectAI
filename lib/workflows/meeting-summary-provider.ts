@@ -19,6 +19,8 @@ export interface MeetingSummaryProvider {
     latencyMs: number;
     inputTokens: number | null;
     outputTokens: number | null;
+    totalTokens: number | null;
+    costUsdMicros: number | null;
   }>;
 }
 
@@ -96,6 +98,10 @@ function combineGatewayResults(first: AiGatewayResult, second: AiGatewayResult):
     inputTokens: sumUsage(first.inputTokens, second.inputTokens),
     outputTokens: sumUsage(first.outputTokens, second.outputTokens),
     totalTokens: sumUsage(first.totalTokens, second.totalTokens),
+    costUsdMicros: sumUsage(
+      first.costUsdMicros ?? null,
+      second.costUsdMicros ?? null,
+    ),
     latencyMs: first.latencyMs + second.latencyMs,
   };
 }
@@ -218,7 +224,7 @@ export class GatewayMeetingSummaryProvider implements MeetingSummaryProvider {
       aggregate = combineGatewayResults(aggregate, merged.generated);
       content = merged.content;
     }
-    return { content, provider: aggregate.provider, actualModel: aggregate.actualModel, latencyMs: aggregate.latencyMs, inputTokens: aggregate.inputTokens, outputTokens: aggregate.outputTokens };
+    return { content, provider: aggregate.provider, actualModel: aggregate.actualModel, latencyMs: aggregate.latencyMs, inputTokens: aggregate.inputTokens, outputTokens: aggregate.outputTokens, totalTokens: aggregate.totalTokens, costUsdMicros: aggregate.costUsdMicros ?? null };
   }
 }
 

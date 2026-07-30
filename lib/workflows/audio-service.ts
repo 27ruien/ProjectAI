@@ -9,7 +9,7 @@ import { getObjectStorage } from "@/lib/files/object-storage";
 import { WorkflowError } from "./errors";
 import { assertWorkflowProviderAuthorization } from "./authorization";
 import { isTrustedWorkflowModelProfile } from "./model-profiles";
-import { createAudioTranscriptionProvider } from "./audio-provider";
+import { createAudioTranscriptionGateway } from "./audio-gateway";
 
 const AUDIO_TYPES = new Map([
   ["mp3", ["audio/mpeg", "audio/mp3"]],
@@ -50,7 +50,7 @@ export async function createMeetingRun(input: {
   requestHeaders: Headers;
 }): Promise<{ runId: string; created: boolean }> {
   const audio = await validatedAudio(input.file);
-  const audioProvider = createAudioTranscriptionProvider();
+  const audioGateway = createAudioTranscriptionGateway();
   const idempotencyKeyHash = digest(input.idempotencyKey);
   const sourceScopeDigest = digest({ audioSha256: audio.sha256 });
   const db = getDb();
@@ -87,10 +87,10 @@ export async function createMeetingRun(input: {
     });
     await tx.insert(workflowAudioJob).values({
       id: randomUUID(), runId, projectId: target.id, sourceId,
-      transcriptionProvider: audioProvider.provider,
-      transcriptionModel: audioProvider.model,
-      diarizationProvider: audioProvider.diarizationProvider,
-      diarizationModel: audioProvider.diarizationModel,
+      transcriptionProvider: audioGateway.runtime.provider,
+      transcriptionModel: audioGateway.runtime.actualModel,
+      diarizationProvider: audioGateway.runtime.diarizationProvider,
+      diarizationModel: audioGateway.runtime.diarizationModel,
       status: "queued",
     });
     return { runId, projectId: target.id, created: true, objectKey, sourceId };

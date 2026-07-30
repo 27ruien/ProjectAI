@@ -41,15 +41,18 @@ import { renderArtifactMarkdown } from "./render";
 import { createMeetingSummaryProvider } from "./meeting-summary-provider";
 import { buildAudioProviderUrl } from "./audio-service";
 import {
-  createAudioTranscriptionProvider,
-  type AudioTranscriptionProvider,
-  type SpeakerDiarizationProvider,
-} from "./audio-provider";
+  AUDIO_TRANSCRIPTION_SKILL_ID,
+  AudioTranscriptionGateway,
+  createAudioTranscriptionGateway,
+} from "./audio-gateway";
 import { WorkflowError } from "./errors";
 import { canonicalJsonDigest } from "./digest";
 import { buildArtifactPrompt, type WorkflowEvidence } from "./prompt";
 import { artifactTitle } from "./service";
-import { requireWorkflowModelProfile } from "./model-profiles";
+import {
+  requireWorkflowModelProfile,
+  workflowRuntimeModelProfileId,
+} from "./model-profiles";
 import { assertWorkflowProviderAuthorization } from "./authorization";
 
 const ACTIVE = [
@@ -136,7 +139,6 @@ export async function claimWorkflowRun(workerId: string, workerConfig = config()
       select id, project_id from workflow_runs
       where status in (${sql.join(ACTIVE.map((status) => sql`${status}`), sql`, `)})
         and leased_by is null
-        and cancellation_requested_at is null
         and next_attempt_at <= now()
       order by created_at asc, id asc
       for update skip locked
@@ -172,19 +174,52 @@ async function renew(runId: string, projectId: string, workerId: string, leaseTo
 }
 
 async function assertOwned(run: typeof workflowRun.$inferSelect) {
-  const [current] = await getDb().select({
-    cancellationRequestedAt: workflowRun.cancellationRequestedAt,
-  }).from(workflowRun).where(and(
-    eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId),
-    eq(workflowRun.leasedBy, run.leasedBy!), eq(workflowRun.leaseToken, run.leaseToken!),
-    sql`${workflowRun.leaseExpiresAt} > now()`,
-  )).limit(1);
-  if (!current) throw new WorkflowError(409, "WORKFLOW_LEASE_LOST", "工作流执行租约已失效");
-  if (current.cancellationRequestedAt) {
-    await getDb().update(workflowRun).set({
-      status: "cancelled", leasedBy: null, leaseToken: null, leaseExpiresAt: null,
-      heartbeatAt: null, completedAt: new Date(), updatedAt: new Date(),
-    }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
+  const ownership = await getDb().transaction(async (tx) => {
+    const [current] = await tx.select({
+      cancellationRequestedAt: workflowRun.cancellationRequestedAt,
+    }).from(workflowRun).where(and(
+      eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId),
+      eq(workflowRun.leasedBy, run.leasedBy!), eq(workflowRun.leaseToken, run.leaseToken!),
+      sql`${workflowRun.leaseExpiresAt} > now()`,
+    )).limit(1).for("update", { of: workflowRun });
+    if (!current) return "lost" as const;
+    if (current.cancellationRequestedAt) {
+      const now = new Date();
+      await tx.update(workflowExecution).set({
+        status: "cancelled",
+        failureCode: "WORKFLOW_CANCELLED",
+        completedAt: now,
+      }).where(and(
+        eq(workflowExecution.runId, run.id),
+        eq(workflowExecution.projectId, run.projectId),
+        eq(workflowExecution.status, "running"),
+      ));
+      if (run.workflowType === "meeting_minutes") {
+        await tx.update(workflowAudioJob).set({
+          status: "cancelled",
+          completedAt: now,
+          updatedAt: now,
+        }).where(and(
+          eq(workflowAudioJob.runId, run.id),
+          eq(workflowAudioJob.projectId, run.projectId),
+        ));
+      }
+      await tx.update(workflowRun).set({
+        status: "cancelled", leasedBy: null, leaseToken: null, leaseExpiresAt: null,
+        heartbeatAt: null, completedAt: now, updatedAt: now,
+      }).where(and(
+        eq(workflowRun.id, run.id),
+        eq(workflowRun.projectId, run.projectId),
+        eq(workflowRun.leaseToken, run.leaseToken!),
+      ));
+      return "cancelled" as const;
+    }
+    return "owned" as const;
+  });
+  if (ownership === "lost") {
+    throw new WorkflowError(409, "WORKFLOW_LEASE_LOST", "工作流执行租约已失效");
+  }
+  if (ownership === "cancelled") {
     throw new WorkflowError(409, "WORKFLOW_CANCELLED", "工作流已取消");
   }
 }
@@ -280,15 +315,30 @@ async function beginStep(run: typeof workflowRun.$inferSelect, step: number, sta
   await getDb().transaction(async (tx) => {
     const updated = await tx.update(workflowRun).set({ status: statusOverride ?? statusForStep(step), currentStep: step, updatedAt: new Date(), heartbeatAt: new Date() }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!), sql`${workflowRun.leaseExpiresAt} > now()`)).returning({ id: workflowRun.id });
     if (updated.length !== 1) throw new WorkflowError(409, "WORKFLOW_LEASE_LOST", "工作流执行租约已失效");
-    await tx.insert(workflowExecution).values({ id: executionId, runId: run.id, projectId: run.projectId, step, attempt: (last?.attempt ?? 0) + 1, status: "running" });
+    const isAudioTranscription = run.workflowType === "meeting_minutes" && step === 2;
+    await tx.insert(workflowExecution).values({
+      id: executionId,
+      runId: run.id,
+      projectId: run.projectId,
+      step,
+      attempt: (last?.attempt ?? 0) + 1,
+      status: "running",
+      skillId: isAudioTranscription
+        ? AUDIO_TRANSCRIPTION_SKILL_ID
+        : `workflow.${run.workflowType}.step_${step}`,
+      modelProfileId: isAudioTranscription
+        ? "qwen-meeting-transcription-cn-v1"
+        : workflowRuntimeModelProfileId(run.workflowType, run.modelProfileId),
+    });
   });
   return executionId;
 }
 
-async function finishStep(run: typeof workflowRun.$inferSelect, executionId: string, result?: { provider?: string; actualModel?: string; latencyMs?: number; inputTokens?: number | null; outputTokens?: number | null; resultDigest?: string }) {
+async function finishStep(run: typeof workflowRun.$inferSelect, executionId: string, result?: { provider?: string; actualModel?: string; latencyMs?: number; inputTokens?: number | null; outputTokens?: number | null; totalTokens?: number | null; costUsdMicros?: number | null; resultDigest?: string }) {
   const updated = await getDb().update(workflowExecution).set({
     status: "succeeded", provider: result?.provider, actualModel: result?.actualModel,
     latencyMs: result?.latencyMs, inputTokens: result?.inputTokens, outputTokens: result?.outputTokens,
+    totalTokens: result?.totalTokens, costUsdMicros: result?.costUsdMicros,
     resultDigest: result?.resultDigest ?? createHash("sha256").update(executionId).digest("hex"), completedAt: new Date(),
   }).where(and(eq(workflowExecution.id, executionId), eq(workflowExecution.projectId, run.projectId), eq(workflowExecution.status, "running"))).returning({ id: workflowExecution.id });
   if (updated.length !== 1) throw new WorkflowError(409, "WORKFLOW_EXECUTION_STATE_INVALID", "工作流步骤状态已变化");
@@ -478,7 +528,7 @@ async function generateArtifact(run: typeof workflowRun.$inferSelect, projectNam
     await tx.insert(workflowArtifactVersion).values({ id: randomUUID(), artifactId, projectId: run.projectId, version, content, markdown, sourceReferences, contentDigest, createdBy: run.creatorId });
     if (existing) await tx.update(workflowArtifact).set({ currentVersion: version, contentDigest, status: "awaiting_review", publishedDocumentId: null, publishedDocumentVersionId: null, publishedAt: null, updatedAt: new Date() }).where(and(eq(workflowArtifact.id, existing.id), eq(workflowArtifact.projectId, existing.projectId), eq(workflowArtifact.currentVersion, existing.currentVersion)));
   });
-  await finishStep(run, executionId, { provider: result.provider, actualModel: result.actualModel, latencyMs: result.latencyMs, inputTokens: result.inputTokens, outputTokens: result.outputTokens, resultDigest: contentDigest });
+  await finishStep(run, executionId, { provider: result.provider, actualModel: result.actualModel, latencyMs: result.latencyMs, inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens, costUsdMicros: result.costUsdMicros, resultDigest: contentDigest });
 }
 
 async function insertMeetingArtifact(input: {
@@ -535,7 +585,7 @@ async function beginOrResumeTranscriptionStep(
 }
 
 type WorkflowWorkerDependencies = {
-  audioProviderFactory?: () => AudioTranscriptionProvider & SpeakerDiarizationProvider;
+  audioGatewayFactory?: () => AudioTranscriptionGateway;
 };
 
 const PROVIDER_DISPATCHING = "WORKFLOW_PROVIDER_DISPATCHING";
@@ -595,13 +645,14 @@ async function processMeetingRun(
   const [job] = await getDb().select().from(workflowAudioJob).where(and(eq(workflowAudioJob.runId, run.id), eq(workflowAudioJob.projectId, run.projectId))).limit(1);
   const [source] = await getDb().select().from(workflowRunSource).where(and(eq(workflowRunSource.runId, run.id), eq(workflowRunSource.projectId, run.projectId), eq(workflowRunSource.sourceType, "audio"), eq(workflowRunSource.status, "ready"))).limit(1);
   if (!job || !source) throw new WorkflowError(422, "AUDIO_SOURCE_NOT_READY", "会议音视频尚未就绪");
-  const provider = dependencies.audioProviderFactory?.() ?? createAudioTranscriptionProvider();
+  const audioGateway = dependencies.audioGatewayFactory?.() ?? createAudioTranscriptionGateway();
+  const audioRuntime = audioGateway.runtime;
   if (
-    job.transcriptionProvider !== provider.provider ||
-    job.transcriptionModel !== provider.model ||
-    job.diarizationProvider !== provider.diarizationProvider ||
-    job.diarizationModel !== provider.diarizationModel ||
-    provider.providesSpeakerIds !== true
+    job.transcriptionProvider !== audioRuntime.provider ||
+    job.transcriptionModel !== audioRuntime.actualModel ||
+    job.diarizationProvider !== audioRuntime.diarizationProvider ||
+    job.diarizationModel !== audioRuntime.diarizationModel ||
+    audioRuntime.providesSpeakerIds !== true
   ) {
     throw new WorkflowError(503, "WORKFLOW_MODEL_PROFILE_INVALID", "会议转写配置与受信 Provider 不一致");
   }
@@ -628,7 +679,7 @@ async function processMeetingRun(
       if (marked.length !== 1) throw new WorkflowError(409, PROVIDER_RESULT_UNKNOWN, "语音 Provider 提交状态已变化");
     });
     try {
-      const submitted = await provider.submit(providerUrl);
+      const submitted = await audioGateway.submit(providerUrl);
       taskId = submitted.taskId;
       const persisted = await getDb().update(workflowAudioJob).set({
         providerTaskId: taskId,
@@ -648,8 +699,10 @@ async function processMeetingRun(
     }
   }
   const started = Date.now();
+  await assertOwned(run);
   await assertWorkflowProviderAuthorization(run);
-  const result = await provider.poll(taskId);
+  const result = await audioGateway.poll(taskId);
+  await assertOwned(run);
   if (result.status === "pending" || result.status === "running") {
     await getDb().transaction(async (tx) => {
       await tx.update(workflowAudioJob).set({ status: "transcribing", updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
@@ -692,7 +745,7 @@ async function processMeetingRun(
     }))).onConflictDoNothing({ target: [transcriptSegment.runId, transcriptSegment.sequence] });
     await tx.update(workflowAudioJob).set({ status: "normalizing", updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
   });
-  await finishStep(run, transcriptionExecution, { provider: provider.provider, actualModel: provider.model, latencyMs: Date.now() - started, resultDigest: createHash("sha256").update(JSON.stringify(segments.map((segment) => ({ startMs: segment.startMs, endMs: segment.endMs, speakerName: segment.speakerName, text: segment.text })))).digest("hex") });
+  await finishStep(run, transcriptionExecution, { provider: audioRuntime.provider, actualModel: audioRuntime.actualModel, latencyMs: Date.now() - started, costUsdMicros: null, resultDigest: createHash("sha256").update(JSON.stringify(segments.map((segment) => ({ startMs: segment.startMs, endMs: segment.endMs, speakerName: segment.speakerName, text: segment.text })))).digest("hex") });
   const transcriptContent = { durationMs: result.durationMs, speakers, segments };
   await insertMeetingArtifact({ run, kind: "meeting_transcript", title: "完整会议转写", content: transcriptContent, markdown: renderArtifactMarkdown("meeting_transcript", transcriptContent) });
   await getDb().update(workflowRun).set({ status: "summarizing", currentStep: 5, updatedAt: new Date() }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
@@ -707,7 +760,7 @@ async function processMeetingRun(
   const actionsContent = { actions: summary.actions };
   await insertMeetingArtifact({ run, kind: "meeting_minutes", title: "会议纪要", content: meetingContent, markdown: renderArtifactMarkdown("meeting_minutes", meetingContent) });
   await insertMeetingArtifact({ run, kind: "meeting_actions", title: "会议待办", content: actionsContent, markdown: renderArtifactMarkdown("meeting_actions", actionsContent) });
-  await finishStep(run, summaryExecution, { provider: summaryResult.provider, actualModel: summaryResult.actualModel, latencyMs: summaryResult.latencyMs, inputTokens: summaryResult.inputTokens, outputTokens: summaryResult.outputTokens, resultDigest: createHash("sha256").update(JSON.stringify(summary)).digest("hex") });
+  await finishStep(run, summaryExecution, { provider: summaryResult.provider, actualModel: summaryResult.actualModel, latencyMs: summaryResult.latencyMs, inputTokens: summaryResult.inputTokens, outputTokens: summaryResult.outputTokens, totalTokens: summaryResult.totalTokens, costUsdMicros: summaryResult.costUsdMicros, resultDigest: createHash("sha256").update(JSON.stringify(summary)).digest("hex") });
   await getDb().transaction(async (tx) => {
     await tx.update(workflowAudioJob).set({ status: "awaiting_review", completedAt: new Date(), updatedAt: new Date() }).where(and(eq(workflowAudioJob.id, job.id), eq(workflowAudioJob.projectId, run.projectId)));
     await tx.update(workflowRun).set({ status: "awaiting_review", currentStep: 10, leasedBy: null, leaseToken: null, leaseExpiresAt: null, heartbeatAt: null, updatedAt: new Date() }).where(and(eq(workflowRun.id, run.id), eq(workflowRun.projectId, run.projectId), eq(workflowRun.leaseToken, run.leaseToken!)));
@@ -718,6 +771,7 @@ export async function processWorkflowRun(
   run: typeof workflowRun.$inferSelect,
   dependencies: WorkflowWorkerDependencies = {},
 ) {
+  await assertOwned(run);
   if (run.workflowType === "meeting_minutes") return processMeetingRun(run, dependencies);
   if (run.workflowType !== "requirement_framework") throw new WorkflowError(422, "WORKFLOW_TYPE_NOT_SUPPORTED", "该工作流类型尚未接入当前执行器");
   await assertWorkflowProviderAuthorization(run);

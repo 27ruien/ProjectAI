@@ -45,6 +45,21 @@ export function requireWorkflowModelProfile(
   return runtime;
 }
 
+export function workflowRuntimeModelProfileId(
+  workflowType: string,
+  modelProfileId: string,
+): typeof PROJECT_ASSISTANT_PROFILE_ID {
+  const trusted = TRUSTED_WORKFLOW_MODEL_PROFILES[workflowType as WorkflowType];
+  if (!trusted || modelProfileId !== trusted.id) {
+    throw new WorkflowError(
+      503,
+      "WORKFLOW_MODEL_PROFILE_INVALID",
+      "工作流模型配置无效",
+    );
+  }
+  return trusted.runtimeProfileId;
+}
+
 export function isTrustedWorkflowModelProfile(
   workflowType: string,
   modelProfileId: string,

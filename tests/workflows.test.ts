@@ -30,6 +30,10 @@ import {
   FakeAudioTranscriptionProvider,
   createAudioTranscriptionProvider,
 } from "../lib/workflows/audio-provider";
+import {
+  AUDIO_TRANSCRIPTION_MODEL_PROFILE_ID,
+  AudioTranscriptionGateway,
+} from "../lib/workflows/audio-gateway";
 import { buildAudioProviderUrl } from "../lib/workflows/audio-service";
 import { WorkflowError } from "../lib/workflows/errors";
 import { GatewayMeetingSummaryProvider } from "../lib/workflows/meeting-summary-provider";
@@ -526,6 +530,7 @@ describe("V3 workflow artifact contracts", () => {
           inputTokens: 10,
           outputTokens: 5,
           totalTokens: 15,
+          costUsdMicros: 7,
           providerRequestId: `request-${call}`,
           latencyMs: 20,
         };
@@ -537,6 +542,8 @@ describe("V3 workflow artifact contracts", () => {
     assert.equal(result.actualModel, "fallback");
     assert.equal(result.inputTokens, 20);
     assert.equal(result.outputTokens, 10);
+    assert.equal(result.totalTokens, 30);
+    assert.equal(result.costUsdMicros, 14);
     assert.equal(result.latencyMs, 40);
   });
 
@@ -665,6 +672,15 @@ describe("V3 workflow artifact contracts", () => {
 });
 
 describe("V3 artifact exports and audio provider boundary", () => {
+  it("routes ASR through the Provider-neutral audio gateway profile", async () => {
+    const gateway = new AudioTranscriptionGateway(new FakeAudioTranscriptionProvider());
+    assert.equal(gateway.runtime.modelProfileId, AUDIO_TRANSCRIPTION_MODEL_PROFILE_ID);
+    assert.equal(gateway.runtime.provider, "fake");
+    const submitted = await gateway.submit("https://example.invalid/audio.wav");
+    const result = await gateway.poll(submitted.taskId);
+    assert.equal(result.status, "succeeded");
+  });
+
   it("creates readable OOXML packages without embedding external files", async () => {
     const docx = await buildArtifactExport({ artifact: artifact("requirements_document", {}, "# 虚构需求\n\n## 背景\n\n仅用于测试。\n\n| 字段 | 内容 |\n| --- | --- |\n| 名称 | 中文验收 |\n"), projectName: "虚构项目", format: "docx" });
     const docxFiles = unzipSync(docx.bytes);

@@ -46,6 +46,7 @@ import {
 } from "../../lib/workflows/service";
 import { claimWorkflowRun, processWorkflowRun } from "../../lib/workflows/worker";
 import { WorkflowError } from "../../lib/workflows/errors";
+import { AudioTranscriptionGateway } from "../../lib/workflows/audio-gateway";
 import { setObjectStorageForTests, type ObjectStorage, type StoredObjectMetadata } from "../../lib/files/object-storage";
 
 const prefix = "v3-r2-workflow-test-";
@@ -87,6 +88,12 @@ function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required for V3 Round 2 integration tests.`);
   return value;
+}
+
+function postgresErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  if ("code" in error && typeof error.code === "string") return error.code;
+  return "cause" in error ? postgresErrorCode(error.cause) : undefined;
 }
 
 function principal(): AuthenticatedPrincipal {
@@ -189,6 +196,8 @@ describe("V3 Round 2 workflow database lifecycle", () => {
     const executions = await getDb().select().from(workflowExecution).where(eq(workflowExecution.runId, winners[0]!.id));
     assert.equal(executions.length, 10);
     assert.equal(executions.every((execution) => execution.status === "succeeded"), true);
+    assert.equal(executions.every((execution) => execution.skillId.startsWith("workflow.requirement_framework.")), true);
+    assert.equal(executions.every((execution) => execution.modelProfileId === "qwen-project-assistant-cn-v1"), true);
 
     await assert.rejects(
       saveArtifactVersion({ principal: principal(), projectId, runId: winners[0]!.id, artifactId: detail.artifacts[0]!.id, expectedVersion: 1, content: { forged: true }, requestHeaders: headers }),
@@ -243,6 +252,8 @@ describe("V3 Round 2 workflow database lifecycle", () => {
         step,
         attempt: index + 2,
         status: "succeeded" as const,
+        skillId: `workflow.requirement_framework.step_${step}`,
+        modelProfileId: "qwen-project-assistant-cn-v1",
         resultDigest: createHash("sha256").update(`setup:${step}:${index + 2}`).digest("hex"),
         completedAt: new Date(),
       }))),
@@ -286,6 +297,56 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       documentId, documentVersionId: `${prefix}version`, displayName: "forged",
       sha256: "f".repeat(64), status: "ready",
     }));
+  });
+
+  it("rejects cross-project published document and version links at the database boundary", async () => {
+    const crossDocumentId = `${prefix}published-cross-document`;
+    const crossVersionId = `${prefix}published-cross-version`;
+    const content = "虚构跨项目发布关联";
+    const contentHash = createHash("sha256").update(content).digest("hex");
+    const now = new Date();
+    await getDb().transaction(async (tx) => {
+      await tx.insert(projectDocument).values({
+        id: crossDocumentId,
+        projectId: "project-002",
+        displayName: "虚构其他项目发布目标.md",
+        status: "active",
+        createdBy: manager.id,
+      });
+      await tx.insert(projectDocumentVersion).values({
+        id: crossVersionId,
+        documentId: crossDocumentId,
+        projectId: "project-002",
+        versionNumber: 1,
+        isCurrent: true,
+        uploadId: `${prefix}published-cross-upload`,
+        objectKey: `projects/project-002/documents/${crossDocumentId}/versions/${crossVersionId}/${randomUUID()}`,
+        originalFilename: "fictional-cross.md",
+        normalizedExtension: "md",
+        declaredMimeType: "text/markdown",
+        detectedMimeType: "text/markdown",
+        sizeBytes: Buffer.byteLength(content),
+        sha256: contentHash,
+        storageEtag: `${prefix}published-cross-etag`,
+        storageStatus: "stored",
+        uploadedBy: manager.id,
+        storedAt: now,
+      });
+    });
+    try {
+      const [artifact] = await getDb().select().from(workflowArtifact).where(eq(workflowArtifact.runId, requirementRunId)).limit(1);
+      assert.ok(artifact);
+      await assert.rejects(
+        getDb().update(workflowArtifact).set({
+          publishedDocumentId: crossDocumentId,
+          publishedDocumentVersionId: crossVersionId,
+        }).where(eq(workflowArtifact.id, artifact.id)),
+        (error: unknown) => postgresErrorCode(error) === "23503",
+      );
+    } finally {
+      await getDb().delete(projectDocumentVersion).where(eq(projectDocumentVersion.id, crossVersionId));
+      await getDb().delete(projectDocument).where(eq(projectDocument.id, crossDocumentId));
+    }
   });
 
   it("hides requirement runs, artifacts, and exports after source access is revoked", async () => {
@@ -505,7 +566,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构会议恢复", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "6".repeat(64), modelProfileId: definition.modelProfileId, status: "transcribing", currentStep: 2, idempotencyKeyHash: "7".repeat(64), leasedBy: `${prefix}crashed`, leaseToken: `${prefix}expired-token`, leaseExpiresAt: expired, heartbeatAt: expired });
       await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `workflow-audio/fictional/${runId}.wav`, displayName: "虚构恢复音频.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "8".repeat(64), status: "ready" });
       await tx.insert(workflowAudioJob).values({ id: `${prefix}audio-recovery-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-paraformer-v2", diarizationProvider: "fake", diarizationModel: "fake-paraformer-v2", providerTaskId: "fake-existing-provider-task", providerTaskIdHash: createHash("sha256").update("fake-existing-provider-task").digest("hex"), status: "transcribing" });
-      await tx.insert(workflowExecution).values({ id: `${prefix}audio-recovery-execution`, runId, projectId, step: 2, attempt: 1, status: "running" });
+      await tx.insert(workflowExecution).values({ id: `${prefix}audio-recovery-execution`, runId, projectId, step: 2, attempt: 1, status: "running", skillId: "workflow.meeting_minutes.transcription", modelProfileId: "qwen-meeting-transcription-cn-v1" });
     });
     try {
       const recovered = await claimWorkflowRun(`${prefix}recovery-worker`);
@@ -611,7 +672,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       for (let index = 0; index < 26; index += 1) {
         const claimed = await claimWorkflowRun(`${prefix}long-poll-worker-${index}`);
         assert.equal(claimed?.id, runId);
-        await processWorkflowRun(claimed!, { audioProviderFactory: () => provider });
+        await processWorkflowRun(claimed!, { audioGatewayFactory: () => new AudioTranscriptionGateway(provider) });
         if (index < 25) {
           await getDb().update(workflowRun).set({ nextAttemptAt: sql`now()` }).where(eq(workflowRun.id, runId));
         }
@@ -640,7 +701,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构待取消会议", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "e".repeat(64), modelProfileId: definition.modelProfileId, status: "transcribing", currentStep: 2, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex"), nextAttemptAt: new Date() });
       await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构待取消.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "1".repeat(64), status: "ready" });
       await tx.insert(workflowAudioJob).values({ id: `${prefix}cancel-pending-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-long-poll", diarizationProvider: "fake", diarizationModel: "fake-long-poll", providerTaskId: "fake-pending-provider-task", providerTaskIdHash: "2".repeat(64), status: "transcribing" });
-      await tx.insert(workflowExecution).values({ id: `${prefix}cancel-pending-execution`, runId, projectId, step: 2, attempt: 1, status: "running" });
+      await tx.insert(workflowExecution).values({ id: `${prefix}cancel-pending-execution`, runId, projectId, step: 2, attempt: 1, status: "running", skillId: "workflow.meeting_minutes.transcription", modelProfileId: "qwen-meeting-transcription-cn-v1" });
     });
     try {
       await cancelWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers });
@@ -652,6 +713,98 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       assert.equal(cancelledExecution!.status, "cancelled");
       assert.equal(cancelledExecution!.failureCode, "WORKFLOW_CANCELLED");
       assert.ok(cancelledExecution!.completedAt);
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("finishes cancellation requested while a leased ASR poll is in flight", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
+    assert.ok(target?.departmentId && definition);
+    const runId = `${prefix}cancel-leased-asr`;
+    const sourceId = `${prefix}cancel-leased-source`;
+    await getDb().transaction(async (tx) => {
+      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构租约内取消会议", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "4".repeat(64), modelProfileId: definition.modelProfileId, status: "transcribing", currentStep: 2, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex"), nextAttemptAt: new Date(Date.now() - 1_000) });
+      await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构租约内取消.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "6".repeat(64), status: "ready" });
+      await tx.insert(workflowAudioJob).values({ id: `${prefix}cancel-leased-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-cancel-poll", diarizationProvider: "fake", diarizationModel: "fake-cancel-poll", providerTaskId: "fake-cancel-provider-task", providerTaskIdHash: "7".repeat(64), status: "transcribing" });
+      await tx.insert(workflowExecution).values({ id: `${prefix}cancel-leased-execution`, runId, projectId, step: 2, attempt: 1, status: "running", skillId: "workflow.meeting_minutes.transcription", modelProfileId: "qwen-meeting-transcription-cn-v1" });
+    });
+    const provider = {
+      provider: "fake" as const,
+      model: "fake-cancel-poll",
+      diarizationProvider: "fake" as const,
+      diarizationModel: "fake-cancel-poll",
+      providesSpeakerIds: true as const,
+      async submit() { throw new Error("existing Provider task must not be resubmitted"); },
+      async poll() {
+        await cancelWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers });
+        return { status: "pending" as const };
+      },
+    };
+    try {
+      const claimed = await claimWorkflowRun(`${prefix}cancel-leased-worker`);
+      assert.equal(claimed?.id, runId);
+      await assert.rejects(
+        processWorkflowRun(claimed!, { audioGatewayFactory: () => new AudioTranscriptionGateway(provider) }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_CANCELLED",
+      );
+      const [cancelledRun] = await getDb().select().from(workflowRun).where(eq(workflowRun.id, runId));
+      const [cancelledJob] = await getDb().select().from(workflowAudioJob).where(eq(workflowAudioJob.runId, runId));
+      const [cancelledExecution] = await getDb().select().from(workflowExecution).where(eq(workflowExecution.runId, runId));
+      assert.equal(cancelledRun?.status, "cancelled");
+      assert.equal(cancelledRun?.leaseToken, null);
+      assert.equal(cancelledJob?.status, "cancelled");
+      assert.equal(cancelledExecution?.status, "cancelled");
+      assert.equal(cancelledExecution?.failureCode, "WORKFLOW_CANCELLED");
+    } finally {
+      await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
+    }
+  });
+
+  it("rechecks ownership after ASR submission and cancels before the first poll", async () => {
+    const [target] = await getDb().select().from(project).where(eq(project.id, projectId)).limit(1);
+    const [definition] = await getDb().select().from(workflowDefinition).where(eq(workflowDefinition.workflowType, "meeting_minutes")).limit(1);
+    assert.ok(target?.departmentId && definition);
+    const runId = `${prefix}cancel-after-submit`;
+    const sourceId = `${prefix}cancel-after-submit-source`;
+    await getDb().transaction(async (tx) => {
+      await tx.insert(workflowRun).values({ id: runId, definitionId: definition.id, organizationId: target.organizationId, departmentId: target.departmentId, projectId, workflowType: "meeting_minutes", creatorId: manager.id, displayName: "虚构提交后取消会议", authorizedSourceScope: { documentIds: [], knowledgeSpaceIds: [] }, sourceScopeDigest: "8".repeat(64), modelProfileId: definition.modelProfileId, status: "queued", currentStep: 1, idempotencyKeyHash: createHash("sha256").update(`${runId}:idempotency`).digest("hex"), nextAttemptAt: new Date(Date.now() - 1_000) });
+      await tx.insert(workflowRunSource).values({ id: sourceId, runId, projectId, sourceProjectId: projectId, sourceType: "audio", objectKey: `projects/${projectId}/workflow-audio/${runId}/fictional.wav`, displayName: "虚构提交后取消.wav", mimeType: "audio/wav", sizeBytes: 256, sha256: "9".repeat(64), status: "ready" });
+      await tx.insert(workflowAudioJob).values({ id: `${prefix}cancel-after-submit-job`, runId, projectId, sourceId, transcriptionProvider: "fake", transcriptionModel: "fake-cancel-after-submit", diarizationProvider: "fake", diarizationModel: "fake-cancel-after-submit", status: "queued" });
+    });
+    let polls = 0;
+    const provider = {
+      provider: "fake" as const,
+      model: "fake-cancel-after-submit",
+      diarizationProvider: "fake" as const,
+      diarizationModel: "fake-cancel-after-submit",
+      providesSpeakerIds: true as const,
+      async submit() {
+        await cancelWorkflowRun({ principal: principal(), projectId, runId, requestHeaders: headers });
+        return { taskId: "fake-cancel-after-submit-task" };
+      },
+      async poll() {
+        polls += 1;
+        return { status: "pending" as const };
+      },
+    };
+    try {
+      const claimed = await claimWorkflowRun(`${prefix}cancel-after-submit-worker`);
+      assert.equal(claimed?.id, runId);
+      await assert.rejects(
+        processWorkflowRun(claimed!, { audioGatewayFactory: () => new AudioTranscriptionGateway(provider) }),
+        (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_CANCELLED",
+      );
+      const [cancelledRun] = await getDb().select().from(workflowRun).where(eq(workflowRun.id, runId));
+      const [cancelledJob] = await getDb().select().from(workflowAudioJob).where(eq(workflowAudioJob.runId, runId));
+      const [cancelledExecution] = await getDb().select().from(workflowExecution).where(eq(workflowExecution.runId, runId));
+      assert.equal(polls, 0);
+      assert.equal(cancelledRun?.status, "cancelled");
+      assert.equal(cancelledJob?.status, "cancelled");
+      assert.equal(cancelledJob?.providerTaskId, "fake-cancel-after-submit-task");
+      assert.equal(cancelledExecution?.status, "cancelled");
+      assert.equal(cancelledExecution?.failureCode, "WORKFLOW_CANCELLED");
     } finally {
       await getDb().delete(workflowRun).where(eq(workflowRun.id, runId));
     }
@@ -685,7 +838,7 @@ describe("V3 Round 2 workflow database lifecycle", () => {
       const claimed = await claimWorkflowRun(`${prefix}unknown-submit-worker`);
       assert.equal(claimed?.id, runId);
       await assert.rejects(
-        processWorkflowRun(claimed!, { audioProviderFactory: () => provider }),
+        processWorkflowRun(claimed!, { audioGatewayFactory: () => new AudioTranscriptionGateway(provider) }),
         (error: unknown) => error instanceof WorkflowError && error.code === "WORKFLOW_PROVIDER_RESULT_UNKNOWN",
       );
       assert.equal(submits, 1);
