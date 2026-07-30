@@ -123,6 +123,7 @@ function uploadVersion(
     versionNumber: 1,
     isCurrent: storageStatus === "stored",
     originalFilename: "project-plan.pdf",
+    versionNote: null,
     extension: "pdf",
     detectedMimeType: "application/pdf",
     sizeBytes: 128,

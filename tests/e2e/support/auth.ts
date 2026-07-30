@@ -7,6 +7,7 @@ export type TestActor =
   | "managerB"
   | "memberA"
   | "viewerA"
+  | "outsider"
   | "uatAdmin"
   | "uatManager"
   | "uatRestricted";
@@ -17,6 +18,7 @@ const actorEnvironment: Record<TestActor, { email: string; password: string }> =
   managerB: { email: "SEED_MANAGER_B_EMAIL", password: "SEED_MANAGER_B_PASSWORD" },
   memberA: { email: "SEED_MEMBER_A_EMAIL", password: "SEED_MEMBER_A_PASSWORD" },
   viewerA: { email: "SEED_VIEWER_A_EMAIL", password: "SEED_VIEWER_A_PASSWORD" },
+  outsider: { email: "SEED_OUTSIDER_EMAIL", password: "SEED_OUTSIDER_PASSWORD" },
   uatAdmin: { email: "UAT_ADMIN_EMAIL", password: "UAT_ADMIN_PASSWORD" },
   uatManager: { email: "UAT_MANAGER_EMAIL", password: "UAT_MANAGER_PASSWORD" },
   uatRestricted: { email: "UAT_RESTRICTED_EMAIL", password: "UAT_RESTRICTED_PASSWORD" },

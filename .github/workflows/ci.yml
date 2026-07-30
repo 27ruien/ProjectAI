@@ -1,22 +1,21 @@
-name: CI
+name: Focused MVP CI
 
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: focused-mvp-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  validate:
+  focused-mvp:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 35
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg17
@@ -34,48 +33,32 @@ jobs:
     env:
       CI: "true"
       NODE_ENV: test
-      AUTH_PROVIDER: legacy-credential-test
-      ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
+      NEXT_PUBLIC_APP_ENV: test
+      NEXT_PUBLIC_BASE_PATH: /tool/projectai
+      NEXT_PUBLIC_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       DATABASE_URL: postgresql://projectai_ci:projectai_ci_database_only@127.0.0.1:5432/projectai_ci
       BETTER_AUTH_URL: http://127.0.0.1:3200/tool/projectai/api/auth
-      NEXT_PUBLIC_BASE_PATH: /tool/projectai
-      NEXT_PUBLIC_APP_ENV: test
-      NEXT_PUBLIC_COMMIT_SHA: ${{ github.sha }}
-      RELEASE_CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      AI_REGION: cn-beijing
-      AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v1
-      AI_EXECUTION_STALE_AFTER_MS: "900000"
-      AI_GATEWAY_VERSION: "1"
-      AI_EMBEDDING_ENABLED: "false"
-      AI_EMBEDDING_PROFILE_ID: qwen-text-embedding-cn-v1
-      AI_EMBEDDING_DIMENSIONS: "1024"
-      AI_EMBEDDING_WORKER_POLL_MS: "2000"
-      AI_EMBEDDING_WORKER_LEASE_SECONDS: "120"
-      AI_EMBEDDING_WORKER_MAX_ATTEMPTS: "3"
-      AI_EMBEDDING_BATCH_SIZE: "10"
-      AI_EMBEDDING_BATCH_MAX_CHARACTERS: "30000"
-      AI_EMBEDDING_DAILY_JOB_LIMIT: "500"
-      AI_EMBEDDING_DAILY_TOKEN_LIMIT: "5000000"
-      AI_ASSISTANT_RETRIEVAL_MODE: lexical
-      PM_DAILY_REPORT_ENABLED: "true"
-      WECOM_TIMESHEET_SYNC_ENABLED: "true"
-      PM_DAILY_REPORT_CONFIDENCE_THRESHOLD: "0.85"
-      AI_HYBRID_RETRIEVAL_PROFILE_ID: hybrid-rrf-v1
-      AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS: "5000"
-      AI_HYBRID_VECTOR_SQL_TIMEOUT_MS: "1500"
-      AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT: "5000000"
-      SEED_ADMIN_EMAIL: admin.ci@projectai.invalid
-      SEED_ORG_ADMIN_EMAIL: org-admin.ci@projectai.invalid
-      SEED_DEPT_ADMIN_EMAIL: dept-admin.ci@projectai.invalid
-      SEED_MANAGER_A_EMAIL: manager-a.ci@projectai.invalid
-      SEED_MANAGER_B_EMAIL: manager-b.ci@projectai.invalid
-      SEED_MEMBER_A_EMAIL: member-a.ci@projectai.invalid
-      SEED_VIEWER_A_EMAIL: viewer-a.ci@projectai.invalid
-      SEED_OTHER_DEPT_EMAIL: other-dept.ci@projectai.invalid
-      SEED_OUTSIDER_EMAIL: outsider.ci@projectai.invalid
+      AUTH_PROVIDER: legacy-credential-test
+      ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
+      AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100"
       PROJECTAI_SEED_ENVIRONMENT: test
-      PLAYWRIGHT_REVIEW_ARTIFACTS: "1"
-      DOCUMENT_WORKER_POLL_MS: "2000"
+      SEED_ADMIN_EMAIL: admin.focused-ci@projectai.invalid
+      SEED_ORG_ADMIN_EMAIL: org-admin.focused-ci@projectai.invalid
+      SEED_DEPT_ADMIN_EMAIL: dept-admin.focused-ci@projectai.invalid
+      SEED_MANAGER_A_EMAIL: manager-a.focused-ci@projectai.invalid
+      SEED_MANAGER_B_EMAIL: manager-b.focused-ci@projectai.invalid
+      SEED_MEMBER_A_EMAIL: member-a.focused-ci@projectai.invalid
+      SEED_VIEWER_A_EMAIL: viewer-a.focused-ci@projectai.invalid
+      SEED_OTHER_DEPT_EMAIL: other-dept.focused-ci@projectai.invalid
+      SEED_OUTSIDER_EMAIL: outsider.focused-ci@projectai.invalid
+      OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
+      OBJECT_STORAGE_REGION: us-east-1
+      OBJECT_STORAGE_BUCKET: projectai-focused-ci
+      OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
+      OBJECT_STORAGE_USE_SSL: "false"
+      MAX_UPLOAD_BYTES: "52428800"
+      UPLOAD_ALLOWED_EXTENSIONS: pdf,docx,xlsx,pptx,txt,md
+      DOCUMENT_WORKER_POLL_MS: "250"
       DOCUMENT_WORKER_LEASE_SECONDS: "120"
       DOCUMENT_WORKER_MAX_ATTEMPTS: "3"
       DOCUMENT_MAX_PAGES: "1000"
@@ -93,27 +76,21 @@ jobs:
       DOCUMENT_CHUNK_MIN_CHARS: "120"
       DOCUMENT_PARSER_VERSION: "1"
       DOCUMENT_CHUNKER_VERSION: "1"
+      AI_PROVIDER: fake
+      AI_ASSISTANT_ENABLED: "true"
+      AI_REGION: cn-beijing
+      AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v1
+      AI_ASSISTANT_RETRIEVAL_MODE: lexical
+      AI_EMBEDDING_ENABLED: "false"
+      AI_EMBEDDING_PROFILE_ID: qwen-text-embedding-cn-v1
+      AI_EMBEDDING_DIMENSIONS: "1024"
 
     steps:
-      - name: Checkout
+      - name: Checkout exact pull-request head
         uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-
-      - name: Record the revision actually checked out for testing
-        shell: bash
-        env:
-          EXPECTED_TESTED_SHA: ${{ github.sha }}
-          REVIEW_EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -Eeuo pipefail
-          tested_sha="$(git rev-parse HEAD)"
-          [[ "$tested_sha" == "$EXPECTED_TESTED_SHA" ]]
-          if [[ "$REVIEW_EVENT_NAME" == "pull_request" ]]; then
-            echo "REVIEW_TESTED_MERGE_SHA=$tested_sha" >> "$GITHUB_ENV"
-          else
-            echo "REVIEW_TESTED_MERGE_SHA=" >> "$GITHUB_ENV"
-          fi
 
       - name: Use Node.js 22
         uses: actions/setup-node@v7
@@ -121,587 +98,84 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Create ephemeral authentication test secrets
+      - name: Create ephemeral test-only credentials
         shell: bash
         run: |
           set -Eeuo pipefail
-          password="$(openssl rand -base64 32 | tr -d '\n')Aa1!"
-          auth_secret="$(openssl rand -hex 48)"
-          echo "::add-mask::$password"
-          echo "::add-mask::$auth_secret"
-          {
-            echo "NEXT_PUBLIC_APP_VERSION=$(node -p 'require("./package.json").version')"
-            echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-            echo "BETTER_AUTH_SECRET=$auth_secret"
-            echo "SEED_ADMIN_PASSWORD=$password"
-            echo "SEED_ORG_ADMIN_PASSWORD=$password"
-            echo "SEED_DEPT_ADMIN_PASSWORD=$password"
-            echo "SEED_MANAGER_A_PASSWORD=$password"
-            echo "SEED_MANAGER_B_PASSWORD=$password"
-            echo "SEED_MEMBER_A_PASSWORD=$password"
-            echo "SEED_VIEWER_A_PASSWORD=$password"
-            echo "SEED_OTHER_DEPT_PASSWORD=$password"
-            echo "SEED_OUTSIDER_PASSWORD=$password"
-          } >> "$GITHUB_ENV"
-
-      - name: Start isolated MinIO with ephemeral credentials
-        shell: bash
-        env:
-          MINIO_IMAGE: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z
-          MINIO_CLIENT_IMAGE: quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z
-        run: |
-          set -Eeuo pipefail
-          container="projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          network="projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          root_file="${RUNNER_TEMP}/projectai-ci-minio-root.env"
-          root_user="ci-root-$(openssl rand -hex 12)"
-          root_password="$(openssl rand -hex 32)"
-          app_access_key="ci-app-$(openssl rand -hex 12)"
-          app_secret_key="$(openssl rand -hex 32)"
-          bucket="projectai-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(openssl rand -hex 4)"
-          endpoint="http://127.0.0.1:9000"
-
-          for secret in "$root_user" "$root_password" "$app_access_key" "$app_secret_key" "$bucket" "$endpoint"; do
-            echo "::add-mask::$secret"
+          seed_password="Ci-$(openssl rand -hex 16)-Aa1!"
+          auth_secret="$(openssl rand -base64 48)"
+          storage_access="ci$(openssl rand -hex 8)"
+          storage_secret="$(openssl rand -base64 36 | tr -d '/+=')"
+          for value in "$seed_password" "$auth_secret" "$storage_access" "$storage_secret"; do
+            echo "::add-mask::$value"
           done
-
-          umask 077
           {
-            printf 'MINIO_ROOT_USER=%s\n' "$root_user"
-            printf 'MINIO_ROOT_PASSWORD=%s\n' "$root_password"
-          } > "$root_file"
-
-          {
-            printf 'PROJECTAI_CI_MINIO_CONTAINER=%s\n' "$container"
-            printf 'PROJECTAI_CI_MINIO_NETWORK=%s\n' "$network"
-            printf 'PROJECTAI_CI_MINIO_ROOT_FILE=%s\n' "$root_file"
-            printf 'OBJECT_STORAGE_ENDPOINT=%s\n' "$endpoint"
-            printf 'OBJECT_STORAGE_REGION=us-east-1\n'
-            printf 'OBJECT_STORAGE_BUCKET=%s\n' "$bucket"
-            printf 'OBJECT_STORAGE_ACCESS_KEY=%s\n' "$app_access_key"
-            printf 'OBJECT_STORAGE_SECRET_KEY=%s\n' "$app_secret_key"
-            printf 'OBJECT_STORAGE_FORCE_PATH_STYLE=true\n'
-            printf 'OBJECT_STORAGE_USE_SSL=false\n'
-            printf 'MAX_UPLOAD_BYTES=52428800\n'
-            printf 'UPLOAD_ALLOWED_EXTENSIONS=pdf,docx,xlsx,pptx,txt,md\n'
+            echo "BETTER_AUTH_SECRET=$auth_secret"
+            echo "OBJECT_STORAGE_ACCESS_KEY=$storage_access"
+            echo "OBJECT_STORAGE_SECRET_KEY=$storage_secret"
+            for name in ADMIN ORG_ADMIN DEPT_ADMIN MANAGER_A MANAGER_B MEMBER_A VIEWER_A OTHER_DEPT OUTSIDER; do
+              echo "SEED_${name}_PASSWORD=$seed_password"
+            done
           } >> "$GITHUB_ENV"
 
-          export MINIO_ROOT_USER="$root_user"
-          export MINIO_ROOT_PASSWORD="$root_password"
-          export OBJECT_STORAGE_BUCKET="$bucket"
-          export OBJECT_STORAGE_ACCESS_KEY="$app_access_key"
-          export OBJECT_STORAGE_SECRET_KEY="$app_secret_key"
+      - name: Install dependencies
+        run: npm ci
 
-          docker pull "$MINIO_IMAGE" >/dev/null
-          docker pull "$MINIO_CLIENT_IMAGE" >/dev/null
-          docker network create "$network" >/dev/null
-          docker run --detach --rm \
-            --name "$container" \
-            --network "$network" \
-            --network-alias projectai-minio \
+      - name: Start isolated private object storage
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker run --detach --rm --name projectai-focused-ci-minio \
             --publish 127.0.0.1:9000:9000 \
             --tmpfs /data:rw,noexec,nosuid,nodev,size=512m \
-            --env MINIO_ROOT_USER \
-            --env MINIO_ROOT_PASSWORD \
-            "$MINIO_IMAGE" server /data --console-address :9001 >/dev/null
-
+            --env MINIO_ROOT_USER="$OBJECT_STORAGE_ACCESS_KEY" \
+            --env MINIO_ROOT_PASSWORD="$OBJECT_STORAGE_SECRET_KEY" \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            server /data --console-address :9001
           ready=0
           for _ in {1..30}; do
-            if curl --fail --silent --show-error --max-time 3 \
-              "$endpoint/minio/health/live" >/dev/null; then
+            if curl --fail --silent --max-time 2 "$OBJECT_STORAGE_ENDPOINT/minio/health/live" >/dev/null; then
               ready=1
               break
             fi
             sleep 2
           done
-          [[ "$ready" == "1" ]] || {
-            echo "CI MinIO readiness timed out." >&2
-            exit 1
-          }
+          test "$ready" = 1
+          docker run --rm --network host --entrypoint /bin/sh \
+            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \
+            -ec 'mc alias set ci "$1" "$2" "$3" >/dev/null && mc mb --ignore-existing "ci/$4" >/dev/null && mc anonymous set none "ci/$4" >/dev/null' \
+            _ "$OBJECT_STORAGE_ENDPOINT" "$OBJECT_STORAGE_ACCESS_KEY" "$OBJECT_STORAGE_SECRET_KEY" "$OBJECT_STORAGE_BUCKET"
 
-          docker run --rm \
-            --network "$network" \
-            --env MINIO_ROOT_USER \
-            --env MINIO_ROOT_PASSWORD \
-            --env OBJECT_STORAGE_BUCKET \
-            --env OBJECT_STORAGE_ACCESS_KEY \
-            --env OBJECT_STORAGE_SECRET_KEY \
-            --entrypoint /bin/sh \
-            "$MINIO_CLIENT_IMAGE" -ec '
-              umask 077
-              config_dir="$(mktemp -d /tmp/projectai-mc.XXXXXX)"
-              policy_file="$(mktemp /tmp/projectai-policy.XXXXXX)"
-              trap '\''rm -rf "$config_dir" "$policy_file"'\'' EXIT
-              mc --quiet --config-dir "$config_dir" alias set admin http://projectai-minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
-              mc --quiet --config-dir "$config_dir" mb --ignore-existing "admin/$OBJECT_STORAGE_BUCKET"
-              mc --quiet --config-dir "$config_dir" anonymous set none "admin/$OBJECT_STORAGE_BUCKET"
-              mc --quiet --config-dir "$config_dir" admin user add admin "$OBJECT_STORAGE_ACCESS_KEY" "$OBJECT_STORAGE_SECRET_KEY"
-              printf "%s" '\''{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetBucketLocation","s3:ListBucket","s3:ListBucketMultipartUploads"],"Resource":["arn:aws:s3:::'\''"$OBJECT_STORAGE_BUCKET"'\''"]},{"Effect":"Allow","Action":["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:AbortMultipartUpload","s3:ListMultipartUploadParts"],"Resource":["arn:aws:s3:::'\''"$OBJECT_STORAGE_BUCKET"'\''/projects/*"]}]}'\'' > "$policy_file"
-              mc --quiet --config-dir "$config_dir" admin policy create admin projectai-ci-files "$policy_file"
-              mc --quiet --config-dir "$config_dir" admin policy attach admin projectai-ci-files --user "$OBJECT_STORAGE_ACCESS_KEY"
-              mc --quiet --config-dir "$config_dir" alias set app http://projectai-minio:9000 "$OBJECT_STORAGE_ACCESS_KEY" "$OBJECT_STORAGE_SECRET_KEY"
-              mc --quiet --config-dir "$config_dir" ls "app/$OBJECT_STORAGE_BUCKET" >/dev/null
-            '
+      - name: Apply committed migrations and isolated seed
+        run: |
+          npm run db:migrate
+          npm run db:seed
 
-          anonymous_code="$(curl --silent --show-error --output /dev/null \
-            --write-out '%{http_code}' --max-time 5 \
-            "$endpoint/$bucket?list-type=2")"
-          [[ "$anonymous_code" == "403" ]] || {
-            echo "CI object-storage bucket is not private." >&2
-            exit 1
-          }
+      - name: Focused static and contract gates
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test:focused
+          npm run build
+          git diff --check
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install Playwright Chromium
+      - name: Install Chromium for the single Happy Path
         run: npx playwright install --with-deps chromium
 
-      - name: Wait for isolated PostgreSQL service
-        shell: bash
-        env:
-          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
-        run: |
-          set -Eeuo pipefail
-          for _ in {1..30}; do
-            if docker exec "$POSTGRES_CONTAINER_ID" pg_isready -U projectai_ci -d projectai_ci >/dev/null 2>&1; then
-              echo "PostgreSQL is ready."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "PostgreSQL readiness timed out." >&2
-          exit 1
-
-      - name: Verify non-empty 0004 to 0005 to 0006 upgrade
-        run: npm run embeddings:migration-upgrade
-
-      - name: Verify non-empty 0004 to 0005 to 0006 to 0007 upgrade
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run retrieval:migration-upgrade 2>&1 | tee test-logs/retrieval-migration-upgrade.log
-
-      - name: Verify non-empty 0007 to 0015 Phase 1 upgrade
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run phase1:migration-upgrade 2>&1 | tee test-logs/phase1-migration-upgrade.log
-
-      - name: Verify non-empty 0015 to 0016 to 0017 daily-report upgrade
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run timesheets:migration-upgrade 2>&1 | tee test-logs/timesheets-migration-upgrade.log
-
-      - name: Verify non-empty 0019 to 0024 Product V2 upgrade
-        shell: bash
-        env:
-          AUTH_PROVIDER: mock-wecom
-          ALLOW_MOCK_WECOM_AUTH: "true"
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run product-v2:migration-upgrade 2>&1 | tee test-logs/product-v2-migration-upgrade.log
-
-      - name: Apply committed migrations
-        run: npm run db:migrate
-
-      - name: Apply idempotent CI seed
-        run: npm run db:seed
-
-      - name: TypeScript
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run typecheck 2>&1 | tee test-logs/typecheck.log
-
-      - name: ESLint
-        shell: bash
-        run: |
-          set -o pipefail
-          npm run lint 2>&1 | tee test-logs/lint.log
-
-      - name: SSR tests and production build
-        shell: bash
-        env:
-          NODE_ENV: production
-          AUTH_PROVIDER: wecom
-          ALLOW_MOCK_WECOM_AUTH: "false"
-          ALLOW_STAGING_TEST_LOGIN: "false"
-          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"
-        run: |
-          set -o pipefail
-          npm test 2>&1 | tee test-logs/build-and-ssr.log
-
-      - name: Document parser and chunker unit tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:documents 2>&1 | tee test-logs/document-processing-unit.log
-
-      - name: Project assistant unit and architecture tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:assistant 2>&1 | tee test-logs/assistant-unit.log
-
-      - name: Embedding Gateway, Provider, and Worker unit tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:embeddings 2>&1 | tee test-logs/embedding-unit.log
-
-      - name: Retrieval, RRF, configuration, and quality-gate unit tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:retrieval 2>&1 | tee test-logs/retrieval-unit.log
-
-      - name: Fictional lexical, vector, and hybrid evaluation
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run retrieval:evaluate 2>&1 | tee test-logs/retrieval-evaluation.log
-
-      - name: Authentication and project-isolation integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:integration 2>&1 | tee test-logs/integration.log
-
-      - name: Project file storage integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:storage 2>&1 | tee test-logs/storage-integration.log
-
-      - name: Document processing, queue, lease, and search integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:document-integration 2>&1 | tee test-logs/document-processing-integration.log
-
-      - name: pgvector schema, isolation, queue, backfill, and recovery integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:embedding-integration 2>&1 | tee test-logs/embedding-integration.log
-
-      - name: Project assistant permissions, grounding, and limit integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:assistant-integration 2>&1 | tee test-logs/assistant-integration.log
-
-      - name: Retrieval isolation, fallback, coverage, and query-cost integration tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:retrieval-integration 2>&1 | tee test-logs/retrieval-integration.log
-
-      - name: Phase 1 authorization contract and database matrix
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:phase1 2>&1 | tee test-logs/phase1-contract.log
-          npm run test:phase1-integration 2>&1 | tee test-logs/phase1-integration.log
-
-      - name: Phase 1 ACL-aware AI, requirement, and Scope tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:phase1-round2 2>&1 | tee test-logs/phase1-round2-contract.log
-          npm run test:phase1-round2-integration 2>&1 | tee test-logs/phase1-round2-integration.log
-
-      - name: Phase 1 Action, Risk, weekly report, audit, and export tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:phase1-round3 2>&1 | tee test-logs/phase1-round3-contract.log
-          npm run test:phase1-round3-integration 2>&1 | tee test-logs/phase1-round3-integration.log
-
-      - name: Daily report AI, ownership, sync, and replay tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:timesheets 2>&1 | tee test-logs/timesheets-unit.log
-          npm run test:timesheets-integration 2>&1 | tee test-logs/timesheets-integration.log
-
-      - name: Build, inspect, and exercise the MV3 extension in isolation
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run extension:package 2>&1 | tee test-logs/wecom-extension-package.log
-          npm run test:extension-package 2>&1 | tee -a test-logs/wecom-extension-package.log
-          npm run test:extension-e2e 2>&1 | tee test-logs/wecom-extension-e2e.log
-
-      - name: Upload review-only MV3 package
-        uses: actions/upload-artifact@v7
-        with:
-          name: wecom-timesheet-extension-review-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 14
-          path: release/wecom-timesheet-extension-v0.1.0.zip
-
-      - name: Write sanitized Retrieval verification summary
-        run: npm run retrieval:ci-evidence
-
-      - name: Verify database and object-storage consistency
+      - name: Focused MVP Happy Path
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p test-logs
-          npm run storage:verify 2>&1 | tee test-logs/storage-verify.log
-          npm run storage:reconcile 2>&1 | tee -a test-logs/storage-verify.log
-
-      - name: Product review artifact sanitizer tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:artifacts 2>&1 | tee test-logs/artifact-sanitizer.log
-
-      - name: Staging deployment safety contract tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:deployment 2>&1 | tee test-logs/deployment-contract.log
-
-      - name: Production release tooling contract tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:release 2>&1 | tee test-logs/release-tooling.log
-
-      - name: Production rollout executor contract tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:production-rollout 2>&1 | tee test-logs/production-rollout-tooling.log
-
-      - name: Isolated release backup, restore, and migration rehearsal
-        shell: bash
-        env:
-          NODE_ENV: test
-          POSTGRES_CONTAINER_ID: ${{ job.services.postgres.id }}
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run release:database-rehearsal 2>&1 | tee test-logs/release-database-rehearsal.log
-
-      - name: Build and verify the exact release head with all AI disabled
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          release_tree="${RUNNER_TEMP}/projectai-release-head-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          app_image="projectai-release-candidate:${RELEASE_CANDIDATE_SHA}"
-          db_tools_image="projectai-release-db-tools:${RELEASE_CANDIDATE_SHA}"
-          cleanup_release_tree() {
-            git worktree remove --force "$release_tree" >/dev/null 2>&1 || true
+          worker_log="$RUNNER_TEMP/focused-document-worker.log"
+          npm run worker:documents >"$worker_log" 2>&1 &
+          worker_pid=$!
+          cleanup() {
+            kill "$worker_pid" >/dev/null 2>&1 || true
+            wait "$worker_pid" >/dev/null 2>&1 || true
           }
-          trap cleanup_release_tree EXIT
+          trap cleanup EXIT
+          npm run test:focused:e2e
 
-          if ! git cat-file -e "${RELEASE_CANDIDATE_SHA}^{commit}" 2>/dev/null; then
-            echo "::error::Release candidate commit is unavailable after checkout: ${RELEASE_CANDIDATE_SHA}"
-            exit 1
-          fi
-          git worktree add --detach "$release_tree" "$RELEASE_CANDIDATE_SHA" >/dev/null
-          docker build \
-            --target runner \
-            --build-arg NEXT_PUBLIC_BASE_PATH=/tool/projectai \
-            --build-arg NEXT_PUBLIC_APP_ENV=production \
-            --build-arg "NEXT_PUBLIC_APP_VERSION=${NEXT_PUBLIC_APP_VERSION}" \
-            --build-arg "NEXT_PUBLIC_COMMIT_SHA=${RELEASE_CANDIDATE_SHA}" \
-            --build-arg "NEXT_PUBLIC_BUILD_TIME=${NEXT_PUBLIC_BUILD_TIME}" \
-            --tag "$app_image" \
-            "$release_tree" >/dev/null
-          docker build \
-            --target db-tools \
-            --tag "$db_tools_image" \
-            "$release_tree" >/dev/null
-
-          app_digest="$(docker image inspect --format '{{.Id}}' "$app_image")"
-          npm run release:session -- \
-            --expected-sha="$RELEASE_CANDIDATE_SHA" \
-            --expected-image="$app_digest" \
-            --production-baseline=release/fixtures/production-like-inventory.json \
-            --output-dir=review-artifacts
-          release_session="review-artifacts/release-session.json"
-          npm run release:report -- \
-            --kind=database-rehearsal \
-            --input=review-artifacts/release-database-rehearsal.json \
-            --session="$release_session" \
-            --output-dir=review-artifacts
-          log_path="test-logs/release-disabled-image-rehearsal.log"
-          RELEASE_REHEARSAL=1 \
-            "$release_tree/scripts/release/disabled-image-rehearsal.sh" \
-              "$app_image" "$db_tools_image" "$RELEASE_CANDIDATE_SHA" \
-            | tee "$log_path"
-          npm run release:report -- \
-            --kind=disabled-image \
-            --input="$log_path" \
-            --expected-sha="$RELEASE_CANDIDATE_SHA" \
-            --expected-image="$app_digest" \
-            --session="$release_session" \
-            --output-dir=review-artifacts
-          {
-            echo "RELEASE_CI_APP_DIGEST=$app_digest"
-            echo "RELEASE_CI_SESSION=$release_session"
-          } >> "$GITHUB_ENV"
-
-      - name: Isolated guarded Production rollout rehearsal
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run production:rehearsal 2>&1 | tee test-logs/production-rollout-rehearsal.log
-
-      - name: Build isolated legacy credential E2E runtime
-        shell: bash
-        env:
-          NODE_ENV: test
-          NEXT_PUBLIC_APP_ENV: test
-          AUTH_PROVIDER: legacy-credential-test
-          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
-          ALLOW_MOCK_WECOM_AUTH: "false"
-        run: |
-          set -o pipefail
-          npm run build 2>&1 | tee test-logs/legacy-credential-e2e-build.log
-
-      - name: Playwright identity, isolation, and MVP flows
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:e2e 2>&1 | tee test-logs/playwright.log
-
-      - name: Write generated CI release smoke report
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          smoke_tsv="${RUNNER_TEMP}/projectai-release-smoke-${GITHUB_RUN_ID}.tsv"
-          node scripts/release/write-ci-smoke-tsv.mjs > "$smoke_tsv"
-          npm run release:report -- \
-            --kind=smoke \
-            --input="$smoke_tsv" \
-            --expected-sha="$RELEASE_CANDIDATE_SHA" \
-            --expected-image="$RELEASE_CI_APP_DIGEST" \
-            --session="$RELEASE_CI_SESSION" \
-            --output-dir=review-artifacts
-
-      - name: Apply passwordless Product V2 CI seed
-        env:
-          AUTH_PROVIDER: mock-wecom
-          ALLOW_MOCK_WECOM_AUTH: "true"
-        run: npm run db:seed:product-v2
-
-      - name: Product V2 authentication, architecture, and ACL tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p test-logs
-          npm run test:product-v2 2>&1 | tee test-logs/product-v2-contract.log
-          npm run test:product-v2-integration 2>&1 | tee test-logs/product-v2-integration.log
-          npm run test:staging-test-login-integration 2>&1 | tee test-logs/staging-test-login-integration.log
-
-      - name: Remove all CI Sessions, documents, indexes, objects, and temporary files
+      - name: Stop isolated object storage
         if: always()
-        shell: bash
-        env:
-          NODE_ENV: test
-          PROJECTAI_TEST_CLEANUP: "1"
-        run: |
-          set -Eeuo pipefail
-          mkdir -p test-logs
-          npm run test:cleanup 2>&1 | tee test-logs/test-cleanup.log
-          npm run storage:verify 2>&1 | tee test-logs/post-cleanup-storage-verify.log
-
-      - name: Write product review evidence index
-        if: always()
-        env:
-          REVIEW_ARTIFACT_STATUS: ${{ job.status }}
-          REVIEW_EVENT_NAME: ${{ github.event_name }}
-          REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          REVIEW_BRANCH: ${{ github.head_ref || github.ref_name }}
-          REVIEW_WORKFLOW_RUN_ID: ${{ github.run_id }}
-        run: node scripts/write-review-manifest.mjs
-
-      - name: Sanitize product review evidence
-        id: sanitize_evidence
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          if [[ -n "${PROJECTAI_CI_MINIO_ROOT_FILE:-}" && -f "$PROJECTAI_CI_MINIO_ROOT_FILE" ]]; then
-            set -a
-            source "$PROJECTAI_CI_MINIO_ROOT_FILE"
-            set +a
-          fi
-          npm run review:sanitize
-
-      - name: Upload product review evidence
-        id: upload_evidence
-        if: always() && steps.sanitize_evidence.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: product-review-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            product-review-evidence/
-
-      - name: Finalize published product review manifest
-        id: finalize_review_manifest
-        if: always() && steps.upload_evidence.outcome == 'success'
-        env:
-          REVIEW_ARTIFACT_ID: ${{ steps.upload_evidence.outputs.artifact-id }}
-          REVIEW_ARTIFACT_NAME: product-review-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          REVIEW_ARTIFACT_DIGEST: ${{ steps.upload_evidence.outputs.artifact-digest }}
-        run: npm run review:finalize
-
-      - name: Upload product review provenance manifest
-        if: always() && steps.finalize_review_manifest.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: product-review-manifest-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            product-review-manifest/manifest.json
-
-      - name: Destroy isolated CI MinIO
-        if: always()
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          container="${PROJECTAI_CI_MINIO_CONTAINER:-projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          network="${PROJECTAI_CI_MINIO_NETWORK:-projectai-ci-minio-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}}"
-          docker rm --force "$container" >/dev/null 2>&1 || true
-          docker network rm "$network" >/dev/null 2>&1 || true
-          if [[ -n "${PROJECTAI_CI_MINIO_ROOT_FILE:-}" ]]; then
-            rm -f -- "$PROJECTAI_CI_MINIO_ROOT_FILE"
-          fi
+        run: docker rm --force projectai-focused-ci-minio >/dev/null 2>&1 || true

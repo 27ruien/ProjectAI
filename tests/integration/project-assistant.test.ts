@@ -858,6 +858,7 @@ describe("retrieval and database constraints", () => {
       getDb().insert(aiMessageCitation).values({
         id: randomUUID(),
         projectId: projectA,
+        sourceProjectId: projectA,
         threadId: thread.id,
         assistantMessageId: result.assistantMessage.id,
         citationIndex: 2,
@@ -880,6 +881,7 @@ describe("retrieval and database constraints", () => {
       getDb().insert(aiMessageCitation).values({
         id: randomUUID(),
         projectId: projectA,
+        sourceProjectId: projectA,
         threadId: thread.id,
         assistantMessageId: result.assistantMessage.id,
         citationIndex: 1,

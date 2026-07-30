@@ -581,6 +581,7 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
         id: randomUUID(),
         retrievalRunId: run!.id,
         projectId: projectA,
+        sourceProjectId: projectA,
         chunkId: cross.chunkId,
         documentId: cross.documentId,
         versionId: cross.versionId,

@@ -24,6 +24,7 @@ type RuntimeMonitor = {
     status: number;
     pathname: string;
   }) => void;
+  allowAbortedRequestOnce: (pathname: string) => void;
 };
 
 async function attachJson(testInfo: TestInfo, name: string, value: unknown) {
@@ -87,6 +88,7 @@ export const test = base.extend<ProjectAIFixtures>({
         status: number;
         pathname: string;
       }> = [];
+      const abortedRequestAllowances: string[] = [];
 
       const runtimeMonitor: RuntimeMonitor = {
         allowConsoleErrorOnce: (allowance) => {
@@ -94,6 +96,9 @@ export const test = base.extend<ProjectAIFixtures>({
         },
         allowHttpStatusOnce: (allowance) => {
           httpStatusAllowances.push(allowance);
+        },
+        allowAbortedRequestOnce: (pathname) => {
+          abortedRequestAllowances.push(pathname);
         },
       };
 
@@ -118,6 +123,14 @@ export const test = base.extend<ProjectAIFixtures>({
 
       page.on("requestfailed", (request) => {
         if (isSupersededVinextRscRequest(request)) return;
+        if (request.failure()?.errorText === "net::ERR_ABORTED") {
+          const pathname = new URL(request.url()).pathname;
+          const allowanceIndex = abortedRequestAllowances.indexOf(pathname);
+          if (allowanceIndex >= 0) {
+            abortedRequestAllowances.splice(allowanceIndex, 1);
+            return;
+          }
+        }
         const issue: RuntimeIssue = {
           kind: "requestfailed",
           message: request.failure()?.errorText ?? "Request failed without an error message",
