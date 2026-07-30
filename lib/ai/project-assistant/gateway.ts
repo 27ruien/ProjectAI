@@ -37,6 +37,8 @@ function responseFormatForPurpose(
   return [
     "requirement_extraction",
     "requirement_repair",
+    "requirement_document",
+    "requirement_document_repair",
     "action_generation",
     "risk_generation",
     "weekly_report",

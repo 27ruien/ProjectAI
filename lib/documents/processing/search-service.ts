@@ -12,6 +12,7 @@ import type {
   KnowledgeSearchResultDto,
 } from "@/types/knowledge-search";
 import { validateSourceLocator } from "./source-locator";
+import { publishedCompanySourceFilter } from "@/lib/focused-mvp/company-source-filter";
 
 const searchRequestSchema = z.object({
   query: z.string().trim().min(2).max(200),
@@ -45,6 +46,7 @@ function excerpt(content: string, query: string): string {
 
 export type SearchRow = {
   chunk_id: string;
+  source_project_id: string;
   document_id: string;
   version_id: string;
   display_name: string;
@@ -62,6 +64,7 @@ export type SearchRow = {
 export type ProjectKnowledgeEvidence = {
   label: string;
   chunkId: string;
+  sourceProjectId?: string;
   documentId: string;
   versionId: string;
   displayName: string;
@@ -97,6 +100,7 @@ export async function queryProjectKnowledgeRows(input: {
       with ranked as (
         select
           c.id as chunk_id,
+          c.project_id as source_project_id,
           c.document_id,
           c.version_id,
           d.display_name,
@@ -139,6 +143,12 @@ export async function queryProjectKnowledgeRows(input: {
           and v.storage_status = 'stored'
           and v.is_current = true
           and j.status = 'succeeded'
+          and ${publishedCompanySourceFilter({
+            actorUserId: input.actorUserId,
+            targetProjectId: input.projectId,
+            sourceScope: sql`authorized.source_scope`,
+            documentId: sql`d.id`,
+          })}
           ${documentFilter}
           and (
             c.search_vector @@ websearch_to_tsquery('english', ${input.query})
@@ -190,6 +200,7 @@ export async function retrieveLexicalProjectCandidates(input: {
       evidence: {
         label: "",
         chunkId: row.chunk_id,
+        sourceProjectId: row.source_project_id,
         documentId: row.document_id,
         versionId: row.version_id,
         displayName: row.display_name,

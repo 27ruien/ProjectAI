@@ -90,6 +90,21 @@ export function archiveProjectAssistantThread(
   );
 }
 
+export async function deleteProjectAssistantThread(
+  projectId: string,
+  threadId: string,
+): Promise<void> {
+  const response = await fetch(withBasePath(projectPath(projectId, `/${encodeURIComponent(threadId)}`)), {
+    method: "DELETE",
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string } };
+    throw new ProjectAssistantApiError(response.status, body.error?.code ?? `HTTP_${response.status}`, body.error?.message ?? "删除对话失败");
+  }
+}
+
 export function askProjectAssistant(
   projectId: string,
   threadId: string,

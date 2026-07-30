@@ -83,6 +83,10 @@ export const aiThread = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    deletedAt: timestamp("deleted_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
   },
   (table) => [
     unique("ai_threads_project_owner_scope_unique").on(
@@ -339,6 +343,7 @@ export const aiMessageCitation = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "restrict" }),
+    sourceProjectId: text("source_project_id").notNull(),
     threadId: text("thread_id").notNull(),
     assistantMessageId: text("assistant_message_id").notNull(),
     citationIndex: integer("citation_index").notNull(),
@@ -379,7 +384,7 @@ export const aiMessageCitation = pgTable(
       name: "ai_message_citations_chunk_scope_fk",
       columns: [
         table.chunkId,
-        table.projectId,
+        table.sourceProjectId,
         table.documentId,
         table.versionId,
       ],

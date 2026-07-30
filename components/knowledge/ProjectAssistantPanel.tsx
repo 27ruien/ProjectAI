@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   Archive,
@@ -13,22 +13,21 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/common/button";
+import { withBasePath } from "@/lib/base-path";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import {
   archiveProjectAssistantThread,
   askProjectAssistant,
   createProjectAssistantThread,
+  deleteProjectAssistantThread,
   getProjectAssistantThread,
   listProjectAssistantThreads,
   ProjectAssistantApiError,
 } from "@/lib/ai/project-assistant/client";
-import {
-  documentErrorMessage,
-  downloadProjectDocumentVersion,
-  listProjectDocuments,
-} from "@/lib/documents/client";
+import { documentErrorMessage, downloadProjectDocumentVersion } from "@/lib/documents/client";
 import type { ProjectDocumentDto } from "@/types/documents";
 import type {
   ProjectAssistantCitationDto,
@@ -78,16 +77,18 @@ function assistantErrorMessage(error: unknown): string {
 }
 
 const scopeLabels: Record<string, string> = {
-  organization: "公司空间",
-  department: "部门空间",
-  project: "项目空间",
-  restricted: "受限授权",
+  organization: "[公司资料]",
+  department: "[项目资料]",
+  project: "[项目资料]",
+  restricted: "[项目资料]",
 };
 
 export function ProjectAssistantPanel({
   project,
+  focused = false,
 }: {
   project: AuthorizedProjectSummary;
+  focused?: boolean;
 }) {
   const loadController = useRef<AbortController | null>(null);
   const [phase, setPhase] = useState<PanelPhase>("loading");
@@ -99,8 +100,12 @@ export function ProjectAssistantPanel({
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [availableSources, setAvailableSources] = useState<ProjectDocumentDto[]>([]);
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [availableSources, setAvailableSources] = useState<Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>>([]);
+  const [sourceMode, setSourceMode] = useState<"project" | "organization" | "both">("both");
+  const selectedSourceIds = useMemo(
+    () => availableSources.filter((item) => sourceMode === "both" || item.sourceScope === sourceMode).map((item) => item.id),
+    [availableSources, sourceMode],
+  );
 
   const loadThread = useCallback(
     async (threadId: string, signal?: AbortSignal) => {
@@ -157,8 +162,14 @@ export function ProjectAssistantPanel({
 
   useEffect(() => {
     const controller = new AbortController();
-    void listProjectDocuments(project.id, "active", controller.signal)
-      .then((response) => setAvailableSources(response.documents))
+    void fetch(withBasePath(`/api/projects/${project.id}/ai/sources`), { credentials: "include", cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("source list failed");
+        return response.json() as Promise<{ documents: Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }> }>;
+      })
+      .then((response) => {
+        setAvailableSources(response.documents);
+      })
       .catch((caught: unknown) => {
         if (!(caught instanceof DOMException && caught.name === "AbortError")) {
           setError("知识来源列表暂时不可用，请刷新重试。");
@@ -188,6 +199,10 @@ export function ProjectAssistantPanel({
     const normalized = nextQuestion.trim();
     if (normalized.length < 2) {
       setError("请输入至少 2 个字符的问题。");
+      return;
+    }
+    if (selectedSourceIds.length === 0) {
+      setError(sourceMode === "organization" ? "当前没有已发布且可访问的公司资料。" : "当前没有可用于回答的有效资料。");
       return;
     }
     setSending(true);
@@ -230,16 +245,33 @@ export function ProjectAssistantPanel({
     }
   };
 
+  const removeThread = async () => {
+    if (!thread || !window.confirm("确认删除这条私人对话？")) return;
+    setError(null);
+    try {
+      await deleteProjectAssistantThread(project.id, thread.id);
+      await refreshThreads();
+    } catch (caught) {
+      setError(assistantErrorMessage(caught));
+    }
+  };
+
   const download = async (citation: ProjectAssistantCitationDto) => {
     setDownloading(citation.versionId);
     setError(null);
     try {
-      await downloadProjectDocumentVersion(
-        project.id,
-        citation.documentId,
-        citation.versionId,
-        citation.displayName,
-      );
+      if (citation.sourceScope === "organization") {
+        const response = await fetch(withBasePath(`/api/company-knowledge/${citation.documentId}/versions/${citation.versionId}/download`), { credentials: "include" });
+        if (!response.ok) throw new Error("download failed");
+        const url = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = citation.displayName;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } else {
+        await downloadProjectDocumentVersion(project.id, citation.documentId, citation.versionId, citation.displayName);
+      }
     } catch (caught) {
       setError(documentErrorMessage(caught));
     } finally {
@@ -279,17 +311,17 @@ export function ProjectAssistantPanel({
   }
 
   return (
-    <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant">
+    <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant" data-focused={focused ? "true" : "false"}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
           <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">项目 AI 助手</h3>
+            <h3 className="text-sm font-semibold text-foreground">AI 对话</h3>
             <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
               Qwen · Grounded
             </span>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            基于当前项目知识索引生成回答；每次提问都会重新检索有效资料。
+            每次提问都会重新检索当前有效资料，并在返回前校验引用。
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={() => void createThread()} loading={creating}>
@@ -313,28 +345,17 @@ export function ProjectAssistantPanel({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <p className="text-xs font-semibold text-foreground">本次回答的知识来源</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">不选择时使用全部有权来源；选择只会缩小服务端 ACL 范围。</p>
+            <p className="mt-0.5 text-[10px] text-muted-foreground">公司资料仅包含已发布、未失效且当前用户可见的版本。</p>
           </div>
-          {selectedSourceIds.length ? (
-            <button type="button" className="text-[11px] font-medium text-primary hover:underline" onClick={() => setSelectedSourceIds([])}>清除选择</button>
-          ) : null}
+          <div className="flex rounded-lg border bg-background p-0.5">{([
+            ["project", "项目资料"],
+            ["organization", "公司资料"],
+            ["both", "两者"],
+          ] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setSourceMode(value)} className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${sourceMode === value ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>{label}</button>)}</div>
         </div>
         <div className="mt-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto">
-          {availableSources.map((document) => {
-            const checked = selectedSourceIds.includes(document.id);
-            return (
-              <label key={document.id} className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] ${checked ? "border-primary bg-primary/5 text-primary" : "border-border bg-background text-muted-foreground"}`}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => setSelectedSourceIds((current) => checked ? current.filter((id) => id !== document.id) : [...current, document.id])}
-                  className="size-3 accent-primary"
-                />
-                <span className="max-w-48 truncate">{document.displayName}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px]">{document.visibility === "restricted" ? "受限授权" : document.visibility === "department_shared" ? "部门共享" : document.visibility === "organization_shared" ? "公司共享" : "项目资料"}</span>
-              </label>
-            );
-          })}
+          {availableSources.filter((item) => sourceMode === "both" || item.sourceScope === sourceMode).map((document) => <span key={document.id} className="inline-flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary"><span className="max-w-48 truncate">{document.displayName}</span><span className="rounded bg-background px-1.5 py-0.5 text-[9px]">{document.sourceScope === "organization" ? "公司资料" : "项目资料"}</span></span>)}
+          {selectedSourceIds.length === 0 ? <p className="text-[11px] text-warning">该范围暂无有效资料。</p> : null}
         </div>
       </div>
 
@@ -383,11 +404,7 @@ export function ProjectAssistantPanel({
                   {thread.status === "active" ? "进行中" : "已归档"} · {thread.messageCount} 条消息
                 </p>
               </div>
-              {thread.status === "active" ? (
-                <button type="button" onClick={() => void archive()} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
-                  <Archive className="size-3.5" />归档
-                </button>
-              ) : null}
+              <div className="flex items-center gap-3">{thread.status === "active" ? <button type="button" onClick={() => void archive()} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"><Archive className="size-3.5" />归档</button> : null}<button type="button" onClick={() => void removeThread()} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" />删除</button></div>
             </div>
           ) : null}
 
@@ -399,10 +416,10 @@ export function ProjectAssistantPanel({
                     <Sparkles className="size-5" />
                   </span>
                   <h4 className="mt-4 text-sm font-semibold text-foreground">
-                    从项目资料开始提问
+                    从项目和公司资料开始提问
                   </h4>
                   <p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                    例如：客户要求什么时候上线？回答只会使用当前项目有效索引中的证据。
+                    例如：当前需求是否符合公司的项目管理规范？
                   </p>
                 </div>
               </div>
@@ -448,7 +465,7 @@ export function ProjectAssistantPanel({
                                   v{citation.versionNumber} · {sourceLabel(citation)}
                                 </p>
                                 <p className="mt-0.5 text-[9px] font-medium text-primary">
-                                  {scopeLabels[citation.sourceScope]} · {citation.knowledgeSpaceId}
+                                  {scopeLabels[citation.sourceScope]}
                                 </p>
                               </div>
                             </div>
@@ -494,7 +511,7 @@ export function ProjectAssistantPanel({
               <textarea
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                placeholder="向当前项目资料提问…"
+                placeholder="向当前项目和公司资料提问…"
                 maxLength={2_000}
                 rows={3}
                 disabled={sending || thread?.status === "archived"}
@@ -514,8 +531,8 @@ export function ProjectAssistantPanel({
       </div>
 
       <footer className="grid gap-2 border-t border-border bg-muted/20 px-5 py-3 text-[10px] text-muted-foreground sm:grid-cols-2">
-        <p>AI 回答仅基于当前项目资料生成，请结合引用来源核对关键信息。</p>
-        <p className="sm:text-right">当前回答仅基于本项目有效资料；检索异常时会自动使用词法证据，请结合引用核对。</p>
+        <p>AI 回答仅基于选定范围内的有效资料生成，请结合引用核对。</p>
+        <p className="sm:text-right">项目与公司来源会明确标注；证据不足时不会猜测。</p>
       </footer>
     </section>
   );

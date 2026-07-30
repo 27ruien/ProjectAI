@@ -6,6 +6,7 @@ import {
   desc,
   eq,
   inArray,
+  isNull,
   ne,
   sql,
 } from "drizzle-orm";
@@ -22,6 +23,8 @@ import {
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
   aiThread,
+  projectDocument,
+  projectDocumentVersion,
   type AiExecutionRecord,
   type AiRetrievalMode,
 } from "@/lib/db/schema";
@@ -43,6 +46,8 @@ import type { ProjectAssistantHistoryMessage } from "./grounding";
 import type { ValidatedGroundedAnswer } from "./citations";
 import type { AiGatewayResult } from "./gateway";
 import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
+import { listCompanyKnowledge } from "@/lib/focused-mvp/company-knowledge";
+import { publishedCompanySourceFilter } from "@/lib/focused-mvp/company-source-filter";
 
 const RUNNING_EXECUTION_STATUSES = [
   "reserved",
@@ -97,6 +102,7 @@ async function ownedThread(
         eq(aiThread.id, threadId),
         eq(aiThread.projectId, projectId),
         eq(aiThread.createdBy, principal.user.id),
+        isNull(aiThread.deletedAt),
       ),
     )
     .limit(1);
@@ -184,6 +190,7 @@ export async function listOwnedThreadSummaries(input: {
       and(
         eq(aiThread.projectId, input.projectId),
         eq(aiThread.createdBy, input.principal.user.id),
+        isNull(aiThread.deletedAt),
       ),
     )
     .groupBy(
@@ -232,14 +239,19 @@ export async function loadOwnedThread(input: {
       "对话不存在",
     );
   }
-  const authorizedDocuments = new Map(
-    (
-      await listAuthorizedDocumentScope({
+  const [authorizedScope, companyKnowledge] = await Promise.all([
+    listAuthorizedDocumentScope({
         principal: input.principal,
         projectId: input.projectId,
         permission: "view",
-      })
-    ).map((item) => [item.documentId, item] as const),
+    }),
+    listCompanyKnowledge({ principal: input.principal }),
+  ]);
+  const publishedCompanyIds = new Set(companyKnowledge.documents.filter((item) => item.lifecycleStatus === "published").map((item) => item.id));
+  const authorizedDocuments = new Map(
+    authorizedScope
+      .filter((item) => item.sourceScope !== "organization" || publishedCompanyIds.has(item.documentId))
+      .map((item) => [item.documentId, item] as const),
   );
   const [messages, citations, executions] = await Promise.all([
     getDb()
@@ -284,9 +296,33 @@ export async function loadOwnedThread(input: {
     string,
     typeof citations
   >();
+  const citedDocumentIds = [...new Set(citations.map((citation) => citation.documentId))];
+  const currentVersions = citedDocumentIds.length
+    ? await getDb()
+        .select({
+          documentId: projectDocument.id,
+          documentStatus: projectDocument.status,
+          versionId: projectDocumentVersion.id,
+          storageStatus: projectDocumentVersion.storageStatus,
+        })
+        .from(projectDocument)
+        .innerJoin(projectDocumentVersion, and(
+          eq(projectDocumentVersion.documentId, projectDocument.id),
+          eq(projectDocumentVersion.projectId, projectDocument.projectId),
+          eq(projectDocumentVersion.isCurrent, true),
+        ))
+        .where(inArray(projectDocument.id, citedDocumentIds))
+    : [];
+  const currentVersionByDocument = new Map(currentVersions.map((item) => [item.documentId, item]));
   const revokedCitationMessages = new Set<string>();
   for (const citation of citations) {
-    if (!authorizedDocuments.has(citation.documentId)) {
+    const current = currentVersionByDocument.get(citation.documentId);
+    if (
+      !authorizedDocuments.has(citation.documentId) ||
+      current?.documentStatus !== "active" ||
+      current.storageStatus !== "stored" ||
+      current.versionId !== citation.versionId
+    ) {
       revokedCitationMessages.add(citation.assistantMessageId);
       continue;
     }
@@ -414,6 +450,37 @@ export async function archiveOwnedThread(input: {
       },
       tx,
     );
+    return { ok: true } as const;
+  });
+  if ("error" in result) throw result.error;
+}
+
+export async function deleteOwnedThread(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  threadId: string;
+  requestHeaders: Headers;
+}): Promise<void> {
+  const result = await getDb().transaction(async (tx) => {
+    try {
+      await requireProjectAccess(input.principal, input.projectId, input.requestHeaders, { db: tx, lockForUpdate: true });
+    } catch (error) {
+      if (error instanceof AuthorizationError) return { error } as const;
+      throw error;
+    }
+    const thread = await ownedThread(tx, input.principal, input.projectId, input.threadId, true);
+    if (!thread) return { error: new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "对话不存在") } as const;
+    const now = new Date();
+    await tx.update(aiThread).set({ status: "archived", archivedAt: thread.archivedAt ?? now, deletedAt: now, updatedAt: now }).where(eq(aiThread.id, thread.id));
+    await writeAuditEvent({
+      actorUserId: input.principal.user.id,
+      projectId: input.projectId,
+      eventType: "ai_thread_deleted",
+      entityType: "ai_thread",
+      entityId: thread.id,
+      result: "succeeded",
+      ...getRequestAuditContext(input.requestHeaders),
+    }, tx);
     return { ok: true } as const;
   });
   if ("error" in result) throw result.error;
@@ -928,7 +995,7 @@ export async function finalizeInsufficientEvidence(input: {
       .update(aiMessage)
       .set({
         status: "insufficient_evidence",
-        content: "现有项目资料中没有足够信息支持明确结论。",
+        content: "我在当前选择的项目/公司资料范围内没有找到足以支持明确结论的有效证据。请确认相关文件已上传、解析完成且公司资料已发布，或补充更具体的关键词后重试。",
       })
       .where(eq(aiMessage.id, locked.assistantMessageId));
     await tx
@@ -982,16 +1049,22 @@ export async function finalizeSuccessfulExecution(input: {
       ...new Set(input.answer.citations.map(({ evidence }) => evidence.documentId)),
     ];
     const authorizedResult = await tx.execute<{ document_id: string }>(sql`
-      select document_id
+      select authorized.document_id
       from projectai_authorized_documents(
         ${locked.actorUserId},
         ${locked.projectId},
         'view'::knowledge_permission
-      )
-      where document_id in (${sql.join(
+      ) authorized
+      where authorized.document_id in (${sql.join(
         expectedDocumentIds.map((documentId) => sql`${documentId}`),
         sql`, `,
       )})
+        and ${publishedCompanySourceFilter({
+          actorUserId: locked.actorUserId,
+          targetProjectId: locked.projectId,
+          sourceScope: sql`authorized.source_scope`,
+          documentId: sql`authorized.document_id`,
+        })}
     `);
     if (authorizedResult.rows.length !== expectedDocumentIds.length) {
       throw new ProjectAssistantError(
@@ -1008,6 +1081,7 @@ export async function finalizeSuccessfulExecution(input: {
       input.answer.citations.map(({ index, evidence }) => ({
         id: crypto.randomUUID(),
         projectId: locked.projectId,
+        sourceProjectId: evidence.sourceProjectId ?? locked.projectId,
         threadId: locked.threadId,
         assistantMessageId: locked.assistantMessageId,
         citationIndex: index,

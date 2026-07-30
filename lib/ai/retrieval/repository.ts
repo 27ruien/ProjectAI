@@ -253,6 +253,7 @@ export async function finalizeRetrievalRun(input: {
           id: crypto.randomUUID(),
           retrievalRunId: input.retrievalRunId,
           projectId: run.projectId,
+          sourceProjectId: candidate.value.sourceProjectId ?? run.projectId,
           chunkId: candidate.chunkId,
           documentId: candidate.value.documentId,
           versionId: candidate.value.versionId,

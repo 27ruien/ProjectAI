@@ -38,6 +38,7 @@ import {
   type FusedRetrievalCandidate,
   type RankedRetrievalCandidate,
 } from "./rrf";
+import { publishedCompanySourceFilter } from "@/lib/focused-mvp/company-source-filter";
 
 export type RetrievalFallbackReason =
   | "RETRIEVAL_PROFILE_DISABLED"
@@ -204,6 +205,12 @@ async function embeddingCoverage(input: {
       and v.storage_status = 'stored'
       and v.is_current = true
       and j.status = 'succeeded'
+      and ${publishedCompanySourceFilter({
+        actorUserId: input.actorUserId,
+        targetProjectId: input.projectId,
+        sourceScope: sql`authorized.source_scope`,
+        documentId: sql`d.id`,
+      })}
       ${documentFilter}
   `);
   const row = result.rows[0];
@@ -341,6 +348,12 @@ async function exactVectorCandidates(input: {
         and v.storage_status = 'stored'
         and v.is_current = true
         and j.status = 'succeeded'
+        and ${publishedCompanySourceFilter({
+          actorUserId: input.actorUserId,
+          targetProjectId: input.projectId,
+          sourceScope: sql`authorized.source_scope`,
+          documentId: sql`d.id`,
+        })}
         ${documentFilter}
         and (e.embedding <=> ${vectorLiteral}::vector) <= ${HYBRID_RETRIEVAL_PROFILE.vectorMaxDistance}
       order by (e.embedding <=> ${vectorLiteral}::vector) asc, c.id asc

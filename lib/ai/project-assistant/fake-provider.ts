@@ -97,6 +97,41 @@ export class FakeProjectAssistantProvider
 
     let text: string;
     if (
+      request.purpose === "requirement_document" ||
+      request.purpose === "requirement_document_repair"
+    ) {
+      const labels = taggedJsonValue(request.userPrompt, "evidence_labels_json");
+      const label = Array.isArray(labels) && typeof labels[0] === "string" ? labels[0] : "E1";
+      const definitions = [
+        ["document_info", "文档信息与版本"],
+        ["project_background", "项目背景"],
+        ["project_goals", "项目目标"],
+        ["users_and_scenarios", "用户与使用场景"],
+        ["product_scope", "产品范围"],
+        ["out_of_scope", "Out of Scope"],
+        ["user_flow", "用户流程"],
+        ["functional_requirements", "功能需求"],
+        ["ui_requirements", "页面与交互要求"],
+        ["platform_compatibility", "平台与兼容性"],
+        ["permissions", "权限要求"],
+        ["exceptions_and_fallbacks", "异常与降级"],
+        ["privacy_and_data", "隐私和数据要求"],
+        ["acceptance_criteria", "验收标准"],
+        ["risks_and_dependencies", "风险与依赖"],
+        ["open_items", "待确认事项"],
+        ["sources", "来源"],
+      ];
+      text = JSON.stringify({
+        sections: definitions.map(([key, title]) => ({
+          key,
+          title,
+          content: key === "open_items"
+            ? "- [TBD] 请由项目经理确认当前资料未覆盖的事项。"
+            : `- [Fact] 根据当前有效项目资料整理的${title}。`,
+          citationLabels: key === "open_items" ? [] : [label],
+        })),
+      });
+    } else if (
       request.purpose === "requirement_extraction" ||
       request.purpose === "requirement_repair"
     ) {

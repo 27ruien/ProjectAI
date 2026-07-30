@@ -23,6 +23,7 @@ import { createProjectAssistantGateway, type AiGatewayResult } from "./gateway";
 import { ProjectAssistantError } from "./errors";
 import {
   archiveOwnedThread,
+  deleteOwnedThread,
   createOwnedThread,
   finalizeFailedExecution,
   finalizeInsufficientEvidence,
@@ -116,6 +117,16 @@ export async function archiveProjectAssistantThread(input: {
 }): Promise<void> {
   requireAiAssistantEnabled();
   await archiveOwnedThread(input);
+}
+
+export async function deleteProjectAssistantThread(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  threadId: string;
+  requestHeaders: Headers;
+}): Promise<void> {
+  requireAiAssistantEnabled();
+  await deleteOwnedThread(input);
 }
 
 export async function askProjectAssistant(input: {
