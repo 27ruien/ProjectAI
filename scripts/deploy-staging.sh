@@ -3,10 +3,12 @@ set -Eeuo pipefail
 
 readonly DEFAULT_EXPECTED_BRANCH="agent/phase1-project-knowledge-management"
 readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
+readonly DEPLOY_MODE="${PROJECTAI_STAGING_DEPLOY_MODE:-app}"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
 COMPOSE_FILE="docker-compose.staging.yml"
+APP_ONLY_COMPOSE_FILE="docker-compose.staging-app-only.yml"
 CONTAINER_NAME="project-ai-os-staging"
 WORKER_CONTAINER_NAME="project-ai-os-staging-worker"
 EMBEDDING_WORKER_CONTAINER_NAME="project-ai-os-staging-embedding-worker"
@@ -92,7 +94,10 @@ fi
 [[ "$APP_VERSION" =~ ^[0-9A-Za-z._-]+$ ]] || fail "NEXT_PUBLIC_APP_VERSION contains unsupported characters"
 [[ "$PUBLIC_VALIDATION" == "0" || "$PUBLIC_VALIDATION" == "1" ]] \
   || fail "PUBLIC_VALIDATION must be exactly 0 or 1"
+[[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "full" ]] \
+  || fail "PROJECTAI_STAGING_DEPLOY_MODE must be app or full"
 [[ -f "$COMPOSE_FILE" ]] || fail "Missing ${COMPOSE_FILE}"
+[[ -f "$APP_ONLY_COMPOSE_FILE" ]] || fail "Missing ${APP_ONLY_COMPOSE_FILE}"
 
 CURRENT_BRANCH="$(git branch --show-current)"
 [[ "$CURRENT_BRANCH" != "main" ]] || fail "Refusing to deploy main"
@@ -185,7 +190,7 @@ log "Checking isolated remote prerequisites and protected environment file"
   "$REMOTE_QWEN_SECRET_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
   "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
   "$COMPOSE_PROJECT" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" \
-  "$REMOTE_EMBEDDING_ENV_FILE" "$EMBEDDING_WORKER_CONTAINER_NAME" <<'REMOTE_PREFLIGHT'
+  "$REMOTE_EMBEDDING_ENV_FILE" "$EMBEDDING_WORKER_CONTAINER_NAME" "$DEPLOY_MODE" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -203,6 +208,7 @@ deploy_lock="${13}"
 deploy_id="${14}"
 embedding_env_file="${15}"
 embedding_worker_container_name="${16}"
+deploy_mode="${17}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
@@ -222,6 +228,7 @@ fi
 [[ "$embedding_env_file" == "$remote_dir/.env.embedding" ]]
 [[ "$qwen_secret_file" == "$remote_dir/secrets/qwen_api_key" ]]
 [[ "$embedding_worker_container_name" == "project-ai-os-staging-embedding-worker" ]]
+[[ "$deploy_mode" == "app" || "$deploy_mode" == "full" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 [[ "$deploy_lock" == "$remote_dir/.staging-deploy-lock" ]]
@@ -243,86 +250,16 @@ sudo test ! -L "$ai_env_file"
 sudo chmod 600 "$ai_env_file"
 [[ "$(sudo stat -c '%a' "$ai_env_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
-ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.preflight.XXXXXX")"
-if ! sudo awk -F= '
-  BEGIN { assistant = 0; model_profile = 0; mode = 0; profile = 0; query_timeout = 0; vector_timeout = 0; daily_limit = 0 }
-  $1 == "AI_ASSISTANT_ENABLED" {
-    print "AI_ASSISTANT_ENABLED=false"
-    assistant += 1
-    next
-  }
-  $1 == "AI_ASSISTANT_RETRIEVAL_MODE" {
-    print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
-    mode += 1
-    next
-  }
-  $1 == "AI_PROJECT_ASSISTANT_PROFILE_ID" {
-    print "AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v2"
-    model_profile += 1
-    next
-  }
-  $1 == "AI_HYBRID_RETRIEVAL_PROFILE_ID" {
-    print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-qwen37-v2"
-    profile += 1
-    next
-  }
-  $1 == "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS" {
-    print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
-    query_timeout += 1
-    next
-  }
-  $1 == "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS" {
-    print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
-    vector_timeout += 1
-    next
-  }
-  $1 == "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT" {
-    print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
-    daily_limit += 1
-    next
-  }
-  { print }
-  END {
-    if (assistant != 1 || model_profile > 1 || mode > 1 || profile > 1 || query_timeout > 1 || vector_timeout > 1 || daily_limit > 1) exit 1
-    if (model_profile == 0) print "AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v2"
-    if (mode == 0) print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
-    if (profile == 0) print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-qwen37-v2"
-    if (query_timeout == 0) print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
-    if (vector_timeout == 0) print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
-    if (daily_limit == 0) print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
-  }
-' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null; then
-  sudo rm -f "$ai_env_temp"
-  printf 'Protected Staging AI configuration must contain exactly one Assistant Feature Flag.\n' >&2
-  exit 1
-fi
-sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
-sudo rm -f "$ai_env_temp"
-embedding_env_temp="$(sudo mktemp "$remote_dir/.env.embedding.preflight.XXXXXX")"
-sudo tee "$embedding_env_temp" >/dev/null <<'EMBEDDING_ENV'
-AI_EMBEDDING_ENABLED=false
-AI_EMBEDDING_PROFILE_ID=qwen3.7-text-embedding-cn-v2
-AI_EMBEDDING_DIMENSIONS=1024
-AI_EMBEDDING_WORKER_POLL_MS=2000
-AI_EMBEDDING_WORKER_LEASE_SECONDS=120
-AI_EMBEDDING_WORKER_MAX_ATTEMPTS=3
-AI_EMBEDDING_BATCH_SIZE=10
-AI_EMBEDDING_BATCH_MAX_CHARACTERS=30000
-AI_EMBEDDING_DAILY_JOB_LIMIT=500
-AI_EMBEDDING_DAILY_TOKEN_LIMIT=5000000
-AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS=25000
-EMBEDDING_ENV
-sudo install -m 0600 -o root -g root "$embedding_env_temp" "$embedding_env_file"
-sudo rm -f "$embedding_env_temp"
 sudo test -f "$embedding_env_file"
 sudo test ! -L "$embedding_env_file"
 [[ "$(sudo stat -c '%a' "$embedding_env_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$embedding_env_file")" == "root:root" ]]
-sudo awk -F= '
+sudo awk -F= -v deploy_mode="$deploy_mode" '
   /^[[:space:]]*($|#)/ { next }
   { count[$1] += 1; values[$1] = substr($0, index($0, "=") + 1) }
   END {
-    if (count["AI_EMBEDDING_ENABLED"] != 1 || values["AI_EMBEDDING_ENABLED"] != "false") exit 1
+    if (count["AI_EMBEDDING_ENABLED"] != 1 || values["AI_EMBEDDING_ENABLED"] !~ /^(true|false)$/) exit 1
+    if (deploy_mode == "full" && values["AI_EMBEDDING_ENABLED"] != "false") exit 1
     if (count["AI_EMBEDDING_PROFILE_ID"] != 1 || values["AI_EMBEDDING_PROFILE_ID"] != "qwen3.7-text-embedding-cn-v2") exit 1
     if (count["AI_EMBEDDING_DIMENSIONS"] != 1 || values["AI_EMBEDDING_DIMENSIONS"] != "1024") exit 1
     if (count["AI_EMBEDDING_BATCH_SIZE"] != 1 || values["AI_EMBEDDING_BATCH_SIZE"] != "10") exit 1
@@ -337,7 +274,7 @@ sudo chmod 600 "$qwen_secret_file"
 [[ "$(sudo stat -c '%U:%G' "$qwen_secret_file")" == "deploy:deploy" ]]
 [[ "$(sudo stat -c '%u:%g' "$qwen_secret_file")" == "1000:1000" ]]
 [[ "$(id -u deploy):$(id -g deploy)" == "1000:1000" ]]
-sudo awk -F= '
+sudo awk -F= -v deploy_mode="$deploy_mode" '
   /^[[:space:]]*($|#)/ { next }
   {
     key = $1
@@ -346,11 +283,13 @@ sudo awk -F= '
     values[key] = value
   }
   END {
-    if (count["AI_ASSISTANT_ENABLED"] != 1 || values["AI_ASSISTANT_ENABLED"] != "false") exit 1
+    if (count["AI_ASSISTANT_ENABLED"] != 1 || values["AI_ASSISTANT_ENABLED"] !~ /^(true|false)$/) exit 1
+    if (deploy_mode == "full" && values["AI_ASSISTANT_ENABLED"] != "false") exit 1
     if (count["AI_PROVIDER"] != 1 || values["AI_PROVIDER"] != "qwen") exit 1
     if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
     if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v2") exit 1
-    if (count["AI_ASSISTANT_RETRIEVAL_MODE"] != 1 || values["AI_ASSISTANT_RETRIEVAL_MODE"] != "lexical") exit 1
+    if (count["AI_ASSISTANT_RETRIEVAL_MODE"] != 1 || values["AI_ASSISTANT_RETRIEVAL_MODE"] !~ /^(lexical|shadow|hybrid)$/) exit 1
+    if (deploy_mode == "full" && values["AI_ASSISTANT_RETRIEVAL_MODE"] != "lexical") exit 1
     if (count["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != 1 || values["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != "hybrid-rrf-qwen37-v2") exit 1
     if (count["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != "5000") exit 1
     if (count["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != 1 || values["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != "1500") exit 1
@@ -394,17 +333,21 @@ required_keys=(
   DOCUMENT_CHUNK_TARGET_CHARS DOCUMENT_CHUNK_OVERLAP_CHARS
   DOCUMENT_CHUNK_MIN_CHARS
   DOCUMENT_PARSER_VERSION DOCUMENT_CHUNKER_VERSION
-  PROJECTAI_SEED_ENVIRONMENT
-  SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
-  SEED_ORG_ADMIN_EMAIL SEED_ORG_ADMIN_PASSWORD
-  SEED_DEPT_ADMIN_EMAIL SEED_DEPT_ADMIN_PASSWORD
-  SEED_MANAGER_A_EMAIL SEED_MANAGER_A_PASSWORD
-  SEED_MANAGER_B_EMAIL SEED_MANAGER_B_PASSWORD
-  SEED_MEMBER_A_EMAIL SEED_MEMBER_A_PASSWORD
-  SEED_VIEWER_A_EMAIL SEED_VIEWER_A_PASSWORD
-  SEED_OTHER_DEPT_EMAIL SEED_OTHER_DEPT_PASSWORD
-  SEED_OUTSIDER_EMAIL SEED_OUTSIDER_PASSWORD
 )
+if [[ "$deploy_mode" == "full" ]]; then
+  required_keys+=(
+    PROJECTAI_SEED_ENVIRONMENT
+    SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
+    SEED_ORG_ADMIN_EMAIL SEED_ORG_ADMIN_PASSWORD
+    SEED_DEPT_ADMIN_EMAIL SEED_DEPT_ADMIN_PASSWORD
+    SEED_MANAGER_A_EMAIL SEED_MANAGER_A_PASSWORD
+    SEED_MANAGER_B_EMAIL SEED_MANAGER_B_PASSWORD
+    SEED_MEMBER_A_EMAIL SEED_MEMBER_A_PASSWORD
+    SEED_VIEWER_A_EMAIL SEED_VIEWER_A_PASSWORD
+    SEED_OTHER_DEPT_EMAIL SEED_OTHER_DEPT_PASSWORD
+    SEED_OUTSIDER_EMAIL SEED_OUTSIDER_PASSWORD
+  )
+fi
 for key in "${required_keys[@]}"; do
   key_count="$(sudo awk -F= -v key="$key" '$1 == key { count += 1 } END { print count + 0 }' "$env_file")"
   [[ "$key_count" == "1" ]] || {
@@ -435,18 +378,20 @@ if sudo awk -F= '
   exit 1
 fi
 
-for key in \
-  SEED_ADMIN_PASSWORD SEED_ORG_ADMIN_PASSWORD SEED_DEPT_ADMIN_PASSWORD \
-  SEED_MANAGER_A_PASSWORD SEED_MANAGER_B_PASSWORD SEED_MEMBER_A_PASSWORD \
-  SEED_VIEWER_A_PASSWORD SEED_OTHER_DEPT_PASSWORD SEED_OUTSIDER_PASSWORD; do
-  sudo awk -F= -v key="$key" '
-    $1 == key { value = substr($0, index($0, "=") + 1); exit(length(value) >= 12 ? 0 : 1) }
-    END { if (!value) exit 1 }
-  ' "$env_file" || {
-    printf '%s must contain at least 12 characters.\n' "$key" >&2
-    exit 1
-  }
-done
+if [[ "$deploy_mode" == "full" ]]; then
+  for key in \
+    SEED_ADMIN_PASSWORD SEED_ORG_ADMIN_PASSWORD SEED_DEPT_ADMIN_PASSWORD \
+    SEED_MANAGER_A_PASSWORD SEED_MANAGER_B_PASSWORD SEED_MEMBER_A_PASSWORD \
+    SEED_VIEWER_A_PASSWORD SEED_OTHER_DEPT_PASSWORD SEED_OUTSIDER_PASSWORD; do
+    sudo awk -F= -v key="$key" '
+      $1 == key { value = substr($0, index($0, "=") + 1); exit(length(value) >= 12 ? 0 : 1) }
+      END { if (!value) exit 1 }
+    ' "$env_file" || {
+      printf '%s must contain at least 12 characters.\n' "$key" >&2
+      exit 1
+    }
+  done
+fi
 
 sudo awk -F= '
   $1 == "POSTGRES_PASSWORD" { value = substr($0, index($0, "=") + 1); exit(length(value) >= 16 ? 0 : 1) }
@@ -993,6 +938,9 @@ log "Creating a tracked-file-only release for Commit ${SHORT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-release.XXXXXX")"
 git archive --format=tar "$COMMIT_SHA" | tar -xf - -C "$RELEASE_ROOT"
 [[ -f "$RELEASE_ROOT/$COMPOSE_FILE" ]] || fail "Tracked release is missing ${COMPOSE_FILE}"
+[[ -f "$RELEASE_ROOT/$APP_ONLY_COMPOSE_FILE" ]] || fail "Tracked release is missing ${APP_ONLY_COMPOSE_FILE}"
+[[ -f "$RELEASE_ROOT/scripts/release/staging-app-only-deploy.sh" ]] \
+  || fail "Tracked release is missing the app-only deployment helper"
 [[ ! -e "$RELEASE_ROOT/.env.auth-staging" ]] || fail "Tracked release unexpectedly contains a protected environment file"
 sensitive_release_paths="$(
   git ls-tree -r --name-only "$COMMIT_SHA" \
@@ -1020,19 +968,21 @@ docker build \
   --build-arg "NEXT_PUBLIC_BUILD_TIME=$BUILD_TIME" \
   --tag "$APP_IMAGE_REF" \
   "$RELEASE_ROOT"
-docker build \
-  --pull \
-  --platform "$REMOTE_DOCKER_PLATFORM" \
-  --target db-tools \
-  --tag "$DB_TOOLS_IMAGE_REF" \
-  "$RELEASE_ROOT"
-
 APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
-DB_TOOLS_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$DB_TOOLS_IMAGE_REF")"
 [[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
-[[ "$DB_TOOLS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
-[[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$DB_TOOLS_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+DB_TOOLS_IMAGE_ID=""
+if [[ "$DEPLOY_MODE" == "full" ]]; then
+  docker build \
+    --pull \
+    --platform "$REMOTE_DOCKER_PLATFORM" \
+    --target db-tools \
+    --tag "$DB_TOOLS_IMAGE_REF" \
+    "$RELEASE_ROOT"
+  DB_TOOLS_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$DB_TOOLS_IMAGE_REF")"
+  [[ "$DB_TOOLS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$DB_TOOLS_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+fi
 
 log "Preparing fixed Staging release directory without moving its protected environment"
 "${SSH[@]}" bash -s -- \
@@ -1087,24 +1037,52 @@ rsync --archive --compress --delete \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 
 log "Transferring locally built Staging images without building on the shared host"
-docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" \
-  | gzip -1 \
-  | "${SSH[@]}" 'sudo docker load >/dev/null'
+if [[ "$DEPLOY_MODE" == "app" ]]; then
+  docker save "$APP_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+else
+  docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" \
+    | gzip -1 \
+    | "${SSH[@]}" 'sudo docker load >/dev/null'
+fi
 
 "${SSH[@]}" bash -s -- \
   "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" \
-  "$REMOTE_DOCKER_PLATFORM" <<'REMOTE_IMAGE_VERIFY'
+  "$REMOTE_DOCKER_PLATFORM" "$DEPLOY_MODE" <<'REMOTE_IMAGE_VERIFY'
 set -Eeuo pipefail
 app_image_ref="$1"
 app_image_id="$2"
 db_tools_image_ref="$3"
 db_tools_image_id="$4"
 expected_platform="$5"
+deploy_mode="$6"
+[[ "$deploy_mode" == "app" || "$deploy_mode" == "full" ]]
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$app_image_ref")" == "$app_image_id" ]]
-[[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
 [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$app_image_ref")" == "$expected_platform" ]]
-[[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$db_tools_image_ref")" == "$expected_platform" ]]
+if [[ "$deploy_mode" == "full" ]]; then
+  [[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
+  [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$db_tools_image_ref")" == "$expected_platform" ]]
+fi
 REMOTE_IMAGE_VERIFY
+
+if [[ "$DEPLOY_MODE" == "app" ]]; then
+  log "Replacing only the Staging App and required Workers without Migration, Seed, or credential E2E"
+  "${SSH[@]}" sudo bash \
+    "$REMOTE_DIR/scripts/release/staging-app-only-deploy.sh" \
+    "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_EMBEDDING_ENV_FILE" \
+    "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$APP_ONLY_COMPOSE_FILE" \
+    "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$COMMIT_SHA" "$APP_VERSION" "$BUILD_TIME" \
+    "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$EMBEDDING_WORKER_CONTAINER_NAME" \
+    "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER"
+  [[ "$(get_production_state)" == "$PRODUCTION_STATE_BEFORE" ]] \
+    || fail "Production changed before the app-only Staging transaction could commit"
+  public_health_code="$(http_code "${PUBLIC_STAGING_URL}/api/health")"
+  [[ "$public_health_code" == "200" ]] \
+    || fail "Public Staging health returned ${public_health_code}"
+  "${SSH[@]}" "sudo rm -f '$DEPLOY_MARKER'"
+  log "App-only Staging deployment verified"
+  log "Environment=staging Version=${APP_VERSION} Commit=${COMMIT_SHA} BuildTime=${BUILD_TIME}"
+  exit 0
+fi
 
 log "Starting the isolated Staging services from preloaded images"
 "${SSH[@]}" bash -s -- \
