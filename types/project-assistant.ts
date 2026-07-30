@@ -1,7 +1,7 @@
 import type { SourceLocator } from "@/lib/documents/processing/source-locator";
 
 export const PROJECT_ASSISTANT_MODEL_PROFILE_ID =
-  "qwen-project-assistant-cn-v1" as const;
+  "qwen-project-assistant-cn-v2" as const;
 
 export type ProjectAssistantCitationDto = {
   index: number;

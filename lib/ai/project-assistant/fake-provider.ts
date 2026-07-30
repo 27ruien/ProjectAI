@@ -75,11 +75,7 @@ export class FakeProjectAssistantProvider
     if (request.userPrompt.includes("FAKE_500")) {
       throw new AiProviderError("SERVER_ERROR", true);
     }
-    if (
-      (request.userPrompt.includes("FAKE_PRIMARY_FAILURE") ||
-        currentQuestion.includes("备用模型验证")) &&
-      request.model === "qwen3.7-plus"
-    ) {
+    if (request.userPrompt.includes("FAKE_PRIMARY_FAILURE")) {
       throw new AiProviderError("SERVER_ERROR", true);
     }
     if (currentQuestion.includes("供应商超时后重试验证")) {

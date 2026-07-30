@@ -68,7 +68,7 @@ function postgresErrorMessage(error: unknown): string {
 
 async function vectorFor(text: string): Promise<number[]> {
   const result = await new FakeEmbeddingProvider().embed({
-    model: "text-embedding-v4",
+    model: "qwen3.7-text-embedding",
     dimensions: 1024,
     inputs: [text],
     timeoutMs: 5_000,
@@ -101,7 +101,7 @@ async function clearState(): Promise<void> {
     await tx
       .update(aiRetrievalProfile)
       .set({ enabled: true, updatedAt: new Date() })
-      .where(eq(aiRetrievalProfile.id, "hybrid-rrf-v1"));
+      .where(eq(aiRetrievalProfile.id, "hybrid-rrf-qwen37-v2"));
   });
   process.env.AI_ASSISTANT_RETRIEVAL_MODE = "hybrid";
   process.env.AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT = "5000000";
@@ -218,7 +218,7 @@ async function seedChunk(input: {
         projectId: input.projectId,
         documentId,
         versionId,
-        embeddingProfileId: "qwen-text-embedding-cn-v1",
+        embeddingProfileId: "qwen3.7-text-embedding-cn-v2",
         generation: 1,
         status: "succeeded",
         attemptCount: 1,
@@ -237,7 +237,7 @@ async function seedChunk(input: {
         documentId,
         versionId,
         chunkId,
-        embeddingProfileId: "qwen-text-embedding-cn-v1",
+        embeddingProfileId: "qwen3.7-text-embedding-cn-v2",
         embeddingJobId,
         embedding: input.vector,
         contentSha256: hash,
@@ -266,7 +266,7 @@ async function ask(question: string, key = randomUUID()) {
     idempotencyKey: key,
     body: {
       question,
-      modelProfileId: "qwen-project-assistant-cn-v1",
+      modelProfileId: "qwen-project-assistant-cn-v2",
     },
   });
   return { thread, result };
@@ -508,7 +508,7 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
         idempotencyKey: key,
         body: {
           question: query,
-          modelProfileId: "qwen-project-assistant-cn-v1",
+          modelProfileId: "qwen-project-assistant-cn-v2",
         },
       });
     const first = await request();
@@ -533,7 +533,7 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
       getDb()
         .update(aiRetrievalProfile)
         .set({ vectorMaxDistance: 0.6 })
-        .where(eq(aiRetrievalProfile.id, "hybrid-rrf-v1")),
+        .where(eq(aiRetrievalProfile.id, "hybrid-rrf-qwen37-v2")),
       (error: unknown) =>
         postgresErrorMessage(error).includes(
           "retrieval profile definitions are immutable",
@@ -542,7 +542,7 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
     await assert.rejects(
       getDb()
         .delete(aiRetrievalProfile)
-        .where(eq(aiRetrievalProfile.id, "hybrid-rrf-v1")),
+        .where(eq(aiRetrievalProfile.id, "hybrid-rrf-qwen37-v2")),
       (error: unknown) =>
         postgresErrorMessage(error).includes(
           "retrieval profile definitions are immutable",
@@ -551,7 +551,7 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
     await getDb()
       .update(aiRetrievalProfile)
       .set({ enabled: false, updatedAt: new Date() })
-      .where(eq(aiRetrievalProfile.id, "hybrid-rrf-v1"));
+      .where(eq(aiRetrievalProfile.id, "hybrid-rrf-qwen37-v2"));
     await ask(query);
     const [run] = await getDb().select().from(aiRetrievalRun);
     assert.equal(run?.fallbackReason, "RETRIEVAL_PROFILE_DISABLED");

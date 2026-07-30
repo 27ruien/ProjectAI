@@ -10,7 +10,7 @@ import {
 
 const baseUrl = required("APP_BASE_URL").replace(/\/+$/, "");
 const origin = required("AUTH_REQUEST_ORIGIN");
-const projectProfile = "qwen-project-assistant-cn-v1";
+const projectProfile = "qwen-project-assistant-cn-v2";
 const marker = `phase1-staging-${randomUUID()}`;
 const userAgent = `projectai-phase1-staging-verifier/${randomUUID()}`;
 

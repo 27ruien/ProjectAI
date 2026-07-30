@@ -2,7 +2,10 @@ import { jsonResponse } from "@/lib/auth/http";
 import { requireProjectAccess } from "@/lib/auth/authorization";
 import { requireApiPrincipal } from "@/lib/auth/session";
 import { listAuthorizedDocuments } from "@/lib/db/repositories/document-repository";
-import { serializeDocumentList } from "@/lib/files/serialization";
+import {
+  isCurrentDocumentAiReady,
+  serializeDocumentList,
+} from "@/lib/files/serialization";
 import { listCompanyKnowledge } from "@/lib/focused-mvp/company-knowledge";
 import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 import { projectAssistantErrorResponse } from "@/lib/ai/project-assistant";
@@ -20,8 +23,16 @@ export async function GET(request: Request, context: Context): Promise<Response>
     const company = await listCompanyKnowledge({ principal });
     return jsonResponse({
       documents: [
-        ...projectDocuments.map((document) => ({ ...document, sourceScope: "project" as const })),
-        ...company.documents.filter((document) => document.lifecycleStatus === "published").map((document) => ({ ...document, sourceScope: "organization" as const })),
+        ...projectDocuments
+          .filter(isCurrentDocumentAiReady)
+          .map((document) => ({ ...document, sourceScope: "project" as const })),
+        ...company.documents
+          .filter(
+            (document) =>
+              document.lifecycleStatus === "published" &&
+              isCurrentDocumentAiReady(document),
+          )
+          .map((document) => ({ ...document, sourceScope: "organization" as const })),
       ],
     });
   } catch (error) {

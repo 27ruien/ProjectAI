@@ -1,12 +1,15 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   AlertCircle,
   Archive,
   Bot,
   ChevronRight,
   Download,
+  FileText,
+  ListChecks,
   LoaderCircle,
   MessageSquarePlus,
   MoreHorizontal,
@@ -38,7 +41,7 @@ import type {
   ProjectAssistantThreadSummaryDto,
 } from "@/types/project-assistant";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
@@ -47,6 +50,15 @@ type PanelPhase =
   | "ready"
   | "disabled"
   | "error";
+
+type GeneratedArtifact = {
+  id: string;
+  versionNumber: number;
+  status: "generating" | "draft" | "published" | "failed";
+  failureCode: string | null;
+  projectSourceCount: number;
+  companySourceCount: number;
+};
 
 function sourceLabel(citation: ProjectAssistantCitationDto): string {
   const source = citation.source;
@@ -74,7 +86,7 @@ function assistantErrorMessage(error: unknown): string {
       AI_PROJECT_DAILY_LIMIT_REACHED: "今日项目 AI 用量已达上限。",
       AI_CONCURRENCY_LIMIT_REACHED: "AI 服务繁忙，请稍后重试。",
       AI_PROVIDER_TIMEOUT: "AI 服务响应超时，请重试。",
-      AI_PROVIDER_UNAVAILABLE: "AI 服务当前不可用。项目资料和公司资料未发生变化，请联系管理员检查模型访问权限。",
+      AI_PROVIDER_UNAVAILABLE: "AI 服务当前不可用。项目资料和常规模板未发生变化，请联系管理员检查模型访问权限。",
       AI_CITATION_VALIDATION_FAILED: "回答未通过来源校验，请重试。",
       AI_THREAD_NOT_FOUND: "对话不存在或无权访问。",
     };
@@ -84,7 +96,7 @@ function assistantErrorMessage(error: unknown): string {
 }
 
 const scopeLabels: Record<string, string> = {
-  organization: "[公司资料]",
+  organization: "[常规模板]",
   department: "[项目资料]",
   project: "[项目资料]",
   restricted: "[项目资料]",
@@ -108,13 +120,13 @@ export function ProjectAssistantPanel({
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
   const [availableSources, setAvailableSources] = useState<Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>>([]);
-  const [projectSourcesEnabled, setProjectSourcesEnabled] = useState(true);
-  const [organizationSourcesEnabled, setOrganizationSourcesEnabled] = useState(true);
   const [threadSearch, setThreadSearch] = useState("");
-  const selectedSourceIds = useMemo(
-    () => availableSources.filter((item) => item.sourceScope === "project" ? projectSourcesEnabled : organizationSourcesEnabled).map((item) => item.id),
-    [availableSources, organizationSourcesEnabled, projectSourcesEnabled],
-  );
+  const [artifact, setArtifact] = useState<GeneratedArtifact | null>(null);
+  const [artifactBusy, setArtifactBusy] = useState(false);
+  const [artifactError, setArtifactError] = useState<string | null>(null);
+  const selectedSourceIds = useMemo(() => availableSources.map((item) => item.id), [availableSources]);
+  const projectSourceCount = useMemo(() => availableSources.filter((item) => item.sourceScope === "project").length, [availableSources]);
+  const templateSourceCount = availableSources.length - projectSourceCount;
   const visibleThreads = useMemo(() => { const query = threadSearch.trim().toLocaleLowerCase("zh-CN"); return query ? threads.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(query)) : threads; }, [threadSearch, threads]);
 
   const loadThread = useCallback(
@@ -188,6 +200,25 @@ export function ProjectAssistantPanel({
     return () => controller.abort();
   }, [project.id]);
 
+  const loadLatestArtifact = useCallback(async (preferredId?: string) => {
+    const response = await fetch(withBasePath(`/api/projects/${project.id}/requirement-documents`), {
+      credentials: "include",
+      cache: "no-store",
+    });
+    const body = await response.json() as { documents?: GeneratedArtifact[]; error?: { message?: string } };
+    if (!response.ok) throw new Error(body.error?.message ?? "AI 生成文档加载失败");
+    const next = body.documents?.find((item) => item.id === preferredId) ?? body.documents?.[0] ?? null;
+    setArtifact(next);
+    return next;
+  }, [project.id]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadLatestArtifact().catch(() => undefined);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadLatestArtifact]);
+
   const createThread = async () => {
     setCreating(true);
     setError(null);
@@ -236,6 +267,33 @@ export function ProjectAssistantPanel({
       if (thread) await loadThread(thread.id).catch(() => undefined);
     } finally {
       setSending(false);
+    }
+  };
+
+  const generateRequirementDocument = async () => {
+    if (artifactBusy) return;
+    setArtifactBusy(true);
+    setArtifactError(null);
+    try {
+      const response = await fetch(withBasePath(`/api/projects/${project.id}/requirement-documents`), {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      const body = await response.json() as { document?: GeneratedArtifact; error?: { message?: string } };
+      if (!response.ok || !body.document) throw new Error(body.error?.message ?? "需求文档生成任务创建失败");
+      setArtifact(body.document);
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_000));
+        const current = await loadLatestArtifact(body.document.id);
+        if (!current || current.status !== "generating") break;
+      }
+    } catch (caught) {
+      setArtifactError(caught instanceof Error ? caught.message : "需求文档生成未完成");
+      await loadLatestArtifact().catch(() => undefined);
+    } finally {
+      setArtifactBusy(false);
     }
   };
 
@@ -329,9 +387,9 @@ export function ProjectAssistantPanel({
     <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant" data-focused={focused ? "true" : "false"}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">AI 对话</h3>
+          <h3 className="text-sm font-semibold text-foreground">项目会话</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            每次提问都会重新检索当前有效资料，并在返回前校验引用。
+            每次提问都会自动检索当前项目资料和相关常规模板，并在返回前校验引用权限。
           </p>
         </div>
         <Sheet><SheetTrigger asChild><Button type="button" variant="outline" size="sm" className="lg:hidden"><PanelLeft className="size-3.5" />会话历史</Button></SheetTrigger><SheetContent side="left" className="w-[min(88vw,320px)] p-0"><SheetHeader className="sr-only"><SheetTitle>会话历史</SheetTitle><SheetDescription>搜索并打开私人会话</SheetDescription></SheetHeader>{historyPanel}</SheetContent></Sheet>
@@ -349,7 +407,7 @@ export function ProjectAssistantPanel({
         </div>
       ) : null}
 
-      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-x-6 gap-y-3"><span className="text-xs font-medium">检索范围</span><label className="flex items-center gap-2 text-xs"><Switch checked={projectSourcesEnabled} onCheckedChange={setProjectSourcesEnabled} />项目资料</label><label className="flex items-center gap-2 text-xs"><Switch checked={organizationSourcesEnabled} onCheckedChange={setOrganizationSourcesEnabled} />公司资料</label><span className="text-[10px] text-muted-foreground">已选择 {selectedSourceIds.length} 份有效资料</span>{selectedSourceIds.length === 0 ? <span className="text-[11px] text-warning">该范围暂无有效资料</span> : null}</div></div>
+      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">自动使用</span><Badge variant="outline">项目资料 {projectSourceCount} 份</Badge><Badge variant="outline">常规模板 {templateSourceCount} 份</Badge><span className="text-[10px] text-muted-foreground">仅包含当前用户有权访问的最新有效版本</span>{selectedSourceIds.length === 0 ? <span className="text-[11px] text-warning">当前项目暂无可用于 AI 的资料</span> : null}</div></div>
 
       <div className="grid min-h-[560px] lg:grid-cols-[280px_1fr]">
         <aside className="hidden border-r bg-muted/20 lg:block">{historyPanel}</aside>
@@ -375,10 +433,10 @@ export function ProjectAssistantPanel({
                     <Sparkles className="size-5" />
                   </span>
                   <h4 className="mt-4 text-sm font-semibold text-foreground">
-                    从项目和公司资料开始提问
+                    从项目资料开始提问
                   </h4>
                   <p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                    例如：当前需求是否符合公司的项目管理规范？
+                    例如：总结当前项目现状，或根据资料生成需求文档。
                   </p>
                 </div>
               </div>
@@ -459,13 +517,20 @@ export function ProjectAssistantPanel({
             ) : null}
           </div>
 
+          {artifact || artifactError || artifactBusy ? <GeneratedArtifactCard projectId={project.id} artifact={artifact} busy={artifactBusy} error={artifactError} /> : null}
+
           <form onSubmit={submit} className="border-t border-border p-4">
+            <div className="mb-3 flex flex-wrap gap-2" aria-label="会话快捷操作">
+              <Button type="button" size="sm" variant="outline" loading={artifactBusy} onClick={() => void generateRequirementDocument()} disabled={selectedSourceIds.length === 0}><FileText className="size-3.5" />生成需求文档</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。") } disabled={sending || selectedSourceIds.length === 0}><Sparkles className="size-3.5" />总结项目现状</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || selectedSourceIds.length === 0}><ListChecks className="size-3.5" />列出待确认事项</Button>
+            </div>
             <label className="block">
               <span className="sr-only">向项目 AI 助手提问</span>
               <textarea
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                placeholder="向当前项目和公司资料提问…"
+                placeholder="向当前项目提问，系统会自动补充相关常规模板…"
                 maxLength={2_000}
                 rows={3}
                 disabled={sending || thread?.status === "archived"}
@@ -485,9 +550,30 @@ export function ProjectAssistantPanel({
       </div>
 
       <footer className="grid gap-2 border-t border-border bg-muted/20 px-5 py-3 text-[10px] text-muted-foreground sm:grid-cols-2">
-        <p>AI 回答仅基于选定范围内的有效资料生成，请结合引用核对。</p>
-        <p className="sm:text-right">项目与公司来源会明确标注；证据不足时不会猜测。</p>
+        <p>AI 回答仅基于当前用户有权访问的有效资料生成，请结合引用核对。</p>
+        <p className="sm:text-right">项目资料与常规模板会明确标注；证据不足时不会猜测。</p>
       </footer>
     </section>
   );
+}
+
+function GeneratedArtifactCard({ projectId, artifact, busy, error }: { projectId: string; artifact: GeneratedArtifact | null; busy: boolean; error: string | null }) {
+  const repositoryHref = `/knowledge/projects/${projectId}/artifacts`;
+  if (error && !artifact) {
+    return <div className="border-t border-border bg-destructive-soft px-4 py-3 text-sm text-destructive" role="alert"><span className="inline-flex items-start gap-2"><AlertCircle className="mt-0.5 size-4 shrink-0" />{error}</span></div>;
+  }
+  if (!artifact) return null;
+  const downloadBase = withBasePath(`/api/projects/${projectId}/requirement-documents/${artifact.id}/export`);
+  const providerFailure = artifact.failureCode === "REQUIREMENT_PROVIDER_FAILED";
+  return <section className="border-t border-border bg-muted/15 px-4 py-4" data-testid="conversation-requirement-artifact">
+    <div className="rounded-lg border bg-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-accent text-primary"><FileText className="size-4" /></span><div><div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-semibold">项目需求文档 v{artifact.versionNumber}</h4><Badge variant="outline">{{ generating: "生成中", draft: "AI 草稿", published: "已发布", failed: "生成失败" }[artifact.status]}</Badge></div><p className="mt-1 text-xs text-muted-foreground">项目资料 {artifact.projectSourceCount} 份 · 常规模板 {artifact.companySourceCount} 份</p></div></div>
+        {artifact.status === "generating" || busy ? <span className="inline-flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-3.5 animate-spin" />正在生成并校验引用</span> : null}
+      </div>
+      {artifact.status === "failed" ? <div className="mt-3 rounded-lg border border-destructive/20 bg-destructive-soft px-3 py-2 text-xs leading-5 text-destructive">{providerFailure ? "AI 服务暂时不可用。项目资料已保留，请联系管理员检查模型访问权限后再试。" : error ?? "本次文档生成未完成，请检查项目资料状态后重试。"}</div> : null}
+      {artifact.status === "draft" || artifact.status === "published" ? <div className="mt-4 flex flex-wrap items-center gap-2"><Link href={repositoryHref} className="inline-flex h-8 items-center rounded-lg bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary-hover">预览与编辑</Link><Link href={repositoryHref} className="inline-flex h-8 items-center rounded-lg border bg-background px-3 text-xs font-medium hover:bg-muted">保存到项目</Link><a href={`${downloadBase}?format=md`} className="inline-flex h-8 items-center rounded-lg border bg-background px-3 text-xs font-medium hover:bg-muted">下载 Markdown</a><a href={`${downloadBase}?format=docx`} className="inline-flex h-8 items-center rounded-lg border bg-background px-3 text-xs font-medium hover:bg-muted">下载 DOCX</a><span className="text-[10px] text-muted-foreground">已进入项目的“AI 生成文档”</span></div> : null}
+      {artifact.status === "failed" ? <div className="mt-3"><Link href={repositoryHref} className="text-xs font-medium text-primary hover:underline">查看失败记录</Link></div> : null}
+    </div>
+  </section>;
 }

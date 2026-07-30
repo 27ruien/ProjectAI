@@ -93,8 +93,8 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     assert.equal(index.parserVersion, "1");
     assert.equal(index.chunkerVersion, "1");
     assert.equal(index.aiGatewayVersion, "1");
-    assert.equal(index.assistantProfileId, "qwen-project-assistant-cn-v1");
-    assert.equal(index.retrievalProfileId, "hybrid-rrf-v1");
+    assert.equal(index.assistantProfileId, "qwen-project-assistant-cn-v2");
+    assert.equal(index.retrievalProfileId, "hybrid-rrf-qwen37-v2");
     assert.equal(
       index.retrievalEvaluationDatasetVersion,
       "hybrid-retrieval-fictional-v1",
@@ -351,9 +351,9 @@ test("publishes a separate authoritative manifest after payload upload", async (
     assert.equal(manifest.aiGatewayVersion, "1");
     assert.equal(
       manifest.assistantProfileId,
-      "qwen-project-assistant-cn-v1",
+      "qwen-project-assistant-cn-v2",
     );
-    assert.equal(manifest.retrievalProfileId, "hybrid-rrf-v1");
+    assert.equal(manifest.retrievalProfileId, "hybrid-rrf-qwen37-v2");
     assert.equal(
       manifest.retrievalEvaluationDatasetVersion,
       "hybrid-retrieval-fictional-v1",

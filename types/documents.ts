@@ -44,6 +44,22 @@ export interface ProjectDocumentVersionDto {
   storedAt: string | null;
   supersededAt: string | null;
   ingestion: DocumentIngestionDto;
+  embedding: DocumentEmbeddingDto;
+}
+
+export interface DocumentEmbeddingDto {
+  status:
+    | "not_started"
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "unknown";
+  profileId: string | null;
+  model: string | null;
+  dimensions: number | null;
+  generatedAt: string | null;
+  failureCode: string | null;
 }
 
 export type PublicDocumentIngestionStatus =

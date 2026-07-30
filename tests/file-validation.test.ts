@@ -145,6 +145,14 @@ function uploadVersion(
       lastIndexedAt: null,
       failureCode: null,
     },
+    embedding: overrides.embedding ?? {
+      status: "not_started",
+      profileId: null,
+      model: null,
+      dimensions: null,
+      generatedAt: null,
+      failureCode: null,
+    },
   };
 }
 

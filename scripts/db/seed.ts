@@ -3,6 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   account,
+  aiEmbeddingProfile,
   aiModelProfile,
   aiRetrievalProfile,
   department,
@@ -203,10 +204,24 @@ async function main(): Promise<void> {
     throw new Error("SEED_PRODUCTION_FORBIDDEN");
   }
   await getDb()
+    .insert(aiEmbeddingProfile)
+    .values({
+      id: "qwen3.7-text-embedding-cn-v2",
+      provider: "qwen",
+      model: "qwen3.7-text-embedding",
+      region: "cn-beijing",
+      dimensions: 1024,
+      distanceMetric: "cosine",
+      profileVersion: 2,
+      enabled: true,
+    })
+    .onConflictDoNothing({ target: aiEmbeddingProfile.id });
+
+  await getDb()
     .insert(aiRetrievalProfile)
     .values({
-      id: "hybrid-rrf-v1",
-      profileVersion: 1,
+      id: "hybrid-rrf-qwen37-v2",
+      profileVersion: 2,
       lexicalCandidateLimit: 30,
       vectorCandidateLimit: 30,
       fusedCandidateLimit: 30,
@@ -216,7 +231,7 @@ async function main(): Promise<void> {
       vectorWeight: 1,
       vectorMaxDistance: 0.55,
       minEmbeddingCoverageBps: 9_800,
-      embeddingProfileId: "qwen-text-embedding-cn-v1",
+      embeddingProfileId: "qwen3.7-text-embedding-cn-v2",
       enabled: true,
     })
     .onConflictDoNothing({ target: aiRetrievalProfile.id });
@@ -224,11 +239,11 @@ async function main(): Promise<void> {
   await getDb()
     .insert(aiModelProfile)
     .values({
-      id: "qwen-project-assistant-cn-v1",
+      id: "qwen-project-assistant-cn-v2",
       provider: "qwen",
       purpose: "project_assistant",
-      primaryModel: "qwen3.7-plus",
-      fallbackModel: "qwen3.6-flash",
+      primaryModel: "qwen3.7-flash",
+      fallbackModel: "qwen3.7-flash",
       region: "cn-beijing",
       enabled: true,
       gatewayVersion: "1",

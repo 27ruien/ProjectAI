@@ -245,7 +245,7 @@ sudo chmod 600 "$ai_env_file"
 [[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
 ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.preflight.XXXXXX")"
 if ! sudo awk -F= '
-  BEGIN { assistant = 0; mode = 0; profile = 0; query_timeout = 0; vector_timeout = 0; daily_limit = 0 }
+  BEGIN { assistant = 0; model_profile = 0; mode = 0; profile = 0; query_timeout = 0; vector_timeout = 0; daily_limit = 0 }
   $1 == "AI_ASSISTANT_ENABLED" {
     print "AI_ASSISTANT_ENABLED=false"
     assistant += 1
@@ -256,8 +256,13 @@ if ! sudo awk -F= '
     mode += 1
     next
   }
+  $1 == "AI_PROJECT_ASSISTANT_PROFILE_ID" {
+    print "AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v2"
+    model_profile += 1
+    next
+  }
   $1 == "AI_HYBRID_RETRIEVAL_PROFILE_ID" {
-    print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1"
+    print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-qwen37-v2"
     profile += 1
     next
   }
@@ -278,9 +283,10 @@ if ! sudo awk -F= '
   }
   { print }
   END {
-    if (assistant != 1 || mode > 1 || profile > 1 || query_timeout > 1 || vector_timeout > 1 || daily_limit > 1) exit 1
+    if (assistant != 1 || model_profile > 1 || mode > 1 || profile > 1 || query_timeout > 1 || vector_timeout > 1 || daily_limit > 1) exit 1
+    if (model_profile == 0) print "AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v2"
     if (mode == 0) print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
-    if (profile == 0) print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1"
+    if (profile == 0) print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-qwen37-v2"
     if (query_timeout == 0) print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
     if (vector_timeout == 0) print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
     if (daily_limit == 0) print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
@@ -295,7 +301,7 @@ sudo rm -f "$ai_env_temp"
 embedding_env_temp="$(sudo mktemp "$remote_dir/.env.embedding.preflight.XXXXXX")"
 sudo tee "$embedding_env_temp" >/dev/null <<'EMBEDDING_ENV'
 AI_EMBEDDING_ENABLED=false
-AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1
+AI_EMBEDDING_PROFILE_ID=qwen3.7-text-embedding-cn-v2
 AI_EMBEDDING_DIMENSIONS=1024
 AI_EMBEDDING_WORKER_POLL_MS=2000
 AI_EMBEDDING_WORKER_LEASE_SECONDS=120
@@ -317,7 +323,7 @@ sudo awk -F= '
   { count[$1] += 1; values[$1] = substr($0, index($0, "=") + 1) }
   END {
     if (count["AI_EMBEDDING_ENABLED"] != 1 || values["AI_EMBEDDING_ENABLED"] != "false") exit 1
-    if (count["AI_EMBEDDING_PROFILE_ID"] != 1 || values["AI_EMBEDDING_PROFILE_ID"] != "qwen-text-embedding-cn-v1") exit 1
+    if (count["AI_EMBEDDING_PROFILE_ID"] != 1 || values["AI_EMBEDDING_PROFILE_ID"] != "qwen3.7-text-embedding-cn-v2") exit 1
     if (count["AI_EMBEDDING_DIMENSIONS"] != 1 || values["AI_EMBEDDING_DIMENSIONS"] != "1024") exit 1
     if (count["AI_EMBEDDING_BATCH_SIZE"] != 1 || values["AI_EMBEDDING_BATCH_SIZE"] != "10") exit 1
     if (count["AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS"] != 1 || values["AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS"] != "25000") exit 1
@@ -343,9 +349,9 @@ sudo awk -F= '
     if (count["AI_ASSISTANT_ENABLED"] != 1 || values["AI_ASSISTANT_ENABLED"] != "false") exit 1
     if (count["AI_PROVIDER"] != 1 || values["AI_PROVIDER"] != "qwen") exit 1
     if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
-    if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v1") exit 1
+    if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v2") exit 1
     if (count["AI_ASSISTANT_RETRIEVAL_MODE"] != 1 || values["AI_ASSISTANT_RETRIEVAL_MODE"] != "lexical") exit 1
-    if (count["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != 1 || values["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != "hybrid-rrf-v1") exit 1
+    if (count["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != 1 || values["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != "hybrid-rrf-qwen37-v2") exit 1
     if (count["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != "5000") exit 1
     if (count["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != 1 || values["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != "1500") exit 1
     if (count["AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT"] != "5000000") exit 1
@@ -1752,7 +1758,7 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
             from ai_embedding_profiles
             where id = $4 and provider = $5 and model = $6 and region = $7
               and dimensions = 1024 and distance_metric = $8
-              and profile_version = 1 and enabled = true
+              and profile_version = 2 and enabled = true
           ) as profile_count
           ,(
             select array_agg(e.enumlabel::text order by e.enumsortorder)
@@ -1792,9 +1798,9 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
         "vector",
         "document_chunk_embeddings",
         "embedding",
-        "qwen-text-embedding-cn-v1",
+        "qwen3.7-text-embedding-cn-v2",
         "qwen",
-        "text-embedding-v4",
+        "qwen3.7-text-embedding",
         "cn-beijing",
         "cosine",
         "document_embedding_batch_status",
@@ -1976,9 +1982,9 @@ curl --fail --silent --max-time 10 "${origin}${base_path}/login" >/dev/null
 printf 'Running the fixed Qwen Provider Probe while the assistant Feature Flag remains disabled.\n'
 sudo docker exec "$container_name" npm run ai:probe:qwen
 
-printf 'Running the fixed text-embedding-v4 Probe while the Embedding Feature Flag remains disabled.\n'
+printf 'Running the fixed qwen3.7-text-embedding Probe while the Embedding Feature Flag remains disabled.\n'
 embedding_probe="$(sudo docker exec "$embedding_worker_container_name" npm run embeddings:probe)"
-grep -q '"model":"text-embedding-v4"' <<<"$embedding_probe"
+grep -q '"model":"qwen3.7-text-embedding"' <<<"$embedding_probe"
 grep -q '"dimensions":1024' <<<"$embedding_probe"
 grep -q '"vectorCount":1' <<<"$embedding_probe"
 grep -q '"finite":true' <<<"$embedding_probe"
@@ -2310,7 +2316,7 @@ printf 'Running the grounded fictional Assistant regression with hybrid Evidence
   projectai-ai-smoke npm run assistant:smoke
 retrieval_status="$(sudo docker exec "$container_name" npm run retrieval:status)"
 grep -q '"mode":"hybrid"' <<<"$retrieval_status"
-grep -q '"id":"hybrid-rrf-v1"' <<<"$retrieval_status"
+grep -q '"id":"hybrid-rrf-qwen37-v2"' <<<"$retrieval_status"
 
 "${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";

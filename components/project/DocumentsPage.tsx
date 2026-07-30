@@ -32,6 +32,7 @@ import {
   listProjectDocumentGrants,
   listProjectDocuments,
   reindexProjectDocumentVersion,
+  retryProjectDocumentEmbedding,
   restoreProjectDocument,
   setProjectDocumentGrant,
   type ProjectDocumentGrantDto,
@@ -156,8 +157,8 @@ function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
       classes: "border-info/20 bg-info-soft text-info",
     },
     succeeded: {
-      label: "可用于 AI",
-      detail: "解析与索引已完成",
+      label: "解析完成",
+      detail: "已提取可检索文本",
       classes: "border-success/20 bg-success-soft text-success",
     },
     failed: {
@@ -171,6 +172,48 @@ function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
       classes: "border-warning/20 bg-warning-soft text-warning",
     },
   }[version.ingestion.status];
+}
+
+function embeddingPresentation(version: ProjectDocumentVersionDto | null) {
+  if (!version || version.ingestion.status !== "succeeded") {
+    return {
+      label: "等待解析",
+      detail: "解析完成后自动向量化",
+      classes: "border-border bg-muted text-muted-foreground",
+    };
+  }
+  return {
+    not_started: {
+      label: "等待向量化",
+      detail: "等待 qwen3.7-text-embedding 任务",
+      classes: "border-info/20 bg-info-soft text-info",
+    },
+    pending: {
+      label: "等待向量化",
+      detail: "向量任务已进入队列",
+      classes: "border-info/20 bg-info-soft text-info",
+    },
+    running: {
+      label: "正在向量化",
+      detail: "正在生成 1024 维文本向量",
+      classes: "border-info/20 bg-info-soft text-info",
+    },
+    succeeded: {
+      label: "可用于 AI",
+      detail: `${version.embedding.model} · ${version.embedding.dimensions} 维`,
+      classes: "border-success/20 bg-success-soft text-success",
+    },
+    failed: {
+      label: "向量化失败",
+      detail: "可由项目经理精确重试",
+      classes: "border-destructive/20 bg-destructive-soft text-destructive",
+    },
+    unknown: {
+      label: "等待管理员复核",
+      detail: "结果状态不确定，禁止自动重试",
+      classes: "border-warning/20 bg-warning-soft text-warning",
+    },
+  }[version.embedding.status];
 }
 
 function isAbortError(error: unknown): boolean {
@@ -260,6 +303,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
       !documents.some((document) =>
         ["pending", "running"].includes(
           document.currentVersion?.ingestion.status ?? "",
+        ) || ["not_started", "pending", "running"].includes(
+          document.currentVersion?.embedding.status ?? "",
         ),
       )
     ) {
@@ -388,6 +433,28 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     }
   };
 
+  const retryEmbedding = async (
+    document: ProjectDocumentDto,
+    version: ProjectDocumentVersionDto,
+  ) => {
+    const actionKey = `embedding:${version.id}`;
+    setPendingAction(actionKey);
+    setActionError(null);
+    try {
+      await retryProjectDocumentEmbedding(
+        project.id,
+        document.id,
+        version.id,
+      );
+      toast(`已为“${document.displayName}”重新创建向量化任务`, "success");
+      await loadDocuments({ background: true });
+    } catch (caught) {
+      setActionError(documentErrorMessage(caught));
+    } finally {
+      setPendingAction(null);
+    }
+  };
+
   return (
     <div className="min-h-full bg-background">
       <ProjectContextHeader project={project} activeTab="files" />
@@ -409,7 +476,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           ) : null}
         </div>
 
-        <aside className="mt-4 rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">文件上传后会自动解析；状态变为“可用于 AI”后即可参与问答和文档生成。</aside>
+        <aside className="mt-4 rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">文件上传后会自动解析并使用 qwen3.7-text-embedding 生成 1024 维向量；只有状态变为“可用于 AI”的当前版本才进入新检索。</aside>
 
         {!canUpload && phase === "ready" ? (
           <aside className="mt-3 rounded-lg border border-border bg-card px-3 py-2.5 text-xs text-muted-foreground">
@@ -570,6 +637,9 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
               onVersions={setVersionDocument}
               onUploadVersion={openVersionUpload}
               onReindex={(document, version) => void reindex(document, version)}
+              onRetryEmbedding={(document, version) =>
+                void retryEmbedding(document, version)
+              }
               onLifecycle={(document, kind) =>
                 setConfirmAction({ document, kind })
               }
@@ -669,6 +739,7 @@ function DocumentTable({
   onVersions,
   onUploadVersion,
   onReindex,
+  onRetryEmbedding,
   onLifecycle,
 }: {
   documents: ProjectDocumentDto[];
@@ -683,18 +754,23 @@ function DocumentTable({
     document: ProjectDocumentDto,
     version: ProjectDocumentVersionDto,
   ) => void;
+  onRetryEmbedding: (
+    document: ProjectDocumentDto,
+    version: ProjectDocumentVersionDto,
+  ) => void;
   onLifecycle: (
     document: ProjectDocumentDto,
     kind: "archive" | "restore",
   ) => void;
 }) {
   return <div className="overflow-x-auto"><Table className="min-w-[900px]"><TableHeader><TableRow>
-    <TableHead>文件名称</TableHead><TableHead>类型</TableHead><TableHead>当前版本</TableHead><TableHead>上传人</TableHead><TableHead>更新时间</TableHead><TableHead>解析状态</TableHead><TableHead className="w-12"><span className="sr-only">操作</span></TableHead>
+    <TableHead>文件名称</TableHead><TableHead>类型</TableHead><TableHead>当前版本</TableHead><TableHead>上传人</TableHead><TableHead>更新时间</TableHead><TableHead>处理状态</TableHead><TableHead className="w-12"><span className="sr-only">操作</span></TableHead>
   </TableRow></TableHeader><TableBody>
           {documents.map((document) => {
             const version = document.currentVersion;
             const status = statusPresentation(document);
             const ingestion = ingestionPresentation(version);
+            const embedding = embeddingPresentation(version);
             const canDownload =
               document.permissions.canDownload &&
               version?.storageStatus === "stored";
@@ -737,12 +813,7 @@ function DocumentTable({
                 <TableCell>{version?.uploadedBy.displayName ?? document.createdBy.displayName}</TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">{formatDate(document.updatedAt)}</TableCell>
                 <TableCell>
-                  <span
-                    className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${document.status === "archived" ? status.classes : ingestion.classes}`}
-                  >
-                    {document.status === "archived" ? status.label : ingestion.label}
-                  </span>
-                  <p className="mt-1 max-w-52 text-[10px] text-muted-foreground">{document.status === "archived" ? "已从有效资料中移除" : ingestion.detail}</p>
+                  {document.status === "archived" ? <><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}>{status.label}</span><p className="mt-1 max-w-52 text-[10px] text-muted-foreground">已从有效资料中移除</p></> : <div className="space-y-1"><div className="flex flex-wrap gap-1"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}>{ingestion.label}</span><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${embedding.classes}`}>{embedding.label}</span></div><p className="max-w-64 text-[10px] text-muted-foreground">{version?.ingestion.status === "succeeded" ? embedding.detail : ingestion.detail}</p></div>}
                 </TableCell>
                 <TableCell>
                   <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`${document.displayName} 操作`} disabled={Boolean(pendingAction)}><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
@@ -751,6 +822,7 @@ function DocumentTable({
                     {document.permissions.canUploadVersion && document.status === "active" ? <DropdownMenuItem onSelect={() => onUploadVersion(document)}>上传新版本</DropdownMenuItem> : null}
                     <DropdownMenuItem onSelect={() => onVersions(document)}>查看版本历史</DropdownMenuItem>
                     {version && document.permissions.canReindex && document.status === "active" && version.storageStatus === "stored" ? <DropdownMenuItem onSelect={() => onReindex(document, version)}>重新解析</DropdownMenuItem> : null}
+                    {version && document.permissions.canReindex && document.status === "active" && version.embedding.status === "failed" ? <DropdownMenuItem onSelect={() => onRetryEmbedding(document, version)}>重试向量化</DropdownMenuItem> : null}
                     {(document.permissions.canArchive || document.permissions.canRestore) ? <DropdownMenuSeparator /> : null}
                     {document.status === "active" && document.permissions.canArchive ? <DropdownMenuItem variant="destructive" onSelect={() => onLifecycle(document, "archive")}>{busy ? "处理中…" : "归档"}</DropdownMenuItem> : null}
                     {document.status === "archived" && document.permissions.canRestore ? <DropdownMenuItem onSelect={() => onLifecycle(document, "restore")}>{busy ? "处理中…" : "恢复"}</DropdownMenuItem> : null}

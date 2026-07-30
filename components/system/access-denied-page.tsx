@@ -12,8 +12,8 @@ export function AccessDeniedPage({ obscureResource = false }: { obscureResource?
         <h1 className="mt-2 text-xl font-semibold text-foreground">{obscureResource ? "页面不存在或无法访问" : "当前身份没有此操作权限"}</h1>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">{obscureResource ? "为保护项目标识，系统不会说明资源是否存在。请从已授权项目列表重新进入。" : "你的 Session 已验证，但当前角色不包含此页面或操作所需的权限。"}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <Link href="/projects" className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary-hover"><ArrowLeft className="size-4" />返回项目列表</Link>
-          <Link href="/dashboard" className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground hover:bg-muted">返回工作台</Link>
+          <Link href="/knowledge/projects" className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary-hover"><ArrowLeft className="size-4" />返回项目列表</Link>
+          <Link href="/knowledge/sessions" className="inline-flex h-9 items-center rounded-lg border border-border bg-card px-4 text-sm font-medium text-foreground hover:bg-muted">打开会话</Link>
         </div>
       </section>
     </div>

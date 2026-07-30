@@ -36,7 +36,7 @@ const managerAgentPrefix = "projectai-staging-assistant-manager/0.6/";
 const viewerAgentPrefix = "projectai-staging-assistant-viewer/0.6/";
 const managerUserAgent = `${managerAgentPrefix}${runId}`;
 const viewerUserAgent = `${viewerAgentPrefix}${runId}`;
-const modelProfileId = "qwen-project-assistant-cn-v1";
+const modelProfileId = "qwen-project-assistant-cn-v2";
 const managerEmail = requiredEnvironment("SEED_MANAGER_A_EMAIL");
 const managerPassword = requiredEnvironment("SEED_MANAGER_A_PASSWORD");
 const viewerEmail = requiredEnvironment("SEED_VIEWER_A_EMAIL");
@@ -319,7 +319,7 @@ async function waitForEmbeddingCoverage(documentId: string, versionId: string) {
         and e.document_id = c.document_id
         and e.version_id = c.version_id
         and e.content_sha256 = c.content_sha256
-        and e.embedding_profile_id = 'qwen-text-embedding-cn-v1'
+        and e.embedding_profile_id = 'qwen3.7-text-embedding-cn-v2'
         and e.status = 'current'
        where c.project_id = $1 and c.document_id = $2 and c.version_id = $3
          and c.is_effective = true and j.status = 'succeeded'`,
@@ -621,7 +621,7 @@ try {
           prompt_version, retrieval_version, gateway_version, question_sha256,
           idempotency_key, started_at, created_at
         ) values (
-          $1, $2, $3, $4, $5, $6, $7, 'qwen', 'qwen3.7-plus', $8,
+          $1, $2, $3, $4, $5, $6, $7, 'qwen', 'qwen3.7-flash', $8,
           '1', 'b2-lexical-1', '1', $9, $10,
           now() - interval '16 minutes', now() - interval '16 minutes'
         )`,
@@ -721,7 +721,7 @@ try {
   const usage = execution.rows[0];
   assert(usage, "Grounded Execution was not persisted.");
   assert(
-    ["qwen3.7-plus", "qwen3.6-flash"].includes(usage.actual_model || ""),
+    usage.actual_model === "qwen3.7-flash",
     "Unexpected actual model.",
   );
   assert(
@@ -817,7 +817,7 @@ try {
       prompt_version, retrieval_version, gateway_version, question_sha256,
       idempotency_key, started_at, created_at
     ) values (
-      $1, $2, $3, $4, $5, $6, $7, 'qwen', 'qwen3.7-plus', 'validating',
+      $1, $2, $3, $4, $5, $6, $7, 'qwen', 'qwen3.7-flash', 'validating',
       '1', 'b2-lexical-1', '1', $8, $9,
       now() - interval '2 minutes', now() - interval '2 minutes'
     )`,
@@ -838,8 +838,8 @@ try {
     failureCode: "AI_CITATION_VALIDATION_FAILED",
     gateway: {
       provider: "qwen",
-      requestedModel: "qwen3.7-plus",
-      actualModel: "qwen3.7-plus",
+      requestedModel: "qwen3.7-flash",
+      actualModel: "qwen3.7-flash",
       fallbackUsed: false,
       text: "",
       inputTokens: 60_000,

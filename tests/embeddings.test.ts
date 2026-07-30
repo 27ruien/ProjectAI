@@ -3,8 +3,8 @@ import { afterEach, describe, it } from "node:test";
 import {
   EMBEDDING_BUDGET_RULE_VERSION,
   EMBEDDING_MODEL,
-  TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM,
-  TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
+  QWEN37_EMBEDDING_MAX_TOKENS_PER_ITEM,
+  QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST,
   type EmbeddingRuntimeConfig,
   getEmbeddingRuntimeConfig,
 } from "../lib/ai/embeddings/config";
@@ -39,8 +39,8 @@ function config(overrides: Partial<EmbeddingRuntimeConfig> = {}): EmbeddingRunti
   return {
     enabled: true,
     provider: "fake",
-    profileId: "qwen-text-embedding-cn-v1",
-    model: "text-embedding-v4",
+    profileId: "qwen3.7-text-embedding-cn-v2",
+    model: "qwen3.7-text-embedding",
     region: "cn-beijing",
     dimensions: 1024,
     qwenBaseUrl: null,
@@ -135,12 +135,12 @@ describe("embedding configuration and Gateway", () => {
     Reflect.set(process.env, "NODE_ENV", "test");
     process.env.NEXT_PUBLIC_APP_ENV = "test";
     process.env.AI_EMBEDDING_PROVIDER = "fake";
-    process.env.AI_EMBEDDING_PROFILE_ID = "qwen-text-embedding-cn-v1";
+    process.env.AI_EMBEDDING_PROFILE_ID = "qwen3.7-text-embedding-cn-v2";
     process.env.AI_EMBEDDING_DIMENSIONS = "1024";
     process.env.AI_EMBEDDING_BATCH_SIZE = "10";
     const parsed = getEmbeddingRuntimeConfig();
-    assert.equal(parsed.profileId, "qwen-text-embedding-cn-v1");
-    assert.equal(parsed.model, "text-embedding-v4");
+    assert.equal(parsed.profileId, "qwen3.7-text-embedding-cn-v2");
+    assert.equal(parsed.model, "qwen3.7-text-embedding");
     assert.equal(parsed.dimensions, 1024);
     assert.equal(parsed.batchSize, 10);
 
@@ -223,13 +223,13 @@ describe("embedding configuration and Gateway", () => {
   });
 });
 
-describe("text-embedding-v4 hard budget reservation", () => {
+describe("qwen3.7-text-embedding hard budget reservation", () => {
   it("covers Chinese, mixed language, emoji, code, English, and ten-item batches", async () => {
-    assert.equal(TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM, 8_192);
-    assert.equal(TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST, 33_000);
+    assert.equal(QWEN37_EMBEDDING_MAX_TOKENS_PER_ITEM, 8_192);
+    assert.equal(QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST, 33_000);
     assert.equal(
       EMBEDDING_BUDGET_RULE_VERSION,
-      "text-embedding-v4-hard-limit-cn-beijing-v1",
+      "qwen3.7-text-embedding-hard-limit-cn-beijing-v2",
     );
     const inputs = [
       "这是一个没有空格的中文项目说明",
@@ -266,7 +266,7 @@ describe("text-embedding-v4 hard budget reservation", () => {
     }));
     assert.equal(
       embeddingBatchReservedInputTokens(tenChunks),
-      TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
+      QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST,
     );
   });
 });
@@ -288,7 +288,7 @@ describe("Qwen embedding Adapter", () => {
         return new Response(
           JSON.stringify({
             id: "provider-id",
-            model: "text-embedding-v4",
+            model: "qwen3.7-text-embedding",
             data: [
               { index: 1, embedding: vectorB },
               { index: 0, embedding: vectorA },
@@ -300,7 +300,7 @@ describe("Qwen embedding Adapter", () => {
       },
     );
     const result = await provider.embed({
-      model: "text-embedding-v4",
+      model: "qwen3.7-text-embedding",
       dimensions: 1024,
       inputs: ["first", "second"],
       timeoutMs: 1_000,
@@ -308,7 +308,7 @@ describe("Qwen embedding Adapter", () => {
     assert.equal(requestedUrl.endsWith("/embeddings"), true);
     assert.equal(requestedUrl.includes("chat/completions"), false);
     assert.deepEqual(requestBody.input, ["first", "second"]);
-    assert.equal(requestBody.model, "text-embedding-v4");
+    assert.equal(requestBody.model, "qwen3.7-text-embedding");
     assert.equal(requestBody.dimensions, 1024);
     assert.equal(result.vectors[0]?.[0], 0.1);
     assert.equal(result.vectors[1]?.[0], 0.2);
@@ -328,7 +328,7 @@ describe("Qwen embedding Adapter", () => {
       );
       await assert.rejects(
         provider.embed({
-          model: "text-embedding-v4",
+          model: "qwen3.7-text-embedding",
           dimensions: 1024,
           inputs: ["safe text"],
           timeoutMs: 1_000,
@@ -362,7 +362,7 @@ describe("Qwen embedding Adapter", () => {
       );
       await assert.rejects(
         provider.embed({
-          model: "text-embedding-v4",
+          model: "qwen3.7-text-embedding",
           dimensions: 1024,
           inputs: ["safe text"],
           timeoutMs: 1_000,
@@ -386,7 +386,7 @@ describe("Qwen embedding Adapter", () => {
       new Response(JSON.stringify({ data: [] }), { status: 200 }),
       new Response(
         JSON.stringify({
-          model: "text-embedding-v4",
+          model: "qwen3.7-text-embedding",
           data: [{ index: 0, embedding: [1] }],
         }),
         { status: 200 },
@@ -403,7 +403,7 @@ describe("Qwen embedding Adapter", () => {
       );
       await assert.rejects(
         provider.embed({
-          model: "text-embedding-v4",
+          model: "qwen3.7-text-embedding",
           dimensions: 1024,
           inputs: ["safe text"],
           timeoutMs: 1_000,
@@ -436,7 +436,7 @@ describe("Qwen embedding Adapter", () => {
       },
     );
     const pending = provider.embed({
-      model: "text-embedding-v4",
+      model: "qwen3.7-text-embedding",
       dimensions: 1024,
       inputs: ["fictional shutdown text"],
       timeoutMs: 1_000,
@@ -456,7 +456,7 @@ describe("Qwen embedding Adapter", () => {
     preDispatch.abort(new Error("SIGTERM"));
     await assert.rejects(
       provider.embed({
-        model: "text-embedding-v4",
+        model: "qwen3.7-text-embedding",
         dimensions: 1024,
         inputs: ["fictional pre-dispatch text"],
         timeoutMs: 1_000,

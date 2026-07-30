@@ -1,10 +1,10 @@
 import { EmbeddingPipelineError } from "@/lib/ai/embeddings/errors";
 
-export const HYBRID_RETRIEVAL_PROFILE_ID = "hybrid-rrf-v1" as const;
-export const HYBRID_RETRIEVAL_PROFILE_VERSION = 1 as const;
-export const HYBRID_RETRIEVAL_VERSION = "hybrid-rrf-1" as const;
+export const HYBRID_RETRIEVAL_PROFILE_ID = "hybrid-rrf-qwen37-v2" as const;
+export const HYBRID_RETRIEVAL_PROFILE_VERSION = 2 as const;
+export const HYBRID_RETRIEVAL_VERSION = "hybrid-rrf-qwen37-2" as const;
 export const QUERY_EMBEDDING_BUDGET_RULE_VERSION =
-  "text-embedding-v4-query-hard-limit-cn-beijing-v1" as const;
+  "qwen3.7-text-embedding-query-hard-limit-cn-beijing-v2" as const;
 export const QUERY_EMBEDDING_RESERVED_TOKENS = 8_192 as const;
 
 export type RetrievalMode = "lexical" | "shadow" | "hybrid";
@@ -22,12 +22,12 @@ export type HybridRetrievalProfile = {
   vectorWeight: number;
   vectorMaxDistance: number;
   minEmbeddingCoverageBps: number;
-  embeddingProfileId: "qwen-text-embedding-cn-v1";
+  embeddingProfileId: "qwen3.7-text-embedding-cn-v2";
   embeddingDimensions: 1024;
   distanceMetric: "cosine";
 };
 
-// Profile v1 is immutable. A parameter change requires a new profile id and a
+// Profile v2 is immutable. A parameter change requires a new profile id and a
 // complete evaluation run instead of an in-place environment override.
 export const HYBRID_RETRIEVAL_PROFILE: Readonly<HybridRetrievalProfile> =
   Object.freeze({
@@ -45,7 +45,7 @@ export const HYBRID_RETRIEVAL_PROFILE: Readonly<HybridRetrievalProfile> =
     // evaluation command verifies both answerable recall and no-answer FPR.
     vectorMaxDistance: 0.55,
     minEmbeddingCoverageBps: 9_800,
-    embeddingProfileId: "qwen-text-embedding-cn-v1",
+    embeddingProfileId: "qwen3.7-text-embedding-cn-v2",
     embeddingDimensions: 1024,
     distanceMetric: "cosine",
   });

@@ -45,25 +45,29 @@ function memberPrincipal(id: string): AuthenticatedPrincipal {
 }
 
 describe("focused MVP product surface", () => {
-  it("exposes only projects, chat and company knowledge as primary navigation", async () => {
-    const [sidebar, router, workspace, projectHeader] = await Promise.all([
+  it("exposes one knowledge entry with projects, templates and sessions inside", async () => {
+    const [sidebar, router, workspace, projectHeader, knowledgeNav] = await Promise.all([
       source("components/layout/sidebar.tsx"),
       source("app/[...slug]/page.tsx"),
       source("components/workspace.tsx"),
       source("components/project/ProjectContextHeader.tsx"),
+      source("components/knowledge/KnowledgeModuleNav.tsx"),
     ]);
-    for (const label of ["项目", "AI 对话", "公司知识库"]) assert.match(sidebar, new RegExp(label));
+    assert.match(sidebar, /知识库/);
+    for (const removedPrimary of ["AI 对话", "公司知识库"]) assert.doesNotMatch(sidebar, new RegExp(removedPrimary));
+    for (const label of ["项目", "常规模板", "会话"]) assert.match(knowledgeNav, new RegExp(label));
     for (const removed of ["工作日报", "AI 工作流", "会议纪要", "Action Plan", "周报", "Skills", "审核中心"]) {
       assert.doesNotMatch(sidebar, new RegExp(removed, "i"));
     }
-    assert.match(router, /allowedRoot = \["projects", "chat", "company-knowledge", "organization", "settings"\]/);
+    assert.match(router, /allowedRoot = \["knowledge", "organization", "settings"\]/);
+    assert.match(router, /\["projects", "templates", "sessions"\]/);
     assert.match(router, /notFound\(\)/);
     assert.match(workspace, /<ProjectsPage/);
     assert.match(workspace, /<FocusedChatPage/);
     assert.match(workspace, /<CompanyKnowledgePage/);
-    assert.match(projectHeader, /概览/);
+    assert.match(projectHeader, /基本信息/);
     assert.match(projectHeader, /项目资料/);
-    assert.match(projectHeader, /需求文档/);
+    assert.match(projectHeader, /AI 生成文档/);
     assert.match(projectHeader, /成员与权限/);
   });
 
@@ -115,14 +119,14 @@ describe("focused requirement document", () => {
           requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
           return new Response(JSON.stringify({
             id: "focused-test-response",
-            model: "qwen3.7-plus",
+            model: "qwen3.7-flash",
             choices: [{ message: { content: "{\"sections\":[]}" } }],
             usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
           }), { status: 200, headers: { "content-type": "application/json" } });
         },
       );
       await provider.generate({
-        model: "qwen3.7-plus",
+        model: "qwen3.7-flash",
         systemPrompt: "请输出 JSON",
         userPrompt: "请输出 JSON",
         purpose: "requirement_document",
@@ -144,7 +148,7 @@ describe("focused requirement document", () => {
     assert.deepEqual(requirementSectionDefinitions.map(([, title]) => title), expectedTemplate);
     const provider = new FakeProjectAssistantProvider();
     const result = await provider.generate({
-      model: "qwen3.7-plus",
+      model: "qwen3.7-flash",
       systemPrompt: "focused requirement test",
       userPrompt: '<evidence_labels_json>["E1"]</evidence_labels_json>',
       purpose: "requirement_document",
@@ -163,7 +167,7 @@ describe("focused requirement document", () => {
   it("keeps project and company citations distinct in deterministic output", async () => {
     const provider = new FakeProjectAssistantProvider();
     const result = await provider.generate({
-      model: "qwen3.7-plus",
+      model: "qwen3.7-flash",
       systemPrompt: "focused requirement test",
       userPrompt: '<evidence_labels_json>["E1","E2"]</evidence_labels_json>\n<evidence_set>\n<evidence id="E1" scope="project">项目资料</evidence>\n<evidence id="E2" scope="organization">公司规范</evidence>\n</evidence_set>',
       purpose: "requirement_document",
@@ -210,7 +214,22 @@ describe("focused requirement document", () => {
     assert.match(service, /REQUIREMENT_EXECUTION_CREATE_FAILED/);
     assert.match(page, /status === "generating"/);
     assert.match(page, /window\.setInterval/);
-    assert.match(page, /重新生成/);
+    assert.match(page, /前往会话生成/);
+  });
+
+  it("pins all current text and vector generation to the qwen3.7 profiles", async () => {
+    const [assistant, gateway, embedding, retrieval] = await Promise.all([
+      source("lib/ai/project-assistant/config.ts"),
+      source("lib/ai/project-assistant/gateway.ts"),
+      source("lib/ai/embeddings/config.ts"),
+      source("lib/ai/retrieval/service.ts"),
+    ]);
+    assert.match(assistant, /qwen3\.7-flash/);
+    assert.doesNotMatch(assistant, /qwen3\.7-plus|qwen3\.6-flash|qwen-plus|qwen-flash/);
+    assert.doesNotMatch(gateway, /FALLBACK_MODEL/);
+    assert.match(embedding, /qwen3\.7-text-embedding/);
+    assert.match(embedding, /AI_EMBEDDING_DIMENSIONS/);
+    assert.match(retrieval, /embedding_profile_id = \$\{HYBRID_RETRIEVAL_PROFILE\.embeddingProfileId\}/);
   });
 });
 
@@ -243,7 +262,7 @@ describe("focused authorization and source boundaries", () => {
     assert.match(migration, /FOREIGN KEY \("chunk_id", "source_project_id", "document_id", "version_id"\)/);
   });
 
-  it("labels project and company evidence before the model and in the UI", async () => {
+  it("labels project and template evidence before the model and in the UI", async () => {
     const evidence: ProjectKnowledgeEvidence = {
       label: "E1",
       chunkId: "chunk-1",
@@ -263,7 +282,7 @@ describe("focused authorization and source boundaries", () => {
     const prompt = buildGroundedUserPrompt({ question: "公司要求是什么？", history: [], evidence: [evidence] });
     assert.match(prompt, /source_scope="organization"/);
     const panel = await source("components/knowledge/ProjectAssistantPanel.tsx");
-    assert.match(panel, /\[公司资料\]/);
+    assert.match(panel, /\[常规模板\]/);
     assert.match(panel, /\[项目资料\]/);
     assert.doesNotMatch(panel, /scopeLabels\[citation\.sourceScope\]}.+citation\.knowledgeSpaceId/);
   });

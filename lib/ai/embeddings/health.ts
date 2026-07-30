@@ -19,13 +19,13 @@ export async function inspectEmbeddingDependencies(): Promise<EmbeddingDependenc
       exists(
         select 1
         from ai_embedding_profiles
-        where id = 'qwen-text-embedding-cn-v1'
+        where id = 'qwen3.7-text-embedding-cn-v2'
           and provider = 'qwen'
-          and model = 'text-embedding-v4'
+          and model = 'qwen3.7-text-embedding'
           and region = 'cn-beijing'
           and dimensions = 1024
           and distance_metric = 'cosine'
-          and profile_version = 1
+          and profile_version = 2
           and enabled = true
       ) as profile_ready,
       (select count(*) >= 0 from document_embedding_jobs) as jobs_schema_ready,
@@ -35,7 +35,7 @@ export async function inspectEmbeddingDependencies(): Promise<EmbeddingDependenc
       exists(
         select 1
         from embedding_worker_heartbeats
-        where embedding_profile_id = 'qwen-text-embedding-cn-v1'
+        where embedding_profile_id = 'qwen3.7-text-embedding-cn-v2'
           and state = 'running'
           and heartbeat_at > now() - interval '60 seconds'
       ) as worker_ready

@@ -263,6 +263,22 @@ export function reindexProjectDocumentVersion(
   );
 }
 
+export function retryProjectDocumentEmbedding(
+  projectId: string,
+  documentId: string,
+  versionId: string,
+): Promise<{ embedding: { status: string } }> {
+  return jsonMutation(
+    documentPath(
+      projectId,
+      documentId,
+      `/versions/${encodeURIComponent(versionId)}/embedding/retry`,
+    ),
+    "POST",
+    {},
+  );
+}
+
 export type DocumentUploadProgress = {
   loaded: number;
   total: number;
@@ -448,6 +464,7 @@ export function documentErrorMessage(error: unknown): string {
     DOCUMENT_NOT_FOUND: "资料不存在或你无权访问。",
     VERSION_NOT_FOUND: "文件版本不存在或你无权访问。",
     VERSION_NOT_AVAILABLE: "该文件版本当前不可下载。",
+    EMBEDDING_RESULT_UNKNOWN: "向量化结果需要管理员复核，当前不能自动重试。",
     DOCUMENT_ARCHIVED: "资料已归档，无法执行此操作。",
     STORAGE_UNAVAILABLE: "文件存储服务暂时不可用，请稍后重试。",
     FORBIDDEN: "你没有执行此操作的权限。",

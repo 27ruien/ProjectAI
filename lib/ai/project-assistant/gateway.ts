@@ -1,8 +1,4 @@
-import {
-  PROJECT_ASSISTANT_FALLBACK_MODEL,
-  PROJECT_ASSISTANT_PRIMARY_MODEL,
-  type AiRuntimeConfig,
-} from "./config";
+import { PROJECT_ASSISTANT_PRIMARY_MODEL, type AiRuntimeConfig } from "./config";
 import { AiProviderError, ProjectAssistantError } from "./errors";
 import { FakeProjectAssistantProvider } from "./fake-provider";
 import type {
@@ -80,7 +76,6 @@ export class ProjectAssistantGateway {
   async generate(
     input: ProjectAssistantGatewayInput,
   ): Promise<AiGatewayResult> {
-    let primaryFailure: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return this.result(
@@ -88,29 +83,20 @@ export class ProjectAssistantGateway {
           false,
         );
       } catch (error) {
-        primaryFailure = error;
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
         }
         if (attempt < 2) await this.sleep((attempt + 1) * 1_000);
       }
     }
-
-    try {
-      return this.result(
-        await this.invoke(PROJECT_ASSISTANT_FALLBACK_MODEL, input),
-        true,
-      );
-    } catch (error) {
-      throw controlledProviderFailure(error ?? primaryFailure);
-    }
+    throw controlledProviderFailure(new AiProviderError("SERVER_ERROR", true));
   }
 
-  private invoke(
+  private async invoke(
     model: string,
     input: ProjectAssistantGatewayInput,
   ): Promise<ProjectAssistantProviderResult> {
-    return this.provider.generate({
+    const result = await this.provider.generate({
       model,
       systemPrompt: input.systemPrompt,
       userPrompt: input.userPrompt,
@@ -120,6 +106,10 @@ export class ProjectAssistantGateway {
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxOutputTokens,
     });
+    if (result.actualModel !== PROJECT_ASSISTANT_PRIMARY_MODEL) {
+      throw new AiProviderError("INVALID_RESPONSE", false);
+    }
+    return result;
   }
 
   private result(

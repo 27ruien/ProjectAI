@@ -4,16 +4,16 @@ import { EmbeddingPipelineError } from "./errors";
 
 export const EMBEDDING_GATEWAY_VERSION = "2";
 export const EMBEDDING_WORKER_VERSION = "2";
-export const TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM = 8_192;
-export const TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST = 33_000;
+export const QWEN37_EMBEDDING_MAX_TOKENS_PER_ITEM = 8_192;
+export const QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST = 33_000;
 export const EMBEDDING_BUDGET_RULE_VERSION =
-  "text-embedding-v4-hard-limit-cn-beijing-v1";
-export const EMBEDDING_PROFILE_ID = "qwen-text-embedding-cn-v1";
+  "qwen3.7-text-embedding-hard-limit-cn-beijing-v2";
+export const EMBEDDING_PROFILE_ID = "qwen3.7-text-embedding-cn-v2";
 export const EMBEDDING_PROVIDER = "qwen";
-export const EMBEDDING_MODEL = "text-embedding-v4";
+export const EMBEDDING_MODEL = "qwen3.7-text-embedding";
 export const EMBEDDING_REGION = "cn-beijing";
 export const EMBEDDING_DISTANCE_METRIC = "cosine";
-export const EMBEDDING_PROFILE_VERSION = 1;
+export const EMBEDDING_PROFILE_VERSION = 2;
 
 export type EmbeddingProviderKind = "qwen" | "fake";
 

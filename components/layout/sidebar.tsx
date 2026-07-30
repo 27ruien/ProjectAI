@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, FolderKanban, Library, LogOut, MessageSquare, Settings, ShieldCheck, Users } from "lucide-react";
+import { Building2, Library, LogOut, Settings, ShieldCheck, Users } from "lucide-react";
 import { useState } from "react";
 import { initials } from "@/components/project/mock-view";
 import { navigateToLogin, signOut } from "@/components/auth/auth-client";
@@ -11,9 +11,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 
 const navigation = [
-  { label: "项目", href: "/projects", icon: FolderKanban },
-  { label: "AI 对话", href: "/chat", icon: MessageSquare },
-  { label: "公司知识库", href: "/company-knowledge", icon: Library },
+  { label: "知识库", href: "/knowledge", icon: Library },
 ] as const;
 
 interface SidebarProps {
@@ -34,7 +32,7 @@ function SidebarContent({ viewer, currentPath, onNavigate }: { viewer: ViewerCon
   };
   return <div className="flex h-full min-h-0 flex-col">
     <div className="flex h-[58px] items-center border-b border-sidebar-border px-4">
-      <Link href="/projects" className="flex min-w-0 items-center gap-2.5" onClick={onNavigate}>
+      <Link href="/knowledge/projects" className="flex min-w-0 items-center gap-2.5" onClick={onNavigate}>
         <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-primary/15 bg-accent text-primary"><Building2 className="size-[17px]" /></span>
         <span className="truncate text-[15px] font-semibold tracking-tight">ProjectAI</span>
       </Link>

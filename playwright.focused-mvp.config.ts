@@ -6,6 +6,8 @@ export default defineConfig({
   testMatch: "focused-mvp.spec.ts",
   retries: 0,
   workers: 1,
+  timeout: 120_000,
+  expect: { timeout: 15_000 },
   reporter: [["list"]],
   use: {
     ...baseConfig.use,

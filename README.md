@@ -11,13 +11,13 @@
 - PostgreSQL 基础：Drizzle Schema、已提交 Migration、insert-only 幂等环境变量 Seed、受保护的测试库 Reset、数据库项目列表/创建/基础信息/成员关系和审计事件。
 - 项目资料：真实上传与持久化、PDF/OOXML/TXT/Markdown 校验、50 MiB 上限、S3-compatible 私有对象存储、幂等重试、版本/current、归档/恢复、权限下载、SHA-256/ETag 完整性和文件审计。
 - 文档处理：PostgreSQL 持久化 Job、独立 Worker、Lease/Heartbeat、六格式有界解析、needs_ocr、Section/Chunk、来源定位、版本/归档有效性和 reindex。
-- 工作台：项目进度、AI 审核、风险、待办、AI 活动和状态演示。
-- 项目管理：搜索、组合筛选、排序、分页、列控制和项目创建。
+- Focused 知识库：普通用户只有一个“知识库”入口，内部包含项目、常规模板和会话。
+- 项目管理：项目创建、资料上传、解析/向量化状态、不可变版本、AI 生成文档产物和成员权限。
 - Product V2 工作台：日报、AI 工作流、部门/项目知识空间、全局授权搜索，以及 Super Admin 管理的四级 Kivisense 组织架构。
 - 项目知识：读取当前项目 Active/Current/Stored/Succeeded/Effective 索引，支持 FTS、contains、`pg_trgm` 模糊匹配与 PDF Page、DOCX Section、XLSX Range、PPTX Slide、文本行来源。
-- 项目 AI 助手：私人 Thread、有限多轮、Qwen 主/备用模型、服务端 Evidence/Citation 校验、资料不足、失败重试、Token Usage、限流与审计；回答不直接写入正式业务数据。
-- Assistant Evidence Retrieval：服务端 lexical/shadow/hybrid Mode、冻结 `hybrid-rrf-v1`、Query Embedding 成本账本、exact pgvector、RRF、Coverage Gate、Lexical Fallback 与 60 条虚构 Query 质量门禁。
-- 向量基础：固定 `qwen-text-embedding-cn-v1` Profile、`text-embedding-v4`、1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、dry-run Backfill、Probe 与 Usage；不接入浏览器检索或回答 Evidence。
+- 项目 AI 会话：私人 Thread、有限多轮、固定 `qwen3.7-flash`、服务端 Evidence/Citation 校验、资料不足、失败重试、Token Usage、限流与审计；回答不直接写入正式业务数据。
+- Assistant Evidence Retrieval：服务端 lexical/shadow/hybrid Mode、冻结 `hybrid-rrf-qwen37-v2`、Query Embedding 成本账本、exact pgvector、RRF、Coverage Gate、Lexical Fallback 与 60 条虚构 Query 质量门禁。
+- 向量基础：固定 `qwen3.7-text-embedding-cn-v2` Profile、`qwen3.7-text-embedding`、显式 1024 维 pgvector、Chunk Embedding、持久化 Job/Batch/不可变 Provider Call、专用 Worker、Lease/Recovery、发送后 unknown 防重放、硬 Token 预算、精确重试、Probe 与 Usage。旧 Profile 向量不进入当前检索。
 - 需求中心：TanStack Table、批量操作、CSV 导出和可编辑 Requirement Drawer。
 - AI 工作流：需求提取使用当前有效且已授权的 Chunk、真实 AI Gateway、严格 JSON/引用校验与一次 Repair；结果在当前页面编辑并整批审核后才写入正式需求。
 - 审核中心：三栏审核、差异、证据、执行信息、通过/修改后通过/驳回/草稿/重新生成。
@@ -39,28 +39,15 @@ AI 产出始终先以草稿或待审核状态存在。Requirement Extraction 只
 ## 主要路由
 
 ```text
-/dashboard
-/projects
-/projects/new
-/projects/[projectId]/overview
-/projects/[projectId]/documents
-/projects/[projectId]/knowledge
-/projects/[projectId]/requirements
-/projects/[projectId]/scope
-/projects/[projectId]/actions
-/projects/[projectId]/meetings
-/projects/[projectId]/risks
-/workflows
-/workflows/requirement-extraction
-/reviews
-/skills
-/skills/[skillId]
-/knowledge
-/daily-report
-/analytics
+/knowledge/projects
+/knowledge/projects/new
+/knowledge/projects/[projectId]/overview
+/knowledge/projects/[projectId]/files
+/knowledge/projects/[projectId]/artifacts
+/knowledge/projects/[projectId]/members
+/knowledge/templates
+/knowledge/sessions
 /settings
-/settings/ai-models
-/settings/ai-models/[profileId]
 ```
 
 ## AI 与知识架构
@@ -71,13 +58,13 @@ AI 产出始终先以草稿或待审核状态存在。Requirement Extraction 只
   → 服务端 lexical / shadow / hybrid Evidence Retrieval
   → Grounded Prompt（Evidence 与规则分区）
   → AI Gateway
-  → qwen-project-assistant-cn-v1
+  → qwen-project-assistant-cn-v2 / qwen3.7-flash
   → Qwen Provider Adapter
   → Citation Validation / 一次 Repair
   → Thread + Message + Execution + Citation + Audit
 ```
 
-项目页面先在服务端从 Session 建立用户身份，再从 PostgreSQL 查询项目成员关系。资料 API 继续验证 `projectId → documentId → versionId` 归属，再访问 PostgreSQL 文件元数据和私有对象存储；Bucket、Endpoint、Object Key 与凭据不会序列化给浏览器。其他业务模块仍在授权后按精确 `projectId` 映射 Mock 数据，客户端不会收到其他项目内容。
+项目页面先在服务端从 Session 建立用户身份，再从 PostgreSQL 查询项目成员关系。资料 API 继续验证 `projectId → documentId → versionId` 归属，再访问 PostgreSQL 文件元数据和私有对象存储；Bucket、Endpoint、Object Key 与凭据不会序列化给浏览器。会话使用 `qwen3.7-text-embedding` 生成查询向量，检索有权访问的项目资料与常规模板，合并后交给 `qwen3.7-flash`，返回前再次校验 Citation 权限。
 
 项目知识页继续使用真实词法搜索与来源定位；项目助手则由服务端按配置使用 lexical、shadow 或经过评测的 exact-vector + RRF hybrid Evidence，最终最多 10 条、总计最多 24000 字符。Coverage、预算、Timeout、Provider 或向量异常自动回退 Lexical；没有合格 Evidence 时不调用回答模型。Query Vector 不持久化，客户端不能提交 Mode、Profile、Score 或内部 Evidence。OCR、ANN 索引和 Reranker 仍未实现。
 

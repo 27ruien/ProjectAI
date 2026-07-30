@@ -18,8 +18,8 @@ import {
   EMBEDDING_PROFILE_VERSION,
   EMBEDDING_PROVIDER,
   EMBEDDING_REGION,
-  TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM,
-  TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
+  QWEN37_EMBEDDING_MAX_TOKENS_PER_ITEM,
+  QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST,
   type EmbeddingRuntimeConfig,
   getEmbeddingRuntimeConfig,
 } from "./config";
@@ -154,7 +154,13 @@ export async function ensureEmbeddingJob(input: {
   documentId: string;
   versionId: string;
   createdBy: string;
-  reason: "ingestion_succeeded" | "current_version" | "restored" | "backfill" | "profile_upgrade";
+  reason:
+    | "ingestion_succeeded"
+    | "current_version"
+    | "restored"
+    | "backfill"
+    | "profile_upgrade"
+    | "manual_retry";
   db?: DatabaseExecutor;
   config?: EmbeddingRuntimeConfig;
 }): Promise<DocumentEmbeddingJobRecord | null> {
@@ -675,8 +681,8 @@ export function embeddingBatchReservedInputTokens(
   chunks: EligibleEmbeddingChunk[],
 ): number {
   return Math.min(
-    chunks.length * TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM,
-    TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
+    chunks.length * QWEN37_EMBEDDING_MAX_TOKENS_PER_ITEM,
+    QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST,
   );
 }
 
@@ -1415,10 +1421,10 @@ export async function retryUnknownEmbeddingJob(input: {
     const newReservedInputTokens = Math.min(
       batches.reduce(
         (total, batch) =>
-          total + batch.chunkCount * TEXT_EMBEDDING_V4_MAX_TOKENS_PER_ITEM,
+          total + batch.chunkCount * QWEN37_EMBEDDING_MAX_TOKENS_PER_ITEM,
         0,
       ),
-      TEXT_EMBEDDING_V4_MAX_TOKENS_PER_REQUEST,
+      QWEN37_EMBEDDING_MAX_TOKENS_PER_REQUEST,
     );
     const canApply =
       usedInputTokens + newReservedInputTokens <= config.dailyTokenLimit;

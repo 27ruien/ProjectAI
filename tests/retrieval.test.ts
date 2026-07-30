@@ -138,11 +138,11 @@ describe("immutable hybrid retrieval runtime configuration", () => {
     }
   });
 
-  it("defaults to lexical and freezes evaluated v1 parameters", () => {
+  it("defaults to lexical and freezes evaluated qwen3.7 parameters", () => {
     for (const name of variables) delete process.env[name];
     const config = getHybridRetrievalRuntimeConfig();
     assert.equal(config.mode, "lexical");
-    assert.equal(config.profileId, "hybrid-rrf-v1");
+    assert.equal(config.profileId, "hybrid-rrf-qwen37-v2");
     assert.equal(HYBRID_RETRIEVAL_PROFILE.vectorMaxDistance, 0.55);
     assert.equal(HYBRID_RETRIEVAL_PROFILE.minEmbeddingCoverageBps, 9_800);
     assert.equal(HYBRID_RETRIEVAL_PROFILE.rrfK, 60);

@@ -58,7 +58,7 @@ export default defineConfig({
           AI_ASSISTANT_ENABLED: "true",
           AI_REGION: "cn-beijing",
           AI_PROJECT_ASSISTANT_PROFILE_ID:
-            "qwen-project-assistant-cn-v1",
+            "qwen-project-assistant-cn-v2",
           PM_DAILY_REPORT_ENABLED: "true",
           WECOM_TIMESHEET_SYNC_ENABLED: "true",
           // The complete serial suite intentionally exercises several actors

@@ -368,7 +368,7 @@ before(async () => {
   await getDb().insert(aiEmbeddingProfile).values({
     id: profileV2,
     provider: "qwen",
-    model: "text-embedding-v4",
+    model: "qwen3.7-text-embedding",
     region: "cn-beijing",
     dimensions: 1024,
     distanceMetric: "cosine",
@@ -440,10 +440,10 @@ describe("pgvector schema and embedding pipeline", () => {
     const [profile] = await getDb()
       .select()
       .from(aiEmbeddingProfile)
-      .where(eq(aiEmbeddingProfile.id, "qwen-text-embedding-cn-v1"));
-    assert.equal(profile?.model, "text-embedding-v4");
+      .where(eq(aiEmbeddingProfile.id, "qwen3.7-text-embedding-cn-v2"));
+    assert.equal(profile?.model, "qwen3.7-text-embedding");
     assert.equal(profile?.dimensions, 1024);
-    assert.equal(profile?.profileVersion, 1);
+    assert.equal(profile?.profileVersion, 2);
 
     const fixture = await createFixture({
       name: "batch-foundation",
@@ -714,10 +714,10 @@ describe("pgvector schema and embedding pipeline", () => {
         projectId: fixtureB.projectId,
         documentId: fixtureA.documentId,
         versionId: fixtureA.versionId,
-        embeddingProfileId: "qwen-text-embedding-cn-v1",
+        embeddingProfileId: "qwen3.7-text-embedding-cn-v2",
         callSequence: 99,
         status: "reserved",
-        budgetRuleVersion: "text-embedding-v4-hard-limit-cn-beijing-v1",
+        budgetRuleVersion: "qwen3.7-text-embedding-hard-limit-cn-beijing-v2",
         reservedInputTokens: 8_192,
       }),
     );
@@ -771,22 +771,22 @@ describe("pgvector schema and embedding pipeline", () => {
         )
       `),
     );
-    const [v1] = await getDb()
+    const [current] = await getDb()
       .select()
       .from(aiEmbeddingProfile)
-      .where(eq(aiEmbeddingProfile.id, "qwen-text-embedding-cn-v1"));
+      .where(eq(aiEmbeddingProfile.id, "qwen3.7-text-embedding-cn-v2"));
     const [v2] = await getDb()
       .select()
       .from(aiEmbeddingProfile)
       .where(eq(aiEmbeddingProfile.id, profileV2));
-    assert.equal(v1?.profileVersion, 1);
+    assert.equal(current?.profileVersion, 2);
     assert.equal(v2?.profileVersion, 2);
-    assert.notEqual(v1?.id, v2?.id);
+    assert.notEqual(current?.id, v2?.id);
     await assert.rejects(
       getDb()
         .update(aiEmbeddingProfile)
         .set({ model: "silent-definition-overwrite" })
-        .where(eq(aiEmbeddingProfile.id, "qwen-text-embedding-cn-v1")),
+        .where(eq(aiEmbeddingProfile.id, "qwen3.7-text-embedding-cn-v2")),
     );
   });
 
@@ -942,7 +942,7 @@ describe("pgvector schema and embedding pipeline", () => {
 
     const provider = new FakeEmbeddingProvider();
     const query = await provider.embed({
-      model: "text-embedding-v4",
+      model: "qwen3.7-text-embedding",
       dimensions: 1024,
       inputs: ["Exact probe alpha"],
       timeoutMs: 1_000,

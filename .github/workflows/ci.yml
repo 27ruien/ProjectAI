@@ -79,10 +79,10 @@ jobs:
       AI_PROVIDER: fake
       AI_ASSISTANT_ENABLED: "true"
       AI_REGION: cn-beijing
-      AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v1
-      AI_ASSISTANT_RETRIEVAL_MODE: lexical
-      AI_EMBEDDING_ENABLED: "false"
-      AI_EMBEDDING_PROFILE_ID: qwen-text-embedding-cn-v1
+      AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v2
+      AI_ASSISTANT_RETRIEVAL_MODE: hybrid
+      AI_EMBEDDING_ENABLED: "true"
+      AI_EMBEDDING_PROFILE_ID: qwen3.7-text-embedding-cn-v2
       AI_EMBEDDING_DIMENSIONS: "1024"
 
     steps:
@@ -166,12 +166,16 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          worker_log="$RUNNER_TEMP/focused-document-worker.log"
-          npm run worker:documents >"$worker_log" 2>&1 &
-          worker_pid=$!
+          document_worker_log="$RUNNER_TEMP/focused-document-worker.log"
+          embedding_worker_log="$RUNNER_TEMP/focused-embedding-worker.log"
+          npm run worker:documents >"$document_worker_log" 2>&1 &
+          document_worker_pid=$!
+          npm run worker:embeddings >"$embedding_worker_log" 2>&1 &
+          embedding_worker_pid=$!
           cleanup() {
-            kill "$worker_pid" >/dev/null 2>&1 || true
-            wait "$worker_pid" >/dev/null 2>&1 || true
+            kill "$document_worker_pid" "$embedding_worker_pid" >/dev/null 2>&1 || true
+            wait "$document_worker_pid" >/dev/null 2>&1 || true
+            wait "$embedding_worker_pid" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
           npm run test:focused:e2e
