@@ -221,7 +221,10 @@ export function ProjectAssistantPanel({
     });
     const body = await response.json() as { documents?: GeneratedArtifact[]; error?: { message?: string } };
     if (!response.ok) throw new Error(body.error?.message ?? "AI 生成文档加载失败");
-    const next = body.documents?.find((item) => item.id === preferredId) ?? body.documents?.[0] ?? null;
+    // Do not surface an old failed attempt when merely opening the session.
+    // A failed artifact is shown only when this request explicitly follows
+    // the generation attempt that created it.
+    const next = body.documents?.find((item) => item.id === preferredId) ?? body.documents?.find((item) => item.status !== "failed") ?? null;
     setArtifact(next);
     return next;
   }, [projectId]);
