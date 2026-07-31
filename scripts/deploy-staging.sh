@@ -983,6 +983,7 @@ if [[ "$DEPLOY_MODE" == "full" ]]; then
   [[ "$DB_TOOLS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
   [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$DB_TOOLS_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
 fi
+DB_TOOLS_IMAGE_ID_ARG="${DB_TOOLS_IMAGE_ID:-__projectai_empty__}"
 
 log "Preparing fixed Staging release directory without moving its protected environment"
 "${SSH[@]}" bash -s -- \
@@ -1046,7 +1047,7 @@ else
 fi
 
 "${SSH[@]}" bash -s -- \
-  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" \
+  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID_ARG" \
   "$REMOTE_DOCKER_PLATFORM" "$DEPLOY_MODE" <<'REMOTE_IMAGE_VERIFY'
 set -Eeuo pipefail
 app_image_ref="$1"
