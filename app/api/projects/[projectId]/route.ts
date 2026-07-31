@@ -185,11 +185,11 @@ export async function DELETE(
     const principal = await requireApiPrincipal(request.headers);
     const result = await getDb().transaction(async (tx) => {
       await requireProjectRole(principal, projectId, ["project_manager"], request.headers, { db: tx, lockForUpdate: true });
-      const objectRows = (await tx.execute(sql`
+      const objectResult = (await tx.execute(sql`
         select object_key
         from public.project_document_versions
         where project_id = ${projectId}
-      `)) as unknown as Array<{ object_key: string }>;
+      `)) as unknown as { rows: Array<{ object_key: string }> };
       await deleteScopedRows(tx, { projectId });
       await writeAuditEvent({
         actorUserId: principal.user.id,
@@ -204,7 +204,7 @@ export async function DELETE(
       return record
         ? {
             kind: "deleted" as const,
-            objectKeys: objectRows.map((row) => row.object_key),
+            objectKeys: objectResult.rows.map((row) => row.object_key),
           }
         : { kind: "not_found" as const };
     });

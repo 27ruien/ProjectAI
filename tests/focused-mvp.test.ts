@@ -129,6 +129,7 @@ describe("focused MVP product surface", () => {
     ]);
     assert.match(deletion, /type ExecuteResult<T> = \{ rows: T\[\] \} \| T\[\]/);
     assert.match(deletion, /return Array\.isArray\(result\) \? result : result\.rows/);
+    assert.match(projectRoute, /objectResult\.rows\.map/);
     assert.match(projectRoute, /PROJECT_DELETE_FAILED/);
     assert.match(projectsPage, /删除项目失败，请稍后重试/);
   });
