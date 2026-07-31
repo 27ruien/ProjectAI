@@ -14,6 +14,7 @@ import {
   type ProjectKnowledgeEvidence,
   type RankedProjectKnowledgeEvidence,
   retrieveLexicalProjectCandidates,
+  retrieveAuthorizedProjectContextCandidates,
   selectBoundedProjectEvidence,
 } from "@/lib/documents/processing/search-service";
 import { validateSourceLocator } from "@/lib/documents/processing/source-locator";
@@ -50,6 +51,7 @@ export type RetrievalFallbackReason =
   | "VECTOR_RETRIEVAL_TIMEOUT"
   | "VECTOR_RETRIEVAL_FAILED"
   | "VECTOR_CANDIDATES_EMPTY"
+  | "AUTHORIZED_PROJECT_CONTEXT"
   | "HYBRID_CONFIDENCE_INSUFFICIENT"
   | "SHADOW_MODE";
 
@@ -153,6 +155,20 @@ function selectHybridEvidence(
     evidenceLimit: HYBRID_RETRIEVAL_PROFILE.evidenceLimit,
     maxChars: HYBRID_RETRIEVAL_PROFILE.maxEvidenceCharacters,
   });
+}
+
+export function shouldUseAuthorizedProjectContext(query: string): boolean {
+  const normalized = query.toLocaleLowerCase().replace(/\s+/g, "");
+  return [
+    /基于当前项目/,
+    /当前项目.*(资料|现状|情况)/,
+    /总结.*项目/,
+    /项目.*(待确认|缺失|风险|信息缺口)/,
+    /列出.*(确认|缺失|风险|问题)/,
+    /为什么.*(没有|查不到)/,
+    /summari[sz]e/,
+    /project.*(context|status|openquestion|missing|risk)/,
+  ].some((pattern) => pattern.test(normalized));
 }
 
 async function embeddingCoverage(input: {
@@ -518,6 +534,29 @@ export async function retrieveProjectEvidence(input: {
           }
         }
       }
+    }
+  }
+
+  if (evidence.length === 0 && shouldUseAuthorizedProjectContext(query)) {
+    const contextCandidates = await retrieveAuthorizedProjectContextCandidates({
+      actorUserId: input.principal.user.id,
+      projectId: input.projectId,
+      documentIds: input.sourceDocumentIds,
+      limit: HYBRID_RETRIEVAL_PROFILE.fusedCandidateLimit,
+    });
+    const contextEvidence = selectBoundedProjectEvidence({
+      candidates: contextCandidates,
+      evidenceLimit: HYBRID_RETRIEVAL_PROFILE.evidenceLimit,
+      maxChars: HYBRID_RETRIEVAL_PROFILE.maxEvidenceCharacters,
+    });
+    if (contextEvidence.length > 0) {
+      evidence = contextEvidence;
+      fallbackReason = "AUTHORIZED_PROJECT_CONTEXT";
+      // Keep the existing audit schema (lexical/vector/both) without adding a
+      // migration. The explicit fallback reason distinguishes these bounded
+      // context candidates from a genuine lexical match.
+      auditCandidates = auditedLexicalCandidates(contextCandidates);
+      fused = fusedLexicalCandidates(contextCandidates);
     }
   }
 
