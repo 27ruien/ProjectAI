@@ -132,6 +132,8 @@ describe("focused MVP product surface", () => {
     assert.match(projectRoute, /objectResult\.rows\.map/);
     assert.match(projectRoute, /PROJECT_DELETE_FAILED/);
     assert.match(projectsPage, /删除项目失败，请稍后重试/);
+    const overview = await source("components/project/ProjectOverviewPage.tsx");
+    assert.match(overview, /router\.push\(withBasePath\("\/knowledge\/projects"\)\)/);
   });
 });
 
