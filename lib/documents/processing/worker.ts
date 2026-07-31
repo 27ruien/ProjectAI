@@ -14,7 +14,10 @@ import {
 import {
   validateUploadFile,
 } from "@/lib/files/validation";
-import type { SupportedFileExtension } from "@/lib/files/config";
+import {
+  isAiReadableExtension,
+  type SupportedFileExtension,
+} from "@/lib/files/config";
 import {
   claimIngestionJob,
   completeIngestionJob,
@@ -132,6 +135,9 @@ async function loadJobBytes(
       validated.sha256 !== version.sha256
     ) {
       throw new Error("Validated metadata mismatch.");
+    }
+    if (!isAiReadableExtension(validated.extension)) {
+      throw new Error("Attachment-only files must not enter the document worker.");
     }
     return { bytes, extension: validated.extension };
   } catch {

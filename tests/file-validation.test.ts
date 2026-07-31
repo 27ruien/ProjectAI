@@ -125,6 +125,7 @@ function uploadVersion(
     originalFilename: "project-plan.pdf",
     versionNote: null,
     extension: "pdf",
+    aiReadable: true,
     detectedMimeType: "application/pdf",
     sizeBytes: 128,
     storageStatus,
@@ -314,6 +315,19 @@ describe("bounded Office Open XML validation", () => {
         },
       ]),
     );
+  });
+});
+
+describe("attachment uploads", () => {
+  it("stores an unsupported binary format without queuing it as AI-readable text", async () => {
+    const validated = await validateUploadFile(
+      new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "项目素材.zip", {
+        type: "application/zip",
+      }),
+    );
+    assert.equal(validated.extension, "zip");
+    assert.equal(validated.aiReadable, false);
+    assert.equal(validated.detectedMimeType, "application/zip");
   });
 });
 

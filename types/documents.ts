@@ -35,6 +35,8 @@ export interface ProjectDocumentVersionDto {
   originalFilename: string;
   versionNote: string | null;
   extension: string;
+  /** Whether this version has a bounded parser and can enter AI retrieval. */
+  aiReadable: boolean;
   detectedMimeType: string;
   sizeBytes: number;
   storageStatus: DocumentStorageStatus;
@@ -118,8 +120,9 @@ export interface DocumentListCountsDto {
 
 export interface DocumentUploadPolicyDto {
   maxBytes: number;
-  /** Lower-case extensions without a leading dot. */
-  allowedExtensions: string[];
+  acceptsAllFiles: boolean;
+  /** Lower-case extensions without a leading dot that can be indexed for AI. */
+  aiReadableExtensions: string[];
 }
 
 export interface KnowledgeSpaceUploadDestinationDto {

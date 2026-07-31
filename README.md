@@ -9,8 +9,8 @@
 - 企业身份登录：产品 UI 不再接受邮箱/密码；Local/Staging 可显式启用三个 Mock WeCom 虚构身份，正式环境预留企业微信 OAuth/扫码 Provider。受控 Staging 还可显示“进入测试环境”按钮，它只向固定 Admin Seed 发起空参数 POST，并同时校验 Staging 环境、精确 Host、Base Path 与 Origin；认证后仍使用数据库 Session 与 HttpOnly Cookie，响应不暴露 token。旧 `debug=admin` query 已退役，Production 配置和端点均失败关闭。
 - 项目隔离：`super_admin` / `admin` / `member` 产品角色，`project_manager` / `project_member` / `viewer` 项目角色，以及统一服务端 404 防枚举授权。
 - PostgreSQL 基础：Drizzle Schema、已提交 Migration、insert-only 幂等环境变量 Seed、受保护的测试库 Reset、数据库项目列表/创建/基础信息/成员关系和审计事件。
-- 项目资料：真实上传与持久化、PDF/OOXML/TXT/Markdown 校验、50 MiB 上限、S3-compatible 私有对象存储、幂等重试、版本/current、归档/恢复、权限下载、SHA-256/ETag 完整性和文件审计。
-- 文档处理：PostgreSQL 持久化 Job、独立 Worker、Lease/Heartbeat、六格式有界解析、needs_ocr、Section/Chunk、来源定位、版本/归档有效性和 reindex。
+- 项目资料：任意文件可安全上传并持久化（50 MiB 上限、私有对象存储、版本、权限下载、SHA-256/ETag 完整性）；PDF/OOXML/TXT/Markdown 额外进行严格内容校验、解析和 AI 索引。
+- 文档处理：PostgreSQL 持久化 Job、独立 Worker、Lease/Heartbeat、六种 AI 可读格式的有界解析、needs_ocr、Section/Chunk、来源定位、版本有效性和 reindex；其他附件不会被误标为可检索资料。
 - Focused 知识库：普通用户只有一个“知识库”入口，内部包含项目、常规模板和会话。
 - 项目管理：项目创建、资料上传、解析/向量化状态、不可变版本、AI 生成文档产物和成员权限。
 - Product V2 工作台：日报、AI 工作流、部门/项目知识空间、全局授权搜索，以及 Super Admin 管理的四级 Kivisense 组织架构。

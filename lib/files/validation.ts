@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import yauzl from "yauzl";
-import { allowedUploadExtensions, maxUploadBytes, type SupportedFileExtension } from "./config";
+import {
+  isAiReadableExtension,
+  maxUploadBytes,
+  type SupportedFileExtension,
+} from "./config";
 import { FileOperationError } from "./errors";
 
 const MAX_FILENAME_BYTES = 255;
@@ -56,7 +60,8 @@ export type ValidatedUpload = {
   bytes: Uint8Array;
   originalFilename: string;
   displayName: string;
-  extension: SupportedFileExtension;
+  extension: string;
+  aiReadable: boolean;
   declaredMimeType: string;
   detectedMimeType: string;
   sizeBytes: number;
@@ -103,13 +108,18 @@ export function sanitizeOriginalFilename(value: string): string {
   return truncateFilename(safe || "file");
 }
 
-function extensionOf(filename: string): SupportedFileExtension | null {
+function extensionOf(filename: string): string {
   const index = filename.lastIndexOf(".");
-  if (index < 1 || index === filename.length - 1) return null;
+  if (index < 1 || index === filename.length - 1) return "file";
   const extension = filename.slice(index + 1).toLowerCase();
-  return allowedUploadExtensions().has(extension as SupportedFileExtension)
-    ? (extension as SupportedFileExtension)
-    : null;
+  return /^[a-z0-9][a-z0-9_-]{0,11}$/.test(extension) ? extension : "file";
+}
+
+function genericMimeType(value: string): string {
+  const mimeType = value.trim().toLowerCase();
+  return /^[a-z0-9!#$&^_.+-]{1,127}\/[a-z0-9!#$&^_.+-]{1,127}$/.test(mimeType)
+    ? mimeType
+    : "application/octet-stream";
 }
 
 function invalidOfficeContainer(): FileOperationError {
@@ -312,28 +322,33 @@ function validateText(bytes: Uint8Array): void {
 export async function validateUploadFile(file: File): Promise<ValidatedUpload> {
   const originalFilename = sanitizeOriginalFilename(file.name);
   const extension = extensionOf(originalFilename);
-  if (!extension) {
-    throw new FileOperationError(415, "UNSUPPORTED_FILE_TYPE", "仅支持 PDF、DOCX、XLSX、PPTX、TXT 和 Markdown");
-  }
   if (file.size < 1 || file.size > maxUploadBytes()) {
     throw new FileOperationError(413, "FILE_TOO_LARGE", "文件为空或超过上传大小限制");
-  }
-  const declaredMimeType = file.type.trim().toLowerCase();
-  if (!MIME_TYPES[extension].includes(declaredMimeType)) {
-    throw new FileOperationError(415, "FILE_SIGNATURE_MISMATCH", "声明的文件类型与扩展名不一致");
   }
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes.byteLength !== file.size || bytes.byteLength > maxUploadBytes()) {
     throw new FileOperationError(413, "FILE_TOO_LARGE", "文件大小校验失败");
   }
-  if (extension === "pdf") {
-    if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") {
-      throw new FileOperationError(415, "FILE_SIGNATURE_MISMATCH", "文件签名与扩展名不一致");
+  const aiReadable = isAiReadableExtension(extension);
+  const declaredMimeType = aiReadable
+    ? file.type.trim().toLowerCase()
+    : genericMimeType(file.type);
+  const detectedMimeType = aiReadable
+    ? DETECTED_MIME[extension]
+    : declaredMimeType;
+  if (aiReadable) {
+    if (!MIME_TYPES[extension].includes(declaredMimeType)) {
+      throw new FileOperationError(415, "FILE_SIGNATURE_MISMATCH", "声明的文件类型与扩展名不一致");
     }
-  } else if (["docx", "xlsx", "pptx"].includes(extension)) {
-    await validateOfficeContainer(bytes, extension as "docx" | "xlsx" | "pptx");
-  } else {
-    validateText(bytes);
+    if (extension === "pdf") {
+      if (new TextDecoder().decode(bytes.slice(0, 5)) !== "%PDF-") {
+        throw new FileOperationError(415, "FILE_SIGNATURE_MISMATCH", "文件签名与扩展名不一致");
+      }
+    } else if (["docx", "xlsx", "pptx"].includes(extension)) {
+      await validateOfficeContainer(bytes, extension as "docx" | "xlsx" | "pptx");
+    } else {
+      validateText(bytes);
+    }
   }
   const displayName = truncateUtf8(
     originalFilename.replace(/\.[^.]+$/, "").trim(),
@@ -344,8 +359,9 @@ export async function validateUploadFile(file: File): Promise<ValidatedUpload> {
     originalFilename,
     displayName: displayName || "未命名资料",
     extension,
+    aiReadable,
     declaredMimeType,
-    detectedMimeType: DETECTED_MIME[extension],
+    detectedMimeType,
     sizeBytes: bytes.byteLength,
     sha256: createHash("sha256").update(bytes).digest("hex"),
   };

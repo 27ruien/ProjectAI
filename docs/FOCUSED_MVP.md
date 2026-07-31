@@ -18,7 +18,7 @@
 
 ## 项目与文件
 
-项目状态固定为 `planning`、`active`、`completed`、`archived`。创建者自动成为项目负责人。项目文件继续使用私有对象存储、不可变版本、受控下载和独立解析 Worker；上传时只选择文件并可填写版本说明，不向业务用户暴露知识空间、Chunk、Embedding、Skill、模型或 Prompt 配置。
+项目状态固定为 `planning`、`active`、`completed`、`archived`。创建者自动成为项目负责人。项目文件继续使用私有对象存储、不可变版本、受控下载和独立解析 Worker；任意文件可作为安全附件上传并填写版本说明，只有 PDF、DOCX、XLSX、PPTX、TXT 和 Markdown 会进入解析、向量化与 AI 检索。业务用户不需要配置知识空间、Chunk、Embedding、Skill、模型或 Prompt。
 
 文件读取、上传、版本切换、归档和重新解析继续由服务端项目成员关系控制。未邀请用户统一获得 404，Viewer 只读。
 

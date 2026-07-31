@@ -22,6 +22,7 @@ import type {
   ProjectDocumentPermissionsDto,
   ProjectDocumentVersionDto,
 } from "@/types/documents";
+import { isAiReadableExtension } from "./config";
 
 type VersionWithOptionalUploader = ProjectDocumentVersionRecord & {
   uploaderDisplayName?: string;
@@ -66,6 +67,7 @@ export function serializeDocumentVersion(
     originalFilename: version.originalFilename,
     versionNote: version.versionNote,
     extension: version.normalizedExtension,
+    aiReadable: isAiReadableExtension(version.normalizedExtension),
     detectedMimeType: version.detectedMimeType,
     sizeBytes: version.sizeBytes,
     storageStatus: version.storageStatus,

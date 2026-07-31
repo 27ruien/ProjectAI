@@ -134,6 +134,10 @@ describe("authorized project context fallback", () => {
       shouldUseAuthorizedProjectContext("总结项目现状并列出风险"),
       true,
     );
+    assert.equal(
+      shouldUseAuthorizedProjectContext("请告诉我这份文档里列了哪些需求？"),
+      true,
+    );
   });
 
   it("does not broaden unrelated questions", () => {

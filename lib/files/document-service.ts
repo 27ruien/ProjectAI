@@ -30,6 +30,7 @@ import {
   type ProjectRole,
 } from "@/lib/db/schema";
 import { FileOperationError } from "./errors";
+import { isAiReadableExtension } from "./config";
 import { generateObjectKey, validateUploadFile } from "./validation";
 import { getObjectStorage, type ObjectStorage } from "./object-storage";
 import {
@@ -598,14 +599,24 @@ async function finalizeUpload(
       .set({ status: "active", updatedAt: now })
       .where(eq(projectDocument.id, document.id))
       .returning();
-    await activateOrQueueVersionIndex({
-      projectId: document.projectId,
-      documentId: document.id,
-      versionId: latestStored.id,
-      actorUserId: principal.user.id,
-      reason: "stored",
-      db: tx,
-    });
+    if (isAiReadableExtension(version.normalizedExtension)) {
+      await activateOrQueueVersionIndex({
+        projectId: document.projectId,
+        documentId: document.id,
+        versionId: latestStored.id,
+        actorUserId: principal.user.id,
+        reason: "stored",
+        db: tx,
+      });
+    } else {
+      await deactivateDocumentIndex(
+        document.projectId,
+        document.id,
+        principal.user.id,
+        "stored",
+        tx,
+      );
+    }
     if (reservation.isNewDocument) {
       await writeAuditEvent(
         {
@@ -858,14 +869,24 @@ export async function setCurrentDocumentVersion(input: {
       .update(projectDocument)
       .set({ updatedAt: now })
       .where(eq(projectDocument.id, document.id));
-    await activateOrQueueVersionIndex({
-      projectId: input.projectId,
-      documentId: input.documentId,
-      versionId: version.id,
-      actorUserId: input.principal.user.id,
-      reason: "current_version",
-      db: tx,
-    });
+    if (isAiReadableExtension(version.normalizedExtension)) {
+      await activateOrQueueVersionIndex({
+        projectId: input.projectId,
+        documentId: input.documentId,
+        versionId: version.id,
+        actorUserId: input.principal.user.id,
+        reason: "current_version",
+        db: tx,
+      });
+    } else {
+      await deactivateDocumentIndex(
+        input.projectId,
+        input.documentId,
+        input.principal.user.id,
+        "current_version",
+        tx,
+      );
+    }
     await writeAuditEvent(
       {
         actorUserId: input.principal.user.id,
@@ -1050,14 +1071,21 @@ export async function setDocumentArchived(input: {
         )
         .limit(1);
       if (currentVersion) {
-        await activateOrQueueVersionIndex({
-          projectId: input.projectId,
-          documentId: input.documentId,
-          versionId: currentVersion.id,
-          actorUserId: input.principal.user.id,
-          reason: "restored",
-          db: tx,
-        });
+        const [version] = await tx
+          .select({ extension: projectDocumentVersion.normalizedExtension })
+          .from(projectDocumentVersion)
+          .where(eq(projectDocumentVersion.id, currentVersion.id))
+          .limit(1);
+        if (version && isAiReadableExtension(version.extension)) {
+          await activateOrQueueVersionIndex({
+            projectId: input.projectId,
+            documentId: input.documentId,
+            versionId: currentVersion.id,
+            actorUserId: input.principal.user.id,
+            reason: "restored",
+            db: tx,
+          });
+        }
       }
     }
     await writeAuditEvent(

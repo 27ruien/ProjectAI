@@ -64,7 +64,8 @@ type ConfirmAction = {
 
 const defaultPolicy: DocumentUploadPolicyDto = {
   maxBytes: 50 * 1024 * 1024,
-  allowedExtensions: ["pdf", "docx", "xlsx", "pptx", "txt", "md"],
+  acceptsAllFiles: true,
+  aiReadableExtensions: ["pdf", "docx", "xlsx", "pptx", "txt", "md"],
 };
 
 const emptyCounts: DocumentListCountsDto = { active: 0, archived: 0 };
@@ -88,6 +89,13 @@ function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
     return {
       label: "尚未开始",
       detail: "文件尚未完成存储",
+      classes: "border-border bg-muted text-muted-foreground",
+    };
+  }
+  if (!version.aiReadable) {
+    return {
+      label: "已保存",
+      detail: "当前格式暂不支持 AI 解析，可下载使用",
       classes: "border-border bg-muted text-muted-foreground",
     };
   }
@@ -126,6 +134,13 @@ function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
 }
 
 function embeddingPresentation(version: ProjectDocumentVersionDto | null) {
+  if (version && !version.aiReadable) {
+    return {
+      label: "不用于 AI",
+      detail: "保留原文件，不会进入 AI 检索",
+      classes: "border-border bg-muted text-muted-foreground",
+    };
+  }
   if (!version || version.ingestion.status !== "succeeded") {
     return {
       label: "等待解析",
@@ -412,7 +427,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           ) : null}
         </div>
 
-        <aside className="mt-4 rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">文件上传后会自动解析并使用 qwen3.7-text-embedding 生成 1024 维向量；只有状态变为“可用于 AI”的当前版本才进入新检索。</aside>
+        <aside className="mt-4 rounded-lg border border-info/20 bg-info-soft px-4 py-3 text-sm text-info">可上传任意文件。PDF、DOCX、XLSX、PPTX、TXT 和 Markdown 会自动解析，并使用 qwen3.7-text-embedding 生成 1024 维向量；其他格式会安全保存供下载，不会进入 AI 检索。</aside>
 
         {!canUpload && phase === "ready" ? (
           <aside className="mt-3 rounded-lg border border-border bg-card px-3 py-2.5 text-xs text-muted-foreground">
@@ -726,8 +741,8 @@ function DocumentTable({
                     {canDownload && version ? <DropdownMenuItem onSelect={() => onDownload(document, version)}>下载</DropdownMenuItem> : null}
                     {document.permissions.canUploadVersion && document.status === "active" ? <DropdownMenuItem onSelect={() => onUploadVersion(document)}>上传新版本</DropdownMenuItem> : null}
                     <DropdownMenuItem onSelect={() => onVersions(document)}>查看版本历史</DropdownMenuItem>
-                    {version && document.permissions.canReindex && document.status === "active" && version.storageStatus === "stored" ? <DropdownMenuItem onSelect={() => onReindex(document, version)}>重新解析</DropdownMenuItem> : null}
-                    {version && document.permissions.canReindex && document.status === "active" && version.embedding.status === "failed" ? <DropdownMenuItem onSelect={() => onRetryEmbedding(document, version)}>重试向量化</DropdownMenuItem> : null}
+                    {version && version.aiReadable && document.permissions.canReindex && document.status === "active" && version.storageStatus === "stored" ? <DropdownMenuItem onSelect={() => onReindex(document, version)}>重新解析</DropdownMenuItem> : null}
+                    {version && version.aiReadable && document.permissions.canReindex && document.status === "active" && version.embedding.status === "failed" ? <DropdownMenuItem onSelect={() => onRetryEmbedding(document, version)}>重试向量化</DropdownMenuItem> : null}
                     {document.permissions.canDelete ? <><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => onLifecycle(document, "delete")}>{busy ? "删除中…" : "删除资料"}</DropdownMenuItem></> : null}
                   </DropdownMenuContent></DropdownMenu>
                 </TableCell>

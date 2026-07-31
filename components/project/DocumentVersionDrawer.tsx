@@ -347,6 +347,7 @@ export function DocumentVersionDrawer({
                     ) : null}
                     {document?.permissions.canReindex &&
                     document.status === "active" &&
+                    version.aiReadable &&
                     version.storageStatus === "stored" ? (
                       <Button
                         type="button"

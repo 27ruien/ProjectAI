@@ -255,10 +255,9 @@ export function DocumentUploadDrawer({
   const [replayed, setReplayed] = useState(false);
 
   const isVersionUpload = Boolean(target);
-  const allowedExtensions = policy.allowedExtensions.map((value) =>
+  const aiReadableExtensions = policy.aiReadableExtensions.map((value) =>
     value.replace(/^\./, "").toLocaleLowerCase("en-US"),
   );
-  const accept = allowedExtensions.map((value) => `.${value}`).join(",");
 
   useEffect(
     () => () => {
@@ -277,15 +276,6 @@ export function DocumentUploadDrawer({
 
   const selectFile = (selected: File | null) => {
     if (!selected) return;
-    const extension = extensionFromFile(selected);
-    if (!allowedExtensions.includes(extension)) {
-      setFile(null);
-      setError(
-        `仅支持 ${allowedExtensions.map((value) => value.toUpperCase()).join("、")} 文件。`,
-      );
-      setPhase("error");
-      return;
-    }
     if (selected.size < 1 || selected.size > policy.maxBytes) {
       setFile(null);
       setError(`文件必须大于 0 B 且不超过 ${formatBytes(policy.maxBytes)}。`);
@@ -382,7 +372,7 @@ export function DocumentUploadDrawer({
           <input
             ref={inputRef}
             type="file"
-            accept={accept}
+            accept="*/*"
             className="sr-only"
             aria-label="选择上传文件"
             onChange={(event) =>
@@ -396,9 +386,9 @@ export function DocumentUploadDrawer({
             拖放文件到此处，或选择文件
           </p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            支持{" "}
-            {allowedExtensions.map((value) => value.toUpperCase()).join("、")}
-            ，单文件不超过 {formatBytes(policy.maxBytes)}
+            可上传任意文件，单文件不超过 {formatBytes(policy.maxBytes)}。{" "}
+            {aiReadableExtensions.map((value) => value.toUpperCase()).join("、")}
+            当前可解析并用于 AI；其他格式会安全保存供下载。
           </p>
           <Button
             type="button"

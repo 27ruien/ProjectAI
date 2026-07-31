@@ -15,7 +15,7 @@ import {
   listAuthorizedDocuments,
   listProjectDocumentVersions,
 } from "@/lib/db/repositories/document-repository";
-import { maxUploadBytes, allowedUploadExtensions } from "@/lib/files/config";
+import { aiReadableUploadExtensions, maxUploadBytes } from "@/lib/files/config";
 import { documentRoles, uploadDocument } from "@/lib/files/document-service";
 import { FileOperationError } from "@/lib/files/errors";
 import {
@@ -128,7 +128,8 @@ export async function GET(
       counts: { active: counts.active, archived: counts.archived },
       uploadPolicy: {
         maxBytes: maxUploadBytes(),
-        allowedExtensions: [...allowedUploadExtensions()],
+        acceptsAllFiles: true,
+        aiReadableExtensions: [...aiReadableUploadExtensions()],
       },
       permissions: { canUpload, uploadDestinations },
     });

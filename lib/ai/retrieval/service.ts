@@ -166,6 +166,9 @@ export function shouldUseAuthorizedProjectContext(query: string): boolean {
     /项目.*(待确认|缺失|风险|信息缺口)/,
     /列出.*(确认|缺失|风险|问题)/,
     /为什么.*(没有|查不到)/,
+    /这份?(文档|文件|资料)/,
+    /(文档|文件|资料).*(需求|内容|讲了什么|写了什么|包括|列了什么)/,
+    /哪些?需求/,
     /summari[sz]e/,
     /project.*(context|status|openquestion|missing|risk)/,
   ].some((pattern) => pattern.test(normalized));
@@ -537,7 +540,11 @@ export async function retrieveProjectEvidence(input: {
     }
   }
 
-  if (evidence.length === 0 && shouldUseAuthorizedProjectContext(query)) {
+  const hasExactlyOneAuthorizedSource = input.sourceDocumentIds.length === 1;
+  if (
+    evidence.length === 0 &&
+    (hasExactlyOneAuthorizedSource || shouldUseAuthorizedProjectContext(query))
+  ) {
     const contextCandidates = await retrieveAuthorizedProjectContextCandidates({
       actorUserId: input.principal.user.id,
       projectId: input.projectId,
