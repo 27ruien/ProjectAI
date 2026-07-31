@@ -2495,7 +2495,7 @@ staging_location="$(sudo nginx -T 2>/dev/null | awk -v path="$base_path" '
 ')"
 [[ -n "$staging_location" ]]
 grep -Fq 'proxy_pass http://127.0.0.1:3101;' <<<"$staging_location"
-grep -Fq 'client_max_body_size 52m;' <<<"$staging_location"
+grep -Fq 'client_max_body_size 64m;' <<<"$staging_location"
 grep -Fqi 'X-Robots-Tag "noindex, nofollow"' <<<"$staging_location"
 REMOTE_NGINX_CONTRACT
 
