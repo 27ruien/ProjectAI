@@ -59,6 +59,7 @@ export type RetrievalEvidenceResult = {
   fallbackReason: RetrievalFallbackReason | null;
   evidence: ProjectKnowledgeEvidence[];
   retrievalRunId: string;
+  auditDegraded: boolean;
   metrics: {
     lexicalCandidateCount: number;
     vectorCandidateCount: number;
@@ -75,6 +76,7 @@ export type RetrievalEvidenceResult = {
 
 type VectorRow = {
   chunk_id: string;
+  source_project_id: string;
   document_id: string;
   version_id: string;
   display_name: string;
@@ -302,6 +304,7 @@ async function exactVectorCandidates(input: {
     return tx.execute<VectorRow>(sql`
       select
         c.id as chunk_id,
+        authorized.source_project_id,
         c.document_id,
         c.version_id,
         d.display_name,
@@ -367,6 +370,7 @@ async function exactVectorCandidates(input: {
     value: {
       label: "",
       chunkId: row.chunk_id,
+      sourceProjectId: row.source_project_id,
       documentId: row.document_id,
       versionId: row.version_id,
       displayName: row.display_name,
@@ -381,7 +385,8 @@ async function exactVectorCandidates(input: {
         : [],
       source: validateSourceLocator(row.source_locator),
       score: Math.max(0, 1 - Number(row.vector_distance)),
-      knowledgeSpaceId: row.knowledge_space_id,
+      knowledgeBaseId: row.knowledge_space_id,
+      knowledgeBaseType: row.source_scope === "organization" ? "template" : "project",
       sourceScope: row.source_scope,
     },
   }));
@@ -518,7 +523,7 @@ export async function retrieveProjectEvidence(input: {
 
   const selectedChunkIds = new Set(evidence.map((item) => item.chunkId));
   const totalLatencyMs = elapsed(totalStarted);
-  await finalizeRetrievalRun({
+  const retrievalAudit = await finalizeRetrievalRun({
     retrievalRunId,
     executionId: input.execution.id,
     effectiveMode,
@@ -542,6 +547,7 @@ export async function retrieveProjectEvidence(input: {
     fallbackReason,
     evidence,
     retrievalRunId,
+    auditDegraded: retrievalAudit.auditDegraded,
     metrics: {
       lexicalCandidateCount: lexical.length,
       vectorCandidateCount: vector.length,

@@ -23,6 +23,9 @@ import {
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
   aiThread,
+  organization,
+  organizationMember,
+  project,
   projectDocument,
   projectDocumentVersion,
   type AiExecutionRecord,
@@ -62,6 +65,98 @@ const limits = {
   projectDailyTokens: 500_000,
   globalConcurrent: 3,
 } as const;
+
+export type AssistantConversationScope = "project" | "general";
+
+export async function resolveGeneralChatProjectId(
+  principal: AuthenticatedPrincipal,
+  db: DatabaseExecutor = getDb(),
+): Promise<string> {
+  const [currentOrganization] = await db
+    .select({ id: organization.id, createdBy: organization.createdBy })
+    .from(organization)
+    .where(and(eq(organization.slug, "kivisense"), eq(organization.isActive, true)))
+    .limit(1);
+  if (!currentOrganization) {
+    throw new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "通用会话暂时不可用");
+  }
+  if (principal.user.productRole === "member") {
+    const [membership] = await db
+      .select({ id: organizationMember.id })
+      .from(organizationMember)
+      .where(and(
+        eq(organizationMember.organizationId, currentOrganization.id),
+        eq(organizationMember.userId, principal.user.id),
+        eq(organizationMember.isActive, true),
+      ))
+      .limit(1);
+    if (!membership) {
+      throw new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "通用会话暂时不可用");
+    }
+  }
+  let [storageProject] = await db
+    .select({ id: project.id })
+    .from(project)
+    .where(and(
+      eq(project.organizationId, currentOrganization.id),
+      eq(project.isInternal, true),
+    ))
+    .limit(1);
+  if (!storageProject) {
+    const storageProjectId = `project-company-knowledge-${currentOrganization.id}`;
+    await db
+      .insert(project)
+      .values({
+        id: storageProjectId,
+        organizationId: currentOrganization.id,
+        name: "公司知识库内部存储",
+        clientName: "内部系统",
+        description: "ProjectAI 通用会话和公司知识库使用的内部存储项目，不在项目列表显示。",
+        status: "active",
+        stage: "operation",
+        health: "healthy",
+        isInternal: true,
+        createdBy: currentOrganization.createdBy,
+      })
+      .onConflictDoNothing({ target: project.id });
+    [storageProject] = await db
+      .select({ id: project.id })
+      .from(project)
+      .where(and(
+        eq(project.id, storageProjectId),
+        eq(project.organizationId, currentOrganization.id),
+        eq(project.isInternal, true),
+      ))
+      .limit(1);
+  }
+  if (!storageProject) {
+    throw new ProjectAssistantError(503, "AI_EXECUTION_FAILED", "通用会话暂时不可用");
+  }
+  return storageProject.id;
+}
+
+async function requireAssistantConversationAccess(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  requestHeaders: Headers;
+  scope: AssistantConversationScope;
+  db: DatabaseExecutor;
+  lockForUpdate?: boolean;
+}): Promise<void> {
+  if (input.scope === "general") {
+    const generalProjectId = await resolveGeneralChatProjectId(input.principal, input.db);
+    if (generalProjectId !== input.projectId) {
+      throw new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "通用会话暂时不可用");
+    }
+    return;
+  }
+  await requireProjectAccess(
+    input.principal,
+    input.projectId,
+    input.requestHeaders,
+    { db: input.db, lockForUpdate: input.lockForUpdate },
+  );
+}
 
 function titleFrom(question: string): string {
   return question.replace(/\s+/g, " ").trim().slice(0, 80) || "新对话";
@@ -116,15 +211,16 @@ export async function createOwnedThread(input: {
   principal: AuthenticatedPrincipal;
   projectId: string;
   requestHeaders: Headers;
+  scope?: AssistantConversationScope;
 }) {
   return getDb().transaction(async (tx) => {
     try {
-      await requireProjectAccess(
-        input.principal,
-        input.projectId,
-        input.requestHeaders,
-        { db: tx, lockForUpdate: true },
-      );
+      await requireAssistantConversationAccess({
+        ...input,
+        scope: input.scope ?? "project",
+        db: tx,
+        lockForUpdate: true,
+      });
     } catch (error) {
       if (error instanceof AuthorizationError) return { error } as const;
       throw error;
@@ -162,12 +258,13 @@ export async function listOwnedThreadSummaries(input: {
   principal: AuthenticatedPrincipal;
   projectId: string;
   requestHeaders: Headers;
+  scope?: AssistantConversationScope;
 }): Promise<ProjectAssistantThreadSummaryDto[]> {
-  await requireProjectAccess(
-    input.principal,
-    input.projectId,
-    input.requestHeaders,
-  );
+  await requireAssistantConversationAccess({
+    ...input,
+    scope: input.scope ?? "project",
+    db: getDb(),
+  });
   const rows = await getDb()
     .select({
       id: aiThread.id,
@@ -218,13 +315,16 @@ export async function loadOwnedThread(input: {
   projectId: string;
   threadId: string;
   requestHeaders?: Headers;
+  scope?: AssistantConversationScope;
 }): Promise<ProjectAssistantThreadDto> {
   if (input.requestHeaders) {
-    await requireProjectAccess(
-      input.principal,
-      input.projectId,
-      input.requestHeaders,
-    );
+    await requireAssistantConversationAccess({
+      principal: input.principal,
+      projectId: input.projectId,
+      requestHeaders: input.requestHeaders,
+      scope: input.scope ?? "project",
+      db: getDb(),
+    });
   }
   const thread = await ownedThread(
     getDb(),
@@ -239,14 +339,16 @@ export async function loadOwnedThread(input: {
       "对话不存在",
     );
   }
-  const [authorizedScope, companyKnowledge] = await Promise.all([
-    listAuthorizedDocumentScope({
-        principal: input.principal,
-        projectId: input.projectId,
-        permission: "view",
-    }),
-    listCompanyKnowledge({ principal: input.principal }),
-  ]);
+  const [authorizedScope, companyKnowledge] = input.scope === "general"
+    ? [[], { documents: [] }]
+    : await Promise.all([
+        listAuthorizedDocumentScope({
+          principal: input.principal,
+          projectId: input.projectId,
+          permission: "view",
+        }),
+        listCompanyKnowledge({ principal: input.principal }),
+      ]);
   const publishedCompanyIds = new Set(companyKnowledge.documents.filter((item) => item.lifecycleStatus === "published").map((item) => item.id));
   const authorizedDocuments = new Map(
     authorizedScope
@@ -386,15 +488,16 @@ export async function archiveOwnedThread(input: {
   projectId: string;
   threadId: string;
   requestHeaders: Headers;
+  scope?: AssistantConversationScope;
 }): Promise<void> {
   const result = await getDb().transaction(async (tx) => {
     try {
-      await requireProjectAccess(
-        input.principal,
-        input.projectId,
-        input.requestHeaders,
-        { db: tx, lockForUpdate: true },
-      );
+      await requireAssistantConversationAccess({
+        ...input,
+        scope: input.scope ?? "project",
+        db: tx,
+        lockForUpdate: true,
+      });
     } catch (error) {
       if (error instanceof AuthorizationError) return { error } as const;
       throw error;
@@ -460,10 +563,16 @@ export async function deleteOwnedThread(input: {
   projectId: string;
   threadId: string;
   requestHeaders: Headers;
+  scope?: AssistantConversationScope;
 }): Promise<void> {
   const result = await getDb().transaction(async (tx) => {
     try {
-      await requireProjectAccess(input.principal, input.projectId, input.requestHeaders, { db: tx, lockForUpdate: true });
+      await requireAssistantConversationAccess({
+        ...input,
+        scope: input.scope ?? "project",
+        db: tx,
+        lockForUpdate: true,
+      });
     } catch (error) {
       if (error instanceof AuthorizationError) return { error } as const;
       throw error;
@@ -503,6 +612,7 @@ export async function reserveAssistantExecution(input: {
   retrievalProfileId: string;
   retrievalMode: AiRetrievalMode;
   sourceSelectionDigest: string;
+  scope?: AssistantConversationScope;
 }): Promise<Reservation> {
   const scope = [
     input.projectId,
@@ -515,12 +625,14 @@ export async function reserveAssistantExecution(input: {
       sql`select pg_advisory_xact_lock(hashtextextended(${scope}, 0))`,
     );
     try {
-      await requireProjectAccess(
-        input.principal,
-        input.projectId,
-        input.requestHeaders,
-        { db: tx, lockForUpdate: true },
-      );
+      await requireAssistantConversationAccess({
+        principal: input.principal,
+        projectId: input.projectId,
+        requestHeaders: input.requestHeaders,
+        scope: input.scope ?? "project",
+        db: tx,
+        lockForUpdate: true,
+      });
     } catch (error) {
       if (error instanceof AuthorizationError) return { error } as const;
       throw error;
@@ -1033,6 +1145,216 @@ export async function finalizeSuccessfulExecution(input: {
   gateway: AiGatewayResult;
   evidenceCount: number;
   requestHeaders: Headers;
+}): Promise<{ citationAuditDegraded: boolean }> {
+  const completedAt = new Date();
+  try {
+    await getDb().transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(aiExecution)
+        .where(eq(aiExecution.id, input.execution.id))
+        .limit(1)
+        .for("update", { of: aiExecution });
+      if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) {
+        return;
+      }
+      const expectedSources = new Map(
+        input.answer.citations.map(({ evidence }) => [
+          evidence.documentId,
+          `${evidence.sourceProjectId}:${evidence.versionId}`,
+        ]),
+      );
+      const expectedDocumentIds = [...expectedSources.keys()];
+      const authorizedResult = await tx.execute<{
+        document_id: string;
+        source_project_id: string;
+        version_id: string;
+      }>(sql`
+        select
+          authorized.document_id,
+          authorized.source_project_id,
+          current_version.id as version_id
+        from projectai_authorized_documents(
+          ${locked.actorUserId},
+          ${locked.projectId},
+          'view'::knowledge_permission
+        ) authorized
+        inner join project_documents source_document
+          on source_document.id = authorized.document_id
+          and source_document.project_id = authorized.source_project_id
+          and source_document.document_status = 'active'
+        inner join project_document_versions current_version
+          on current_version.document_id = authorized.document_id
+          and current_version.project_id = authorized.source_project_id
+          and current_version.is_current = true
+          and current_version.storage_status = 'stored'
+        where authorized.document_id in (${sql.join(
+          expectedDocumentIds.map((documentId) => sql`${documentId}`),
+          sql`, `,
+        )})
+          and ${publishedCompanySourceFilter({
+            actorUserId: locked.actorUserId,
+            targetProjectId: locked.projectId,
+            sourceScope: sql`authorized.source_scope`,
+            documentId: sql`authorized.document_id`,
+          })}
+      `);
+      const currentSources = new Map(
+        authorizedResult.rows.map((row) => [
+          row.document_id,
+          `${row.source_project_id}:${row.version_id}`,
+        ]),
+      );
+      if (
+        currentSources.size !== expectedSources.size ||
+        [...expectedSources].some(
+          ([documentId, source]) => currentSources.get(documentId) !== source,
+        )
+      ) {
+        throw new ProjectAssistantError(
+          409,
+          "AI_CITATION_VALIDATION_FAILED",
+          "来源权限已变化，请重新提问",
+        );
+      }
+      await tx
+        .update(aiMessage)
+        .set({ status: "completed", content: input.answer.text })
+        .where(eq(aiMessage.id, locked.assistantMessageId));
+      await tx.insert(aiMessageCitation).values(
+        input.answer.citations.map(({ index, evidence }) => ({
+          id: crypto.randomUUID(),
+          projectId: locked.projectId,
+          sourceProjectId: evidence.sourceProjectId,
+          threadId: locked.threadId,
+          assistantMessageId: locked.assistantMessageId,
+          citationIndex: index,
+          evidenceLabel: evidence.label,
+          chunkId: evidence.chunkId,
+          documentId: evidence.documentId,
+          versionId: evidence.versionId,
+          displayName: evidence.displayName,
+          versionNumber: evidence.versionNumber,
+          mimeType: evidence.mimeType,
+          headingPath: evidence.headingPath,
+          sourceLocator: evidence.source,
+          excerpt: evidence.content
+            .replace(/[\u0000-\u001f\u007f]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 900),
+          contentSha256: evidence.contentSha256,
+          retrievalScore: evidence.score,
+        })),
+      );
+      await tx
+        .update(aiExecution)
+        .set({
+          provider: input.gateway.provider,
+          actualModel: input.gateway.actualModel,
+          fallbackUsed: input.gateway.fallbackUsed,
+          status: "succeeded",
+          evidenceCount: input.evidenceCount,
+          inputTokenCount: input.gateway.inputTokens,
+          outputTokenCount: input.gateway.outputTokens,
+          totalTokenCount: input.gateway.totalTokens,
+          latencyMs: input.gateway.latencyMs,
+          providerRequestId: input.gateway.providerRequestId,
+          failureCode: null,
+          completedAt,
+        })
+        .where(eq(aiExecution.id, locked.id));
+      await tx
+        .update(aiThread)
+        .set({ updatedAt: completedAt })
+        .where(eq(aiThread.id, locked.threadId));
+      await writeAuditEvent(
+        {
+          actorUserId: locked.actorUserId,
+          projectId: locked.projectId,
+          eventType: "ai_execution_succeeded",
+          entityType: "ai_execution",
+          entityId: locked.id,
+          result: "succeeded",
+          metadata: {
+            modelProfileId: locked.modelProfileId,
+            provider: input.gateway.provider,
+            requestedModel: locked.requestedModel,
+            actualModel: input.gateway.actualModel,
+            fallbackUsed: input.gateway.fallbackUsed,
+            evidenceCount: input.evidenceCount,
+            inputTokenCount: input.gateway.inputTokens,
+            outputTokenCount: input.gateway.outputTokens,
+            totalTokenCount: input.gateway.totalTokens,
+            latencyMs: input.gateway.latencyMs,
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+    });
+    return { citationAuditDegraded: false };
+  } catch (error) {
+    if (error instanceof ProjectAssistantError) throw error;
+    const safeContent = "回答已生成，但来源审计记录暂时不可用。为避免展示无法核验的内容，本次未返回具体结论，请稍后重试。";
+    await getDb().transaction(async (tx) => {
+      const [locked] = await tx
+        .select()
+        .from(aiExecution)
+        .where(eq(aiExecution.id, input.execution.id))
+        .limit(1)
+        .for("update", { of: aiExecution });
+      if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) return;
+      await tx
+        .update(aiMessage)
+        .set({ status: "completed", content: safeContent })
+        .where(eq(aiMessage.id, locked.assistantMessageId));
+      await tx
+        .update(aiExecution)
+        .set({
+          provider: input.gateway.provider,
+          actualModel: input.gateway.actualModel,
+          fallbackUsed: input.gateway.fallbackUsed,
+          status: "succeeded",
+          evidenceCount: input.evidenceCount,
+          inputTokenCount: input.gateway.inputTokens,
+          outputTokenCount: input.gateway.outputTokens,
+          totalTokenCount: input.gateway.totalTokens,
+          latencyMs: input.gateway.latencyMs,
+          providerRequestId: input.gateway.providerRequestId,
+          failureCode: null,
+          completedAt,
+        })
+        .where(eq(aiExecution.id, locked.id));
+      await tx
+        .update(aiThread)
+        .set({ updatedAt: completedAt })
+        .where(eq(aiThread.id, locked.threadId));
+    });
+    await writeAuditEvent({
+      actorUserId: input.execution.actorUserId,
+      projectId: input.execution.projectId,
+      eventType: "ai_citation_audit_degraded",
+      entityType: "ai_execution",
+      entityId: input.execution.id,
+      result: "failed",
+      metadata: {
+        stage: "citation_persistence",
+        citationCount: input.answer.citations.length,
+        answerBlocked: false,
+        factualAnswerSuppressed: true,
+      },
+      ...getRequestAuditContext(input.requestHeaders),
+    }).catch(() => undefined);
+    return { citationAuditDegraded: true };
+  }
+}
+
+export async function finalizeGeneralSuccessfulExecution(input: {
+  execution: AiExecutionRecord;
+  answer: string;
+  gateway: AiGatewayResult;
+  requestHeaders: Headers;
 }): Promise<void> {
   const completedAt = new Date();
   await getDb().transaction(async (tx) => {
@@ -1042,67 +1364,11 @@ export async function finalizeSuccessfulExecution(input: {
       .where(eq(aiExecution.id, input.execution.id))
       .limit(1)
       .for("update", { of: aiExecution });
-    if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) {
-      return;
-    }
-    const expectedDocumentIds = [
-      ...new Set(input.answer.citations.map(({ evidence }) => evidence.documentId)),
-    ];
-    const authorizedResult = await tx.execute<{ document_id: string }>(sql`
-      select authorized.document_id
-      from projectai_authorized_documents(
-        ${locked.actorUserId},
-        ${locked.projectId},
-        'view'::knowledge_permission
-      ) authorized
-      where authorized.document_id in (${sql.join(
-        expectedDocumentIds.map((documentId) => sql`${documentId}`),
-        sql`, `,
-      )})
-        and ${publishedCompanySourceFilter({
-          actorUserId: locked.actorUserId,
-          targetProjectId: locked.projectId,
-          sourceScope: sql`authorized.source_scope`,
-          documentId: sql`authorized.document_id`,
-        })}
-    `);
-    if (authorizedResult.rows.length !== expectedDocumentIds.length) {
-      throw new ProjectAssistantError(
-        409,
-        "AI_CITATION_VALIDATION_FAILED",
-        "来源权限已变化，请重新提问",
-      );
-    }
+    if (!locked || !RUNNING_EXECUTION_STATUSES.includes(locked.status as never)) return;
     await tx
       .update(aiMessage)
-      .set({ status: "completed", content: input.answer.text })
+      .set({ status: "completed", content: input.answer.trim() })
       .where(eq(aiMessage.id, locked.assistantMessageId));
-    await tx.insert(aiMessageCitation).values(
-      input.answer.citations.map(({ index, evidence }) => ({
-        id: crypto.randomUUID(),
-        projectId: locked.projectId,
-        sourceProjectId: evidence.sourceProjectId ?? locked.projectId,
-        threadId: locked.threadId,
-        assistantMessageId: locked.assistantMessageId,
-        citationIndex: index,
-        evidenceLabel: evidence.label,
-        chunkId: evidence.chunkId,
-        documentId: evidence.documentId,
-        versionId: evidence.versionId,
-        displayName: evidence.displayName,
-        versionNumber: evidence.versionNumber,
-        mimeType: evidence.mimeType,
-        headingPath: evidence.headingPath,
-        sourceLocator: evidence.source,
-        excerpt: evidence.content
-          .replace(/[\u0000-\u001f\u007f]/g, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 900),
-        contentSha256: evidence.contentSha256,
-        retrievalScore: evidence.score,
-      })),
-    );
     await tx
       .update(aiExecution)
       .set({
@@ -1110,7 +1376,7 @@ export async function finalizeSuccessfulExecution(input: {
         actualModel: input.gateway.actualModel,
         fallbackUsed: input.gateway.fallbackUsed,
         status: "succeeded",
-        evidenceCount: input.evidenceCount,
+        evidenceCount: 0,
         inputTokenCount: input.gateway.inputTokens,
         outputTokenCount: input.gateway.outputTokens,
         totalTokenCount: input.gateway.totalTokens,
@@ -1128,7 +1394,7 @@ export async function finalizeSuccessfulExecution(input: {
       {
         actorUserId: locked.actorUserId,
         projectId: locked.projectId,
-        eventType: "ai_execution_succeeded",
+        eventType: "ai_general_execution_succeeded",
         entityType: "ai_execution",
         entityId: locked.id,
         result: "succeeded",
@@ -1138,7 +1404,7 @@ export async function finalizeSuccessfulExecution(input: {
           requestedModel: locked.requestedModel,
           actualModel: input.gateway.actualModel,
           fallbackUsed: input.gateway.fallbackUsed,
-          evidenceCount: input.evidenceCount,
+          evidenceCount: 0,
           inputTokenCount: input.gateway.inputTokens,
           outputTokenCount: input.gateway.outputTokens,
           totalTokenCount: input.gateway.totalTokens,
@@ -1235,11 +1501,13 @@ export async function responseForExecution(input: {
   projectId: string;
   execution: AiExecutionRecord;
   replayed: boolean;
+  scope?: AssistantConversationScope;
 }): Promise<ProjectAssistantMessageResponse> {
   const thread = await loadOwnedThread({
     principal: input.principal,
     projectId: input.projectId,
     threadId: input.execution.threadId,
+    scope: input.scope,
   });
   const userMessage = thread.messages.find(
     (message) => message.id === input.execution.userMessageId,

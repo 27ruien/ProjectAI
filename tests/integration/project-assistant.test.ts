@@ -322,6 +322,9 @@ async function insertExecutionFixture(input: {
       status: input.status,
       promptVersion: "1",
       retrievalVersion: "b2-lexical-1",
+      retrievalProfileId: "hybrid-rrf-qwen37-v2",
+      requestedRetrievalMode: "hybrid",
+      sourceSelectionDigest: createHash("sha256").update("").digest("hex"),
       gatewayVersion: "1",
       evidenceCount:
         input.status === "succeeded" || hasKnownUsage ? 1 : 0,
@@ -510,6 +513,39 @@ describe("project assistant permissions and persistence", () => {
         .then((rows) => rows[0]?.value),
       1,
     );
+  });
+
+  it("suppresses factual output instead of failing an ACL-approved answer when Citation audit persistence degrades", async () => {
+    await seedEvidence(projectA, managerA);
+    const thread = await createThread(managerA);
+    await getDb().execute(sql.raw(`
+      create function projectai_test_fail_citation_audit()
+      returns trigger language plpgsql as $$
+      begin
+        raise exception 'citation audit test failure';
+      end;
+      $$;
+      create trigger projectai_test_fail_citation_audit_trigger
+      before insert on ai_message_citations
+      for each statement execute function projectai_test_fail_citation_audit();
+    `));
+    try {
+      const result = await ask(managerA, thread.id, "客户要求什么时候上线？");
+      assert.equal(result.execution.status, "succeeded");
+      assert.equal(result.assistantMessage.citations.length, 0);
+      assert.match(result.assistantMessage.content, /来源审计记录暂时不可用/);
+      assert.equal(result.assistantMessage.content.includes("2026 年 10 月 15 日"), false);
+      const [degraded] = await getDb()
+        .select()
+        .from(auditEvent)
+        .where(eq(auditEvent.eventType, "ai_citation_audit_degraded"));
+      assert.equal(degraded?.result, "failed");
+    } finally {
+      await getDb().execute(sql.raw(`
+        drop trigger if exists projectai_test_fail_citation_audit_trigger on ai_message_citations;
+        drop function if exists projectai_test_fail_citation_audit();
+      `));
+    }
   });
 
   it("does not call the Provider when Evidence is insufficient", async () => {

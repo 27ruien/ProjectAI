@@ -260,6 +260,11 @@ export class FakeProjectAssistantProvider
         warnings: ["MOCK_AI：结果仅用于流程测试；未从输入推断出的字段保持待确认"],
         unresolved_record_ids: [],
       });
+    } else if (
+      request.purpose === "answer" &&
+      request.systemPrompt.includes("本次回答不使用项目知识库")
+    ) {
+      text = "我可以帮助你梳理问题、总结内容、起草文本和规划下一步。选择项目后，我还能基于你有权访问的项目资料和常规模板回答并标注来源。本回答未使用知识库资料。";
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

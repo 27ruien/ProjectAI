@@ -80,6 +80,39 @@ async function verifyDownload(download: Download, extension: ".md" | ".docx") {
   await download.delete();
 }
 
+test("General Chat 单击发送一次并在刷新后保留消息", async ({ page }) => {
+  let messagePostCount = 0;
+  page.on("request", (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (
+      request.method() === "POST" &&
+      /\/api\/ai\/threads\/[^/]+\/messages$/.test(pathname)
+    ) {
+      messagePostCount += 1;
+    }
+  });
+
+  await page.goto(appPath("/knowledge/sessions"));
+  await expect(page.getByLabel("会话范围")).toContainText("通用会话（不使用知识库）");
+  const input = page.getByLabel("向项目 AI 助手提问");
+  await input.fill("你能做什么？");
+  await page.getByRole("button", { name: "发送", exact: true }).click();
+
+  await expect(page.locator('[data-message-role="user"]').last()).toContainText("你能做什么？");
+  await expect(page.locator('[data-message-role="assistant"]').last()).toContainText(
+    "本回答未使用知识库资料。",
+    { timeout: 45_000 },
+  );
+  await expect(input).toHaveValue("");
+  expect(messagePostCount).toBe(1);
+
+  await page.reload();
+  await expect(page.locator('[data-message-role="user"]').last()).toContainText("你能做什么？");
+  await expect(page.locator('[data-message-role="assistant"]').last()).toContainText(
+    "本回答未使用知识库资料。",
+  );
+});
+
 test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", async ({ browser, page, runtimeMonitor }) => {
   const suffix = randomUUID().slice(0, 8);
   const projectName = `[TEST] Focused MVP ${suffix}`;
@@ -123,9 +156,20 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const projectDocument = projectBody.documents.find((item) => item.displayName === projectDisplayName);
   expect(projectDocument).toBeTruthy();
   await waitUntilAiReady(page, projectId, projectDocument!.id);
+  runtimeMonitor.allowAbortedRequestOnce(
+    appPath(`/api/projects/${projectId}/documents`),
+  );
   await page.reload();
   await expect(page.getByText("可用于 AI", { exact: true })).toBeVisible();
   await evidence(page, "03-project-files.png");
+
+  await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
+  await expect(page.getByRole("button", { name: "生成需求文档", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "生成需求文档", exact: true }).click();
+  const projectOnlyArtifact = page.getByTestId("conversation-requirement-artifact");
+  await expect(projectOnlyArtifact.getByText("项目需求文档 v1", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(projectOnlyArtifact).toContainText("项目资料 1 份");
+  await expect(projectOnlyArtifact).toContainText("常规模板 0 份");
 
   await page.getByRole("link", { name: "常规模板", exact: true }).click();
   await evidence(page, "10-company-knowledge.png");
@@ -151,15 +195,15 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(companyRow.getByText("已发布", { exact: false })).toBeVisible();
 
   await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
-  await expect(page.getByLabel("当前项目")).toHaveText(projectName);
+  await expect(page.getByLabel("会话范围")).toHaveText(projectName);
   await expect(page.getByRole("button", { name: "生成需求文档", exact: true })).toBeEnabled();
   await evidence(page, "04-session-empty.png");
   await page.getByRole("button", { name: "生成需求文档", exact: true }).click();
   await expect(page.getByTestId("conversation-requirement-artifact")).toContainText("生成中");
   await evidence(page, "05-requirement-generating.png");
   const artifact = page.getByTestId("conversation-requirement-artifact");
-  await expect(artifact.getByText("项目需求文档 v1", { exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect(artifact).toContainText("项目资料 1 份");
+  await expect(artifact.getByText("项目需求文档 v2", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(artifact).toContainText(/项目资料 [1-9]\d* 份/);
   await expect(artifact).toContainText(/常规模板 [1-9]\d* 份/);
   await expect(artifact.getByText("AI 草稿", { exact: true })).toBeVisible();
   await expect(artifact.getByRole("link", { name: "保存到项目", exact: true })).toBeVisible();
@@ -251,7 +295,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect.poll(async () => {
     const response = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
     const body = await json<{ documents: Array<{ id: string; versionNumber: number; status: string; failureCode: string | null }> }>(response);
-    const failed = body.documents.find((item) => item.versionNumber === 2);
+    const failed = body.documents.find((item) => item.versionNumber === 3);
     failedRequirementId = failed?.id ?? "";
     return failed ? `${failed.status}:${failed.failureCode}` : "missing";
   }, { timeout: 60_000, intervals: [250, 500, 1_000] }).toBe("failed:REQUIREMENT_PROVIDER_FAILED");

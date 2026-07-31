@@ -4,7 +4,7 @@ import { describe, it } from "node:test";
 import { resolveProjectPermissions } from "../lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "../lib/auth/session";
 import { FakeProjectAssistantProvider } from "../lib/ai/project-assistant/fake-provider";
-import { buildGroundedUserPrompt } from "../lib/ai/project-assistant/grounding";
+import { buildGeneralUserPrompt, buildGroundedUserPrompt, GENERAL_ASSISTANT_SYSTEM_PROMPT } from "../lib/ai/project-assistant/grounding";
 import { QwenProjectAssistantProvider } from "../lib/ai/project-assistant/qwen-provider";
 import { ProjectAssistantError } from "../lib/ai/project-assistant/errors";
 import { requirementDocx } from "../lib/focused-mvp/requirement-export";
@@ -69,6 +69,41 @@ describe("focused MVP product surface", () => {
     assert.match(projectHeader, /项目资料/);
     assert.match(projectHeader, /AI 生成文档/);
     assert.match(projectHeader, /成员与权限/);
+  });
+
+  it("supports a citation-free general conversation without exposing the internal storage project", async () => {
+    const [page, service, repository, migration] = await Promise.all([
+      source("components/knowledge/FocusedChatPage.tsx"),
+      source("lib/ai/project-assistant/service.ts"),
+      source("lib/ai/project-assistant/repository.ts"),
+      source("drizzle/0026_general_chat_execution.sql"),
+    ]);
+    assert.match(page, /通用会话（不使用知识库）/);
+    assert.match(service, /askGeneralAssistant/);
+    assert.match(service, /GENERAL_ASSISTANT_SYSTEM_PROMPT/);
+    assert.match(repository, /resolveGeneralChatProjectId/);
+    assert.match(repository, /project-company-knowledge-/);
+    assert.match(repository, /onConflictDoNothing/);
+    assert.match(repository, /evidenceCount: 0/);
+    assert.match(migration, /retrieval_run_id" IS NULL AND "evidence_count" = 0/);
+    assert.doesNotMatch(buildGeneralUserPrompt({ question: "你能做什么？", history: [] }), /evidence_set/);
+    assert.match(GENERAL_ASSISTANT_SYSTEM_PROMPT, /本回答未使用知识库资料/);
+  });
+
+  it("returns a citation-free deterministic General Chat answer", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const result = await provider.generate({
+      model: "qwen3.7-flash",
+      systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
+      userPrompt: buildGeneralUserPrompt({ question: "你能做什么？", history: [] }),
+      purpose: "answer",
+      responseFormat: "text",
+      timeoutMs: 1_000,
+      temperature: 0.2,
+      maxOutputTokens: 500,
+    });
+    assert.match(result.text, /本回答未使用知识库资料/);
+    assert.doesNotMatch(result.text, /\[E\d+\]/);
   });
 
   it("keeps focused project statuses and hides the internal company storage project", async () => {
@@ -259,6 +294,10 @@ describe("focused authorization and source boundaries", () => {
     assert.match(assistantRepository, /current\.versionId !== citation\.versionId/);
     assert.match(assistantRepository, /sourceProjectId: evidence\.sourceProjectId/);
     assert.match(retrievalRepository, /sourceProjectId: candidate\.value\.sourceProjectId/);
+    assert.doesNotMatch(assistantRepository, /sourceProjectId: evidence\.sourceProjectId \?\?/);
+    assert.doesNotMatch(retrievalRepository, /sourceProjectId: candidate\.value\.sourceProjectId \?\?/);
+    assert.match(retrievalRepository, /ai_retrieval_audit_degraded/);
+    assert.match(assistantRepository, /ai_citation_audit_degraded/);
     assert.match(migration, /FOREIGN KEY \("chunk_id", "source_project_id", "document_id", "version_id"\)/);
   });
 
@@ -266,6 +305,7 @@ describe("focused authorization and source boundaries", () => {
     const evidence: ProjectKnowledgeEvidence = {
       label: "E1",
       chunkId: "chunk-1",
+      sourceProjectId: "project-company-knowledge-org-kivisense",
       documentId: "document-1",
       versionId: "version-1",
       displayName: "虚构公司规范.md",
@@ -276,11 +316,13 @@ describe("focused authorization and source boundaries", () => {
       headingPath: ["需求确认"],
       source: { type: "markdown_section", headingPath: ["需求确认"], lineStart: 1, lineEnd: 1 },
       score: 1,
-      knowledgeSpaceId: "internal-only",
+      knowledgeBaseId: "internal-only",
+      knowledgeBaseType: "template",
       sourceScope: "organization",
     };
     const prompt = buildGroundedUserPrompt({ question: "公司要求是什么？", history: [], evidence: [evidence] });
     assert.match(prompt, /source_scope="organization"/);
+    assert.equal(evidence.knowledgeBaseType, "template");
     const panel = await source("components/knowledge/ProjectAssistantPanel.tsx");
     assert.match(panel, /\[常规模板\]/);
     assert.match(panel, /\[项目资料\]/);

@@ -61,10 +61,10 @@ export type SearchRow = {
   source_scope: "organization" | "department" | "project" | "restricted";
 };
 
-export type ProjectKnowledgeEvidence = {
+export type RetrievedChunk = {
   label: string;
   chunkId: string;
-  sourceProjectId?: string;
+  sourceProjectId: string;
   documentId: string;
   versionId: string;
   displayName: string;
@@ -75,9 +75,18 @@ export type ProjectKnowledgeEvidence = {
   headingPath: string[];
   source: ReturnType<typeof validateSourceLocator>;
   score: number;
-  knowledgeSpaceId: string;
+  knowledgeBaseId: string;
+  knowledgeBaseType: "project" | "template";
   sourceScope: "organization" | "department" | "project" | "restricted";
 };
+
+export type ProjectKnowledgeEvidence = RetrievedChunk;
+
+function knowledgeBaseType(
+  sourceScope: RetrievedChunk["sourceScope"],
+): RetrievedChunk["knowledgeBaseType"] {
+  return sourceScope === "organization" ? "template" : "project";
+}
 
 export async function queryProjectKnowledgeRows(input: {
   actorUserId: string;
@@ -215,7 +224,8 @@ export async function retrieveLexicalProjectCandidates(input: {
           : [],
         source: validateSourceLocator(row.source_locator),
         score: normalizedScore(row.raw_score),
-        knowledgeSpaceId: row.knowledge_space_id,
+        knowledgeBaseId: row.knowledge_space_id,
+        knowledgeBaseType: knowledgeBaseType(row.source_scope),
         sourceScope: row.source_scope,
       },
     }));

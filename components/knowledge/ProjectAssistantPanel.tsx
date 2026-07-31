@@ -106,9 +106,10 @@ export function ProjectAssistantPanel({
   project,
   focused = false,
 }: {
-  project: AuthorizedProjectSummary;
+  project: AuthorizedProjectSummary | null;
   focused?: boolean;
 }) {
+  const projectId = project?.id ?? null;
   const loadController = useRef<AbortController | null>(null);
   const [phase, setPhase] = useState<PanelPhase>("loading");
   const [threads, setThreads] = useState<ProjectAssistantThreadSummaryDto[]>([]);
@@ -118,12 +119,20 @@ export function ProjectAssistantPanel({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
+  const [optimisticQuestion, setOptimisticQuestion] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [availableSources, setAvailableSources] = useState<Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>>([]);
+  const [sourceState, setSourceState] = useState<{
+    projectId: string;
+    documents: Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>;
+  } | null>(null);
   const [threadSearch, setThreadSearch] = useState("");
   const [artifact, setArtifact] = useState<GeneratedArtifact | null>(null);
   const [artifactBusy, setArtifactBusy] = useState(false);
   const [artifactError, setArtifactError] = useState<string | null>(null);
+  const availableSources = useMemo(
+    () => sourceState?.projectId === projectId ? sourceState.documents : [],
+    [projectId, sourceState],
+  );
   const selectedSourceIds = useMemo(() => availableSources.map((item) => item.id), [availableSources]);
   const projectSourceCount = useMemo(() => availableSources.filter((item) => item.sourceScope === "project").length, [availableSources]);
   const templateSourceCount = availableSources.length - projectSourceCount;
@@ -132,19 +141,19 @@ export function ProjectAssistantPanel({
   const loadThread = useCallback(
     async (threadId: string, signal?: AbortSignal) => {
       const response = await getProjectAssistantThread(
-        project.id,
+        projectId,
         threadId,
         signal,
       );
       setThread(response.thread);
       return response.thread;
     },
-    [project.id],
+    [projectId],
   );
 
   const refreshThreads = useCallback(
     async (preferredThreadId?: string, signal?: AbortSignal) => {
-      const response = await listProjectAssistantThreads(project.id, signal);
+      const response = await listProjectAssistantThreads(projectId, signal);
       setThreads(response.threads);
       const selected =
         preferredThreadId ||
@@ -153,7 +162,7 @@ export function ProjectAssistantPanel({
       if (selected) await loadThread(selected, signal);
       else setThread(null);
     },
-    [loadThread, project.id],
+    [loadThread, projectId],
   );
 
   useEffect(() => {
@@ -180,17 +189,18 @@ export function ProjectAssistantPanel({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [project.id, refreshThreads]);
+  }, [projectId, refreshThreads]);
 
   useEffect(() => {
+    if (!projectId) return;
     const controller = new AbortController();
-    void fetch(withBasePath(`/api/projects/${project.id}/ai/sources`), { credentials: "include", cache: "no-store", signal: controller.signal })
+    void fetch(withBasePath(`/api/projects/${projectId}/ai/sources`), { credentials: "include", cache: "no-store", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("source list failed");
         return response.json() as Promise<{ documents: Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }> }>;
       })
       .then((response) => {
-        setAvailableSources(response.documents);
+        setSourceState({ projectId, documents: response.documents });
       })
       .catch((caught: unknown) => {
         if (!(caught instanceof DOMException && caught.name === "AbortError")) {
@@ -198,10 +208,14 @@ export function ProjectAssistantPanel({
         }
       });
     return () => controller.abort();
-  }, [project.id]);
+  }, [projectId]);
 
   const loadLatestArtifact = useCallback(async (preferredId?: string) => {
-    const response = await fetch(withBasePath(`/api/projects/${project.id}/requirement-documents`), {
+    if (!projectId) {
+      setArtifact(null);
+      return null;
+    }
+    const response = await fetch(withBasePath(`/api/projects/${projectId}/requirement-documents`), {
       credentials: "include",
       cache: "no-store",
     });
@@ -210,7 +224,7 @@ export function ProjectAssistantPanel({
     const next = body.documents?.find((item) => item.id === preferredId) ?? body.documents?.[0] ?? null;
     setArtifact(next);
     return next;
-  }, [project.id]);
+  }, [projectId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -223,7 +237,7 @@ export function ProjectAssistantPanel({
     setCreating(true);
     setError(null);
     try {
-      const response = await createProjectAssistantThread(project.id);
+      const response = await createProjectAssistantThread(projectId);
       setThread(response.thread);
       await refreshThreads(response.thread.id);
       setPhase("ready");
@@ -237,45 +251,48 @@ export function ProjectAssistantPanel({
   };
 
   const sendQuestion = async (nextQuestion: string) => {
+    if (sending) return;
     const normalized = nextQuestion.trim();
     if (normalized.length < 2) {
-      setError("请输入至少 2 个字符的问题。");
+      setError("请输入问题。");
       return;
     }
-    if (selectedSourceIds.length === 0) {
-      setError("当前选择的范围内没有可用于回答的有效资料。");
+    if (projectId && selectedSourceIds.length === 0) {
+      setError("当前项目还没有可供 AI 使用的资料。");
       return;
     }
     setSending(true);
     setError(null);
     setLastQuestion(normalized);
+    setQuestion("");
+    setOptimisticQuestion(normalized);
+    let target = thread?.status === "active" ? thread : null;
     try {
-      const target =
-        thread?.status === "active" ? thread : await createThread();
+      target = target ?? await createThread();
       if (!target) return;
       const result = await askProjectAssistant(
-        project.id,
+        projectId,
         target.id,
         normalized,
         crypto.randomUUID(),
-        selectedSourceIds,
+        projectId ? selectedSourceIds : [],
       );
-      setQuestion("");
       await refreshThreads(result.thread.id);
     } catch (caught) {
       setError(assistantErrorMessage(caught));
-      if (thread) await loadThread(thread.id).catch(() => undefined);
+      if (target) await loadThread(target.id).catch(() => undefined);
     } finally {
+      setOptimisticQuestion(null);
       setSending(false);
     }
   };
 
   const generateRequirementDocument = async () => {
-    if (artifactBusy) return;
+    if (artifactBusy || !projectId) return;
     setArtifactBusy(true);
     setArtifactError(null);
     try {
-      const response = await fetch(withBasePath(`/api/projects/${project.id}/requirement-documents`), {
+      const response = await fetch(withBasePath(`/api/projects/${projectId}/requirement-documents`), {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
@@ -306,7 +323,7 @@ export function ProjectAssistantPanel({
     if (!thread || thread.status !== "active") return;
     setError(null);
     try {
-      await archiveProjectAssistantThread(project.id, thread.id);
+      await archiveProjectAssistantThread(projectId, thread.id);
       await refreshThreads();
     } catch (caught) {
       setError(assistantErrorMessage(caught));
@@ -317,7 +334,7 @@ export function ProjectAssistantPanel({
     if (!thread || !window.confirm("确认删除这条私人对话？")) return;
     setError(null);
     try {
-      await deleteProjectAssistantThread(project.id, thread.id);
+      await deleteProjectAssistantThread(projectId, thread.id);
       await refreshThreads();
     } catch (caught) {
       setError(assistantErrorMessage(caught));
@@ -325,6 +342,7 @@ export function ProjectAssistantPanel({
   };
 
   const download = async (citation: ProjectAssistantCitationDto) => {
+    if (!projectId) return;
     setDownloading(citation.versionId);
     setError(null);
     try {
@@ -338,7 +356,7 @@ export function ProjectAssistantPanel({
         anchor.click();
         URL.revokeObjectURL(url);
       } else {
-        await downloadProjectDocumentVersion(project.id, citation.documentId, citation.versionId, citation.displayName);
+        await downloadProjectDocumentVersion(projectId, citation.documentId, citation.versionId, citation.displayName);
       }
     } catch (caught) {
       setError(documentErrorMessage(caught));
@@ -387,9 +405,11 @@ export function ProjectAssistantPanel({
     <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant" data-focused={focused ? "true" : "false"}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">项目会话</h3>
+          <h3 className="text-sm font-semibold text-foreground">{projectId ? "项目会话" : "通用会话"}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            每次提问都会自动检索当前项目资料和相关常规模板，并在返回前校验引用权限。
+            {projectId
+              ? "每次提问都会自动检索当前项目资料和相关常规模板，并在返回前校验引用权限。"
+              : "直接询问 ProjectAI 的能力和使用方式；此模式不读取任何知识库资料。"}
           </p>
         </div>
         <Sheet><SheetTrigger asChild><Button type="button" variant="outline" size="sm" className="lg:hidden"><PanelLeft className="size-3.5" />会话历史</Button></SheetTrigger><SheetContent side="left" className="w-[min(88vw,320px)] p-0"><SheetHeader className="sr-only"><SheetTitle>会话历史</SheetTitle><SheetDescription>搜索并打开私人会话</SheetDescription></SheetHeader>{historyPanel}</SheetContent></Sheet>
@@ -407,7 +427,7 @@ export function ProjectAssistantPanel({
         </div>
       ) : null}
 
-      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">自动使用</span><Badge variant="outline">项目资料 {projectSourceCount} 份</Badge><Badge variant="outline">常规模板 {templateSourceCount} 份</Badge><span className="text-[10px] text-muted-foreground">仅包含当前用户有权访问的最新有效版本</span>{selectedSourceIds.length === 0 ? <span className="text-[11px] text-warning">当前项目暂无可用于 AI 的资料</span> : null}</div></div>
+      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">{projectId ? "自动使用" : "回答范围"}</span>{projectId ? <><Badge variant="outline">项目资料 {projectSourceCount} 份</Badge><Badge variant="outline">常规模板 {templateSourceCount} 份</Badge><span className="text-[10px] text-muted-foreground">仅包含当前用户有权访问的最新有效版本</span>{selectedSourceIds.length === 0 ? <span className="text-[11px] text-warning">当前项目暂无可用于 AI 的资料</span> : null}</> : <Badge variant="outline">不使用知识库资料</Badge>}</div></div>
 
       <div className="grid min-h-[560px] lg:grid-cols-[280px_1fr]">
         <aside className="hidden border-r bg-muted/20 lg:block">{historyPanel}</aside>
@@ -433,10 +453,10 @@ export function ProjectAssistantPanel({
                     <Sparkles className="size-5" />
                   </span>
                   <h4 className="mt-4 text-sm font-semibold text-foreground">
-                    从项目资料开始提问
+                    {projectId ? "从项目资料开始提问" : "开始通用对话"}
                   </h4>
                   <p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                    例如：总结当前项目现状，或根据资料生成需求文档。
+                    {projectId ? "例如：总结当前项目现状，或根据资料生成需求文档。" : "例如：你能做什么？如何使用知识库？"}
                   </p>
                 </div>
               </div>
@@ -507,30 +527,37 @@ export function ProjectAssistantPanel({
                 </article>
               ))
             )}
+            {optimisticQuestion ? (
+              <article className="ml-auto max-w-2xl" data-message-role="user" data-testid="optimistic-user-message">
+                <div className="rounded-xl border border-primary/10 bg-accent px-4 py-3 text-sm leading-6 text-foreground">
+                  <p className="whitespace-pre-wrap">{optimisticQuestion}</p>
+                </div>
+              </article>
+            ) : null}
             {sending ? (
               <div className="max-w-3xl rounded-xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground" role="status">
                 <span className="inline-flex items-center gap-2">
                   <LoaderCircle className="size-4 animate-spin text-primary" />
-                  正在检索、生成并验证引用
+                  {projectId ? "正在检索、生成并验证引用" : "正在思考"}
                 </span>
               </div>
             ) : null}
           </div>
 
-          {artifact || artifactError || artifactBusy ? <GeneratedArtifactCard projectId={project.id} artifact={artifact} busy={artifactBusy} error={artifactError} /> : null}
+          {projectId && (artifact || artifactError || artifactBusy) ? <GeneratedArtifactCard projectId={projectId} artifact={artifact} busy={artifactBusy} error={artifactError} /> : null}
 
           <form onSubmit={submit} className="border-t border-border p-4">
-            <div className="mb-3 flex flex-wrap gap-2" aria-label="会话快捷操作">
+            {projectId ? <div className="mb-3 flex flex-wrap gap-2" aria-label="会话快捷操作">
               <Button type="button" size="sm" variant="outline" loading={artifactBusy} onClick={() => void generateRequirementDocument()} disabled={selectedSourceIds.length === 0}><FileText className="size-3.5" />生成需求文档</Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。") } disabled={sending || selectedSourceIds.length === 0}><Sparkles className="size-3.5" />总结项目现状</Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || selectedSourceIds.length === 0}><ListChecks className="size-3.5" />列出待确认事项</Button>
-            </div>
+            </div> : null}
             <label className="block">
               <span className="sr-only">向项目 AI 助手提问</span>
               <textarea
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                placeholder="向当前项目提问，系统会自动补充相关常规模板…"
+                placeholder={projectId ? "向当前项目提问，系统会自动补充相关常规模板…" : "询问 ProjectAI 的能力和使用方式…"}
                 maxLength={2_000}
                 rows={3}
                 disabled={sending || thread?.status === "archived"}
@@ -539,7 +566,7 @@ export function ProjectAssistantPanel({
             </label>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <ShieldCheck className="size-3 text-success" />回答返回前会由服务端校验引用
+                <ShieldCheck className="size-3 text-success" />{projectId ? "回答返回前会由服务端校验引用" : "本模式不会读取知识库资料"}
               </span>
               <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"}>
                 <Send className="size-3.5" />发送
@@ -550,8 +577,8 @@ export function ProjectAssistantPanel({
       </div>
 
       <footer className="grid gap-2 border-t border-border bg-muted/20 px-5 py-3 text-[10px] text-muted-foreground sm:grid-cols-2">
-        <p>AI 回答仅基于当前用户有权访问的有效资料生成，请结合引用核对。</p>
-        <p className="sm:text-right">项目资料与常规模板会明确标注；证据不足时不会猜测。</p>
+        <p>{projectId ? "AI 回答仅基于当前用户有权访问的有效资料生成，请结合引用核对。" : "通用会话用于产品使用说明，不回答具体项目事实。"}</p>
+        <p className="sm:text-right">{projectId ? "项目资料与常规模板会明确标注；证据不足时不会猜测。" : "回答会明确标注未使用知识库资料。"}</p>
       </footer>
     </section>
   );

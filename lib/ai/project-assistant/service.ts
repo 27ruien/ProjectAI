@@ -14,8 +14,10 @@ import type {
 } from "@/types/project-assistant";
 import { requireAiAssistantEnabled } from "./config";
 import {
+  buildGeneralUserPrompt,
   buildCitationRepairPrompt,
   buildGroundedUserPrompt,
+  GENERAL_ASSISTANT_SYSTEM_PROMPT,
   PROJECT_ASSISTANT_SYSTEM_PROMPT,
 } from "./grounding";
 import { validateAndMapCitations } from "./citations";
@@ -25,6 +27,7 @@ import {
   archiveOwnedThread,
   deleteOwnedThread,
   createOwnedThread,
+  finalizeGeneralSuccessfulExecution,
   finalizeFailedExecution,
   finalizeInsufficientEvidence,
   finalizeSuccessfulExecution,
@@ -34,6 +37,7 @@ import {
   refreshedExecution,
   reserveAssistantExecution,
   responseForExecution,
+  resolveGeneralChatProjectId,
   updateExecutionPhase,
 } from "./repository";
 
@@ -127,6 +131,141 @@ export async function deleteProjectAssistantThread(input: {
 }): Promise<void> {
   requireAiAssistantEnabled();
   await deleteOwnedThread(input);
+}
+
+export async function createGeneralAssistantThread(input: {
+  principal: AuthenticatedPrincipal;
+  requestHeaders: Headers;
+}): Promise<ProjectAssistantThreadDto> {
+  requireAiAssistantEnabled();
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  const thread = await createOwnedThread({ ...input, projectId, scope: "general" });
+  return loadOwnedThread({ ...input, projectId, threadId: thread.id, scope: "general" });
+}
+
+export async function listGeneralAssistantThreads(input: {
+  principal: AuthenticatedPrincipal;
+  requestHeaders: Headers;
+}): Promise<ProjectAssistantThreadSummaryDto[]> {
+  requireAiAssistantEnabled();
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  return listOwnedThreadSummaries({ ...input, projectId, scope: "general" });
+}
+
+export async function getGeneralAssistantThread(input: {
+  principal: AuthenticatedPrincipal;
+  threadId: string;
+  requestHeaders: Headers;
+}): Promise<ProjectAssistantThreadDto> {
+  requireAiAssistantEnabled();
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  return loadOwnedThread({ ...input, projectId, scope: "general" });
+}
+
+export async function archiveGeneralAssistantThread(input: {
+  principal: AuthenticatedPrincipal;
+  threadId: string;
+  requestHeaders: Headers;
+}): Promise<void> {
+  requireAiAssistantEnabled();
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  await archiveOwnedThread({ ...input, projectId, scope: "general" });
+}
+
+export async function deleteGeneralAssistantThread(input: {
+  principal: AuthenticatedPrincipal;
+  threadId: string;
+  requestHeaders: Headers;
+}): Promise<void> {
+  requireAiAssistantEnabled();
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  await deleteOwnedThread({ ...input, projectId, scope: "general" });
+}
+
+export async function askGeneralAssistant(input: {
+  principal: AuthenticatedPrincipal;
+  threadId: string;
+  requestHeaders: Headers;
+  idempotencyKey: string | null;
+  body: unknown;
+}): Promise<ProjectAssistantMessageResponse> {
+  const config = requireAiAssistantEnabled();
+  const retrievalConfig = getHybridRetrievalRuntimeConfig();
+  const parsed = questionSchema.safeParse(input.body);
+  if (!parsed.success || parsed.data.sourceDocumentIds.length > 0) {
+    throw new ProjectAssistantError(400, "AI_INVALID_REQUEST", "通用会话请求无效");
+  }
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  const reservation = await reserveAssistantExecution({
+    principal: input.principal,
+    projectId,
+    threadId: input.threadId,
+    requestHeaders: input.requestHeaders,
+    question: parsed.data.question,
+    modelProfileId: parsed.data.modelProfileId,
+    idempotencyKey: idempotencyKey(input.idempotencyKey),
+    executionStaleAfterMs: config.executionStaleAfterMs,
+    retrievalProfileId: retrievalConfig.profileId,
+    retrievalMode: retrievalConfig.mode,
+    sourceSelectionDigest: createHash("sha256").update("").digest("hex"),
+    scope: "general",
+  });
+  if (reservation.replayed) {
+    return responseForExecution({
+      principal: input.principal,
+      projectId,
+      execution: reservation.execution,
+      replayed: true,
+      scope: "general",
+    });
+  }
+  let consumedGatewayResult: AiGatewayResult | null = null;
+  try {
+    const history = await loadConversationHistory({
+      projectId,
+      threadId: input.threadId,
+      actorUserId: input.principal.user.id,
+      excludeMessageId: reservation.execution.userMessageId,
+    });
+    const gateway = createProjectAssistantGateway(config);
+    await updateExecutionPhase(reservation.execution.id, "calling_provider");
+    consumedGatewayResult = await gateway.generate({
+      purpose: "answer",
+      systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
+      userPrompt: buildGeneralUserPrompt({ question: parsed.data.question, history }),
+    });
+    const answer = consumedGatewayResult.text.trim();
+    if (!answer) {
+      throw new ProjectAssistantError(502, "AI_EXECUTION_FAILED", "AI 返回了空回答");
+    }
+    const disclosure = "本回答未使用知识库资料。";
+    await finalizeGeneralSuccessfulExecution({
+      execution: reservation.execution,
+      answer: answer.includes(disclosure) ? answer : `${answer}\n\n${disclosure}`,
+      gateway: consumedGatewayResult,
+      requestHeaders: input.requestHeaders,
+    });
+    const execution = await refreshedExecution(reservation.execution.id);
+    return responseForExecution({
+      principal: input.principal,
+      projectId,
+      execution,
+      replayed: false,
+      scope: "general",
+    });
+  } catch (error) {
+    const controlled = error instanceof ProjectAssistantError
+      ? error
+      : new ProjectAssistantError(503, "AI_EXECUTION_FAILED", "AI 回答暂时不可用，请稍后重试");
+    await finalizeFailedExecution({
+      executionId: reservation.execution.id,
+      failureCode: controlled.code,
+      gateway: consumedGatewayResult,
+      evidenceCount: 0,
+      requestHeaders: input.requestHeaders,
+    }).catch(() => undefined);
+    throw controlled;
+  }
 }
 
 export async function askProjectAssistant(input: {

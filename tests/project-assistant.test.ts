@@ -50,6 +50,7 @@ function evidence(): ProjectKnowledgeEvidence[] {
     {
       label: "E1",
       chunkId: "private-chunk-id",
+      sourceProjectId: "project-001",
       documentId: "document-1",
       versionId: "version-1",
       displayName: "虚构项目范围.pdf",
@@ -61,7 +62,8 @@ function evidence(): ProjectKnowledgeEvidence[] {
       headingPath: ["上线计划"],
       source: { type: "pdf_page", pageNumber: 8 },
       score: 0.9,
-      knowledgeSpaceId: "knowledge-space-test",
+      knowledgeBaseId: "knowledge-space-test",
+      knowledgeBaseType: "project",
       sourceScope: "project",
     },
   ];

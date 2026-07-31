@@ -353,6 +353,44 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
     assert.equal(candidate?.selectedAsEvidence, true);
   });
 
+  it("keeps an ACL-approved answer available when Candidate audit persistence degrades", async () => {
+    const query = "候选审计降级不阻塞回答";
+    await seedChunk({
+      projectId: projectA,
+      actor: managerA,
+      suffix: "candidate-audit-degraded",
+      content: `${query} 的当前项目事实。`,
+      vector: await vectorFor(query),
+    });
+    await getDb().execute(sql.raw(`
+      create function projectai_test_fail_candidate_audit()
+      returns trigger language plpgsql as $$
+      begin
+        raise exception 'candidate audit test failure';
+      end;
+      $$;
+      create trigger projectai_test_fail_candidate_audit_trigger
+      before insert on ai_retrieval_candidates
+      for each statement execute function projectai_test_fail_candidate_audit();
+    `));
+    try {
+      const { result } = await ask(query);
+      assert.equal(result.execution.status, "succeeded");
+      assert.equal(result.assistantMessage.citations.length, 1);
+      assert.equal((await getDb().select().from(aiRetrievalCandidate)).length, 0);
+      const [degraded] = await getDb()
+        .select()
+        .from(auditEvent)
+        .where(eq(auditEvent.eventType, "ai_retrieval_audit_degraded"));
+      assert.equal(degraded?.result, "failed");
+    } finally {
+      await getDb().execute(sql.raw(`
+        drop trigger if exists projectai_test_fail_candidate_audit_trigger on ai_retrieval_candidates;
+        drop function if exists projectai_test_fail_candidate_audit();
+      `));
+    }
+  });
+
   it("never admits a more similar cross-project, old-version, or archived chunk", async () => {
     const query = "跨项目语义范围验证";
     await seedChunk({

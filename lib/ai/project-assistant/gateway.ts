@@ -76,6 +76,7 @@ export class ProjectAssistantGateway {
   async generate(
     input: ProjectAssistantGatewayInput,
   ): Promise<AiGatewayResult> {
+    let lastRetryableError: AiProviderError | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
         return this.result(
@@ -86,10 +87,13 @@ export class ProjectAssistantGateway {
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
         }
+        lastRetryableError = error;
         if (attempt < 2) await this.sleep((attempt + 1) * 1_000);
       }
     }
-    throw controlledProviderFailure(new AiProviderError("SERVER_ERROR", true));
+    throw controlledProviderFailure(
+      lastRetryableError ?? new AiProviderError("SERVER_ERROR", true),
+    );
   }
 
   private async invoke(

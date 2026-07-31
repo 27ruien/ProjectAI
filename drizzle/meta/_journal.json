@@ -183,6 +183,13 @@
       "when": 1785398400000,
       "tag": "0025_focused_internal_mvp",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1785484800000,
+      "tag": "0026_general_chat_execution",
+      "breakpoints": true
     }
   ]
 }

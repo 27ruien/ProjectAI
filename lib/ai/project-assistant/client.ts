@@ -44,19 +44,21 @@ async function api<T>(
   return (await response.json()) as T;
 }
 
-function projectPath(projectId: string, suffix: string): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/ai/threads${suffix}`;
+function projectPath(projectId: string | null, suffix: string): string {
+  return projectId
+    ? `/api/projects/${encodeURIComponent(projectId)}/ai/threads${suffix}`
+    : `/api/ai/threads${suffix}`;
 }
 
 export function listProjectAssistantThreads(
-  projectId: string,
+  projectId: string | null,
   signal?: AbortSignal,
 ): Promise<ProjectAssistantThreadsResponse> {
   return api(projectPath(projectId, ""), { signal });
 }
 
 export function createProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
 ): Promise<ProjectAssistantThreadResponse> {
   return api(projectPath(projectId, ""), {
     method: "POST",
@@ -66,7 +68,7 @@ export function createProjectAssistantThread(
 }
 
 export function getProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
   signal?: AbortSignal,
 ): Promise<ProjectAssistantThreadResponse> {
@@ -77,7 +79,7 @@ export function getProjectAssistantThread(
 }
 
 export function archiveProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
 ): Promise<{ archived: true }> {
   return api(
@@ -91,7 +93,7 @@ export function archiveProjectAssistantThread(
 }
 
 export async function deleteProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
 ): Promise<void> {
   const response = await fetch(withBasePath(projectPath(projectId, `/${encodeURIComponent(threadId)}`)), {
@@ -106,7 +108,7 @@ export async function deleteProjectAssistantThread(
 }
 
 export function askProjectAssistant(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
   question: string,
   requestId: string,

@@ -303,7 +303,10 @@ export const aiExecution = pgTable(
         ${table.completedAt} is not null
         and ${table.failureCode} is null
         and ${table.actualModel} is not null
-        and ${table.evidenceCount} > 0
+        and (
+          (${table.retrievalRunId} is null and ${table.evidenceCount} = 0)
+          or (${table.retrievalRunId} is not null and ${table.evidenceCount} > 0)
+        )
       )
     `),
     check("ai_executions_failed_check", sql`
