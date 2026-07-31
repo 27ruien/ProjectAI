@@ -53,7 +53,7 @@ done
 database_counts() {
   sudo docker exec "$db_container_name" sh -eu -c '
     psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "
-      select concat_ws('|',
+      select concat_ws(chr(124),
         (select count(*) from users),
         (select count(*) from accounts),
         (select count(*) from sessions),
