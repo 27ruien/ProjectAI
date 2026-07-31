@@ -236,6 +236,14 @@ export async function DELETE(
     if (getPostgresErrorCode(error) === "23503") {
       return jsonResponse({ error: { code: "PROJECT_DELETE_BLOCKED", message: "项目删除未完成，请稍后重试；已有资料会随项目一并删除" } }, { status: 409 });
     }
-    return authorizationErrorResponse(error);
+    try {
+      return authorizationErrorResponse(error);
+    } catch {
+      console.error("project_delete_failed", { error: error instanceof Error ? error.name : "unknown" });
+      return jsonResponse(
+        { error: { code: "PROJECT_DELETE_FAILED", message: "项目删除失败，请稍后重试" } },
+        { status: 500 },
+      );
+    }
   }
 }

@@ -19,6 +19,15 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 type Summary = { projectId: string; departmentName: string | null; fileCount: number; requirementCount: number; currentRequirementVersion: number | null; latestActivityAt: string };
 type ProjectSummary = ViewerContext["projects"][number];
 
+async function deleteErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = await response.json() as { error?: { message?: string } };
+    return body.error?.message ?? "删除项目失败，请稍后重试";
+  } catch {
+    return "删除项目失败，请稍后重试";
+  }
+}
+
 export function ProjectsPage({ viewer }: { viewer: ViewerContext }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -49,8 +58,7 @@ export function ProjectsPage({ viewer }: { viewer: ViewerContext }) {
         credentials: "include",
       });
       if (!response.ok) {
-        const body = await response.json() as { error?: { message?: string } };
-        throw new Error(body.error?.message ?? "删除项目失败");
+        throw new Error(await deleteErrorMessage(response));
       }
       setDeleteTarget(null);
       router.refresh();

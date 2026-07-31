@@ -18,6 +18,15 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 type Summary = { departmentName: string | null; fileCount: number; requirementCount: number; currentRequirementVersion: number | null; latestActivityAt: string };
 
+async function deleteErrorMessage(response: Response): Promise<string> {
+  try {
+    const body = await response.json() as { error?: { message?: string } };
+    return body.error?.message ?? "删除项目失败，请稍后重试";
+  } catch {
+    return "删除项目失败，请稍后重试";
+  }
+}
+
 export function ProjectOverviewPage({ project }: { project: AuthorizedProjectSummary }) {
   const router = useRouter();
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -30,7 +39,7 @@ export function ProjectOverviewPage({ project }: { project: AuthorizedProjectSum
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { const controller = new AbortController(); void fetch(withBasePath("/api/projects/focused-summaries"), { credentials: "include", cache: "no-store", signal: controller.signal }).then(async (response) => response.json() as Promise<{ summaries: Array<Summary & { projectId: string }> }>).then((payload) => setSummary(payload.summaries.find((item) => item.projectId === project.id) ?? null)).catch(() => undefined); return () => controller.abort(); }, [project.id]);
   const save = async (event: FormEvent) => { event.preventDefault(); setSaving(true); setError(null); try { const response = await fetch(withBasePath(`/api/projects/${project.id}`), { method: "PATCH", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, description, status }) }); const body = await response.json() as { error?: { message?: string } }; if (!response.ok) throw new Error(body.error?.message ?? "保存失败"); setEditing(false); router.refresh(); } catch (caught) { setError(caught instanceof Error ? caught.message : "保存失败"); } finally { setSaving(false); } };
-  const runLifecycleAction = async () => { if (!confirmAction) return; setError(null); const response = await fetch(withBasePath(`/api/projects/${project.id}`), { method: "DELETE", credentials: "include" }); if (!response.ok) { const body = await response.json() as { error?: { message?: string } }; setError(body.error?.message ?? "删除失败"); setConfirmAction(null); return; } setConfirmAction(null); router.push("/knowledge/projects"); router.refresh(); };
+  const runLifecycleAction = async () => { if (!confirmAction) return; setError(null); const response = await fetch(withBasePath(`/api/projects/${project.id}`), { method: "DELETE", credentials: "include" }); if (!response.ok) { setError(await deleteErrorMessage(response)); setConfirmAction(null); return; } setConfirmAction(null); router.push("/knowledge/projects"); router.refresh(); };
   const actions = <>{project.permissions.canEditProject ? <Button variant="outline" onClick={() => setEditing(true)}><Pencil />编辑项目</Button> : null}{project.permissions.canDeleteProject ? <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon" aria-label="更多项目操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem variant="destructive" onSelect={() => setConfirmAction("delete")}>删除项目</DropdownMenuItem></DropdownMenuContent></DropdownMenu> : null}</>;
   return <div className="min-h-full"><ProjectContextHeader project={project} activeTab="overview" actions={actions} /><div className="px-5 py-7 sm:px-6 lg:px-8">
     {error ? <Alert variant="destructive" className="mb-5"><AlertDescription>{error}</AlertDescription></Alert> : null}

@@ -20,7 +20,13 @@ type ScopedColumnSet = {
   columns: Set<string>;
 };
 
+type ExecuteResult<T> = { rows: T[] } | T[];
+
 const PRESERVED_PROJECT_AUDIT_TABLES = new Set(["audit_events"]);
+
+function resultRows<T>(result: ExecuteResult<T>): T[] {
+  return Array.isArray(result) ? result : result.rows;
+}
 
 function quoteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
@@ -34,7 +40,7 @@ async function listScopedTables(
   tx: DatabaseTransaction,
   requiredColumns: readonly string[],
 ): Promise<ScopedColumnSet[]> {
-  const rows = (await tx.execute(sql`
+  const result = (await tx.execute(sql`
     select c.table_schema, c.table_name, c.column_name
     from information_schema.columns c
     inner join information_schema.tables t
@@ -47,7 +53,8 @@ async function listScopedTables(
         sql`, `,
       )})
     order by c.table_name, c.column_name
-  `)) as unknown as ColumnRow[];
+  `)) as unknown as ExecuteResult<ColumnRow>;
+  const rows = resultRows(result);
 
   const grouped = new Map<string, ScopedColumnSet>();
   for (const row of rows) {
@@ -69,7 +76,7 @@ async function listScopedTables(
 async function listForeignKeys(
   tx: DatabaseTransaction,
 ): Promise<ForeignKeyRow[]> {
-  return (await tx.execute(sql`
+  const result = (await tx.execute(sql`
     select
       tc.table_schema as child_schema,
       tc.table_name as child_table,
@@ -82,7 +89,8 @@ async function listForeignKeys(
       and ccu.table_schema = tc.table_schema
     where tc.constraint_type = 'FOREIGN KEY'
       and tc.table_schema = 'public'
-  `)) as unknown as ForeignKeyRow[];
+  `)) as unknown as ExecuteResult<ForeignKeyRow>;
+  return resultRows(result);
 }
 
 /**

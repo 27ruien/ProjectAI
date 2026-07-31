@@ -120,6 +120,18 @@ describe("focused MVP product surface", () => {
     assert.match(migration, /projects_internal_organization_uidx/);
     assert.match(migration, /version_note/);
   });
+
+  it("uses database query result rows when deleting project-owned records", async () => {
+    const [deletion, projectRoute, projectsPage] = await Promise.all([
+      source("lib/db/repositories/scoped-deletion.ts"),
+      source("app/api/projects/[projectId]/route.ts"),
+      source("components/project/ProjectsPage.tsx"),
+    ]);
+    assert.match(deletion, /type ExecuteResult<T> = \{ rows: T\[\] \} \| T\[\]/);
+    assert.match(deletion, /return Array\.isArray\(result\) \? result : result\.rows/);
+    assert.match(projectRoute, /PROJECT_DELETE_FAILED/);
+    assert.match(projectsPage, /删除项目失败，请稍后重试/);
+  });
 });
 
 describe("focused requirement document", () => {
