@@ -10,11 +10,8 @@ import {
 } from "react";
 import {
   AlertCircle,
-  Archive,
-  ArchiveRestore,
   FileCheck2,
   FileText,
-  FolderArchive,
   Inbox,
   KeyRound,
   MoreHorizontal,
@@ -26,14 +23,13 @@ import {
 import { Button } from "@/components/common/button";
 import { useToast } from "@/components/common/toast";
 import {
-  archiveProjectDocument,
+  deleteProjectDocument,
   documentErrorMessage,
   downloadProjectDocumentVersion,
   listProjectDocumentGrants,
   listProjectDocuments,
   reindexProjectDocumentVersion,
   retryProjectDocumentEmbedding,
-  restoreProjectDocument,
   setProjectDocumentGrant,
   type ProjectDocumentGrantDto,
 } from "@/lib/documents/client";
@@ -60,11 +56,10 @@ interface DocumentsPageProps {
   project: AuthorizedProjectSummary;
 }
 
-type DocumentView = "active" | "archived";
 type LoadPhase = "loading" | "ready" | "error";
 type ConfirmAction = {
   document: ProjectDocumentDto;
-  kind: "archive" | "restore";
+  kind: "delete";
 } | null;
 
 const defaultPolicy: DocumentUploadPolicyDto = {
@@ -86,50 +81,6 @@ function formatDate(value: string | null | undefined): string {
     minute: "2-digit",
     hour12: false,
   }).format(date);
-}
-
-function statusPresentation(document: ProjectDocumentDto) {
-  if (document.status === "archived") {
-    return {
-      label: "已归档",
-      classes: "border-warning/20 bg-warning-soft text-warning",
-    };
-  }
-  if (document.status === "failed") {
-    return {
-      label: "上传失败",
-      classes: "border-destructive/20 bg-destructive-soft text-destructive",
-    };
-  }
-  if (document.status === "pending") {
-    return {
-      label: "处理中",
-      classes: "border-info/20 bg-info-soft text-info",
-    };
-  }
-  const storageStatus = document.currentVersion?.storageStatus;
-  return {
-    pending: {
-      label: "处理中",
-      classes: "border-info/20 bg-info-soft text-info",
-    },
-    stored: {
-      label: "已存储",
-      classes: "border-success/20 bg-success-soft text-success",
-    },
-    failed: {
-      label: "上传失败",
-      classes: "border-destructive/20 bg-destructive-soft text-destructive",
-    },
-    quarantined: {
-      label: "已隔离",
-      classes: "border-warning/20 bg-warning-soft text-warning",
-    },
-    deleted: {
-      label: "不可用",
-      classes: "border-border bg-muted text-muted-foreground",
-    },
-  }[storageStatus ?? "pending"];
 }
 
 function ingestionPresentation(version: ProjectDocumentVersionDto | null) {
@@ -223,7 +174,6 @@ function isAbortError(error: unknown): boolean {
 export function DocumentsPage({ project }: DocumentsPageProps) {
   const { toast } = useToast();
   const requestSequence = useRef(0);
-  const [view, setView] = useState<DocumentView>("active");
   const [phase, setPhase] = useState<LoadPhase>("loading");
   const [documents, setDocuments] = useState<ProjectDocumentDto[]>([]);
   const [counts, setCounts] = useState<DocumentListCountsDto>(emptyCounts);
@@ -250,7 +200,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
       try {
         const response = await listProjectDocuments(
           project.id,
-          view,
+          "active",
           options.signal,
         );
         if (sequence !== requestSequence.current) return;
@@ -272,13 +222,13 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         if (sequence === requestSequence.current) setRefreshing(false);
       }
     },
-    [project.id, view],
+    [project.id],
   );
 
   useEffect(() => {
     const sequence = ++requestSequence.current;
     const controller = new AbortController();
-    void listProjectDocuments(project.id, view, controller.signal)
+    void listProjectDocuments(project.id, "active", controller.signal)
       .then((response) => {
         if (sequence !== requestSequence.current) return;
         setDocuments(response.documents);
@@ -295,7 +245,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
         setPhase("error");
       });
     return () => controller.abort();
-  }, [project.id, view]);
+  }, [project.id]);
 
   useEffect(() => {
     if (
@@ -315,14 +265,6 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     }, 2_000);
     return () => window.clearInterval(timer);
   }, [documents, loadDocuments, phase]);
-
-  const changeView = (nextView: DocumentView) => {
-    if (nextView === view) return;
-    setPhase("loading");
-    setListError(null);
-    setSearch("");
-    setView(nextView);
-  };
 
   const filteredDocuments = useMemo(() => {
     const keyword = search.trim().toLocaleLowerCase("zh-CN");
@@ -366,8 +308,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           : "上传请求已接收，正在保存文件",
       "success",
     );
-    if (view !== "active") setView("active");
-    else await loadDocuments({ background: true });
+    await loadDocuments({ background: true });
   };
 
   const download = async (
@@ -400,13 +341,8 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
     setPendingAction(actionKey);
     setActionError(null);
     try {
-      if (kind === "archive") {
-        await archiveProjectDocument(project.id, document.id);
-        toast(`“${document.displayName}”已归档`, "success");
-      } else {
-        await restoreProjectDocument(project.id, document.id);
-        toast(`“${document.displayName}”已恢复`, "success");
-      }
+      await deleteProjectDocument(project.id, document.id);
+      toast(`“${document.displayName}”已删除`, "success");
       await loadDocuments({ background: true });
     } catch (caught) {
       setActionError(documentErrorMessage(caught));
@@ -480,7 +416,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
 
         {!canUpload && phase === "ready" ? (
           <aside className="mt-3 rounded-lg border border-border bg-card px-3 py-2.5 text-xs text-muted-foreground">
-            你拥有查看和下载权限；上传、版本变更和归档操作已按项目权限隐藏。
+              你拥有查看和下载权限；上传、版本变更和删除操作已按项目权限隐藏。
           </aside>
         ) : null}
 
@@ -507,31 +443,10 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
           aria-busy={phase === "loading" || refreshing}
         >
           <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
-            <div
-              className="flex items-center gap-1 rounded-lg bg-muted p-1"
-              role="group"
-              aria-label="资料状态"
-            >
-              <button
-                type="button"
-                aria-pressed={view === "active"}
-                onClick={() => changeView("active")}
-                className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors ${view === "active" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                <FileCheck2 className="size-3.5" />
-                有效资料
-                <span className="tabular-nums">{counts.active}</span>
-              </button>
-              <button
-                type="button"
-                aria-pressed={view === "archived"}
-                onClick={() => changeView("archived")}
-                className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-xs font-medium transition-colors ${view === "archived" ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
-              >
-                <FolderArchive className="size-3.5" />
-                归档资料
-                <span className="tabular-nums">{counts.archived}</span>
-              </button>
+            <div className="flex items-center gap-1 rounded-lg bg-muted px-3 py-1.5 text-xs font-medium text-foreground">
+              <FileCheck2 className="size-3.5" />
+              当前资料
+              <span className="tabular-nums">{counts.active}</span>
             </div>
             <div className="flex items-center gap-2">
               <label className="relative block">
@@ -598,7 +513,6 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
 
           {phase === "ready" && documents.length === 0 ? (
             <DocumentsEmpty
-              archived={view === "archived"}
               canUpload={canUpload}
               onUpload={openNewDocumentUpload}
             />
@@ -693,11 +607,9 @@ function DocumentsLoading() {
 }
 
 function DocumentsEmpty({
-  archived,
   canUpload,
   onUpload,
 }: {
-  archived: boolean;
   canUpload: boolean;
   onUpload: () => void;
 }) {
@@ -705,23 +617,17 @@ function DocumentsEmpty({
     <div className="grid min-h-80 place-items-center px-6 text-center">
       <div>
         <span className="mx-auto grid size-12 place-items-center rounded-xl bg-muted text-muted-foreground">
-          {archived ? (
-            <FolderArchive className="size-5" />
-          ) : (
-            <Inbox className="size-5" />
-          )}
+          <Inbox className="size-5" />
         </span>
         <h3 className="mt-4 text-sm font-semibold text-foreground">
-          {archived ? "暂无归档资料" : "暂无项目资料"}
+          暂无项目资料
         </h3>
         <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-          {archived
-            ? "归档后的资料会保留版本和审计记录，并显示在这里。"
-            : canUpload
-              ? "上传第一份文件，建立可追溯的项目资料版本。"
-              : "项目成员尚未上传可查看的文件。"}
+          {canUpload
+            ? "上传第一份文件，建立可供 AI 使用的项目资料。"
+            : "项目成员尚未上传可查看的文件。"}
         </p>
-        {!archived && canUpload ? (
+        {canUpload ? (
           <Button type="button" size="sm" className="mt-4" onClick={onUpload}>
             <Upload className="size-3.5" />
             上传第一份资料
@@ -760,7 +666,7 @@ function DocumentTable({
   ) => void;
   onLifecycle: (
     document: ProjectDocumentDto,
-    kind: "archive" | "restore",
+    kind: "delete",
   ) => void;
 }) {
   return <div className="overflow-x-auto"><Table className="min-w-[900px]"><TableHeader><TableRow>
@@ -768,7 +674,6 @@ function DocumentTable({
   </TableRow></TableHeader><TableBody>
           {documents.map((document) => {
             const version = document.currentVersion;
-            const status = statusPresentation(document);
             const ingestion = ingestionPresentation(version);
             const embedding = embeddingPresentation(version);
             const canDownload =
@@ -813,7 +718,7 @@ function DocumentTable({
                 <TableCell>{version?.uploadedBy.displayName ?? document.createdBy.displayName}</TableCell>
                 <TableCell className="whitespace-nowrap text-muted-foreground">{formatDate(document.updatedAt)}</TableCell>
                 <TableCell>
-                  {document.status === "archived" ? <><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${status.classes}`}>{status.label}</span><p className="mt-1 max-w-52 text-[10px] text-muted-foreground">已从有效资料中移除</p></> : <div className="space-y-1"><div className="flex flex-wrap gap-1"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}>{ingestion.label}</span><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${embedding.classes}`}>{embedding.label}</span></div><p className="max-w-64 text-[10px] text-muted-foreground">{version?.ingestion.status === "succeeded" ? embedding.detail : ingestion.detail}</p></div>}
+                  <div className="space-y-1"><div className="flex flex-wrap gap-1"><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${ingestion.classes}`}>{ingestion.label}</span><span className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-medium ${embedding.classes}`}>{embedding.label}</span></div><p className="max-w-64 text-[10px] text-muted-foreground">{version?.ingestion.status === "succeeded" ? embedding.detail : ingestion.detail}</p></div>
                 </TableCell>
                 <TableCell>
                   <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" className="size-8" aria-label={`${document.displayName} 操作`} disabled={Boolean(pendingAction)}><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">
@@ -823,9 +728,7 @@ function DocumentTable({
                     <DropdownMenuItem onSelect={() => onVersions(document)}>查看版本历史</DropdownMenuItem>
                     {version && document.permissions.canReindex && document.status === "active" && version.storageStatus === "stored" ? <DropdownMenuItem onSelect={() => onReindex(document, version)}>重新解析</DropdownMenuItem> : null}
                     {version && document.permissions.canReindex && document.status === "active" && version.embedding.status === "failed" ? <DropdownMenuItem onSelect={() => onRetryEmbedding(document, version)}>重试向量化</DropdownMenuItem> : null}
-                    {(document.permissions.canArchive || document.permissions.canRestore) ? <DropdownMenuSeparator /> : null}
-                    {document.status === "active" && document.permissions.canArchive ? <DropdownMenuItem variant="destructive" onSelect={() => onLifecycle(document, "archive")}>{busy ? "处理中…" : "归档"}</DropdownMenuItem> : null}
-                    {document.status === "archived" && document.permissions.canRestore ? <DropdownMenuItem onSelect={() => onLifecycle(document, "restore")}>{busy ? "处理中…" : "恢复"}</DropdownMenuItem> : null}
+                    {document.permissions.canDelete ? <><DropdownMenuSeparator /><DropdownMenuItem variant="destructive" onSelect={() => onLifecycle(document, "delete")}>{busy ? "删除中…" : "删除资料"}</DropdownMenuItem></> : null}
                   </DropdownMenuContent></DropdownMenu>
                 </TableCell>
               </TableRow>
@@ -1050,7 +953,6 @@ function ConfirmLifecycleDialog({
   onConfirm: () => void;
 }) {
   if (!action) return null;
-  const archive = action.kind === "archive";
   return (
     <div
       className="fixed inset-0 z-[90] grid place-items-center px-4"
@@ -1066,24 +968,18 @@ function ConfirmLifecycleDialog({
       />
       <section className="relative w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-[var(--shadow-float)]">
         <span
-          className={`grid size-10 place-items-center rounded-xl ${archive ? "bg-warning-soft text-warning" : "bg-success-soft text-success"}`}
+          className="grid size-10 place-items-center rounded-xl bg-destructive-soft text-destructive"
         >
-          {archive ? (
-            <Archive className="size-5" />
-          ) : (
-            <ArchiveRestore className="size-5" />
-          )}
+          <X className="size-5" />
         </span>
         <h2
           id="document-lifecycle-title"
           className="mt-4 text-base font-semibold text-foreground"
         >
-          {archive ? "归档项目资料" : "恢复项目资料"}
+          删除项目资料
         </h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {archive
-            ? `归档“${action.document.displayName}”后，它将从有效资料列表移除，但所有历史文件和审计记录都会保留。`
-            : `恢复“${action.document.displayName}”后，它会重新出现在有效资料列表中。`}
+          `删除“${action.document.displayName}”后，所有文件版本、解析结果和向量都会被永久移除，无法恢复。`
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <Button
@@ -1096,11 +992,11 @@ function ConfirmLifecycleDialog({
           </Button>
           <Button
             type="button"
-            variant={archive ? "danger" : "primary"}
+            variant="danger"
             onClick={onConfirm}
             loading={pending}
           >
-            {archive ? "确认归档" : "确认恢复"}
+            确认删除
           </Button>
         </div>
       </section>

@@ -113,7 +113,7 @@ describe("focused MVP product surface", () => {
       source("lib/db/repositories/project-repository.ts"),
       source("drizzle/0025_focused_internal_mvp.sql"),
     ]);
-    const exactStatus = /\.enum\(\["planning", "active", "completed", "archived"\]\)/;
+    const exactStatus = /\.enum\(\["planning", "active", "completed"\]\)/;
     assert.match(createRoute, exactStatus);
     assert.match(projectRoute, exactStatus);
     assert.match(repository, /eq\(project\.isInternal, false\)/);

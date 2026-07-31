@@ -57,7 +57,7 @@ export function CreateProjectDialog({ managerName, trigger, defaultOpen = false 
         <label className="grid gap-1.5 text-sm font-medium">项目描述<Textarea maxLength={4000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="grid gap-1.5 text-sm font-medium">所属部门<Select value={departmentId} onValueChange={setDepartmentId}><SelectTrigger className="w-full"><SelectValue placeholder="请选择部门" /></SelectTrigger><SelectContent>{departments.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
-          <label className="grid gap-1.5 text-sm font-medium">项目状态<Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="planning">规划中</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="completed">已完成</SelectItem><SelectItem value="archived">已归档</SelectItem></SelectContent></Select></label>
+          <label className="grid gap-1.5 text-sm font-medium">项目状态<Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="planning">规划中</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="completed">已完成</SelectItem></SelectContent></Select></label>
         </div>
         <label className="grid gap-1.5 text-sm font-medium">项目负责人<Input readOnly value={managerName} className="bg-muted text-muted-foreground" /></label>
         {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}

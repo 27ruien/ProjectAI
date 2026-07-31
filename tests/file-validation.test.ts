@@ -177,6 +177,7 @@ function uploadDocument(
     permissions: {
       canDownload: true,
       canUploadVersion: true,
+      canDelete: true,
       canArchive: true,
       canRestore: false,
       canSetCurrent: true,

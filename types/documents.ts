@@ -85,6 +85,7 @@ export interface DocumentIngestionDto {
 export interface ProjectDocumentPermissionsDto {
   canDownload: boolean;
   canUploadVersion: boolean;
+  canDelete: boolean;
   canArchive: boolean;
   canRestore: boolean;
   canSetCurrent: boolean;

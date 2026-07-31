@@ -137,6 +137,7 @@ export function documentPermissions(
     canDownload: authorized?.download ?? true,
     canUploadVersion:
       (authorized?.manageVersions ?? writer) && status === "active",
+    canDelete: manager,
     canArchive: (authorized?.archive ?? manager) && status === "active",
     canRestore: (authorized?.archive ?? manager) && status === "archived",
     canSetCurrent:

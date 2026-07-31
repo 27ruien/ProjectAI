@@ -62,6 +62,7 @@ async function jsonRequest<T>(
     ...init,
   });
   if (!response.ok) throw await errorFromResponse(response);
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -106,6 +107,15 @@ export function renameProjectDocument(
     "PATCH",
     { displayName },
   );
+}
+
+export function deleteProjectDocument(
+  projectId: string,
+  documentId: string,
+): Promise<void> {
+  return jsonRequest<void>(documentPath(projectId, documentId), {
+    method: "DELETE",
+  });
 }
 
 export function setProjectDocumentVisibility(

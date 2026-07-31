@@ -90,7 +90,7 @@ export function statusLabel(status: string): string {
     planning: "规划中",
     paused: "已暂停",
     completed: "已完成",
-    archived: "已归档",
+    archived: "已完成",
     healthy: "正常",
     attention: "需关注",
     atRisk: "有风险",

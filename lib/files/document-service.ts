@@ -19,6 +19,7 @@ import {
   listProjectDocumentVersions,
 } from "@/lib/db/repositories/document-repository";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
+import { deleteScopedRows } from "@/lib/db/repositories/scoped-deletion";
 import { KnowledgeManagementError } from "@/lib/knowledge/errors";
 import { requireUploadableKnowledgeSpace } from "@/lib/knowledge/management";
 import {
@@ -1137,6 +1138,81 @@ export async function updateDocumentMetadata(input: {
       return updated;
     },
   });
+}
+
+/** Permanently remove a project document, its versions, indexes and objects. */
+export async function deleteProjectDocument(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  documentId: string;
+  requestHeaders: Headers;
+  storage?: ObjectStorage;
+}): Promise<void> {
+  const result = await authorizedDocumentTransaction({
+    principal: input.principal,
+    projectId: input.projectId,
+    allowedRoles: documentRoles.manage,
+    requestHeaders: input.requestHeaders,
+    operation: async (tx) => {
+      const document = await findProjectDocument(
+        input.projectId,
+        input.documentId,
+        tx,
+        { lockForUpdate: true },
+      );
+      if (!document) {
+        throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "资料不存在");
+      }
+      const versions = await listProjectDocumentVersions(
+        input.projectId,
+        input.documentId,
+        tx,
+      );
+      const deletedRows = await deleteScopedRows(tx, {
+        projectId: input.projectId,
+        documentId: input.documentId,
+      });
+      if (deletedRows === 0) {
+        throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "资料不存在");
+      }
+      await writeAuditEvent(
+        {
+          actorUserId: input.principal.user.id,
+          projectId: input.projectId,
+          eventType: "document_deleted",
+          entityType: "project_document",
+          entityId: input.documentId,
+          result: "succeeded",
+          metadata: {
+            documentId: input.documentId,
+            versionCount: versions.length,
+          },
+          ...getRequestAuditContext(input.requestHeaders),
+        },
+        tx,
+      );
+      return versions.map((version) => version.objectKey);
+    },
+  });
+
+  const storage = input.storage ?? getObjectStorage();
+  const failures: string[] = [];
+  for (const objectKey of result) {
+    try {
+      await storage.deleteObject(objectKey);
+    } catch {
+      failures.push(objectKey);
+    }
+  }
+  if (failures.length > 0) {
+    // Database references are already gone. Keep the request successful and
+    // let the existing storage reconciliation job remove orphaned objects.
+    console.error("document_delete_object_cleanup_failed", {
+      projectId: input.projectId,
+      documentId: input.documentId,
+      failedCount: failures.length,
+    });
+  }
 }
 
 export async function getDownloadVersion(input: {
