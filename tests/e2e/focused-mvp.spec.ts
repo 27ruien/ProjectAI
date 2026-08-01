@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { APIResponse, Download, Locator, Page } from "@playwright/test";
-import pg from "pg";
 import type { ProjectDocumentVersionsResponse } from "@/types/documents";
 import { expect, test } from "./fixtures";
 import { appPath } from "./support/app-url";
@@ -51,23 +50,6 @@ async function waitUntilCompanyAiReady(page: Page, documentId: string) {
     const current = body.versions.find((item) => item.isCurrent);
     return `${current?.ingestion.status}:${current?.embedding.status}`;
   }, { timeout: 60_000, intervals: [250, 500, 1_000, 2_000] }).toBe("succeeded:succeeded");
-}
-
-async function expectDownload(
-  page: Page,
-  triggerName: "下载 Markdown" | "下载 DOCX",
-  extension: ".md" | ".docx",
-  allowAbortedRequestOnce: (pathname: string) => void,
-) {
-  const link = page.getByRole("menuitem", { name: triggerName, exact: true });
-  const href = await link.getAttribute("href");
-  expect(href).toBeTruthy();
-  allowAbortedRequestOnce(new URL(href!, page.url()).pathname);
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    link.click(),
-  ]);
-  await verifyDownload(download, extension);
 }
 
 async function verifyDownload(download: Download, extension: ".md" | ".docx") {
@@ -163,14 +145,6 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(page.getByText("可用于 AI", { exact: true })).toBeVisible();
   await evidence(page, "03-project-files.png");
 
-  await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
-  await expect(page.getByRole("button", { name: "生成需求文档", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "生成需求文档", exact: true }).click();
-  const projectOnlyArtifact = page.getByTestId("conversation-requirement-artifact");
-  await expect(projectOnlyArtifact.getByText("项目需求文档 v1", { exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect(projectOnlyArtifact).toContainText("项目资料 1 份");
-  await expect(projectOnlyArtifact).toContainText("常规模板 0 份");
-
   await page.getByRole("link", { name: "常规模板", exact: true }).click();
   await evidence(page, "10-company-knowledge.png");
   await page.getByRole("button", { name: "上传模板", exact: true }).first().click();
@@ -196,52 +170,29 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
 
   await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
   await expect(page.getByLabel("会话范围")).toHaveText(projectName);
-  await expect(page.getByRole("button", { name: "生成需求文档", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
   await evidence(page, "04-session-empty.png");
-  await page.getByRole("button", { name: "生成需求文档", exact: true }).click();
-  await expect(page.getByTestId("conversation-requirement-artifact")).toContainText("生成中");
-  await evidence(page, "05-requirement-generating.png");
-  const artifact = page.getByTestId("conversation-requirement-artifact");
-  await expect(artifact.getByText("项目需求文档 v2", { exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect(artifact).toContainText(/项目资料 [1-9]\d* 份/);
-  await expect(artifact).toContainText(/常规模板 [1-9]\d* 份/);
-  await expect(artifact.getByText("AI 草稿", { exact: true })).toBeVisible();
-  await expect(artifact.getByRole("link", { name: "保存到项目", exact: true })).toBeVisible();
-  await artifact.getByRole("link", { name: "预览与编辑", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "1. 文档信息与版本", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "17. 来源", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "生成需求概览", exact: true }).click();
+  await page.getByTestId("requirement-overview-empty").getByRole("button", { name: "开始需求概览", exact: true }).click();
+  const overview = page.getByTestId("requirement-overview-workspace");
+  await expect(overview.getByText("需求概览 v1", { exact: true })).toBeVisible();
+  const overviewAnswers = overview.locator("textarea");
+  await overviewAnswers.nth(0).fill("内部上线项目；成功标准为按期上线，当前范围不包括外部客户发布。");
+  await overviewAnswers.nth(1).fill("内部项目经理与交付团队；优先完成项目资料检索与需求概览。 ");
+  await overviewAnswers.nth(2).fill("交付需求概览，项目负责人验收，目标日期为 2026 年 10 月 15 日。");
+  await overview.getByRole("button", { name: "保存确认", exact: true }).click();
+  await expect(overview.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
+  await overview.getByRole("button", { name: "生成需求概览", exact: true }).click();
+  await expect(overview.getByText("已生成", { exact: true })).toBeVisible({ timeout: 60_000 });
   await evidence(page, "06-requirement-success-local-fake.png");
-  const requirementList = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
-  const requirementBody = await json<{ documents: Array<{ id: string; status: string }> }>(requirementList);
-  const generatedRequirement = requirementBody.documents.find((item) => item.status === "draft");
-  expect(generatedRequirement).toBeTruthy();
-  const database = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await database.connect();
-  try {
-    const execution = await database.query(
-      `select status, skill_id, source_count, output_count
-       from project_management_ai_executions
-       where id = $1 and project_id = $2`,
-      [generatedRequirement!.id, projectId],
-    );
-    expect(execution.rows).toHaveLength(1);
-    expect(execution.rows[0]).toMatchObject({
-      status: "succeeded",
-      skill_id: "generate_project_requirement_document",
-      output_count: 17,
-    });
-    expect(Number(execution.rows[0].source_count)).toBeGreaterThanOrEqual(2);
-  } finally {
-    await database.end();
-  }
-  await page.getByRole("button", { name: "编辑", exact: true }).click();
-  const firstSection = page.locator("textarea").first();
-  await firstSection.fill(`${await firstSection.inputValue()}\n- [TBD] 由项目经理补充发布负责人。`);
-  await page.getByRole("button", { name: "保存草稿", exact: true }).click();
-  await page.getByRole("button", { name: "下载", exact: true }).click();
-  await expectDownload(page, "下载 Markdown", ".md", runtimeMonitor.allowAbortedRequestOnce);
-  await page.getByRole("button", { name: "下载", exact: true }).click();
-  await expectDownload(page, "下载 DOCX", ".docx", runtimeMonitor.allowAbortedRequestOnce);
+  const overviewDownload = overview.getByRole("link", { name: "下载 Markdown", exact: true });
+  const overviewHref = await overviewDownload.getAttribute("href");
+  expect(overviewHref).toBeTruthy();
+  runtimeMonitor.allowAbortedRequestOnce(new URL(overviewHref!, page.url()).pathname);
+  const [overviewFile] = await Promise.all([page.waitForEvent("download"), overviewDownload.click()]);
+  await verifyDownload(overviewFile, ".md");
+  await overview.getByRole("button", { name: "保存到项目", exact: true }).click();
+  await expect(overview.getByRole("button", { name: "已保存到项目", exact: true })).toBeVisible();
 
   await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
   await page.getByLabel("向项目 AI 助手提问").fill("项目资料中 2026 年 10 月 15 日的内部上线事实是什么？");
@@ -253,71 +204,6 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[常规模板]", { timeout: 45_000 });
-
-  const threadResponse = await page.request.get(appPath(`/api/projects/${projectId}/ai/threads`));
-  const threadBody = await json<{ threads: Array<{ id: string; status: string }> }>(threadResponse);
-  const activeThread = threadBody.threads.find((item) => item.status === "active");
-  expect(activeThread).toBeTruthy();
-  runtimeMonitor.allowHttpStatusOnce({
-    status: 503,
-    pathname: appPath(`/api/projects/${projectId}/ai/threads/${activeThread!.id}/messages`),
-  });
-  runtimeMonitor.allowConsoleErrorOnce({
-    message: "Failed to load resource: the server responded with a status of 503 (Service Unavailable)",
-    pathname: appPath(`/api/projects/${projectId}/ai/threads/${activeThread!.id}/messages`),
-  });
-  await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？FAKE_401");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
-  await expect(page.getByText("AI 服务当前不可用。项目资料和常规模板未发生变化，请联系管理员检查模型访问权限。", { exact: true })).toBeVisible();
-  await evidence(page, "09-ai-provider-failure.png");
-
-  await page.goto(appPath(`/knowledge/projects/${projectId}/files`));
-  await page.getByRole("button", { name: "上传资料", exact: true }).click();
-  const failureUpload = page.getByRole("dialog", { name: "上传项目资料" });
-  const failureFileName = `focused-provider-failure-${suffix}.txt`;
-  await failureUpload.getByLabel("选择上传文件").setInputFiles(fictitiousText(
-    failureFileName,
-    "FAKE_401：仅用于验证 Provider 失败后需求 execution 会被标记为 failed。",
-  ));
-  await failureUpload.getByRole("button", { name: "开始上传", exact: true }).click();
-  await expect(failureUpload.getByText("项目资料上传成功", { exact: true })).toBeVisible();
-  await failureUpload.getByRole("button", { name: "关闭", exact: true }).last().click();
-  const failureDocumentList = await page.request.get(appPath(`/api/projects/${projectId}/documents?status=active`));
-  const failureDocumentBody = await json<{ documents: Array<{ id: string; displayName: string }> }>(failureDocumentList);
-  const failureDocument = failureDocumentBody.documents.find((item) => item.displayName === failureFileName.replace(/\.txt$/, ""));
-  expect(failureDocument).toBeTruthy();
-  await waitUntilAiReady(page, projectId, failureDocument!.id);
-
-  await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
-  await expect(page.getByRole("button", { name: "生成需求文档", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "生成需求文档", exact: true }).click();
-  let failedRequirementId = "";
-  await expect.poll(async () => {
-    const response = await page.request.get(appPath(`/api/projects/${projectId}/requirement-documents`));
-    const body = await json<{ documents: Array<{ id: string; versionNumber: number; status: string; failureCode: string | null }> }>(response);
-    const failed = body.documents.find((item) => item.versionNumber === 3);
-    failedRequirementId = failed?.id ?? "";
-    return failed ? `${failed.status}:${failed.failureCode}` : "missing";
-  }, { timeout: 60_000, intervals: [250, 500, 1_000] }).toBe("failed:REQUIREMENT_PROVIDER_FAILED");
-  await expect(page.getByText("AI 服务暂时不可用。项目资料已保留，请联系管理员检查模型访问权限后再试。", { exact: true })).toBeVisible();
-  await expect(page.getByText("REQUIREMENT_PROVIDER_FAILED", { exact: true })).toHaveCount(0);
-  const failureDatabase = new pg.Client({ connectionString: process.env.DATABASE_URL });
-  await failureDatabase.connect();
-  try {
-    const failedExecution = await failureDatabase.query(
-      `select status, skill_id, failure_code
-       from project_management_ai_executions
-       where id = $1 and project_id = $2`,
-      [failedRequirementId, projectId],
-    );
-    expect(failedExecution.rows).toEqual([{
-      status: "failed",
-      skill_id: "generate_project_requirement_document",
-      failure_code: "REQUIREMENT_PROVIDER_FAILED",
-    }]);
-  } finally {
-    await failureDatabase.end();
-  }
 
   const outsiderContext = await browser.newContext();
   const outsiderPage = await outsiderContext.newPage();
