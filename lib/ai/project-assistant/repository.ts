@@ -51,6 +51,8 @@ import type { AiGatewayResult } from "./gateway";
 import { listAuthorizedDocumentScope } from "@/lib/knowledge/authorization";
 import { listCompanyKnowledge } from "@/lib/focused-mvp/company-knowledge";
 import { publishedCompanySourceFilter } from "@/lib/focused-mvp/company-source-filter";
+import { listAllAuthorizedDocumentScope } from "./context";
+import type { AssistantContextReference } from "@/types/project-assistant";
 
 const RUNNING_EXECUTION_STATUSES = [
   "reserved",
@@ -273,6 +275,7 @@ export async function listOwnedThreadSummaries(input: {
       createdAt: aiThread.createdAt,
       updatedAt: aiThread.updatedAt,
       archivedAt: aiThread.archivedAt,
+      generationModelId: aiThread.generationModelId,
       messageCount: count(aiMessage.id).mapWith(Number),
     })
     .from(aiThread)
@@ -297,6 +300,7 @@ export async function listOwnedThreadSummaries(input: {
       aiThread.createdAt,
       aiThread.updatedAt,
       aiThread.archivedAt,
+      aiThread.generationModelId,
     )
     .orderBy(desc(aiThread.updatedAt), desc(aiThread.createdAt));
   return rows.map((row) => ({
@@ -307,6 +311,7 @@ export async function listOwnedThreadSummaries(input: {
     updatedAt: row.updatedAt.toISOString(),
     archivedAt: row.archivedAt?.toISOString() ?? null,
     messageCount: row.messageCount,
+    generationModelId: row.generationModelId,
   }));
 }
 
@@ -340,7 +345,10 @@ export async function loadOwnedThread(input: {
     );
   }
   const [authorizedScope, companyKnowledge] = input.scope === "general"
-    ? [[], { documents: [] }]
+    ? await Promise.all([
+        listAllAuthorizedDocumentScope(input.principal),
+        listCompanyKnowledge({ principal: input.principal }),
+      ])
     : await Promise.all([
         listAuthorizedDocumentScope({
           principal: input.principal,
@@ -366,7 +374,7 @@ export async function loadOwnedThread(input: {
           eq(aiMessage.createdBy, input.principal.user.id),
         ),
       )
-      .orderBy(asc(aiMessage.createdAt), asc(aiMessage.id)),
+      .orderBy(asc(aiMessage.sequence), asc(aiMessage.id)),
     getDb()
       .select()
       .from(aiMessageCitation)
@@ -446,6 +454,7 @@ export async function loadOwnedThread(input: {
     updatedAt: thread.updatedAt.toISOString(),
     archivedAt: thread.archivedAt?.toISOString() ?? null,
     messageCount: messages.length,
+    generationModelId: thread.generationModelId,
     messages: messages.map((message) => {
       const revoked = revokedCitationMessages.has(message.id);
       return {
@@ -456,6 +465,10 @@ export async function loadOwnedThread(input: {
           ? "该历史回答的部分来源权限已变化，内容已隐藏。请重新提问。"
           : message.content,
         createdAt: message.createdAt.toISOString(),
+        sequence: message.sequence,
+        contextReferences: Array.isArray(message.contextReferences)
+          ? message.contextReferences as AssistantContextReference[]
+          : [],
         fallbackUsed: fallbackByMessage.get(message.id) ?? false,
         citations: revoked
           ? []
@@ -595,6 +608,34 @@ export async function deleteOwnedThread(input: {
   if ("error" in result) throw result.error;
 }
 
+export async function setOwnedThreadGenerationModel(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  threadId: string;
+  generationModelId: string | null;
+  requestHeaders: Headers;
+  scope?: AssistantConversationScope;
+}): Promise<void> {
+  if (input.principal.user.productRole !== "super_admin") {
+    throw new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "对话不存在");
+  }
+  await requireAssistantConversationAccess({ principal: input.principal, projectId: input.projectId, requestHeaders: input.requestHeaders, scope: input.scope ?? "project", db: getDb() });
+  const thread = await ownedThread(getDb(), input.principal, input.projectId, input.threadId);
+  if (!thread) throw new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "对话不存在");
+  await getDb().update(aiThread).set({ generationModelId: input.generationModelId, updatedAt: new Date() }).where(eq(aiThread.id, thread.id));
+}
+
+export async function getOwnedThreadGenerationModel(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  threadId: string;
+  scope?: AssistantConversationScope;
+}): Promise<string | null> {
+  const thread = await ownedThread(getDb(), input.principal, input.projectId, input.threadId);
+  if (!thread) throw new ProjectAssistantError(404, "AI_THREAD_NOT_FOUND", "对话不存在");
+  return thread.generationModelId;
+}
+
 type Reservation = {
   execution: AiExecutionRecord;
   replayed: boolean;
@@ -612,6 +653,7 @@ export async function reserveAssistantExecution(input: {
   retrievalProfileId: string;
   retrievalMode: AiRetrievalMode;
   sourceSelectionDigest: string;
+  contextReferences?: AssistantContextReference[];
   scope?: AssistantConversationScope;
 }): Promise<Reservation> {
   const scope = [
@@ -954,6 +996,13 @@ export async function reserveAssistantExecution(input: {
     const userMessageId = crypto.randomUUID();
     const assistantMessageId = crypto.randomUUID();
     const executionId = crypto.randomUUID();
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`${input.projectId}:${input.threadId}:message-sequence`}, 0))`);
+    const [sequenceRow] = await tx
+      .select({ value: sql<number>`coalesce(max(${aiMessage.sequence}), 0)` })
+      .from(aiMessage)
+      .where(and(eq(aiMessage.projectId, input.projectId), eq(aiMessage.threadId, input.threadId)))
+      .for("update", { of: aiMessage });
+    const nextSequence = Number(sequenceRow?.value ?? 0) + 1;
     await tx.insert(aiMessage).values([
       {
         id: userMessageId,
@@ -963,6 +1012,8 @@ export async function reserveAssistantExecution(input: {
         role: "user",
         status: "completed",
         content: input.question,
+        sequence: nextSequence,
+        contextReferences: input.contextReferences ?? [],
       },
       {
         id: assistantMessageId,
@@ -972,6 +1023,8 @@ export async function reserveAssistantExecution(input: {
         role: "assistant",
         status: "pending",
         content: "",
+        sequence: nextSequence + 1,
+        contextReferences: [],
       },
     ]);
     const [execution] = await tx
@@ -1072,7 +1125,7 @@ export async function loadConversationHistory(input: {
         inArray(aiMessage.status, ["completed", "insufficient_evidence"]),
       ),
     )
-    .orderBy(desc(aiMessage.createdAt), desc(aiMessage.id))
+    .orderBy(desc(aiMessage.sequence), desc(aiMessage.id))
     .limit(20);
   const selected: ProjectAssistantHistoryMessage[] = [];
   let characters = 0;
@@ -1531,6 +1584,7 @@ export async function responseForExecution(input: {
       updatedAt: thread.updatedAt,
       archivedAt: thread.archivedAt,
       messageCount: thread.messageCount,
+      generationModelId: thread.generationModelId,
     },
     userMessage,
     assistantMessage,

@@ -264,9 +264,9 @@ export class FakeProjectAssistantProvider
       });
     } else if (
       request.purpose === "answer" &&
-      request.systemPrompt.includes("本次回答不使用项目知识库")
+      request.systemPrompt.includes("本次回答不使用项目资料或公司资料")
     ) {
-      text = "我可以帮助你梳理问题、总结内容、起草文本和规划下一步。选择项目后，我还能基于你有权访问的项目资料和公司资料回答并标注来源。本回答未使用项目或公司资料。";
+      text = "我可以帮助你梳理问题、总结内容、起草文本和规划下一步。涉及项目或公司事实时，我会按你的权限自动查找资料并标注来源。本回答未使用项目或公司资料。";
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

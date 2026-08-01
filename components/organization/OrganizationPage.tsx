@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Building2,
@@ -7,6 +8,7 @@ import {
   ChevronRight,
   LoaderCircle,
   Pencil,
+  Trash2,
   Plus,
   Search,
   ShieldCheck,
@@ -34,8 +36,8 @@ type OrganizationPayload = {
   members: Member[];
 };
 
-async function request<T>(method: "GET" | "POST" | "PATCH", body?: unknown): Promise<T> {
-  const response = await fetch(withBasePath("/api/organization/departments"), {
+async function request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, suffix = ""): Promise<T> {
+  const response = await fetch(withBasePath(`/api/organization/departments${suffix}`), {
     method,
     credentials: "include",
     cache: "no-store",
@@ -52,7 +54,7 @@ async function request<T>(method: "GET" | "POST" | "PATCH", body?: unknown): Pro
   return payload as T;
 }
 
-export function OrganizationPage() {
+export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | "members" }) {
   const { toast } = useToast();
   const [payload, setPayload] = useState<OrganizationPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -117,6 +119,21 @@ export function OrganizationPage() {
     }
   };
 
+  const remove = async (item: Department) => {
+    try {
+      const preview = await request<{ canDelete: boolean; dependencies: { childDepartments: number; activeMembers: number; projects: number; additionalKnowledgeSpaces: number } }>("GET", undefined, `?previewDelete=${encodeURIComponent(item.id)}`);
+      if (!preview.canDelete) {
+        const values = preview.dependencies;
+        setError(`“${item.name}”暂时不能删除：子部门 ${values.childDepartments}、成员 ${values.activeMembers}、项目 ${values.projects}、额外资料空间 ${values.additionalKnowledgeSpaces}。请先处理这些关联项。`);
+        return;
+      }
+      if (!window.confirm(`确认永久删除空部门“${item.name}”吗？`)) return;
+      await request("DELETE", { departmentId: item.id });
+      toast("空部门已删除", "success");
+      await load();
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "部门删除失败"); }
+  };
+
   const renderBranch = (parentId: string | null): React.ReactNode =>
     (childrenByParent.get(parentId) ?? [])
       .filter((item) => !matchingIds || matchingIds.has(item.id))
@@ -157,9 +174,7 @@ export function OrganizationPage() {
                   {item.code}{heads ? ` · 负责人：${heads}` : " · 暂无负责人"}
                 </p>
               </div>
-              <button type="button" onClick={() => setEditing(item)} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`编辑 ${item.name}`}>
-                <Pencil className="size-4" />
-              </button>
+              <span className="flex gap-1"><button type="button" onClick={() => setEditing(item)} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`编辑 ${item.name}`}><Pencil className="size-4" /></button><button type="button" onClick={() => void remove(item)} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-destructive-soft hover:text-destructive" aria-label={`删除 ${item.name}`}><Trash2 className="size-4" /></button></span>
             </div>
             {!isCollapsed ? renderBranch(item.id) : null}
           </div>
@@ -170,32 +185,32 @@ export function OrganizationPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="Kivisense"
-        title="组织架构"
-        description="四级部门树由 ProjectAI 管理。部门负责人不会自动获得超级管理员权限。"
+        title={mode === "structure" ? "组织架构" : "成员与角色"}
+        description={mode === "structure" ? "四级部门树由 ProjectAI 管理。部门负责人不会自动获得超级管理员权限。" : "成员角色独立于部门层级；至少保留一名超级管理员。"}
         actions={
-          <button type="button" onClick={() => setEditing("new")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground">
+          mode === "structure" ? <button type="button" onClick={() => setEditing("new")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground">
             <Plus className="size-4" />新建部门
-          </button>
+          </button> : undefined
         }
       />
-      <label className="flex h-10 max-w-md items-center gap-2 rounded-lg border bg-card px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
+      <nav className="flex gap-4 border-b text-sm"><Link href="/organization/structure" className={mode === "structure" ? "border-b-2 border-primary pb-2 font-medium text-primary" : "pb-2 text-muted-foreground"}>组织结构</Link><Link href="/organization/members" className={mode === "members" ? "border-b-2 border-primary pb-2 font-medium text-primary" : "pb-2 text-muted-foreground"}>成员与角色</Link></nav>
+      {mode === "structure" ? <label className="flex h-10 max-w-md items-center gap-2 rounded-lg border bg-card px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
         <Search className="size-4 text-muted-foreground" />
         <span className="sr-only">搜索部门</span>
         <input value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索部门名称或编码" />
-      </label>
+      </label> : null}
       {error ? <div role="alert" className="rounded-xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive">{error}</div> : null}
       {loading ? (
         <div className="grid min-h-56 place-items-center rounded-xl border bg-card"><LoaderCircle className="size-6 animate-spin text-primary" /></div>
       ) : (
-        <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        mode === "members" ? (payload ? <MemberRoles members={payload.members} onSaved={load} /> : null) : <div className="grid items-start gap-5">
           <section className="space-y-2 rounded-2xl border bg-surface p-4" aria-label="部门树">
             {renderBranch(null)}
             {matchingIds?.size === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">未找到匹配部门</p> : null}
           </section>
-          {payload ? <MemberRoles members={payload.members} onSaved={load} /> : null}
         </div>
       )}
-      {editing && payload ? (
+      {mode === "structure" && editing && payload ? (
         <DepartmentEditor
           department={editing === "new" ? null : editing}
           departments={departments}

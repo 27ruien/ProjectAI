@@ -6,7 +6,10 @@ import {
   getHybridRetrievalRuntimeConfig,
   finalizeFailedRetrievalRunForExecution,
   retrieveProjectEvidence,
+  retrieveAuthorizedAssistantEvidence,
 } from "@/lib/ai/retrieval";
+import { resolveAssistantContextReferences } from "./context";
+import type { AssistantContextReference } from "@/types/project-assistant";
 import type {
   ProjectAssistantMessageResponse,
   ProjectAssistantThreadDto,
@@ -40,14 +43,21 @@ import {
   reserveAssistantExecution,
   responseForExecution,
   resolveGeneralChatProjectId,
+  getOwnedThreadGenerationModel,
+  setOwnedThreadGenerationModel,
   updateExecutionPhase,
 } from "./repository";
+import { listEnabledGenerationModels } from "@/lib/ai/model-management";
 
 const questionSchema = z
   .object({
     question: z.string().trim().min(2).max(2_000),
     modelProfileId: z.string().trim().min(1).max(120),
     sourceDocumentIds: z.array(z.string().min(1).max(200)).max(50).optional().default([]),
+    contextReferences: z.array(z.discriminatedUnion("type", [
+      z.object({ type: z.literal("project"), projectId: z.string().min(1).max(200), label: z.string().min(1).max(200) }),
+      z.object({ type: z.literal("document"), documentId: z.string().min(1).max(200), documentVersionId: z.string().min(1).max(200).optional(), sourceType: z.enum(["project", "company"]), label: z.string().min(1).max(200) }),
+    ])).max(20).optional().default([]),
   })
   .strict();
 
@@ -174,6 +184,21 @@ export async function archiveGeneralAssistantThread(input: {
   await archiveOwnedThread({ ...input, projectId, scope: "general" });
 }
 
+export async function listGeneralAssistantModels(input: { principal: AuthenticatedPrincipal }) {
+  if (input.principal.user.productRole !== "super_admin") return [];
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  return listEnabledGenerationModels({ projectId, actorId: input.principal.user.id });
+}
+
+export async function setGeneralAssistantThreadModel(input: { principal: AuthenticatedPrincipal; threadId: string; generationModelId: string | null; requestHeaders: Headers }) {
+  const projectId = await resolveGeneralChatProjectId(input.principal);
+  if (input.generationModelId) {
+    const available = await listEnabledGenerationModels({ projectId, actorId: input.principal.user.id });
+    if (!available.some((item) => item.id === input.generationModelId)) throw new ProjectAssistantError(404, "AI_MODEL_PROFILE_NOT_FOUND", "模型不存在或不可用");
+  }
+  await setOwnedThreadGenerationModel({ ...input, projectId, scope: "general" });
+}
+
 export async function deleteGeneralAssistantThread(input: {
   principal: AuthenticatedPrincipal;
   threadId: string;
@@ -198,6 +223,11 @@ export async function askGeneralAssistant(input: {
     throw new ProjectAssistantError(400, "AI_INVALID_REQUEST", "通用会话请求无效");
   }
   const projectId = await resolveGeneralChatProjectId(input.principal);
+  const context = await resolveAssistantContextReferences({
+    principal: input.principal,
+    references: parsed.data.contextReferences as AssistantContextReference[],
+  });
+  const intent = classifyAssistantIntent({ question: parsed.data.question });
   const reservation = await reserveAssistantExecution({
     principal: input.principal,
     projectId,
@@ -209,7 +239,8 @@ export async function askGeneralAssistant(input: {
     executionStaleAfterMs: config.executionStaleAfterMs,
     retrievalProfileId: retrievalConfig.profileId,
     retrievalMode: retrievalConfig.mode,
-    sourceSelectionDigest: createHash("sha256").update("").digest("hex"),
+    sourceSelectionDigest: createHash("sha256").update(JSON.stringify(context.references)).digest("hex"),
+    contextReferences: context.references,
     scope: "general",
   });
   if (reservation.replayed) {
@@ -223,44 +254,77 @@ export async function askGeneralAssistant(input: {
   }
   let consumedGatewayResult: AiGatewayResult | null = null;
   try {
+    const generationModelId = await getOwnedThreadGenerationModel({ principal: input.principal, projectId, threadId: input.threadId, scope: "general" });
     const history = await loadConversationHistory({
       projectId,
       threadId: input.threadId,
       actorUserId: input.principal.user.id,
       excludeMessageId: reservation.execution.userMessageId,
     });
-    const scenario = await resolveGenerationScenario({
+    if (intent === "general_chat" || intent === "artifact_request") {
+      const scenario = await resolveGenerationScenario({
       projectId,
       actorId: input.principal.user.id,
       scenario: "general_chat",
-    });
-    const gateway = createProjectAssistantGateway(scenario.runtime);
-    await updateExecutionPhase(reservation.execution.id, "calling_provider");
-    consumedGatewayResult = await gateway.generate({
+      generationModelId,
+      });
+      const gateway = createProjectAssistantGateway(scenario.runtime);
+      await updateExecutionPhase(reservation.execution.id, "calling_provider");
+      consumedGatewayResult = await gateway.generate({
       purpose: "answer",
       model: scenario.modelId,
       systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGeneralUserPrompt({ question: parsed.data.question, history }),
-    });
-    const answer = consumedGatewayResult.text.trim();
-    if (!answer) {
+      });
+      const answer = consumedGatewayResult.text.trim();
+      if (!answer) {
       throw new ProjectAssistantError(502, "AI_EXECUTION_FAILED", "AI 返回了空回答");
-    }
-    const disclosure = "本回答未使用项目或公司资料。";
-    await finalizeGeneralSuccessfulExecution({
+      }
+      const disclosure = "本回答未使用项目或公司资料。";
+      await finalizeGeneralSuccessfulExecution({
       execution: reservation.execution,
       answer: answer.includes(disclosure) ? answer : `${answer}\n\n${disclosure}`,
       gateway: consumedGatewayResult,
       requestHeaders: input.requestHeaders,
-    });
-    const execution = await refreshedExecution(reservation.execution.id);
-    return responseForExecution({
+      });
+      const execution = await refreshedExecution(reservation.execution.id);
+      return responseForExecution({
       principal: input.principal,
       projectId,
       execution,
       replayed: false,
       scope: "general",
+      });
+    }
+    await updateExecutionPhase(reservation.execution.id, "retrieving");
+    const retrieval = await retrieveAuthorizedAssistantEvidence({
+      principal: input.principal,
+      projectIds: context.projectIds,
+      sourceDocumentIds: context.documentIds,
+      query: parsed.data.question,
+      mode: retrievalConfig.mode,
+      retrievalProfileId: retrievalConfig.profileId,
+      execution: reservation.execution,
     });
+    if (retrieval.evidence.length === 0) {
+      await finalizeInsufficientEvidence({ execution: reservation.execution, requestHeaders: input.requestHeaders });
+      return responseForExecution({
+        principal: input.principal, projectId,
+        execution: await refreshedExecution(reservation.execution.id), replayed: false, scope: "general",
+      });
+    }
+    const scenario = await resolveGenerationScenario({ projectId, actorId: input.principal.user.id, scenario: "project_grounded_chat", generationModelId });
+    const gateway = createProjectAssistantGateway(scenario.runtime);
+    await updateExecutionPhase(reservation.execution.id, "calling_provider");
+    consumedGatewayResult = await gateway.generate({
+      purpose: "answer", model: scenario.modelId, systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
+      userPrompt: buildGroundedUserPrompt({ question: parsed.data.question, history, evidence: retrieval.evidence }),
+    });
+    await updateExecutionPhase(reservation.execution.id, "validating");
+    const validated = validateAndMapCitations(consumedGatewayResult.text, retrieval.evidence);
+    if (!validated) throw new ProjectAssistantError(502, "AI_CITATION_VALIDATION_FAILED", "AI 回答未通过来源校验，请重试");
+    await finalizeSuccessfulExecution({ execution: reservation.execution, answer: validated, gateway: consumedGatewayResult, evidenceCount: retrieval.evidence.length, requestHeaders: input.requestHeaders });
+    return responseForExecution({ principal: input.principal, projectId, execution: await refreshedExecution(reservation.execution.id), replayed: false, scope: "general" });
   } catch (error) {
     const controlled = error instanceof ProjectAssistantError
       ? error

@@ -197,6 +197,13 @@
       "when": 1785571200000,
       "tag": "0027_guided_requirement_overview_model_management",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1785657600000,
+      "tag": "0028_assistant_context_references",
+      "breakpoints": true
     }
   ]
 }

@@ -3,7 +3,6 @@
 import { AppShell } from "@/components/layout";
 import { FocusedChatPage } from "@/components/knowledge/FocusedChatPage";
 import { CompanyKnowledgePage } from "@/components/knowledge/CompanyKnowledgePage";
-import { KnowledgeModuleNav } from "@/components/knowledge/KnowledgeModuleNav";
 import { CreateProjectPage } from "@/components/project/CreateProjectPage";
 import { DocumentsPage } from "@/components/project/DocumentsPage";
 import { ProjectMembersPage } from "@/components/project/ProjectMembersPage";
@@ -13,6 +12,7 @@ import { RequirementDocumentsPage } from "@/components/project/RequirementDocume
 import { OrganizationPage } from "@/components/organization";
 import { AccessDeniedPage, NotFoundPage, SettingsPage } from "@/components/system";
 import { AiModelManagementPage } from "@/components/system/AiModelManagementPage";
+import { ModelsAndApiHelpPage } from "@/components/system/ModelsAndApiHelpPage";
 import type { AuthorizedProjectSummary, ViewerContext } from "@/lib/auth/ui-types";
 
 function StandardPage({ children }: { children: React.ReactNode }) {
@@ -39,10 +39,10 @@ export function Workspace({ route, viewer, currentProject }: {
   else if (project && child === "artifacts") page = <RequirementDocumentsPage key={project.id} project={project} />;
   else if (project && child === "members") page = <ProjectMembersPage key={project.id} project={project} />;
   else if (isDataSpace && area === "company" && !entityId) page = <CompanyKnowledgePage />;
-  else if (section === "organization" && viewer.user.productRole === "super_admin") page = <StandardPage><OrganizationPage /></StandardPage>;
+  else if (section === "organization" && viewer.user.productRole === "super_admin") page = <StandardPage><OrganizationPage mode={area === "members" ? "members" : "structure"} /></StandardPage>;
   else if (section === "settings" && area === "ai-models" && viewer.user.productRole !== "member") page = <StandardPage><AiModelManagementPage organizationId={viewer.projects[0]?.organizationId ?? "org-legacy-default"} verificationProjectId={viewer.projects[0]?.id ?? null} /></StandardPage>;
   else if (section === "settings" && viewer.user.productRole !== "member") page = <StandardPage><SettingsPage /></StandardPage>;
+  else if (section === "help" && area === "models-and-api") page = <ModelsAndApiHelpPage />;
   else page = <StandardPage><NotFoundPage path={path} /></StandardPage>;
-  const dataSpacePage = isDataSpace ? <><KnowledgeModuleNav activeArea={area as "projects" | "company"} />{page}</> : page;
-  return <AppShell viewer={viewer} currentProject={project} currentPath={path} featureFlags={{ pmDailyReport: false, wecomTimesheetSync: false }}>{dataSpacePage}</AppShell>;
+  return <AppShell viewer={viewer} currentProject={project} currentPath={path} featureFlags={{ pmDailyReport: false, wecomTimesheetSync: false }}>{page}</AppShell>;
 }

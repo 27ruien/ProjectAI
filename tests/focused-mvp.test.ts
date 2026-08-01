@@ -48,25 +48,24 @@ function memberPrincipal(id: string): AuthenticatedPrincipal {
 describe("focused MVP product surface", () => {
   it("routes general, protected-context, and skill requests without widening context", () => {
     assert.equal(classifyAssistantIntent({ question: "帮我润色这封客户邮件", hasAssociatedProject: false }), "general_chat");
-    assert.equal(classifyAssistantIntent({ question: "当前项目什么时候上线？", hasAssociatedProject: true }), "project_question");
-    assert.equal(classifyAssistantIntent({ question: "当前项目是否符合公司 UAT 规范？", hasAssociatedProject: true }), "mixed_context_question");
+    assert.equal(classifyAssistantIntent({ question: "当前项目什么时候上线？" }), "project_question");
+    assert.equal(classifyAssistantIntent({ question: "当前项目是否符合公司 UAT 规范？" }), "mixed_context_question");
     assert.equal(classifyAssistantIntent({ question: "生成需求概览", hasAssociatedProject: true }), "skill_request");
   });
   it("separates the AI assistant from permission-aware data spaces", async () => {
-    const [sidebar, router, workspace, projectHeader, knowledgeNav] = await Promise.all([
+    const [sidebar, router, workspace, projectHeader] = await Promise.all([
       source("components/layout/sidebar.tsx"),
       source("app/[...slug]/page.tsx"),
       source("components/workspace.tsx"),
       source("components/project/ProjectContextHeader.tsx"),
-      source("components/knowledge/KnowledgeModuleNav.tsx"),
     ]);
     for (const label of ["AI 助手", "资料空间"]) assert.match(sidebar, new RegExp(label));
     for (const removedPrimary of ["知识库", "AI 对话", "公司知识库"]) assert.doesNotMatch(sidebar, new RegExp(removedPrimary));
-    for (const label of ["项目资料", "公司资料"]) assert.match(knowledgeNav, new RegExp(label));
+    for (const label of ["项目资料", "公司资料"]) assert.match(sidebar, new RegExp(label));
     for (const removed of ["工作日报", "AI 工作流", "会议纪要", "Action Plan", "周报", "Skills", "审核中心"]) {
       assert.doesNotMatch(sidebar, new RegExp(removed, "i"));
     }
-    assert.match(router, /allowedRoot = \["assistant", "data-spaces", "organization", "settings"\]/);
+    assert.match(router, /allowedRoot = \["assistant", "data-spaces", "organization", "settings", "help"\]/);
     assert.match(router, /\["projects", "company"\]/);
     assert.match(router, /notFound\(\)/);
     assert.match(workspace, /<ProjectsPage/);
@@ -85,7 +84,7 @@ describe("focused MVP product surface", () => {
       source("lib/ai/project-assistant/repository.ts"),
       source("drizzle/0026_general_chat_execution.sql"),
     ]);
-    assert.match(page, /不关联项目/);
+    assert.match(page, /自动查找相关资料/);
     assert.match(page, /AI 助手/);
     assert.match(service, /askGeneralAssistant/);
     assert.match(service, /GENERAL_ASSISTANT_SYSTEM_PROMPT/);

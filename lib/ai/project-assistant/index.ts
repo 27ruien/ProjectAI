@@ -1,5 +1,6 @@
 export * from "./citations";
 export * from "./config";
+export * from "./context";
 export * from "./errors";
 export * from "./gateway";
 export * from "./grounding";

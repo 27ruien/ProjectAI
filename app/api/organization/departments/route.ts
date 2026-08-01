@@ -4,7 +4,9 @@ import { requireApiPrincipal } from "@/lib/auth/session";
 import { knowledgeManagementErrorResponse } from "@/lib/knowledge/http";
 import {
   createOrganizationDepartment,
+  deleteOrganizationDepartment,
   getOrganizationTree,
+  previewOrganizationDepartmentDelete,
   updateOrganizationDepartment,
 } from "@/lib/organization/service";
 
@@ -30,7 +32,20 @@ const updateSchema = z.object({
 export async function GET(request: Request): Promise<Response> {
   try {
     const principal = await requireApiPrincipal(request.headers);
-    return jsonResponse(await getOrganizationTree(principal));
+    const previewId = new URL(request.url).searchParams.get("previewDelete");
+    return jsonResponse(previewId ? await previewOrganizationDepartmentDelete({ principal, departmentId: previewId }) : await getOrganizationTree(principal));
+  } catch (error) {
+    return knowledgeManagementErrorResponse(error);
+  }
+}
+
+export async function DELETE(request: Request): Promise<Response> {
+  try {
+    requireTrustedMutationRequest(request);
+    const principal = await requireApiPrincipal(request.headers);
+    const body = z.object({ departmentId: z.string().min(1).max(200) }).strict().safeParse(await request.json());
+    if (!body.success) return jsonResponse({ error: { code: "INVALID_REQUEST", message: "部门信息无效" } }, { status: 400 });
+    return jsonResponse(await deleteOrganizationDepartment({ principal, departmentId: body.data.departmentId, requestHeaders: request.headers }));
   } catch (error) {
     return knowledgeManagementErrorResponse(error);
   }

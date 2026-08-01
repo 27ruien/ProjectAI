@@ -608,3 +608,111 @@ export async function retrieveProjectEvidence(input: {
     },
   };
 }
+
+/**
+ * General assistant retrieval keeps one auditable run per execution while
+ * searching only the projects that the current principal can already read.
+ * A client supplied #/$ reference narrows this list; it can never add scope.
+ * We deliberately use the existing lexical path here rather than mixing
+ * vectors from different source/model generations into a shared result.
+ */
+export async function retrieveAuthorizedAssistantEvidence(input: {
+  principal: AuthenticatedPrincipal;
+  projectIds: string[];
+  sourceDocumentIds: string[];
+  query: string;
+  mode: RetrievalMode;
+  retrievalProfileId: string;
+  execution: AiExecutionRecord;
+}): Promise<RetrievalEvidenceResult> {
+  const runtime = getHybridRetrievalRuntimeConfig();
+  if (input.mode !== runtime.mode || input.retrievalProfileId !== runtime.profileId) {
+    throw new Error("Server retrieval configuration mismatch.");
+  }
+  const query = input.query.trim().slice(0, 2_000);
+  const totalStarted = performance.now();
+  const retrievalRunId = await createRetrievalRun({
+    execution: input.execution,
+    querySha256: createHash("sha256").update(query).digest("hex"),
+    requestedMode: input.mode,
+  });
+  const lexicalStarted = performance.now();
+  const groups = await Promise.all(input.projectIds.map((projectId) =>
+    retrieveLexicalProjectCandidates({
+      actorUserId: input.principal.user.id,
+      projectId,
+      query,
+      limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit,
+      documentIds: input.sourceDocumentIds,
+    }),
+  ));
+  const lexical = groups.flat()
+    .sort((left, right) => right.evidence.score - left.evidence.score)
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+  const lexicalLatencyMs = elapsed(lexicalStarted);
+  let evidence = selectLexicalEvidence(lexical);
+  let fallbackReason: RetrievalFallbackReason | null = null;
+  if (evidence.length === 0 && (input.sourceDocumentIds.length > 0 || shouldUseAuthorizedProjectContext(query))) {
+    const contextualGroups = await Promise.all(input.projectIds.map((projectId) =>
+      retrieveAuthorizedProjectContextCandidates({
+        actorUserId: input.principal.user.id,
+        projectId,
+        documentIds: input.sourceDocumentIds,
+        limit: HYBRID_RETRIEVAL_PROFILE.fusedCandidateLimit,
+      }),
+    ));
+    const contextual = contextualGroups.flat()
+      .sort((left, right) => right.evidence.score - left.evidence.score)
+      .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+    const bounded = selectBoundedProjectEvidence({
+      candidates: contextual,
+      evidenceLimit: HYBRID_RETRIEVAL_PROFILE.evidenceLimit,
+      maxChars: HYBRID_RETRIEVAL_PROFILE.maxEvidenceCharacters,
+    });
+    if (bounded.length > 0) {
+      evidence = bounded;
+      fallbackReason = "AUTHORIZED_PROJECT_CONTEXT";
+    }
+  }
+  const auditCandidates = auditedLexicalCandidates(lexical);
+  const selectedChunkIds = new Set(evidence.map((item) => item.chunkId));
+  const totalLatencyMs = elapsed(totalStarted);
+  const retrievalAudit = await finalizeRetrievalRun({
+    retrievalRunId,
+    executionId: input.execution.id,
+    effectiveMode: "lexical",
+    fallbackReason,
+    insufficientEvidence: evidence.length === 0,
+    embeddingCoverageBps: 0,
+    lexicalLatencyMs,
+    queryEmbeddingLatencyMs: 0,
+    vectorLatencyMs: 0,
+    fusionLatencyMs: 0,
+    totalLatencyMs,
+    lexicalCandidateCount: lexical.length,
+    vectorCandidateCount: 0,
+    fusedCandidateCount: lexical.length,
+    candidates: auditCandidates,
+    selectedChunkIds,
+  });
+  return {
+    requestedMode: input.mode,
+    effectiveMode: "lexical",
+    fallbackReason,
+    evidence,
+    retrievalRunId,
+    auditDegraded: retrievalAudit.auditDegraded,
+    metrics: {
+      lexicalCandidateCount: lexical.length,
+      vectorCandidateCount: 0,
+      fusedCandidateCount: lexical.length,
+      selectedEvidenceCount: evidence.length,
+      embeddingCoverageBps: 0,
+      lexicalLatencyMs,
+      queryEmbeddingLatencyMs: 0,
+      vectorLatencyMs: 0,
+      fusionLatencyMs: 0,
+      totalLatencyMs,
+    },
+  };
+}

@@ -14,6 +14,7 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
+import { aiGenerationModel } from "./ai-model-management";
 import {
   aiExecutionStatusEnum,
   aiMessageRoleEnum,
@@ -87,6 +88,11 @@ export const aiThread = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    /** Optional per-conversation text-model override for super administrators. */
+    generationModelId: text("generation_model_id").references(
+      () => aiGenerationModel.id,
+      { onDelete: "restrict" },
+    ),
   },
   (table) => [
     unique("ai_threads_project_owner_scope_unique").on(
@@ -126,6 +132,13 @@ export const aiMessage = pgTable(
     status: aiMessageStatusEnum("status").notNull(),
     content: text("content").notNull(),
     executionId: text("execution_id"),
+    /** Stable display order; timestamps alone cannot order one request's pair. */
+    sequence: integer("sequence").notNull(),
+    /** Server-validated #project and $document context references for user messages. */
+    contextReferences: jsonb("context_references")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -140,6 +153,11 @@ export const aiMessage = pgTable(
       table.projectId,
       table.threadId,
       table.createdAt,
+    ),
+    uniqueIndex("ai_messages_thread_sequence_uidx").on(
+      table.projectId,
+      table.threadId,
+      table.sequence,
     ),
     foreignKey({
       name: "ai_messages_thread_owner_scope_fk",

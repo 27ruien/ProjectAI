@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Bot, Building2, FolderOpen, LogOut, Settings, ShieldCheck, Users } from "lucide-react";
+import { Bot, Building2, FileText, FolderOpen, LogOut, Settings, ShieldCheck, Users } from "lucide-react";
 import { useState } from "react";
 import { initials } from "@/components/project/mock-view";
 import { navigateToLogin, signOut } from "@/components/auth/auth-client";
@@ -46,6 +46,10 @@ function SidebarContent({ viewer, currentPath, onNavigate }: { viewer: ViewerCon
           <Icon className="size-[17px] shrink-0" /><span>{item.label}</span>
         </Link>;
       })}</div>
+      {active("/data-spaces") ? <div className="mt-1 space-y-0.5 border-l border-sidebar-border pl-3 ml-4" aria-label="资料空间导航">
+        <Link href="/data-spaces/projects" onClick={onNavigate} className={cn("flex h-8 items-center gap-2 rounded-md px-2 text-xs", active("/data-spaces/projects") ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-muted hover:bg-muted hover:text-sidebar-foreground")}><FolderOpen className="size-3.5" />项目资料</Link>
+        <Link href="/data-spaces/company" onClick={onNavigate} className={cn("flex h-8 items-center gap-2 rounded-md px-2 text-xs", active("/data-spaces/company") ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-sidebar-muted hover:bg-muted hover:text-sidebar-foreground")}><FileText className="size-3.5" />公司资料</Link>
+      </div> : null}
     </nav>
     <div className="border-t border-sidebar-border p-3">
       <DropdownMenu>
@@ -63,6 +67,7 @@ function SidebarContent({ viewer, currentPath, onNavigate }: { viewer: ViewerCon
             <DropdownMenuItem asChild><Link href="/settings" onClick={onNavigate}><Settings />管理设置</Link></DropdownMenuItem>
             <DropdownMenuSeparator />
           </> : null}
+          <DropdownMenuItem asChild><Link href="/help/models-and-api" onClick={onNavigate}>模型与 API 帮助</Link></DropdownMenuItem>
           <DropdownMenuItem onSelect={() => void logout()} disabled={loggingOut}><LogOut />{loggingOut ? "正在退出" : "退出登录"}</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

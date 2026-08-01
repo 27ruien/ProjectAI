@@ -19,14 +19,15 @@ export default async function CatchAllPage({ params }: Props) {
   if (section === "data-spaces" && !area) redirect("/data-spaces/projects");
   if (section === "data-spaces" && area === "projects" && entityId && child === "documents") redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/files`);
   if (section === "data-spaces" && area === "projects" && entityId && child === "requirements") redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/artifacts`);
-  const allowedRoot = ["assistant", "data-spaces", "organization", "settings"];
+  const allowedRoot = ["assistant", "data-spaces", "organization", "settings", "help"];
   if (!allowedRoot.includes(section)) notFound();
   if (section === "assistant" && area) notFound();
   if (section === "data-spaces" && !["projects", "company"].includes(area)) notFound();
   if (section === "data-spaces" && area === "company" && entityId) notFound();
   if (section === "data-spaces" && area === "projects" && entityId && entityId !== "new" && child && !["overview", "files", "artifacts", "members"].includes(child)) notFound();
-  if (section === "organization" && area) notFound();
+  if (section === "organization" && area && !["structure", "members"].includes(area)) notFound();
   if (section === "settings" && area && area !== "ai-models") notFound();
+  if (section === "help" && area !== "models-and-api") notFound();
   const returnTo = `/${route.join("/")}`;
   const principal = await requireAuthenticatedUser(returnTo);
   const viewer = await buildViewerContext(principal);

@@ -284,6 +284,7 @@ async function insertExecutionFixture(input: {
         role: "user",
         status: "completed",
         content: question,
+        sequence: 1,
       },
       {
         id: assistantMessageId,
@@ -303,6 +304,7 @@ async function insertExecutionFixture(input: {
             : input.status === "failed"
               ? "额度测试失败"
               : "",
+        sequence: 2,
       },
     ]);
     await tx.insert(aiExecution).values({

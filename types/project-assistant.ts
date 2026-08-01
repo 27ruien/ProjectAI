@@ -17,12 +17,24 @@ export type ProjectAssistantCitationDto = {
   sourceScope: "organization" | "department" | "project" | "restricted";
 };
 
+export type AssistantContextReference =
+  | { type: "project"; projectId: string; label: string }
+  | {
+      type: "document";
+      documentId: string;
+      documentVersionId?: string;
+      sourceType: "project" | "company";
+      label: string;
+    };
+
 export type ProjectAssistantMessageDto = {
   id: string;
   role: "user" | "assistant";
   status: "pending" | "completed" | "failed" | "insufficient_evidence";
   content: string;
   createdAt: string;
+  sequence: number;
+  contextReferences: AssistantContextReference[];
   citations: ProjectAssistantCitationDto[];
   fallbackUsed: boolean;
 };
@@ -35,6 +47,7 @@ export type ProjectAssistantThreadSummaryDto = {
   updatedAt: string;
   archivedAt: string | null;
   messageCount: number;
+  generationModelId: string | null;
 };
 
 export type ProjectAssistantThreadDto = ProjectAssistantThreadSummaryDto & {
@@ -72,4 +85,5 @@ export type ProjectAssistantQuestionRequest = {
   question: string;
   modelProfileId: typeof PROJECT_ASSISTANT_MODEL_PROFILE_ID;
   sourceDocumentIds?: string[];
+  contextReferences?: AssistantContextReference[];
 };

@@ -58,11 +58,18 @@ export async function ensureOrganizationAiDefaults(input: { organizationId: stri
   }
 }
 
-export async function resolveGenerationScenario(input: { projectId: string; actorId: string; scenario: Exclude<AiScenario, "requirement_overview_prefill">; db?: DatabaseExecutor }) {
+export async function resolveGenerationScenario(input: { projectId: string; actorId: string; scenario: Exclude<AiScenario, "requirement_overview_prefill">; generationModelId?: string | null; db?: DatabaseExecutor }) {
   const db = input.db ?? getDb();
   const organizationId = await organizationForProject(input.projectId, db);
   await ensureOrganizationAiDefaults({ organizationId, actorId: input.actorId, db });
-  const [row] = await db.select({ binding: aiScenarioBinding, model: aiGenerationModel, provider: aiProviderProfile })
+  const [row] = input.generationModelId
+    ? await db.select({ binding: aiScenarioBinding, model: aiGenerationModel, provider: aiProviderProfile })
+      .from(aiScenarioBinding)
+      .innerJoin(aiGenerationModel, eq(aiGenerationModel.id, input.generationModelId))
+      .innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
+      .where(and(eq(aiScenarioBinding.organizationId, organizationId), eq(aiScenarioBinding.scenario, input.scenario), eq(aiGenerationModel.organizationId, organizationId)))
+      .limit(1)
+    : await db.select({ binding: aiScenarioBinding, model: aiGenerationModel, provider: aiProviderProfile })
     .from(aiScenarioBinding)
     .innerJoin(aiGenerationModel, eq(aiScenarioBinding.generationModelId, aiGenerationModel.id))
     .innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
@@ -76,6 +83,15 @@ export async function resolveGenerationScenario(input: { projectId: string; acto
   }
   const runtime = getAiRuntimeConfig();
   return { modelId: row.model.modelId, modelRecordId: row.model.id, providerName: row.provider.name, runtime: { ...runtime, qwenBaseUrl: validateQwenBaseUrl(row.provider.baseUrl) } };
+}
+
+export async function listEnabledGenerationModels(input: { projectId: string; actorId: string; db?: DatabaseExecutor }) {
+  const db = input.db ?? getDb();
+  const organizationId = await organizationForProject(input.projectId, db);
+  await ensureOrganizationAiDefaults({ organizationId, actorId: input.actorId, db });
+  return db.select({ id: aiGenerationModel.id, displayName: aiGenerationModel.displayName, modelId: aiGenerationModel.modelId })
+    .from(aiGenerationModel).innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
+    .where(and(eq(aiGenerationModel.organizationId, organizationId), eq(aiGenerationModel.enabled, true), eq(aiProviderProfile.enabled, true)));
 }
 
 export async function testGenerationModel(input: { principal: AuthenticatedPrincipal; projectId: string; modelId: string; db?: DatabaseExecutor }) {

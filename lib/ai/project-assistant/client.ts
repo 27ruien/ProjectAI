@@ -2,6 +2,7 @@
 
 import { withBasePath } from "@/lib/base-path";
 import type {
+  AssistantContextReference,
   ProjectAssistantMessageResponse,
   ProjectAssistantThreadResponse,
   ProjectAssistantThreadsResponse,
@@ -113,6 +114,7 @@ export function askProjectAssistant(
   question: string,
   requestId: string,
   sourceDocumentIds: string[] = [],
+  contextReferences: AssistantContextReference[] = [],
 ): Promise<ProjectAssistantMessageResponse> {
   return api(
     projectPath(projectId, `/${encodeURIComponent(threadId)}/messages`),
@@ -126,7 +128,16 @@ export function askProjectAssistant(
         question,
         modelProfileId: PROJECT_ASSISTANT_MODEL_PROFILE_ID,
         sourceDocumentIds,
+        contextReferences,
       }),
     },
   );
+}
+
+export function listGeneralAssistantModels(): Promise<{ models: Array<{ id: string; displayName: string; modelId: string }> }> {
+  return api("/api/ai/session-models");
+}
+
+export function setGeneralAssistantThreadModel(threadId: string, generationModelId: string | null): Promise<{ ok: true }> {
+  return api(`/api/ai/threads/${encodeURIComponent(threadId)}/model`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ generationModelId }) });
 }
