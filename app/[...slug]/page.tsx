@@ -11,7 +11,7 @@ export default async function CatchAllPage({ params }: Props) {
   const { slug } = await params;
   const route = slug.length ? slug : ["assistant"];
   const [section, area, entityId, child] = route;
-  if (section === "dashboard") redirect("/assistant");
+  if (["dashboard", "daily-report", "ai-workflows", "weekly-reports", "requirements"].includes(section)) redirect("/assistant");
   if (section === "projects") redirect(`/data-spaces/projects/${route.slice(1).map(encodeURIComponent).join("/")}`.replace(/\/$/u, ""));
   if (section === "chat") redirect("/assistant");
   if (section === "company-knowledge") redirect("/data-spaces/company");

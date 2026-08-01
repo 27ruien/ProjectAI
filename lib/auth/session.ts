@@ -1,6 +1,7 @@
 import { headers as nextHeaders } from "next/headers";
 import { redirect } from "next/navigation";
 import { getAuth } from "./config";
+import { DEFAULT_APP_RETURN_TO, safeAppReturnTo } from "./return-to";
 import { findUserById } from "@/lib/db/repositories/user-repository";
 import type { SystemRole, UserRecord } from "@/lib/db/schema";
 import type { ProductRole } from "./providers";
@@ -11,10 +12,7 @@ export type AuthenticatedPrincipal = {
 };
 
 export function safeReturnTo(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return "/daily-report";
-  }
-  return value;
+  return safeAppReturnTo(value);
 }
 
 export async function getAuthenticatedPrincipal(
@@ -30,7 +28,7 @@ export async function getAuthenticatedPrincipal(
 }
 
 export async function requireAuthenticatedUser(
-  returnTo = "/dashboard",
+  returnTo = DEFAULT_APP_RETURN_TO,
 ): Promise<AuthenticatedPrincipal> {
   const requestHeaders = await nextHeaders();
   const principal = await getAuthenticatedPrincipal(requestHeaders);

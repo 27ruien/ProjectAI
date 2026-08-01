@@ -51,7 +51,7 @@ export async function ensureOrganizationAiDefaults(input: { organizationId: stri
   for (const scenario of AI_SCENARIOS) {
     await db.insert(aiScenarioBinding).values({
       id: defaultIds.scenario(orgId, scenario), organizationId: orgId, scenario,
-      generationModelId: scenario === "requirement_overview_prefill" ? null : generationId,
+      generationModelId: generationId,
       embeddingModelId: ["project_grounded_chat", "requirement_overview_prefill"].includes(scenario) ? embeddingId : null,
       enabled: true, updatedBy: input.actorId,
     }).onConflictDoNothing();

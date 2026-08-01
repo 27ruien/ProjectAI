@@ -98,6 +98,17 @@ describe("focused MVP product surface", () => {
     assert.match(GENERAL_ASSISTANT_SYSTEM_PROMPT, /本回答未使用项目或公司资料/);
   });
 
+  it("keeps the assistant route and every text generation scenario available by default", async () => {
+    const [router, modelManagement] = await Promise.all([
+      source("app/[...slug]/page.tsx"),
+      source("lib/ai/model-management.ts"),
+    ]);
+    assert.match(router, /"daily-report"/);
+    assert.match(router, /redirect\("\/assistant"\)/);
+    assert.match(modelManagement, /generationModelId: generationId/);
+    assert.doesNotMatch(modelManagement, /scenario === "requirement_overview_prefill" \? null : generationId/);
+  });
+
   it("returns a citation-free deterministic General Chat answer", async () => {
     const provider = new FakeProjectAssistantProvider();
     const result = await provider.generate({
