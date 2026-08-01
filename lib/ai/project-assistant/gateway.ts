@@ -25,6 +25,8 @@ export type ProjectAssistantGatewayInput = {
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
+  /** Resolved server-side scenario binding; never accepted directly from UI. */
+  model?: string;
 };
 
 function responseFormatForPurpose(
@@ -35,6 +37,7 @@ function responseFormatForPurpose(
     "requirement_repair",
     "requirement_document",
     "requirement_document_repair",
+    "requirement_overview",
     "action_generation",
     "risk_generation",
     "weekly_report",
@@ -79,10 +82,8 @@ export class ProjectAssistantGateway {
     let lastRetryableError: AiProviderError | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        return this.result(
-          await this.invoke(PROJECT_ASSISTANT_PRIMARY_MODEL, input),
-          false,
-        );
+        const model = input.model ?? PROJECT_ASSISTANT_PRIMARY_MODEL;
+        return this.result(await this.invoke(model, input), model, false);
       } catch (error) {
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
@@ -110,7 +111,7 @@ export class ProjectAssistantGateway {
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxOutputTokens,
     });
-    if (result.actualModel !== PROJECT_ASSISTANT_PRIMARY_MODEL) {
+    if (result.actualModel !== model) {
       throw new AiProviderError("INVALID_RESPONSE", false);
     }
     return result;
@@ -118,11 +119,12 @@ export class ProjectAssistantGateway {
 
   private result(
     providerResult: ProjectAssistantProviderResult,
+    requestedModel: string,
     fallbackUsed: boolean,
   ): AiGatewayResult {
     return {
       provider: this.provider.provider,
-      requestedModel: PROJECT_ASSISTANT_PRIMARY_MODEL,
+      requestedModel,
       actualModel: providerResult.actualModel,
       fallbackUsed,
       text: providerResult.text,

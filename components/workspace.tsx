@@ -12,6 +12,7 @@ import { ProjectsPage } from "@/components/project/ProjectsPage";
 import { RequirementDocumentsPage } from "@/components/project/RequirementDocumentsPage";
 import { OrganizationPage } from "@/components/organization";
 import { AccessDeniedPage, NotFoundPage, SettingsPage } from "@/components/system";
+import { AiModelManagementPage } from "@/components/system/AiModelManagementPage";
 import type { AuthorizedProjectSummary, ViewerContext } from "@/lib/auth/ui-types";
 
 function StandardPage({ children }: { children: React.ReactNode }) {
@@ -39,6 +40,7 @@ export function Workspace({ route, viewer, currentProject }: {
   else if (isKnowledge && area === "sessions" && !entityId) page = <FocusedChatPage viewer={viewer} />;
   else if (isKnowledge && area === "templates" && !entityId) page = <CompanyKnowledgePage />;
   else if (section === "organization" && viewer.user.productRole === "super_admin") page = <StandardPage><OrganizationPage /></StandardPage>;
+  else if (section === "settings" && area === "ai-models" && viewer.user.productRole !== "member") page = <StandardPage><AiModelManagementPage organizationId={viewer.projects[0]?.organizationId ?? "org-legacy-default"} verificationProjectId={viewer.projects[0]?.id ?? null} /></StandardPage>;
   else if (section === "settings" && viewer.user.productRole !== "member") page = <StandardPage><SettingsPage /></StandardPage>;
   else page = <StandardPage><NotFoundPage path={path} /></StandardPage>;
   const knowledgePage = isKnowledge ? <><KnowledgeModuleNav activeArea={area as "projects" | "templates" | "sessions"} />{page}</> : page;

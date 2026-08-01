@@ -15,6 +15,7 @@ import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { RequirementOverviewWorkspace } from "@/components/requirement-overview/RequirementOverviewWorkspace";
 
 type Section = { key: string; title: string; content: string; citationLabels: string[] };
 type Citation = { label: string; valid: boolean; sourceScope?: string; displayName?: string; sourceLocator?: Record<string, unknown>; excerpt?: string; reason?: string };
@@ -47,7 +48,6 @@ export function RequirementDocumentsPage({ project }: { project: AuthorizedProje
   const [sections, setSections] = useState<Section[]>([]);
   const [canEdit, setCanEdit] = useState(false);
   const [canPublish, setCanPublish] = useState(false);
-  const [hasFailedHistory, setHasFailedHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<"generate" | "save" | "publish" | "restore" | null>(null);
   const [generationStep, setGenerationStep] = useState(0);
@@ -59,7 +59,6 @@ export function RequirementDocumentsPage({ project }: { project: AuthorizedProje
     if (!response.ok) throw new Error(body.error?.message ?? "需求文档加载失败");
     const rows = body.documents ?? [];
     setDocuments(rows); setCanEdit(Boolean(body.canEdit)); setCanPublish(Boolean(body.canPublish));
-    setHasFailedHistory(rows.some((item) => item.status === "failed"));
     // A failed execution is history, not a document that should become the
     // default page state. Only show it when this load explicitly requested
     // that version (for example, immediately after the user generated it).
@@ -85,7 +84,8 @@ export function RequirementDocumentsPage({ project }: { project: AuthorizedProje
       {generating ? <section className="mb-6 rounded-lg border bg-card p-5" role="status" data-testid="requirement-generating"><div className="flex items-center justify-between gap-3"><div><p className="text-sm font-medium">{steps[generationStep]}</p><p className="mt-1 text-xs text-muted-foreground">任务已登记，可以离开本页后再返回查看。</p></div><span className="text-xs tabular-nums text-primary">{generationStep + 1}/{steps.length}</span></div><Progress value={((generationStep + 1) / steps.length) * 100} className="mt-4 h-1.5" /><div className="mt-5 space-y-3"><Skeleton className="h-5 w-2/5" /><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-5/6" /></div></section> : null}
       {error ? <Alert variant="destructive" className="mb-5"><AlertTitle>操作未完成</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
 
-      {!selected ? <section className="grid min-h-96 place-items-center rounded-lg border bg-card text-center" data-testid="requirement-empty"><div><FileText className="mx-auto size-9 text-muted-foreground" /><h3 className="mt-3 text-sm font-medium">尚无 AI 生成文档</h3><p className="mt-1 text-xs text-muted-foreground">{hasFailedHistory ? "之前的生成没有完成，目前没有可查看的文档；请前往会话重新生成。" : "上传并解析项目资料后，在会话中生成第一份需求文档。"}</p>{canEdit ? <Button className="mt-4" asChild><Link href={`/knowledge/sessions?project=${encodeURIComponent(project.id)}`}><Sparkles />打开会话</Link></Button> : null}</div></section> : selected.status === "failed" ? <RequirementFailure projectId={project.id} document={selected} /> : <>
+      <RequirementOverviewWorkspace projectId={project.id} />
+      {!selected ? <section className="mt-6 grid min-h-52 place-items-center rounded-lg border bg-card text-center" data-testid="requirement-empty"><div><FileText className="mx-auto size-9 text-muted-foreground" /><h3 className="mt-3 text-sm font-medium">尚无旧版 AI 生成文档</h3><p className="mt-1 text-xs text-muted-foreground">需求概览会在会话中发起，并在保存后出现在项目资料中；这里不会因你尚未生成而显示错误。</p>{canEdit ? <Button className="mt-4" asChild><Link href={`/knowledge/sessions?project=${encodeURIComponent(project.id)}`}><Sparkles />前往会话</Link></Button> : null}</div></section> : selected.status === "failed" ? <RequirementFailure projectId={project.id} document={selected} /> : <>
         <section className="border-b pb-5" data-testid="requirement-document"><div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><h3 className="text-base font-semibold">需求文档 v{selected.versionNumber}</h3><Badge variant="outline" className={selected.status === "published" ? "border-success/20 bg-success-soft text-success" : "bg-muted text-muted-foreground"}>{selected.status === "published" ? "已发布" : selected.status === "generating" ? "生成中" : "草稿"}</Badge></div><dl className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs text-muted-foreground"><div><dt className="inline">资料快照：</dt><dd className="inline">{new Date(selected.sourceSnapshotAt).toLocaleString("zh-CN")}</dd></div><div><dt className="inline">项目资料：</dt><dd className="inline">{selected.projectSourceCount} 份</dd></div><div><dt className="inline">公司规范：</dt><dd className="inline">{selected.companySourceCount} 份</dd></div></dl></div><div className="flex flex-wrap gap-2">{canEdit && selected.status !== "generating" ? editing ? <Button variant="outline" onClick={() => void save()} disabled={Boolean(busy)}>{busy === "save" ? <LoaderCircle className="animate-spin" /> : <Save />}保存草稿</Button> : <Button variant="outline" onClick={() => setEditing(true)}><Pencil />编辑</Button> : null}{canPublish && selected.status === "draft" ? <Button onClick={() => void publish()} disabled={Boolean(busy)}>发布</Button> : null}{selected.status !== "generating" ? <DownloadMenu projectId={project.id} documentId={selected.id} /> : null}<VersionHistory documents={documents} selectedId={selectedId} canEdit={canEdit} busy={Boolean(busy)} onSelect={selectVersion} onRestore={(document) => void restore(document)} /></div></div></section>
 
         <div className="mx-auto max-w-[860px] py-8">

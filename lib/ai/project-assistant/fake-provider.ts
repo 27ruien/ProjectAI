@@ -92,7 +92,9 @@ export class FakeProjectAssistantProvider
     }
 
     let text: string;
-    if (
+    if (request.purpose === "requirement_overview") {
+      text = JSON.stringify({ summary: "- 已根据当前有效项目资料和项目经理确认项生成结构化摘要。\n- 未被资料支持的结论保持为待确认，不作为事实。" });
+    } else if (
       request.purpose === "requirement_document" ||
       request.purpose === "requirement_document_repair"
     ) {

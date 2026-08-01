@@ -18,6 +18,7 @@ export * from "./document-embeddings";
 export * from "./ai-retrieval-profile";
 export * from "./ai-retrieval";
 export * from "./focused-mvp";
+export * from "./ai-model-management";
 
 import { account, rateLimit, verification } from "./auth-support";
 import { session } from "./sessions";

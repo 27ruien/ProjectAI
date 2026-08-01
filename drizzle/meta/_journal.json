@@ -190,6 +190,13 @@
       "when": 1785484800000,
       "tag": "0026_general_chat_execution",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1785571200000,
+      "tag": "0027_guided_requirement_overview_model_management",
+      "breakpoints": true
     }
   ]
 }

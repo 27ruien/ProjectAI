@@ -21,7 +21,7 @@ export type EmbeddingRuntimeConfig = {
   enabled: boolean;
   provider: EmbeddingProviderKind;
   profileId: typeof EMBEDDING_PROFILE_ID;
-  model: typeof EMBEDDING_MODEL;
+  model: string;
   region: typeof EMBEDDING_REGION;
   dimensions: typeof EMBEDDING_VECTOR_DIMENSIONS;
   qwenBaseUrl: string | null;

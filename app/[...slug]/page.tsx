@@ -23,7 +23,8 @@ export default async function CatchAllPage({ params }: Props) {
   if (section === "knowledge" && !["projects", "templates", "sessions"].includes(area)) notFound();
   if (section === "knowledge" && (area === "templates" || area === "sessions") && entityId) notFound();
   if (section === "knowledge" && area === "projects" && entityId && entityId !== "new" && child && !["overview", "files", "artifacts", "members"].includes(child)) notFound();
-  if ((section === "organization" || section === "settings") && area) notFound();
+  if (section === "organization" && area) notFound();
+  if (section === "settings" && area && area !== "ai-models") notFound();
   const returnTo = `/${route.join("/")}`;
   const principal = await requireAuthenticatedUser(returnTo);
   const viewer = await buildViewerContext(principal);

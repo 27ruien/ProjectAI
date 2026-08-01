@@ -13,6 +13,7 @@ import type {
   ProjectAssistantThreadSummaryDto,
 } from "@/types/project-assistant";
 import { requireAiAssistantEnabled } from "./config";
+import { resolveGenerationScenario } from "@/lib/ai/model-management";
 import {
   buildGeneralUserPrompt,
   buildCitationRepairPrompt,
@@ -227,10 +228,16 @@ export async function askGeneralAssistant(input: {
       actorUserId: input.principal.user.id,
       excludeMessageId: reservation.execution.userMessageId,
     });
-    const gateway = createProjectAssistantGateway(config);
+    const scenario = await resolveGenerationScenario({
+      projectId,
+      actorId: input.principal.user.id,
+      scenario: "general_chat",
+    });
+    const gateway = createProjectAssistantGateway(scenario.runtime);
     await updateExecutionPhase(reservation.execution.id, "calling_provider");
     consumedGatewayResult = await gateway.generate({
       purpose: "answer",
+      model: scenario.modelId,
       systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGeneralUserPrompt({ question: parsed.data.question, history }),
     });
@@ -367,10 +374,16 @@ export async function askProjectAssistant(input: {
       });
     }
 
-    const gateway = createProjectAssistantGateway(config);
+    const scenario = await resolveGenerationScenario({
+      projectId: input.projectId,
+      actorId: input.principal.user.id,
+      scenario: "project_grounded_chat",
+    });
+    const gateway = createProjectAssistantGateway(scenario.runtime);
     await updateExecutionPhase(reservation.execution.id, "calling_provider");
     consumedGatewayResult = await gateway.generate({
       purpose: "answer",
+      model: scenario.modelId,
       systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGroundedUserPrompt({
         question: parsed.data.question,
@@ -386,6 +399,7 @@ export async function askProjectAssistant(input: {
     if (!validated) {
       const repaired = await gateway.generate({
         purpose: "repair",
+        model: scenario.modelId,
         systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
         userPrompt: buildCitationRepairPrompt({
           answer: consumedGatewayResult.text,
