@@ -1000,8 +1000,7 @@ export async function reserveAssistantExecution(input: {
     const [sequenceRow] = await tx
       .select({ value: sql<number>`coalesce(max(${aiMessage.sequence}), 0)` })
       .from(aiMessage)
-      .where(and(eq(aiMessage.projectId, input.projectId), eq(aiMessage.threadId, input.threadId)))
-      .for("update", { of: aiMessage });
+      .where(and(eq(aiMessage.projectId, input.projectId), eq(aiMessage.threadId, input.threadId)));
     const nextSequence = Number(sequenceRow?.value ?? 0) + 1;
     await tx.insert(aiMessage).values([
       {
