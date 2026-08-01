@@ -14,6 +14,11 @@ test("guided requirement overview stays structured, cited, and Markdown-only", a
   assert.match(service, /REQUIREMENT_CONFIRMATION_REQUIRED/);
   assert.match(service, /SOURCE_CHANGED/);
   assert.match(service, /sourceDigest/);
+  assert.match(service, /REQUIREMENT_OVERVIEW_FIELD_REGISTRY/);
+  assert.match(service, /renderRequirementOverviewMarkdown/);
+  assert.match(service, /项目整体架构（弥知、客户、三方等）/);
+  assert.match(service, /MVP需求/);
+  assert.doesNotMatch(service, /## 已确认/);
   assert.match(ui, /下载 Markdown/);
   assert.doesNotMatch(ui, /DOCX/);
 });

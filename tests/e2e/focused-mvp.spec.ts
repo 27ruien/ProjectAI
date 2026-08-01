@@ -128,7 +128,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const upload = page.getByRole("dialog", { name: "上传项目资料" });
   await upload.getByLabel("选择上传文件").setInputFiles(fictitiousText(
     projectFileName,
-    "项目事实：虚构项目计划在 2026 年 10 月 15 日完成内部上线。用户是内部项目经理。",
+    "时间：2026 年 10 月 15 日\n平台：微信小程序\n项目地区：中国\nMVP需求：会员注册和 CRM 同步",
   ));
   await upload.getByRole("button", { name: "开始上传", exact: true }).click();
   await expect(upload.getByText("项目资料上传成功", { exact: true })).toBeVisible();
@@ -177,13 +177,24 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const overview = page.getByTestId("requirement-overview-workspace");
   await expect(overview.getByText("需求概览 v1", { exact: true })).toBeVisible();
   const overviewAnswers = overview.locator("textarea");
-  await overviewAnswers.nth(0).fill("内部上线项目；成功标准为按期上线，当前范围不包括外部客户发布。");
-  await overviewAnswers.nth(1).fill("内部项目经理与交付团队；优先完成项目资料检索与需求概览。 ");
-  await overviewAnswers.nth(2).fill("交付需求概览，项目负责人验收，目标日期为 2026 年 10 月 15 日。");
+  await overviewAnswers.nth(0).fill("2026 年 10 月 15 日内部上线。");
+  await overviewAnswers.nth(1).fill("微信小程序。");
+  await overviewAnswers.nth(2).fill("弥知负责研发与交付，客户负责业务确认，CRM 由三方提供。");
+  await overviewAnswers.nth(3).fill("微信小程序由弥知主体发布。");
+  await overviewAnswers.nth(4).fill("仅处理完成会员注册所必需的数据，并在上线前确认隐私政策。");
+  await overviewAnswers.nth(5).fill("可行，需要研发资源和 CRM 三方接口联调。");
+  await overviewAnswers.nth(6).fill("会员注册和 CRM 同步。");
   await overview.getByRole("button", { name: "保存确认", exact: true }).click();
   await expect(overview.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
   await overview.getByRole("button", { name: "生成需求概览", exact: true }).click();
   await expect(overview.getByText("已生成", { exact: true })).toBeVisible({ timeout: 60_000 });
+  const overviewPreview = overview.locator("pre");
+  await expect(overviewPreview).toContainText("|项目地区|中国");
+  await expect(overviewPreview).toContainText("|平台类型|微信小程序");
+  await expect(overviewPreview).toContainText("|7|MVP需求|会员注册和 CRM 同步");
+  await expect(overviewPreview).toContainText("|适配类型|TBD（待项目经理确认）|");
+  await expect(overviewPreview).not.toContainText("目标与成功标准");
+  await expect(overviewPreview).not.toContainText("用户与关键场景");
   await evidence(page, "06-requirement-success-local-fake.png");
   const overviewDownload = overview.getByRole("link", { name: "下载 Markdown", exact: true });
   const overviewHref = await overviewDownload.getAttribute("href");

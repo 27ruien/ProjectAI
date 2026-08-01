@@ -86,8 +86,26 @@ export const aiScenarioBinding = pgTable("ai_scenario_bindings", {
   check("ai_scenario_binding_name_check", sql`${table.scenario} in ('general_chat','project_grounded_chat','requirement_overview_prefill','requirement_overview_guidance','requirement_markdown_generation')`),
 ]);
 
-export type RequirementOverviewItem = { id: string; label: string; status: "confirmed" | "user_confirmed" | "inferred" | "missing" | "conflict" | "not_applicable"; value: string; citationLabels: string[] };
-export type RequirementOverviewQuestion = { id: string; group: string; prompt: string; required: boolean; answer: string; status: "pending" | "answered" | "not_applicable"; citationLabels: string[] };
+export type RequirementOverviewItem = {
+  id: string;
+  label: string;
+  status: "confirmed" | "user_confirmed" | "inferred" | "missing" | "conflict" | "not_applicable";
+  value: string;
+  citationLabels: string[];
+  alternatives?: Array<{ value: string; citationLabels: string[] }>;
+};
+export type RequirementOverviewQuestion = {
+  id: string;
+  group: string;
+  prompt: string;
+  required: boolean;
+  answer: string;
+  status: "pending" | "answered" | "not_applicable";
+  citationLabels: string[];
+  targetFieldKeys?: string[];
+  reason?: string;
+  highRisk?: boolean;
+};
 
 export const guidedRequirementOverview = pgTable("guided_requirement_overviews", {
   id: text("id").primaryKey(),

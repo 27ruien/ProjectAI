@@ -2,54 +2,207 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { requireProjectAccess, requireProjectRole } from "@/lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
-import { createProjectAssistantGateway, ProjectAssistantError } from "@/lib/ai/project-assistant";
-import { resolveGenerationScenario } from "@/lib/ai/model-management";
 import { getDb } from "@/lib/db/client";
-import { guidedRequirementOverview, guidedRequirementOverviewCitation, type RequirementOverviewItem, type RequirementOverviewQuestion } from "@/lib/db/schema";
+import {
+  guidedRequirementOverview,
+  guidedRequirementOverviewCitation,
+  type RequirementOverviewItem,
+  type RequirementOverviewQuestion,
+} from "@/lib/db/schema";
 import { ProjectManagementError } from "@/lib/project-management/errors";
-import { collectRequirementEvidence, requirementSha256, syncRequirementSource, type RequirementEvidence } from "./requirement-documents";
+import {
+  collectRequirementEvidence,
+  requirementSha256,
+  syncRequirementSource,
+  type RequirementEvidence,
+} from "./requirement-documents";
 
 export const REQUIREMENT_OVERVIEW_SKILL_ID = "generate_requirement_overview";
-type OverviewStatus = "confirmed" | "user_confirmed" | "inferred" | "missing" | "conflict" | "not_applicable";
-const updateSchema = z.object({ answers: z.array(z.object({ id: z.string().min(1).max(100), answer: z.string().max(5000), notApplicable: z.boolean().optional() })).max(50) }).strict();
+export type OverviewStatus = "confirmed" | "user_confirmed" | "inferred" | "missing" | "conflict" | "not_applicable";
 
-function digest(evidence: RequirementEvidence[]) { return requirementSha256(evidence.map((item) => `${item.documentId}:${item.versionId}:${item.chunkId}:${item.contentSha256}`).join("\n")); }
+export type RequirementOverviewFieldDefinition = {
+  key: string;
+  section: "项目背景" | "需求概览";
+  order: number;
+  exactLabel: string;
+  templateGuidance: string;
+  required: true;
+  allowedStatus: readonly OverviewStatus[];
+};
+
+const allStatuses: readonly OverviewStatus[] = ["confirmed", "user_confirmed", "inferred", "missing", "conflict", "not_applicable"];
+const backgroundFields = [
+  ["timeline", "时间", "项目关键时间节点、活动期或维护期。"],
+  ["platform_type", "平台类型", "仅记录本项目涉及的具体业务平台，如微信小程序、淘宝 H5。"],
+  ["adaptation_type", "适配类型", "记录屏幕方向、沉浸式、客户端或平板等适配要求。"],
+  ["interaction_type", "交互类型", "记录项目需要的交互形式。"],
+  ["distribution_channel", "投放渠道", "记录入口、落地页、分享和线下等投放渠道。"],
+  ["project_region", "项目地区", "记录国内、海外或具体国家/地区。"],
+  ["project_architecture", "项目整体架构（弥知、客户、三方等）", "记录弥知、客户、三方及其责任边界。"],
+  ["special_support", "特殊支持", "记录 POC、DEMO、提案等特殊支持。"],
+  ["maintenance_type", "项目维护类型", "记录活动期或长期维护安排。"],
+  ["onsite_event_support", "线下活动支持", "记录线下活动现场支持需求。"],
+  ["installation_support", "搭建支持", "记录线下搭建与硬件支持需求。"],
+  ["deployment_type", "上线类型", "记录具体平台的域名、主体、部署或白名单要求。"],
+  ["privacy_and_compliance", "隐私政策与数据合规", "记录隐私政策、数据处理和合规要求。"],
+  ["traffic_and_access", "流量与访问情况", "记录访问量预测和访问特征。"],
+  ["project_special_support", "项目特殊支持", "记录安全、兼容性、性能、弱网及其他配合。"],
+] as const;
+const requirementFields = [
+  ["development_resources", "研发资源", "是否动用研发资源。"],
+  ["third_party_resources", "三方资源", "是否动用由弥知负责的三方资源。"],
+  ["operation_resources", "运营资源", "是否动用运营资源及需求概述。"],
+  ["business_operations", "项目业务运维", "是否需要项目业务运维。"],
+  ["server_or_cloud_development", "服务器或云开发", "是否需要服务器或云开发。"],
+  ["feasibility_analysis", "可行性分析", "记录可行性结论、局限、风险或替代方案。"],
+  ["mvp_requirements", "MVP需求", "本期必须交付的最小可行需求。"],
+  ["interaction_flow_overview", "整体交互流程概览", "记录整体交互流程概览。"],
+  ["available_assets", "可用物料", "记录可直接使用的文案、设计、素材或接口物料。"],
+] as const;
+
+function registry(section: RequirementOverviewFieldDefinition["section"], rows: readonly (readonly [string, string, string])[]) {
+  return rows.map(([key, exactLabel, templateGuidance], index) => ({
+    key,
+    section,
+    order: index + 1,
+    exactLabel,
+    templateGuidance,
+    required: true as const,
+    allowedStatus: allStatuses,
+  }));
+}
+
+export const REQUIREMENT_OVERVIEW_FIELD_REGISTRY: readonly RequirementOverviewFieldDefinition[] = [
+  ...registry("项目背景", backgroundFields),
+  ...registry("需求概览", requirementFields),
+];
+
+const fieldKeys = new Set(REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => field.key));
+const requiredConfirmationFieldKeys = [
+  "timeline",
+  "platform_type",
+  "project_architecture",
+  "deployment_type",
+  "privacy_and_compliance",
+  "feasibility_analysis",
+  "mvp_requirements",
+] as const;
+
+const updateSchema = z.object({
+  answers: z.array(z.object({ id: z.string().min(1).max(100), answer: z.string().max(5000), notApplicable: z.boolean().optional() })).max(50),
+}).strict();
+
+function digest(evidence: RequirementEvidence[]) {
+  return requirementSha256(evidence.map((item) => `${item.documentId}:${item.versionId}:${item.chunkId}:${item.contentSha256}`).join("\n"));
+}
+
+function compact(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function firstEvidenceMatch(evidence: RequirementEvidence[], expressions: RegExp[]) {
+  for (const item of evidence.filter((entry) => entry.sourceScope === "project")) {
+    for (const expression of expressions) {
+      const match = expression.exec(item.content);
+      if (match?.[1]) return { value: compact(match[1]), label: item.label };
+    }
+  }
+  return null;
+}
+
+const evidencePatterns: Partial<Record<string, RegExp[]>> = {
+  timeline: [/(?:时间|上线时间|计划(?:上线|完成)?)[：:]\s*([^\n。；]+)/i],
+  platform_type: [/(?:平台(?:类型)?|平台)[：:]\s*([^\n。；]+)/i],
+  project_region: [/(?:项目地区|地区)[：:]\s*([^\n。；]+)/i],
+  mvp_requirements: [/(?:MVP(?:需求)?|最小可行(?:需求|产品))[：:]\s*([^\n。；]+)/i],
+};
+
 function initialItems(evidence: RequirementEvidence[]): RequirementOverviewItem[] {
-  const projectEvidence = evidence.filter((item) => item.sourceScope === "project");
-  const first = projectEvidence[0];
-  const labels = projectEvidence.map((item) => item.label);
-  const text = first?.content.replace(/\s+/g, " ").trim().slice(0, 700) ?? "";
-  return [
-    { id: "project_background", label: "项目背景", status: first ? "confirmed" : "missing", value: text || "缺少可解析的项目背景资料。", citationLabels: first ? [first.label] : [] },
-    { id: "goals", label: "目标与成功标准", status: labels.length ? "inferred" : "missing", value: labels.length ? "已从当前项目资料中预填，需项目经理确认成功标准。" : "缺少目标与成功标准。", citationLabels: labels.slice(0, 2) },
-    { id: "scope", label: "范围与交付物", status: labels.length ? "inferred" : "missing", value: labels.length ? "已从项目资料提取候选范围，需确认边界与交付物。" : "缺少范围说明。", citationLabels: labels.slice(0, 2) },
-    { id: "users", label: "用户与关键场景", status: "missing", value: "尚未确认关键用户、使用场景与优先级。", citationLabels: [] },
-    { id: "dependencies", label: "依赖、风险与待确认事项", status: "missing", value: "尚未确认外部依赖、风险负责人和关键时间点。", citationLabels: [] },
-  ];
+  return REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => {
+    const matched = firstEvidenceMatch(evidence, evidencePatterns[field.key] ?? []);
+    return {
+      id: field.key,
+      label: field.exactLabel,
+      status: matched ? "confirmed" : "missing",
+      value: matched?.value ?? "",
+      citationLabels: matched ? [matched.label] : [],
+    };
+  });
 }
+
 function initialQuestions(items: RequirementOverviewItem[]): RequirementOverviewQuestion[] {
-  return [
-    { id: "goals", group: "目标与范围", prompt: "请确认项目目标、成功标准，以及不包含在本期范围内的内容。", required: true, answer: "", status: "pending", citationLabels: items.find((item) => item.id === "goals")?.citationLabels ?? [] },
-    { id: "users", group: "用户与场景", prompt: "谁是主要用户？请列出最关键的使用场景和优先级。", required: true, answer: "", status: "pending", citationLabels: [] },
-    { id: "acceptance", group: "交付与验收", prompt: "请确认交付物、验收人、验收标准和目标时间。", required: true, answer: "", status: "pending", citationLabels: [] },
-    { id: "dependencies", group: "依赖与风险", prompt: "请确认外部依赖、已知风险、待决事项及负责人。", required: false, answer: "", status: "pending", citationLabels: [] },
-  ];
+  return requiredConfirmationFieldKeys.map((fieldKey) => {
+    const field = REQUIREMENT_OVERVIEW_FIELD_REGISTRY.find((entry) => entry.key === fieldKey)!;
+    const item = items.find((entry) => entry.id === fieldKey);
+    return {
+      id: `confirm_${fieldKey}`,
+      group: field.exactLabel,
+      prompt: `请逐项确认“${field.exactLabel}”。${item?.value ? `当前资料提取为：${item.value}` : "当前资料未能确认该字段。"}`,
+      required: true,
+      answer: "",
+      status: "pending",
+      citationLabels: item?.citationLabels ?? [],
+      targetFieldKeys: [fieldKey],
+      reason: "模板关键字段需由项目经理逐项确认。",
+      highRisk: true,
+    };
+  });
 }
-function overviewMarkdown(projectName: string, overview: { versionNumber: number; items: RequirementOverviewItem[]; questions: RequirementOverviewQuestion[] }, modelSummary?: string) {
-  const byStatus = (status: OverviewStatus) => overview.items.filter((item) => item.status === status);
-  const section = (title: string, rows: RequirementOverviewItem[]) => [
-    `## ${title}`, "", ...(rows.length ? rows.map((item) => `- **${item.label}**：${item.value}${item.citationLabels.length ? `（来源：${item.citationLabels.map((label) => `[${label}]`).join(" ")}）` : ""}`) : ["- 无"]), "",
-  ];
-  return [
-    `# ${projectName} 需求概览`, "", `> ProjectAI 引导式需求概览 v${overview.versionNumber}。状态与来源均需由项目经理复核。`, "",
-    ...section("已确认", byStatus("confirmed").concat(byStatus("user_confirmed"))),
-    ...section("AI 推断（待确认）", byStatus("inferred")),
-    ...section("信息缺口与冲突", byStatus("missing").concat(byStatus("conflict"))),
-    "## 项目经理确认", "", ...overview.questions.map((question) => `- **${question.group} / ${question.prompt}**：${question.status === "not_applicable" ? "不适用" : question.answer || "待确认"}`), "",
-    "## 结构化摘要", "", modelSummary?.trim() || "- 本概览基于当前有效资料和项目经理确认内容生成。", "",
-  ].join("\n");
+
+function escapeTableCell(value: string) {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n+/g, "<br>").trim();
 }
-function statusFor(questions: RequirementOverviewQuestion[]) { return questions.some((question) => question.required && question.status === "pending") ? "needs_confirmation" : "ready" as const; }
+
+function evidenceReferences(labels: string[], lead: "来源" | "依据" = "来源") {
+  return labels.length ? `<br>${lead}：${labels.map((label) => `[${label}]`).join(" ")}` : "";
+}
+
+function renderDescription(item: RequirementOverviewItem) {
+  const value = escapeTableCell(item.value);
+  if (item.status === "missing") return "TBD（待项目经理确认）";
+  if (item.status === "not_applicable") return `不适用。<br>确认依据：${value || "项目经理确认"}`;
+  if (item.status === "inferred") return `AI 推断（待确认）：${value || "TBD（待项目经理确认）"}${evidenceReferences(item.citationLabels, "依据")}`;
+  if (item.status === "conflict") {
+    const alternatives = item.alternatives ?? [];
+    return alternatives.length >= 2
+      ? `存在冲突，待项目经理确认：${alternatives.map((alternative) => `<br>- ${escapeTableCell(alternative.value)}${evidenceReferences(alternative.citationLabels)}`).join("")}`
+      : "存在冲突，待项目经理确认：<br>- TBD（待项目经理确认）";
+  }
+  const confirmation = item.status === "user_confirmed" ? "<br>状态：项目经理已确认。" : "";
+  return `${value || "TBD（待项目经理确认）"}${confirmation}${evidenceReferences(item.citationLabels)}`;
+}
+
+function canonicalItems(items: RequirementOverviewItem[]) {
+  const byKey = new Map(items.filter((item) => fieldKeys.has(item.id)).map((item) => [item.id, item]));
+  return REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => byKey.get(field.key) ?? {
+    id: field.key,
+    label: field.exactLabel,
+    status: "missing" as const,
+    value: "",
+    citationLabels: [],
+  });
+}
+
+export function renderRequirementOverviewMarkdown(projectName: string, items: RequirementOverviewItem[]) {
+  const renderSection = (section: RequirementOverviewFieldDefinition["section"]) => {
+    const fields = REQUIREMENT_OVERVIEW_FIELD_REGISTRY.filter((field) => field.section === section);
+    const byKey = new Map(canonicalItems(items).map((item) => [item.id, item]));
+    const header = section === "项目背景" ? "|名称|描述|" : "|序号|名称|描述|";
+    const divider = section === "项目背景" ? "|---|---|" : "|---|---|---|";
+    const rows = fields.map((field) => {
+      const item = byKey.get(field.key)!;
+      return section === "项目背景"
+        ? `|${field.exactLabel}|${renderDescription(item)}|`
+        : `|${field.order}|${field.exactLabel}|${renderDescription(item)}|`;
+    });
+    return [`## ${section}`, "", header, divider, ...rows, ""];
+  };
+  return [`# ${projectName} 需求概览`, "", ...renderSection("项目背景"), ...renderSection("需求概览")].join("\n");
+}
+
+function statusFor(questions: RequirementOverviewQuestion[]) {
+  return questions.some((question) => question.required && question.status === "pending") ? "needs_confirmation" : "ready" as const;
+}
 
 export async function createRequirementOverview(input: { principal: AuthenticatedPrincipal; projectId: string; requestHeaders: Headers }) {
   await requireProjectRole(input.principal, input.projectId, ["project_manager"], input.requestHeaders);
@@ -85,9 +238,13 @@ export async function updateRequirementOverview(input: { principal: Authenticate
     const update = updates.get(question.id); if (!update) return question;
     return { ...question, answer: update.answer.trim(), status: update.notApplicable ? "not_applicable" as const : update.answer.trim() ? "answered" as const : "pending" as const };
   });
-  const items = current.items.map((item) => {
-    const question = questions.find((entry) => entry.id === item.id);
-    return question?.status === "answered" ? { ...item, status: "user_confirmed" as const, value: question.answer } : question?.status === "not_applicable" ? { ...item, status: "not_applicable" as const, value: "不适用" } : item;
+  const items = canonicalItems(current.items).map((item) => {
+    const question = questions.find((entry) => (entry.targetFieldKeys ?? [entry.id]).includes(item.id));
+    return question?.status === "answered"
+      ? { ...item, status: "user_confirmed" as const, value: question.answer }
+      : question?.status === "not_applicable"
+        ? { ...item, status: "not_applicable" as const, value: "项目经理确认" }
+        : item;
   });
   const [updated] = await getDb().update(guidedRequirementOverview).set({ questions, items, status: statusFor(questions), updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, current.id)).returning();
   return publicOverview(input, updated);
@@ -101,17 +258,12 @@ export async function generateRequirementOverviewMarkdown(input: { principal: Au
   const sources = await collectRequirementEvidence(input);
   if (digest(sources) !== current.sourceDigest) throw new ProjectManagementError(409, "SOURCE_CHANGED", "资料已更新，请重新生成需求概览");
   try {
-    const scenario = await resolveGenerationScenario({ projectId: input.projectId, actorId: input.principal.user.id, scenario: "requirement_markdown_generation" });
-    const result = await createProjectAssistantGateway(scenario.runtime).generate({ model: scenario.modelId, purpose: "requirement_overview", systemPrompt: "你是项目经理助手。仅基于受信资料和确认项给出不超过五条的结构化摘要。不得编造事实。只输出 JSON {summary:string}。", userPrompt: `<overview_json>${JSON.stringify({ items: current.items, questions: current.questions })}</overview_json>` });
-    let summary = "";
-    try { const value = JSON.parse(result.text) as { summary?: unknown }; summary = typeof value.summary === "string" ? value.summary.slice(0, 4000) : ""; } catch { /* fixed Markdown remains valid without an optional summary */ }
     const access = await requireProjectAccess(input.principal, input.projectId, input.requestHeaders);
-    const markdown = overviewMarkdown(access.name, current, summary);
-    const [updated] = await getDb().update(guidedRequirementOverview).set({ status: "generated", markdown, generationModelId: scenario.modelRecordId, actualModel: result.actualModel, failureCode: null, updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, current.id)).returning();
+    const markdown = renderRequirementOverviewMarkdown(access.name, canonicalItems(current.items));
+    const [updated] = await getDb().update(guidedRequirementOverview).set({ status: "generated", markdown, generationModelId: null, actualModel: null, failureCode: null, updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, current.id)).returning();
     return publicOverview(input, updated);
   } catch (error) {
-    const code = error instanceof ProjectAssistantError ? "REQUIREMENT_PROVIDER_FAILED" : "REQUIREMENT_GENERATION_FAILED";
-    await getDb().update(guidedRequirementOverview).set({ status: "failed", failureCode: code, updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, current.id));
+    await getDb().update(guidedRequirementOverview).set({ status: "failed", failureCode: "REQUIREMENT_GENERATION_FAILED", updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, current.id));
     throw error;
   }
 }
