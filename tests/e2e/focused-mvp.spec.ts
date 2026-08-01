@@ -76,9 +76,9 @@ test("General Chat 单击发送一次并在刷新后保留消息", async ({ page
 
   await page.goto(appPath("/assistant"));
   await expect(page.getByText("不关联项目", { exact: true })).toBeVisible();
-  const input = page.getByLabel("向 AI 助手提问");
+  const input = page.getByTestId("assistant-composer-input");
   await input.fill("你能做什么？");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.getByTestId("assistant-send-button").click();
 
   await expect(page.locator('[data-message-role="user"]').last()).toContainText("你能做什么？");
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText(
@@ -123,8 +123,10 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
     ? new URL(page.url()).pathname.split("/").filter(Boolean).at(-2)!
     : new URL(page.url()).pathname.split("/").filter(Boolean).at(-1)!;
 
-  await page.getByRole("link", { name: "项目资料", exact: true }).click();
-  await page.getByRole("button", { name: "上传资料", exact: true }).click();
+  await page.getByTestId("project-documents-tab").click();
+  const documentsPanel = page.getByTestId("project-documents-panel");
+  await expect(documentsPanel).toBeVisible();
+  await documentsPanel.getByTestId("project-document-upload-button").click();
   const upload = page.getByRole("dialog", { name: "上传项目资料" });
   await upload.getByLabel("选择上传文件").setInputFiles(fictitiousText(
     projectFileName,
@@ -206,14 +208,14 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(overview.getByRole("button", { name: "已保存到项目", exact: true })).toBeVisible();
 
   await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));
-  await page.getByLabel("向项目 AI 助手提问").fill("项目资料中 2026 年 10 月 15 日的内部上线事实是什么？");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.getByTestId("assistant-composer-input").fill("项目资料中 2026 年 10 月 15 日的内部上线事实是什么？");
+  await page.getByTestId("assistant-send-button").click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("2026 年 10 月 15 日", { timeout: 45_000 });
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[项目资料]");
   await evidence(page, "08-ai-conversation.png");
 
-  await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？");
-  await page.getByRole("button", { name: "发送", exact: true }).click();
+  await page.getByTestId("assistant-composer-input").fill("公司项目管理规范中的需求文档发布确认要求是什么？");
+  await page.getByTestId("assistant-send-button").click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[公司资料]", { timeout: 45_000 });
 
   const outsiderContext = await browser.newContext();

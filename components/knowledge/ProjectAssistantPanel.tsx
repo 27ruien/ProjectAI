@@ -503,8 +503,10 @@ export function ProjectAssistantPanel({
               <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || selectedSourceIds.length === 0}><ListChecks className="size-3.5" />列出待确认事项</Button>
             </div> : null}
             <label className="block">
-              <span className="sr-only">向项目 AI 助手提问</span>
+              <span className="sr-only">向 AI 助手提问</span>
               <textarea
+                aria-label="向 AI 助手提问"
+                data-testid="assistant-composer-input"
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
                 placeholder={projectId ? "向 AI 助手提问；需要项目事实时会自动读取相关资料…" : "直接提问、写作、润色或讨论方案…"}
@@ -518,7 +520,7 @@ export function ProjectAssistantPanel({
               <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
                 <ShieldCheck className="size-3 text-success" />{projectId ? "使用资料时会由服务端校验引用权限" : "未关联项目时不会读取项目资料"}
               </span>
-              <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"}>
+              <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"} data-testid="assistant-send-button">
                 <Send className="size-3.5" />发送
               </Button>
             </div>

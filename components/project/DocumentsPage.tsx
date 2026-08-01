@@ -409,7 +409,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
   return (
     <div className="min-h-full bg-background">
       <ProjectContextHeader project={project} activeTab="files" />
-      <main className="px-5 py-5 lg:px-8 lg:py-6">
+      <main className="px-5 py-5 lg:px-8 lg:py-6" id={`project-${project.id}-files-panel`} role="tabpanel" aria-labelledby={`project-${project.id}-files-tab`} data-testid="project-documents-panel">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold tracking-tight text-foreground">
@@ -420,7 +420,7 @@ export function DocumentsPage({ project }: DocumentsPageProps) {
             </p>
           </div>
           {canUpload ? (
-            <Button type="button" onClick={openNewDocumentUpload}>
+            <Button type="button" onClick={openNewDocumentUpload} data-testid="project-document-upload-button">
               <Upload className="size-4" />
               上传资料
             </Button>
