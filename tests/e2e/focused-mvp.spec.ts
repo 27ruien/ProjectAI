@@ -74,15 +74,15 @@ test("General Chat 单击发送一次并在刷新后保留消息", async ({ page
     }
   });
 
-  await page.goto(appPath("/knowledge/sessions"));
-  await expect(page.getByLabel("会话范围")).toContainText("通用会话（不使用知识库）");
-  const input = page.getByLabel("向项目 AI 助手提问");
+  await page.goto(appPath("/assistant"));
+  await expect(page.getByText("不关联项目", { exact: true })).toBeVisible();
+  const input = page.getByLabel("向 AI 助手提问");
   await input.fill("你能做什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
 
   await expect(page.locator('[data-message-role="user"]').last()).toContainText("你能做什么？");
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText(
-    "本回答未使用知识库资料。",
+    "本回答未使用项目或公司资料。",
     { timeout: 45_000 },
   );
   await expect(input).toHaveValue("");
@@ -91,7 +91,7 @@ test("General Chat 单击发送一次并在刷新后保留消息", async ({ page
   await page.reload();
   await expect(page.locator('[data-message-role="user"]').last()).toContainText("你能做什么？");
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText(
-    "本回答未使用知识库资料。",
+    "本回答未使用项目或公司资料。",
   );
 });
 
@@ -103,8 +103,8 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const companyFileName = `focused-company-standard-${suffix}.txt`;
   const companyDisplayName = companyFileName.replace(/\.txt$/, "");
 
-  await page.goto(appPath("/knowledge/projects"));
-  await expect(page.getByRole("heading", { name: "知识库", exact: true })).toBeVisible();
+  await page.goto(appPath("/data-spaces/projects"));
+  await expect(page.getByRole("heading", { name: "资料空间", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
   await expectNoPageOverflow(page);
   await evidence(page, "01-project-list.png");
@@ -114,7 +114,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByLabel("项目状态").click();
   await page.getByRole("option", { name: "进行中", exact: true }).click();
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
-  await page.waitForURL(/\/knowledge\/projects\/project-[^/]+(?:\/overview)?$/);
+  await page.waitForURL(/\/data-spaces\/projects\/project-[^/]+(?:\/overview)?$/);
   await evidence(page, "02-project-overview.png");
   await page.setViewportSize({ width: 1024, height: 900 });
   await expectNoPageOverflow(page);
@@ -145,9 +145,9 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(page.getByText("可用于 AI", { exact: true })).toBeVisible();
   await evidence(page, "03-project-files.png");
 
-  await page.getByRole("link", { name: "常规模板", exact: true }).click();
+  await page.goto(appPath("/data-spaces/company"));
   await evidence(page, "10-company-knowledge.png");
-  await page.getByRole("button", { name: "上传模板", exact: true }).first().click();
+  await page.getByRole("button", { name: "上传公司资料", exact: true }).first().click();
   await settleAnimations(page.getByTestId("company-upload-dialog"));
   await evidence(page, "11-company-upload-dialog.png");
   const companyUploadResponse = page.waitForResponse((response) =>
@@ -168,8 +168,8 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByRole("menuitem", { name: "发布", exact: true }).click();
   await expect(companyRow.getByText("已发布", { exact: false })).toBeVisible();
 
-  await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
-  await expect(page.getByLabel("会话范围")).toHaveText(projectName);
+  await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));
+  await expect(page.getByText(projectName, { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
   await evidence(page, "04-session-empty.png");
   await page.getByRole("button", { name: "生成需求概览", exact: true }).click();
@@ -205,7 +205,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await overview.getByRole("button", { name: "保存到项目", exact: true }).click();
   await expect(overview.getByRole("button", { name: "已保存到项目", exact: true })).toBeVisible();
 
-  await page.goto(appPath(`/knowledge/sessions?project=${encodeURIComponent(projectId)}`));
+  await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));
   await page.getByLabel("向项目 AI 助手提问").fill("项目资料中 2026 年 10 月 15 日的内部上线事实是什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
   await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("2026 年 10 月 15 日", { timeout: 45_000 });
@@ -214,7 +214,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
 
   await page.getByLabel("向项目 AI 助手提问").fill("公司项目管理规范中的需求文档发布确认要求是什么？");
   await page.getByRole("button", { name: "发送", exact: true }).click();
-  await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[常规模板]", { timeout: 45_000 });
+  await expect(page.locator('[data-message-role="assistant"]').last()).toContainText("[公司资料]", { timeout: 45_000 });
 
   const outsiderContext = await browser.newContext();
   const outsiderPage = await outsiderContext.newPage();
@@ -227,7 +227,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   }
 
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.goto(appPath("/knowledge/projects"));
+  await page.goto(appPath("/data-spaces/projects"));
   await page.getByRole("button", { name: "打开导航", exact: true }).click();
   const mobileNavigation = page.getByRole("dialog", { name: "主导航" });
   await settleAnimations(mobileNavigation);

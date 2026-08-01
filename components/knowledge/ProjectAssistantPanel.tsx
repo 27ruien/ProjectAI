@@ -92,7 +92,7 @@ function assistantErrorMessage(error: unknown): string {
 }
 
 const scopeLabels: Record<string, string> = {
-  organization: "[常规模板]",
+  organization: "[公司资料]",
   department: "[项目资料]",
   project: "[项目资料]",
   restricted: "[项目资料]",

@@ -343,7 +343,7 @@ describe("focused authorization and source boundaries", () => {
     assert.match(prompt, /source_scope="organization"/);
     assert.equal(evidence.knowledgeBaseType, "template");
     const panel = await source("components/knowledge/ProjectAssistantPanel.tsx");
-    assert.match(panel, /\[常规模板\]/);
+    assert.match(panel, /\[公司资料\]/);
     assert.match(panel, /\[项目资料\]/);
     assert.doesNotMatch(panel, /scopeLabels\[citation\.sourceScope\]}.+citation\.knowledgeSpaceId/);
   });
