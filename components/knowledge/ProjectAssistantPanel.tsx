@@ -110,7 +110,7 @@ export function ProjectAssistantPanel({
   focused = false,
   viewer,
 }: {
-  project: AuthorizedProjectSummary | null;
+  project: Pick<AuthorizedProjectSummary, "id"> | null;
   focused?: boolean;
   viewer?: ViewerContext;
 }) {
@@ -148,6 +148,7 @@ export function ProjectAssistantPanel({
   const templateSourceCount = availableSources.length - projectSourceCount;
   const referencedProjectId = contextReferences.find((item): item is Extract<AssistantContextReference, { type: "project" }> => item.type === "project")?.projectId ?? null;
   const artifactProjectId = projectId ?? referencedProjectId;
+  const hasProjectContext = Boolean(projectId || referencedProjectId);
   const visibleThreads = useMemo(() => { const query = threadSearch.trim().toLocaleLowerCase("zh-CN"); return query ? threads.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(query)) : threads; }, [threadSearch, threads]);
   const visibleContextOptions = useMemo(() => {
     const query = pickerSearch.trim().toLocaleLowerCase("zh-CN");
@@ -585,8 +586,8 @@ export function ProjectAssistantPanel({
           <form onSubmit={submit} className="border-t border-border p-4">
             {(projectId || contextReferences.some((item) => item.type === "project")) ? <div className="mb-3 flex flex-wrap gap-2" aria-label="会话快捷操作">
               <Button type="button" size="sm" variant="outline" onClick={() => void openRequirementOverview()} disabled={creating || (projectId ? selectedSourceIds.length === 0 : !artifactProjectId)}><FileText className="size-3.5" />生成需求概览</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。") } disabled={sending || selectedSourceIds.length === 0}><Sparkles className="size-3.5" />总结项目现状</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || selectedSourceIds.length === 0}><ListChecks className="size-3.5" />列出待确认事项</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。") } disabled={sending || !hasProjectContext}><Sparkles className="size-3.5" />总结项目现状</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || !hasProjectContext}><ListChecks className="size-3.5" />列出待确认事项</Button>
             </div> : null}
             <label className="block">
               {!projectId && contextReferences.length ? <span className="mb-2 flex flex-wrap gap-1">{contextReferences.map((reference) => <Badge key={reference.type === "project" ? reference.projectId : reference.documentId} variant="outline" className="gap-1"><span>{reference.type === "project" ? "#" : "$"}{reference.label}</span><button type="button" aria-label={`移除 ${reference.label}`} onClick={() => setContextReferences((current) => current.filter((item) => item !== reference))}>×</button></Badge>)}</span> : null}

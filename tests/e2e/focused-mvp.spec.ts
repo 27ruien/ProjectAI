@@ -170,7 +170,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(companyRow.getByText("已发布", { exact: false })).toBeVisible();
 
   await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));
-  await expect(page.getByText(projectName, { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目 AI 助手", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
   await evidence(page, "04-session-empty.png");
   await page.getByRole("button", { name: "生成需求概览", exact: true }).click();

@@ -6,13 +6,11 @@ import { ProjectAssistantPanel } from "./ProjectAssistantPanel";
 
 export function FocusedChatPage({ viewer }: { viewer: ViewerContext }) {
   const searchParams = useSearchParams();
-  // A project deep link narrows this conversation to a project the viewer can
-  // already access. It is a convenience from the project space, never a
-  // prerequisite for using the general assistant.
+  // A project deep link is only a convenience from the project space. The
+  // assistant APIs still resolve and authorize this ID on every request, so a
+  // URL can narrow a conversation but can never expand access.
   const requestedProjectId = searchParams.get("project");
-  const project = requestedProjectId
-    ? viewer.projects.find((candidate) => candidate.id === requestedProjectId) ?? null
-    : null;
+  const project = requestedProjectId ? { id: requestedProjectId } : null;
   return (
     <main className="min-h-full px-5 py-7 sm:px-6 lg:px-8" data-testid="focused-chat-page">
       <header className="mb-5">
