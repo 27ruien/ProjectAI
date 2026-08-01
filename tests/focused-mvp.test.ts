@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { classifyAssistantIntent } from "@/lib/ai/project-assistant/intent-router";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 import { resolveProjectPermissions } from "../lib/auth/authorization";
@@ -45,7 +46,13 @@ function memberPrincipal(id: string): AuthenticatedPrincipal {
 }
 
 describe("focused MVP product surface", () => {
-  it("exposes one knowledge entry with projects, templates and sessions inside", async () => {
+  it("routes general, protected-context, and skill requests without widening context", () => {
+    assert.equal(classifyAssistantIntent({ question: "帮我润色这封客户邮件", hasAssociatedProject: false }), "general_chat");
+    assert.equal(classifyAssistantIntent({ question: "当前项目什么时候上线？", hasAssociatedProject: true }), "project_question");
+    assert.equal(classifyAssistantIntent({ question: "当前项目是否符合公司 UAT 规范？", hasAssociatedProject: true }), "mixed_context_question");
+    assert.equal(classifyAssistantIntent({ question: "生成需求概览", hasAssociatedProject: true }), "skill_request");
+  });
+  it("separates the AI assistant from permission-aware data spaces", async () => {
     const [sidebar, router, workspace, projectHeader, knowledgeNav] = await Promise.all([
       source("components/layout/sidebar.tsx"),
       source("app/[...slug]/page.tsx"),
@@ -53,14 +60,14 @@ describe("focused MVP product surface", () => {
       source("components/project/ProjectContextHeader.tsx"),
       source("components/knowledge/KnowledgeModuleNav.tsx"),
     ]);
-    assert.match(sidebar, /知识库/);
-    for (const removedPrimary of ["AI 对话", "公司知识库"]) assert.doesNotMatch(sidebar, new RegExp(removedPrimary));
-    for (const label of ["项目", "常规模板", "会话"]) assert.match(knowledgeNav, new RegExp(label));
+    for (const label of ["AI 助手", "资料空间"]) assert.match(sidebar, new RegExp(label));
+    for (const removedPrimary of ["知识库", "AI 对话", "公司知识库"]) assert.doesNotMatch(sidebar, new RegExp(removedPrimary));
+    for (const label of ["项目资料", "公司资料"]) assert.match(knowledgeNav, new RegExp(label));
     for (const removed of ["工作日报", "AI 工作流", "会议纪要", "Action Plan", "周报", "Skills", "审核中心"]) {
       assert.doesNotMatch(sidebar, new RegExp(removed, "i"));
     }
-    assert.match(router, /allowedRoot = \["knowledge", "organization", "settings"\]/);
-    assert.match(router, /\["projects", "templates", "sessions"\]/);
+    assert.match(router, /allowedRoot = \["assistant", "data-spaces", "organization", "settings"\]/);
+    assert.match(router, /\["projects", "company"\]/);
     assert.match(router, /notFound\(\)/);
     assert.match(workspace, /<ProjectsPage/);
     assert.match(workspace, /<FocusedChatPage/);
@@ -78,7 +85,8 @@ describe("focused MVP product surface", () => {
       source("lib/ai/project-assistant/repository.ts"),
       source("drizzle/0026_general_chat_execution.sql"),
     ]);
-    assert.match(page, /通用会话（不使用知识库）/);
+    assert.match(page, /不关联项目/);
+    assert.match(page, /AI 助手/);
     assert.match(service, /askGeneralAssistant/);
     assert.match(service, /GENERAL_ASSISTANT_SYSTEM_PROMPT/);
     assert.match(repository, /resolveGeneralChatProjectId/);
@@ -87,7 +95,7 @@ describe("focused MVP product surface", () => {
     assert.match(repository, /evidenceCount: 0/);
     assert.match(migration, /retrieval_run_id" IS NULL AND "evidence_count" = 0/);
     assert.doesNotMatch(buildGeneralUserPrompt({ question: "你能做什么？", history: [] }), /evidence_set/);
-    assert.match(GENERAL_ASSISTANT_SYSTEM_PROMPT, /本回答未使用知识库资料/);
+    assert.match(GENERAL_ASSISTANT_SYSTEM_PROMPT, /本回答未使用项目或公司资料/);
   });
 
   it("returns a citation-free deterministic General Chat answer", async () => {
@@ -102,7 +110,7 @@ describe("focused MVP product surface", () => {
       temperature: 0.2,
       maxOutputTokens: 500,
     });
-    assert.match(result.text, /本回答未使用知识库资料/);
+    assert.match(result.text, /本回答未使用项目或公司资料/);
     assert.doesNotMatch(result.text, /\[E\d+\]/);
   });
 
@@ -133,7 +141,7 @@ describe("focused MVP product surface", () => {
     assert.match(projectRoute, /PROJECT_DELETE_FAILED/);
     assert.match(projectsPage, /删除项目失败，请稍后重试/);
     const overview = await source("components/project/ProjectOverviewPage.tsx");
-    assert.match(overview, /router\.replace\("\/knowledge\/projects"\)/);
+    assert.match(overview, /router\.replace\("\/data-spaces\/projects"\)/);
     assert.doesNotMatch(
       overview,
       /setConfirmAction\(null\); router\.replace\("\/knowledge\/projects"\); router\.refresh\(\)/,
@@ -250,25 +258,17 @@ describe("focused requirement document", () => {
     assert.ok(docx.byteLength > 2_000);
   });
 
-  it("registers an asynchronous, resumable generation record before background work", async () => {
-    const [route, service, page] = await Promise.all([
-      source("app/api/projects/[projectId]/requirement-documents/route.ts"),
-      source("lib/focused-mvp/requirement-documents.ts"),
+  it("keeps the requirement overview as a fixed, project-scoped skill", async () => {
+    const [service, page, workspace] = await Promise.all([
+      source("lib/focused-mvp/requirement-overview.ts"),
       source("components/project/RequirementDocumentsPage.tsx"),
+      source("components/requirement-overview/RequirementOverviewWorkspace.tsx"),
     ]);
-    assert.match(route, /reserveRequirementDocument/);
-    assert.match(route, /after\(async/);
-    assert.match(route, /status: 202/);
-    assert.match(service, /projectSourceCount/);
-    assert.match(service, /companySourceCount/);
-    assert.match(service, /sourceSnapshotAt/);
-    assert.match(service, /category = 'project_management'/);
-    assert.ok(service.indexOf("beginRequirementAiExecution") < service.indexOf("gateway.generate"));
-    assert.match(service, /REQUIREMENT_PROVIDER_FAILED/);
-    assert.match(service, /REQUIREMENT_EXECUTION_CREATE_FAILED/);
-    assert.match(page, /status === "generating"/);
-    assert.match(page, /window\.setInterval/);
-    assert.match(page, /前往会话生成/);
+    assert.match(service, /REQUIREMENT_OVERVIEW_FIELD_REGISTRY/);
+    assert.match(service, /renderRequirementOverviewMarkdown/);
+    assert.match(service, /项目地区/);
+    assert.match(page, /前往 AI 助手/);
+    assert.match(workspace, /请集中确认/);
   });
 
   it("pins all current text and vector generation to the qwen3.7 profiles", async () => {

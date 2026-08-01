@@ -3,54 +3,54 @@
 @import "shadcn/tailwind.css";
 
 :root {
-  --background: #fcfcfb;
-  --foreground: #252529;
+  --background: #fbfcfc;
+  --foreground: #202625;
   --card: #ffffff;
-  --card-foreground: #252529;
+  --card-foreground: #202625;
   --popover: #ffffff;
-  --popover-foreground: #252529;
-  --muted: #f5f5f2;
-  --muted-foreground: #74747c;
-  --border: #e7e7e3;
-  --input: #dededa;
-  --primary: #68627e;
-  --primary-hover: #59546d;
+  --popover-foreground: #202625;
+  --muted: #f3f6f5;
+  --muted-foreground: #707a78;
+  --border: #e1e8e6;
+  --input: #dce5e3;
+  --primary: #20ae9f;
+  --primary-hover: #168f83;
   --primary-foreground: #ffffff;
-  --secondary: #f5f5f2;
-  --secondary-foreground: #252529;
-  --accent: #efedf4;
-  --accent-foreground: #4f4a61;
-  --success: #567263;
-  --success-soft: #eef5f1;
-  --warning: #876b46;
-  --warning-soft: #f8f3ea;
-  --destructive: #965b61;
+  --secondary: #f1f6f5;
+  --secondary-foreground: #31504c;
+  --accent: #e8f5f2;
+  --accent-foreground: #176f66;
+  --success: #3d7f6e;
+  --success-soft: #edf6f2;
+  --warning: #94703e;
+  --warning-soft: #f8f3e9;
+  --destructive: #a85f63;
   --destructive-soft: #f8eeee;
-  --info: #657082;
-  --info-soft: #f0f2f5;
-  --ring: #858095;
-  --sidebar: #f7f7f5;
-  --sidebar-foreground: #252529;
-  --sidebar-muted: #74747c;
-  --sidebar-accent: #efedf4;
-  --sidebar-accent-foreground: #4f4a61;
-  --sidebar-border: #e7e7e3;
-  --sidebar-ring: #858095;
-  --sidebar-primary: #68627e;
+  --info: #567579;
+  --info-soft: #eef4f4;
+  --ring: #52bdb1;
+  --sidebar: #f7f9f8;
+  --sidebar-foreground: #28302f;
+  --sidebar-muted: #707a78;
+  --sidebar-accent: #e7f4f1;
+  --sidebar-accent-foreground: #176f66;
+  --sidebar-border: #e1e8e6;
+  --sidebar-ring: #52bdb1;
+  --sidebar-primary: #20ae9f;
   --sidebar-primary-foreground: #ffffff;
-  --surface: #fafaf8;
-  --overlay: rgb(23 24 34 / 45%);
+  --surface: #f8fbfa;
+  --overlay: rgb(20 42 39 / 42%);
   --radius: 0.5rem;
   --radius-sm: 6px;
   --radius-lg: 10px;
   --spacing-page: clamp(20px, 3vw, 40px);
   --shadow-sm: none;
   --shadow-float: 0 12px 32px rgb(37 37 41 / 10%);
-  --chart-1: #68627e;
-  --chart-2: #567263;
-  --chart-3: #657082;
-  --chart-4: #876b46;
-  --chart-5: #965b61;
+  --chart-1: #20ae9f;
+  --chart-2: #3d7f6e;
+  --chart-3: #567579;
+  --chart-4: #94703e;
+  --chart-5: #a85f63;
 }
 
 @theme inline {
@@ -157,7 +157,7 @@ textarea:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #cfd0d6;
+  background: #c9d8d5;
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: padding-box;

@@ -44,11 +44,11 @@ export function CreateProjectDialog({ managerName, trigger, defaultOpen = false 
       const payload = await response.json() as { project?: { id: string }; error?: { message?: string } };
       if (!response.ok || !payload.project) throw new Error(payload.error?.message ?? "创建项目失败");
       setOpen(false);
-      router.push(`/knowledge/projects/${payload.project.id}`);
+      router.push(`/data-spaces/projects/${payload.project.id}`);
     } catch (caught) { setError(caught instanceof Error ? caught.message : "创建项目失败"); } finally { setSaving(false); }
   };
 
-  return <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next && defaultOpen) router.push("/knowledge/projects"); }}>
+  return <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next && defaultOpen) router.push("/data-spaces/projects"); }}>
     {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
     <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-xl" data-testid="create-project-dialog">
       <DialogHeader><DialogTitle>创建项目</DialogTitle><DialogDescription>填写启动内部项目所需的最少信息。</DialogDescription></DialogHeader>

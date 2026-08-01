@@ -44,6 +44,7 @@ import { Badge } from "@/components/ui/badge";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { RequirementOverviewWorkspace } from "@/components/requirement-overview/RequirementOverviewWorkspace";
+import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
 
 type PanelPhase =
   | "loading"
@@ -72,12 +73,16 @@ function sourceLabel(citation: ProjectAssistantCitationDto): string {
 function assistantErrorMessage(error: unknown): string {
   if (error instanceof ProjectAssistantApiError) {
     const messages: Record<string, string> = {
+      AI_INVALID_REQUEST: "请输入问题。",
+      AI_SOURCE_NOT_FOUND: "当前项目还没有可供 AI 使用的资料，可以先上传项目文件。",
+      AI_RETRIEVAL_FAILED: "资料暂时没有检索成功，你的问题和会话已经保留，可以稍后重试。",
       AI_RATE_LIMITED: "提问过于频繁，请稍后重试。",
       AI_USER_DAILY_LIMIT_REACHED: "今日个人 AI 用量已达上限。",
       AI_PROJECT_DAILY_LIMIT_REACHED: "今日项目 AI 用量已达上限。",
       AI_CONCURRENCY_LIMIT_REACHED: "AI 服务繁忙，请稍后重试。",
       AI_PROVIDER_TIMEOUT: "AI 服务响应超时，请重试。",
-      AI_PROVIDER_UNAVAILABLE: "AI 服务当前不可用。项目资料和常规模板未发生变化，请联系管理员检查模型访问权限。",
+      AI_PROVIDER_UNAVAILABLE: "AI 服务暂时没有完成回答，你的输入和资料没有丢失，请稍后重试。",
+      AI_EXECUTION_FAILED: "AI 服务暂时没有完成回答，你的输入和资料没有丢失，请稍后重试。",
       AI_CITATION_VALIDATION_FAILED: "回答未通过来源校验，请重试。",
       AI_THREAD_NOT_FOUND: "对话不存在或无权访问。",
     };
@@ -117,7 +122,7 @@ export function ProjectAssistantPanel({
     documents: Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>;
   } | null>(null);
   const [threadSearch, setThreadSearch] = useState("");
-  const [showRequirementOverview, setShowRequirementOverview] = useState(false);
+  const [requirementOverviewThreadId, setRequirementOverviewThreadId] = useState<string | null>(null);
   const availableSources = useMemo(
     () => sourceState?.projectId === projectId ? sourceState.documents : [],
     [projectId, sourceState],
@@ -223,7 +228,8 @@ export function ProjectAssistantPanel({
       setError("请输入问题。");
       return;
     }
-    if (projectId && selectedSourceIds.length === 0) {
+    const intent = classifyAssistantIntent({ question: normalized, hasAssociatedProject: Boolean(projectId) });
+    if (projectId && intentNeedsProjectEvidence(intent) && selectedSourceIds.length === 0) {
       setError("当前项目还没有可供 AI 使用的资料。");
       return;
     }
@@ -241,7 +247,7 @@ export function ProjectAssistantPanel({
         target.id,
         normalized,
         crypto.randomUUID(),
-        projectId ? selectedSourceIds : [],
+        projectId && intentNeedsProjectEvidence(intent) ? selectedSourceIds : [],
       );
       await refreshThreads(result.thread.id);
     } catch (caught) {
@@ -256,6 +262,11 @@ export function ProjectAssistantPanel({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     void sendQuestion(question);
+  };
+
+  const openRequirementOverview = async () => {
+    const target = thread?.status === "active" ? thread : await createThread();
+    if (target) setRequirementOverviewThreadId(target.id);
   };
 
   const archive = async () => {
@@ -344,11 +355,11 @@ export function ProjectAssistantPanel({
     <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant" data-focused={focused ? "true" : "false"}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <h3 className="text-sm font-semibold text-foreground">{projectId ? "项目会话" : "通用会话"}</h3>
+          <h3 className="text-sm font-semibold text-foreground">{projectId ? "项目 AI 助手" : "AI 助手"}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
             {projectId
-              ? "每次提问都会自动检索当前项目资料和相关常规模板，并在返回前校验引用权限。"
-              : "直接询问 ProjectAI 的能力和使用方式；此模式不读取任何知识库资料。"}
+              ? "助手会先理解你的问题，再按权限决定是否读取项目资料或公司资料，并在返回前校验引用。"
+              : "可以直接聊天、写作、润色和分析；只有需要公司制度或项目事实时才会使用资料。"}
           </p>
         </div>
         <Sheet><SheetTrigger asChild><Button type="button" variant="outline" size="sm" className="lg:hidden"><PanelLeft className="size-3.5" />会话历史</Button></SheetTrigger><SheetContent side="left" className="w-[min(88vw,320px)] p-0"><SheetHeader className="sr-only"><SheetTitle>会话历史</SheetTitle><SheetDescription>搜索并打开私人会话</SheetDescription></SheetHeader>{historyPanel}</SheetContent></Sheet>
@@ -366,7 +377,7 @@ export function ProjectAssistantPanel({
         </div>
       ) : null}
 
-      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">{projectId ? "自动使用" : "回答范围"}</span>{projectId ? <><Badge variant="outline">项目资料 {projectSourceCount} 份</Badge><Badge variant="outline">常规模板 {templateSourceCount} 份</Badge><span className="text-[10px] text-muted-foreground">仅包含当前用户有权访问的最新有效版本</span>{selectedSourceIds.length === 0 ? <span className="text-[11px] text-warning">当前项目暂无可用于 AI 的资料</span> : null}</> : <Badge variant="outline">不使用知识库资料</Badge>}</div></div>
+      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">{projectId ? "可用上下文" : "回答范围"}</span>{projectId ? <><Badge variant="outline">项目资料 {projectSourceCount} 份</Badge><Badge variant="outline">公司资料 {templateSourceCount} 份</Badge><span className="text-[10px] text-muted-foreground">仅在问题需要时使用当前用户有权访问的最新有效资料</span></> : <Badge variant="outline">未关联项目</Badge>}</div></div>
 
       <div className="grid min-h-[560px] lg:grid-cols-[280px_1fr]">
         <aside className="hidden border-r bg-muted/20 lg:block">{historyPanel}</aside>
@@ -483,11 +494,11 @@ export function ProjectAssistantPanel({
             ) : null}
           </div>
 
-          {projectId && showRequirementOverview ? <RequirementOverviewWorkspace projectId={projectId} /> : null}
+          {projectId && requirementOverviewThreadId === thread?.id ? <section className="border-t" data-testid="assistant-skill-artifact"><div className="border-b bg-muted/20 px-4 py-3 text-xs text-muted-foreground">此需求概览草稿属于当前会话；切换或新建会话后不会显示在新消息流中。</div><RequirementOverviewWorkspace projectId={projectId} /></section> : null}
 
           <form onSubmit={submit} className="border-t border-border p-4">
             {projectId ? <div className="mb-3 flex flex-wrap gap-2" aria-label="会话快捷操作">
-              <Button type="button" size="sm" variant="outline" onClick={() => setShowRequirementOverview(true)} disabled={selectedSourceIds.length === 0}><FileText className="size-3.5" />生成需求概览</Button>
+              <Button type="button" size="sm" variant="outline" onClick={() => void openRequirementOverview()} disabled={creating || selectedSourceIds.length === 0}><FileText className="size-3.5" />生成需求概览</Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。") } disabled={sending || selectedSourceIds.length === 0}><Sparkles className="size-3.5" />总结项目现状</Button>
               <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || selectedSourceIds.length === 0}><ListChecks className="size-3.5" />列出待确认事项</Button>
             </div> : null}
@@ -496,7 +507,7 @@ export function ProjectAssistantPanel({
               <textarea
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
-                placeholder={projectId ? "向当前项目提问，系统会自动补充相关常规模板…" : "询问 ProjectAI 的能力和使用方式…"}
+                placeholder={projectId ? "向 AI 助手提问；需要项目事实时会自动读取相关资料…" : "直接提问、写作、润色或讨论方案…"}
                 maxLength={2_000}
                 rows={3}
                 disabled={sending || thread?.status === "archived"}
@@ -505,7 +516,7 @@ export function ProjectAssistantPanel({
             </label>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <ShieldCheck className="size-3 text-success" />{projectId ? "回答返回前会由服务端校验引用" : "本模式不会读取知识库资料"}
+                <ShieldCheck className="size-3 text-success" />{projectId ? "使用资料时会由服务端校验引用权限" : "未关联项目时不会读取项目资料"}
               </span>
               <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"}>
                 <Send className="size-3.5" />发送
@@ -516,8 +527,8 @@ export function ProjectAssistantPanel({
       </div>
 
       <footer className="grid gap-2 border-t border-border bg-muted/20 px-5 py-3 text-[10px] text-muted-foreground sm:grid-cols-2">
-        <p>{projectId ? "AI 回答仅基于当前用户有权访问的有效资料生成，请结合引用核对。" : "通用会话用于产品使用说明，不回答具体项目事实。"}</p>
-        <p className="sm:text-right">{projectId ? "项目资料与常规模板会明确标注；证据不足时不会猜测。" : "回答会明确标注未使用知识库资料。"}</p>
+        <p>{projectId ? "涉及项目或公司事实时，AI 会基于当前权限范围内的有效资料回答，请结合引用核对。" : "AI 助手可直接完成通用聊天、写作、润色和方案讨论。"}</p>
+        <p className="sm:text-right">{projectId ? "项目资料与公司资料会明确标注；资料不足时不会猜测。" : "未使用资料的回答会明确说明。"}</p>
       </footer>
     </section>
   );

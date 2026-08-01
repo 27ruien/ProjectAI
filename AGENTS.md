@@ -24,7 +24,7 @@
 
 ## Focused MVP 当前运行规则
 
-- 普通用户只有一个一级入口“知识库”，其下包含项目、常规模板和会话；需求文档是会话生成并保存到项目的 AI 产物。
+- 普通用户一级入口为“AI 助手”和“资料空间”。AI 助手默认进入；资料空间只负责维护项目资料和公司资料。需求概览是 AI 助手发起、保存到项目的专业产物。
 - 所有真实文本生成固定使用只读 Profile `qwen-project-assistant-cn-v2` 和模型 `qwen3.7-flash`；不得自动降级到其他文本模型。结构化 JSON 请求必须关闭 Thinking。
 - 所有文档与查询向量固定使用只读 Profile `qwen3.7-text-embedding-cn-v2`、模型 `qwen3.7-text-embedding` 和显式 1024 维。
 - 新检索只能读取当前 Profile 的 Current 向量；旧 Profile 或不同维度向量不得混入。向量失败只允许精确重试，结果不确定时禁止自动重放。

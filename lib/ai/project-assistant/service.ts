@@ -24,6 +24,7 @@ import {
 import { validateAndMapCitations } from "./citations";
 import { createProjectAssistantGateway, type AiGatewayResult } from "./gateway";
 import { ProjectAssistantError } from "./errors";
+import { classifyAssistantIntent } from "./intent-router";
 import {
   archiveOwnedThread,
   deleteOwnedThread,
@@ -245,7 +246,7 @@ export async function askGeneralAssistant(input: {
     if (!answer) {
       throw new ProjectAssistantError(502, "AI_EXECUTION_FAILED", "AI 返回了空回答");
     }
-    const disclosure = "本回答未使用知识库资料。";
+    const disclosure = "本回答未使用项目或公司资料。";
     await finalizeGeneralSuccessfulExecution({
       execution: reservation.execution,
       answer: answer.includes(disclosure) ? answer : `${answer}\n\n${disclosure}`,
@@ -294,6 +295,10 @@ export async function askProjectAssistant(input: {
     );
   }
   const selectedSourceIds = [...new Set(parsed.data.sourceDocumentIds)].sort();
+  const intent = classifyAssistantIntent({
+    question: parsed.data.question,
+    hasAssociatedProject: true,
+  });
   if (selectedSourceIds.length !== parsed.data.sourceDocumentIds.length) {
     throw new ProjectAssistantError(400, "AI_INVALID_REQUEST", "知识来源选择存在重复项");
   }
@@ -334,6 +339,63 @@ export async function askProjectAssistant(input: {
       execution: reservation.execution,
       replayed: true,
     });
+  }
+
+  // A linked project is available as context, not a mandatory retrieval gate.
+  // General drafting, translation, and brainstorming still use the text model
+  // directly and never claim that project facts were read.
+  if (intent === "general_chat") {
+    let gatewayResult: AiGatewayResult | null = null;
+    try {
+      const [history, scenario] = await Promise.all([
+        loadConversationHistory({
+          projectId: input.projectId,
+          threadId: input.threadId,
+          actorUserId: input.principal.user.id,
+          excludeMessageId: reservation.execution.userMessageId,
+        }),
+        resolveGenerationScenario({
+          projectId: input.projectId,
+          actorId: input.principal.user.id,
+          scenario: "general_chat",
+        }),
+      ]);
+      const gateway = createProjectAssistantGateway(scenario.runtime);
+      await updateExecutionPhase(reservation.execution.id, "calling_provider");
+      gatewayResult = await gateway.generate({
+        purpose: "answer",
+        model: scenario.modelId,
+        systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
+        userPrompt: buildGeneralUserPrompt({ question: parsed.data.question, history }),
+      });
+      const disclosure = "本回答未使用项目或公司资料。";
+      const answer = gatewayResult.text.trim();
+      if (!answer) throw new ProjectAssistantError(502, "AI_EXECUTION_FAILED", "AI 返回了空回答");
+      await finalizeGeneralSuccessfulExecution({
+        execution: reservation.execution,
+        answer: answer.includes(disclosure) ? answer : `${answer}\n\n${disclosure}`,
+        gateway: gatewayResult,
+        requestHeaders: input.requestHeaders,
+      });
+      return responseForExecution({
+        principal: input.principal,
+        projectId: input.projectId,
+        execution: await refreshedExecution(reservation.execution.id),
+        replayed: false,
+      });
+    } catch (error) {
+      const controlled = error instanceof ProjectAssistantError
+        ? error
+        : new ProjectAssistantError(503, "AI_EXECUTION_FAILED", "AI 回答暂时不可用，请稍后重试");
+      await finalizeFailedExecution({
+        executionId: reservation.execution.id,
+        failureCode: controlled.code,
+        gateway: gatewayResult,
+        evidenceCount: 0,
+        requestHeaders: input.requestHeaders,
+      }).catch(() => undefined);
+      throw controlled;
+    }
   }
 
   let consumedGatewayResult: AiGatewayResult | null = null;
