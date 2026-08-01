@@ -11,6 +11,17 @@ test("ordinary Staging deploy defaults to app-only and does not require seed cre
   assert.match(deploy, /if \[\[ "\$deploy_mode" == "full" \]\]; then[\s\S]+?SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD/);
   assert.match(deploy, /if \[\[ "\$DEPLOY_MODE" == "app" \]\]; then[\s\S]+?staging-app-only-deploy\.sh/);
   assert.match(deploy, /Replacing only the Staging App and required Workers without Migration, Seed, or credential E2E/);
+  assert.match(deploy, /"app" \|\| "\$DEPLOY_MODE" == "app-migrate"/);
+  assert.match(deploy, /staging-app-migrate-deploy\.sh/);
+});
+
+test("app-migrate backs up then migrates without seed or credential reset", async () => {
+  const helper = await read("scripts/release/staging-app-migrate-deploy.sh");
+  assert.match(helper, /pg_dump --format=custom/);
+  assert.match(helper, /pg_restore --list/);
+  assert.match(helper, /required_backup_bytes/);
+  assert.match(helper, /projectai-migrate npm run db:migrate/);
+  assert.doesNotMatch(helper, /db:seed|reset-test-account|SEED_[A-Z_]*PASSWORD/);
 });
 
 test("app-only helper cannot migrate, seed, reset credentials, or mutate business rows", async () => {

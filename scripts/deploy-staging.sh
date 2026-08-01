@@ -94,8 +94,8 @@ fi
 [[ "$APP_VERSION" =~ ^[0-9A-Za-z._-]+$ ]] || fail "NEXT_PUBLIC_APP_VERSION contains unsupported characters"
 [[ "$PUBLIC_VALIDATION" == "0" || "$PUBLIC_VALIDATION" == "1" ]] \
   || fail "PUBLIC_VALIDATION must be exactly 0 or 1"
-[[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "full" ]] \
-  || fail "PROJECTAI_STAGING_DEPLOY_MODE must be app or full"
+[[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "app-migrate" || "$DEPLOY_MODE" == "full" ]] \
+  || fail "PROJECTAI_STAGING_DEPLOY_MODE must be app, app-migrate, or full"
 [[ -f "$COMPOSE_FILE" ]] || fail "Missing ${COMPOSE_FILE}"
 [[ -f "$APP_ONLY_COMPOSE_FILE" ]] || fail "Missing ${APP_ONLY_COMPOSE_FILE}"
 
@@ -228,7 +228,7 @@ fi
 [[ "$embedding_env_file" == "$remote_dir/.env.embedding" ]]
 [[ "$qwen_secret_file" == "$remote_dir/secrets/qwen_api_key" ]]
 [[ "$embedding_worker_container_name" == "project-ai-os-staging-embedding-worker" ]]
-[[ "$deploy_mode" == "app" || "$deploy_mode" == "full" ]]
+[[ "$deploy_mode" == "app" || "$deploy_mode" == "app-migrate" || "$deploy_mode" == "full" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 [[ "$deploy_lock" == "$remote_dir/.staging-deploy-lock" ]]
@@ -941,6 +941,10 @@ git archive --format=tar "$COMMIT_SHA" | tar -xf - -C "$RELEASE_ROOT"
 [[ -f "$RELEASE_ROOT/$APP_ONLY_COMPOSE_FILE" ]] || fail "Tracked release is missing ${APP_ONLY_COMPOSE_FILE}"
 [[ -f "$RELEASE_ROOT/scripts/release/staging-app-only-deploy.sh" ]] \
   || fail "Tracked release is missing the app-only deployment helper"
+if [[ "$DEPLOY_MODE" == "app-migrate" ]]; then
+  [[ -f "$RELEASE_ROOT/scripts/release/staging-app-migrate-deploy.sh" ]] \
+    || fail "Tracked release is missing the app-migrate deployment helper"
+fi
 [[ ! -e "$RELEASE_ROOT/.env.auth-staging" ]] || fail "Tracked release unexpectedly contains a protected environment file"
 sensitive_release_paths="$(
   git ls-tree -r --name-only "$COMMIT_SHA" \
@@ -972,7 +976,7 @@ APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
 [[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
 DB_TOOLS_IMAGE_ID=""
-if [[ "$DEPLOY_MODE" == "full" ]]; then
+if [[ "$DEPLOY_MODE" != "app" ]]; then
   docker build \
     --pull \
     --platform "$REMOTE_DOCKER_PLATFORM" \
@@ -1056,19 +1060,25 @@ db_tools_image_ref="$3"
 db_tools_image_id="$4"
 expected_platform="$5"
 deploy_mode="$6"
-[[ "$deploy_mode" == "app" || "$deploy_mode" == "full" ]]
+[[ "$deploy_mode" == "app" || "$deploy_mode" == "app-migrate" || "$deploy_mode" == "full" ]]
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$app_image_ref")" == "$app_image_id" ]]
 [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$app_image_ref")" == "$expected_platform" ]]
-if [[ "$deploy_mode" == "full" ]]; then
+if [[ "$deploy_mode" != "app" ]]; then
   [[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
   [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$db_tools_image_ref")" == "$expected_platform" ]]
 fi
 REMOTE_IMAGE_VERIFY
 
-if [[ "$DEPLOY_MODE" == "app" ]]; then
-  log "Replacing only the Staging App and required Workers without Migration, Seed, or credential E2E"
+if [[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "app-migrate" ]]; then
+  deploy_helper="staging-app-only-deploy.sh"
+  if [[ "$DEPLOY_MODE" == "app" ]]; then
+    log "Replacing only the Staging App and required Workers without Migration, Seed, or credential E2E"
+  else
+    log "Backing up Staging PostgreSQL, applying committed migrations only, then replacing App and Workers without Seed, password reset, or credential E2E"
+    deploy_helper="staging-app-migrate-deploy.sh"
+  fi
   "${SSH[@]}" sudo bash \
-    "$REMOTE_DIR/scripts/release/staging-app-only-deploy.sh" \
+    "$REMOTE_DIR/scripts/release/${deploy_helper}" \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_EMBEDDING_ENV_FILE" \
     "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$APP_ONLY_COMPOSE_FILE" \
     "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$COMMIT_SHA" "$APP_VERSION" "$BUILD_TIME" \
