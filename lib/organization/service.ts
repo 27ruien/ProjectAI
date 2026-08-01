@@ -47,11 +47,18 @@ export async function previewOrganizationDepartmentDelete(input: {
     db.select({ value: count() }).from(project).where(and(eq(project.departmentId, current.id), eq(project.isInternal, false))),
     db.select({ id: knowledgeSpace.id }).from(knowledgeSpace).where(eq(knowledgeSpace.departmentId, current.id)),
   ]);
+  const documentCount = spaces.length
+    ? await db
+        .select({ value: count() })
+        .from(projectDocument)
+        .where(inArray(projectDocument.knowledgeSpaceId, spaces.map((space) => space.id)))
+    : [{ value: 0 }];
   const additionalSpaces = spaces.filter((space) => space.id !== `ks-department-${current.id}`).length;
+  const documents = Number(documentCount[0]?.value ?? 0);
   return {
     departmentId: current.id,
-    canDelete: Number(childCount[0]?.value ?? 0) === 0 && Number(memberCount[0]?.value ?? 0) === 0 && Number(projectCount[0]?.value ?? 0) === 0 && additionalSpaces === 0,
-    dependencies: { childDepartments: Number(childCount[0]?.value ?? 0), activeMembers: Number(memberCount[0]?.value ?? 0), projects: Number(projectCount[0]?.value ?? 0), additionalKnowledgeSpaces: additionalSpaces },
+    canDelete: Number(childCount[0]?.value ?? 0) === 0 && Number(memberCount[0]?.value ?? 0) === 0 && Number(projectCount[0]?.value ?? 0) === 0 && additionalSpaces === 0 && documents === 0,
+    dependencies: { childDepartments: Number(childCount[0]?.value ?? 0), activeMembers: Number(memberCount[0]?.value ?? 0), projects: Number(projectCount[0]?.value ?? 0), additionalKnowledgeSpaces: additionalSpaces, documents },
   };
 }
 
@@ -70,9 +77,15 @@ export async function deleteOrganizationDepartment(input: {
       tx.select({ value: count() }).from(project).where(and(eq(project.departmentId, current.id), eq(project.isInternal, false))),
       tx.select({ id: knowledgeSpace.id }).from(knowledgeSpace).where(eq(knowledgeSpace.departmentId, current.id)),
     ]);
+    const documentCount = spaces.length
+      ? await tx
+          .select({ value: count() })
+          .from(projectDocument)
+          .where(inArray(projectDocument.knowledgeSpaceId, spaces.map((space) => space.id)))
+      : [{ value: 0 }];
     const additionalSpaces = spaces.filter((space) => space.id !== `ks-department-${current.id}`);
-    if (Number(children[0]?.value ?? 0) || Number(members[0]?.value ?? 0) || Number(projects[0]?.value ?? 0) || additionalSpaces.length) {
-      throw new KnowledgeManagementError(409, "DEPARTMENT_NOT_EMPTY", "部门仍有关联子部门、成员、项目或资料空间，不能删除");
+    if (Number(children[0]?.value ?? 0) || Number(members[0]?.value ?? 0) || Number(projects[0]?.value ?? 0) || additionalSpaces.length || Number(documentCount[0]?.value ?? 0)) {
+      throw new KnowledgeManagementError(409, "DEPARTMENT_NOT_EMPTY", "部门仍有关联子部门、成员、项目或资料，不能删除");
     }
     await tx.delete(knowledgeSpace).where(eq(knowledgeSpace.id, `ks-department-${current.id}`));
     await tx.delete(department).where(eq(department.id, current.id));

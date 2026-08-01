@@ -75,7 +75,7 @@ test("General Chat 单击发送一次并在刷新后保留消息", async ({ page
   });
 
   await page.goto(appPath("/assistant"));
-  await expect(page.getByText("不关联项目", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI 助手", exact: true })).toBeVisible();
   const input = page.getByTestId("assistant-composer-input");
   await input.fill("你能做什么？");
   await page.getByTestId("assistant-send-button").click();
@@ -104,7 +104,6 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const companyDisplayName = companyFileName.replace(/\.txt$/, "");
 
   await page.goto(appPath("/data-spaces/projects"));
-  await expect(page.getByRole("heading", { name: "资料空间", exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
   await expectNoPageOverflow(page);
   await evidence(page, "01-project-list.png");

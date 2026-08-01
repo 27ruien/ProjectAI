@@ -121,10 +121,10 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
 
   const remove = async (item: Department) => {
     try {
-      const preview = await request<{ canDelete: boolean; dependencies: { childDepartments: number; activeMembers: number; projects: number; additionalKnowledgeSpaces: number } }>("GET", undefined, `?previewDelete=${encodeURIComponent(item.id)}`);
+      const preview = await request<{ canDelete: boolean; dependencies: { childDepartments: number; activeMembers: number; projects: number; additionalKnowledgeSpaces: number; documents: number } }>("GET", undefined, `?previewDelete=${encodeURIComponent(item.id)}`);
       if (!preview.canDelete) {
         const values = preview.dependencies;
-        setError(`“${item.name}”暂时不能删除：子部门 ${values.childDepartments}、成员 ${values.activeMembers}、项目 ${values.projects}、额外资料空间 ${values.additionalKnowledgeSpaces}。请先处理这些关联项。`);
+        setError(`“${item.name}”暂时不能删除：子部门 ${values.childDepartments}、成员 ${values.activeMembers}、项目 ${values.projects}、资料 ${values.documents}、额外资料空间 ${values.additionalKnowledgeSpaces}。请先处理这些关联项。`);
         return;
       }
       if (!window.confirm(`确认永久删除空部门“${item.name}”吗？`)) return;
