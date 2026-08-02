@@ -19,6 +19,8 @@ export type ProjectAssistantProviderRequest = {
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
   responseFormat: "text" | "json_object";
+  /** Stored server-side per model; never accepted from the browser. */
+  disableThinkingForJson?: boolean;
   timeoutMs: number;
   temperature: number;
   maxOutputTokens: number;

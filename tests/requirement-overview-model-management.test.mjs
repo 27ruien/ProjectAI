@@ -34,22 +34,32 @@ test("guided requirement overview stays structured, cited, and Markdown-only", a
   assert.doesNotMatch(ui, /DOCX/);
 });
 
-test("model management keeps keys server-side and only accepts 1024 dimensions", async () => {
-  const [schema, route, ui] = await Promise.all([
+test("model management encrypts managed keys server-side and preserves the fixed vector boundary", async () => {
+  const [schema, route, ui, credentials, management] = await Promise.all([
     source("lib/db/schema/ai-model-management.ts"),
     source("app/api/admin/ai-configuration/route.ts"),
     source("components/system/AiModelManagementPage.tsx"),
+    source("lib/ai/provider-credentials.ts"),
+    source("lib/ai/model-management.ts"),
   ]);
   assert.match(schema, /ai_embedding_model_dimensions_check/);
   assert.match(schema, /dimensions} = 1024/);
-  assert.match(route, /secretReference/);
-  assert.doesNotMatch(route, /apiKey/);
+  assert.match(schema, /aiProviderCredential/);
+  assert.match(schema, /ciphertext/);
+  assert.match(route, /replace_provider_api_key/);
+  assert.match(route, /apiKey: key/);
   assert.match(route, /test_embedding_model/);
   assert.match(route, /set_generation_model_enabled/);
-  assert.match(route, /AI_MODEL_PROFILE_DISABLED/);
-  assert.match(route, /文本模型需先通过 JSON 能力测试后才能启用/);
-  assert.match(ui, /浏览器不会显示、提交或保存 API Key/);
-  assert.match(ui, /添加 1024 维向量模型/);
+  assert.match(management, /AI_MODEL_PROFILE_DISABLED/);
+  assert.match(route, /requireAiConfigurationAdmin/);
+  assert.match(credentials, /aes-256-gcm/);
+  assert.match(credentials, /AI_PROVIDER_CREDENTIALS_KEY_FILE/);
+  assert.match(credentials, /maskProviderApiKey/);
+  assert.doesNotMatch(credentials, /console\.log/);
+  assert.match(management, /organizationMember\.role, "organization_admin"/);
+  assert.match(ui, /保存后不会回显/);
+  assert.match(ui, /替换 API Key/);
+  assert.match(ui, /登记 1024 维模型/);
   assert.match(ui, /已启用/);
 });
 

@@ -23,6 +23,7 @@ REMOTE_ENV_FILE="${REMOTE_DIR}/.env.auth-staging"
 REMOTE_AI_ENV_FILE="${REMOTE_DIR}/.env.ai"
 REMOTE_EMBEDDING_ENV_FILE="${REMOTE_DIR}/.env.embedding"
 REMOTE_QWEN_SECRET_FILE="${REMOTE_DIR}/secrets/qwen_api_key"
+REMOTE_PROVIDER_CREDENTIALS_KEY_FILE="${REMOTE_DIR}/secrets/provider_credentials_key"
 DEPLOY_MARKER="${REMOTE_DIR}/.staging-deploy-in-progress"
 DEPLOY_LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
 readonly BACKUP_RETENTION=10
@@ -190,7 +191,8 @@ log "Checking isolated remote prerequisites and protected environment file"
   "$REMOTE_QWEN_SECRET_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
   "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
   "$COMPOSE_PROJECT" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" \
-  "$REMOTE_EMBEDDING_ENV_FILE" "$EMBEDDING_WORKER_CONTAINER_NAME" "$DEPLOY_MODE" <<'REMOTE_PREFLIGHT'
+  "$REMOTE_EMBEDDING_ENV_FILE" "$EMBEDDING_WORKER_CONTAINER_NAME" "$DEPLOY_MODE" \
+  "$REMOTE_PROVIDER_CREDENTIALS_KEY_FILE" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -209,10 +211,12 @@ deploy_id="${14}"
 embedding_env_file="${15}"
 embedding_worker_container_name="${16}"
 deploy_mode="${17}"
+provider_credentials_key_file="${18}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
 command -v timeout >/dev/null 2>&1
+command -v openssl >/dev/null 2>&1
 sudo -n true
 sudo docker compose version >/dev/null
 
@@ -227,6 +231,7 @@ fi
 [[ "$ai_env_file" == "$remote_dir/.env.ai" ]]
 [[ "$embedding_env_file" == "$remote_dir/.env.embedding" ]]
 [[ "$qwen_secret_file" == "$remote_dir/secrets/qwen_api_key" ]]
+[[ "$provider_credentials_key_file" == "$remote_dir/secrets/provider_credentials_key" ]]
 [[ "$embedding_worker_container_name" == "project-ai-os-staging-embedding-worker" ]]
 [[ "$deploy_mode" == "app" || "$deploy_mode" == "app-migrate" || "$deploy_mode" == "full" ]]
 [[ "$compose_project" == "projectai-staging" ]]
@@ -274,6 +279,24 @@ sudo chmod 600 "$qwen_secret_file"
 [[ "$(sudo stat -c '%U:%G' "$qwen_secret_file")" == "deploy:deploy" ]]
 [[ "$(sudo stat -c '%u:%g' "$qwen_secret_file")" == "1000:1000" ]]
 [[ "$(id -u deploy):$(id -g deploy)" == "1000:1000" ]]
+sudo install -d -m 0700 -o deploy -g deploy "$remote_dir/secrets"
+sudo test ! -L "$remote_dir/secrets"
+if ! sudo test -e "$provider_credentials_key_file"; then
+  sudo -u deploy sh -ceu '
+    umask 077
+    temporary="$1.tmp.$$"
+    trap '\''rm -f -- "$temporary"'\'' EXIT
+    openssl rand -base64 32 > "$temporary"
+    mv -f -- "$temporary" "$1"
+  ' sh "$provider_credentials_key_file"
+fi
+sudo test -f "$provider_credentials_key_file"
+sudo test ! -L "$provider_credentials_key_file"
+sudo chmod 600 "$provider_credentials_key_file"
+sudo chown deploy:deploy "$provider_credentials_key_file"
+[[ "$(sudo stat -c '%a' "$provider_credentials_key_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$provider_credentials_key_file")" == "deploy:deploy" ]]
+[[ "$(sudo -u deploy sh -ceu 'base64 -d "$1" | wc -c' sh "$provider_credentials_key_file")" == "32" ]]
 sudo awk -F= -v deploy_mode="$deploy_mode" '
   /^[[:space:]]*($|#)/ { next }
   {

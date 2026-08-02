@@ -527,8 +527,10 @@ services:
       NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.8.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
+      AI_PROVIDER_CREDENTIALS_KEY_FILE: /run/secrets/provider_credentials_key
     secrets:
       - qwen_api_key
+      - provider_credentials_key
     depends_on:
       projectai-postgres:
         condition: service_healthy
@@ -676,3 +678,5 @@ networks:
 secrets:
   qwen_api_key:
     file: /srv/projectai-staging/secrets/qwen_api_key
+  provider_credentials_key:
+    file: /srv/projectai-staging/secrets/provider_credentials_key

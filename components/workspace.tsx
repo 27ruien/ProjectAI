@@ -40,7 +40,7 @@ export function Workspace({ route, viewer, currentProject }: {
   else if (project && child === "members") page = <ProjectMembersPage key={project.id} project={project} />;
   else if (isDataSpace && area === "company" && !entityId) page = <CompanyKnowledgePage />;
   else if (section === "organization" && viewer.user.productRole === "super_admin") page = <StandardPage><OrganizationPage mode={area === "members" ? "members" : "structure"} /></StandardPage>;
-  else if (section === "settings" && area === "ai-models" && viewer.user.productRole !== "member") page = <StandardPage><AiModelManagementPage organizationId={viewer.projects[0]?.organizationId ?? "org-legacy-default"} verificationProjectId={viewer.projects[0]?.id ?? null} /></StandardPage>;
+  else if (section === "admin" && area === "models") page = <StandardPage><AiModelManagementPage organizationId={viewer.projects[0]?.organizationId ?? ""} verificationProjectId={viewer.projects[0]?.id ?? null} /></StandardPage>;
   else if (section === "settings" && viewer.user.productRole !== "member") page = <StandardPage><SettingsPage /></StandardPage>;
   else if (section === "help" && area === "models-and-api") page = <ModelsAndApiHelpPage />;
   else page = <StandardPage><NotFoundPage path={path} /></StandardPage>;

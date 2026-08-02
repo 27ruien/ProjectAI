@@ -13,7 +13,8 @@ function isAllowedPathname(pathname: string): boolean {
     || pathname === "/data-spaces/company"
     || pathname.startsWith("/data-spaces/projects/")
     || pathname === "/organization"
-    || pathname === "/settings/ai-models";
+    || pathname === "/settings/ai-models"
+    || pathname === "/admin/models";
 }
 
 /**

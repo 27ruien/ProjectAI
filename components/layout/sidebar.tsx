@@ -25,7 +25,7 @@ interface SidebarProps {
 function SidebarContent({ viewer, currentPath, onNavigate }: { viewer: ViewerContext; currentPath: string; onNavigate?: () => void }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const active = (href: string) => currentPath === href || currentPath.startsWith(`${href}/`);
-  const admin = viewer.user.productRole === "super_admin" || viewer.user.productRole === "admin";
+  const admin = viewer.user.systemRole === "system_admin" || viewer.user.productRole === "admin";
   const logout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
@@ -65,6 +65,7 @@ function SidebarContent({ viewer, currentPath, onNavigate }: { viewer: ViewerCon
           {admin ? <>
             <DropdownMenuItem asChild><Link href="/organization" onClick={onNavigate}><Users />组织与账号</Link></DropdownMenuItem>
             <DropdownMenuItem asChild><Link href="/settings" onClick={onNavigate}><Settings />管理设置</Link></DropdownMenuItem>
+            <DropdownMenuItem asChild><Link href="/admin/models" onClick={onNavigate}><Bot />Provider 与模型</Link></DropdownMenuItem>
             <DropdownMenuSeparator />
           </> : null}
           <DropdownMenuItem asChild><Link href="/help/models-and-api" onClick={onNavigate}>模型与 API 帮助</Link></DropdownMenuItem>

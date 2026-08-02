@@ -357,7 +357,7 @@ export async function generateRequirementOverviewCandidates(input: { principal: 
         id: candidateId, runId, candidateOrder: candidateOrder + 1, generationModelId: model.modelRecordId, modelDisplayName: model.displayName, providerName: model.providerName, status: "running",
       });
       try {
-        const result = await createProjectAssistantGateway(model.runtime).generate({ model: model.modelId, purpose: "requirement_overview", systemPrompt: prompt.systemPrompt, userPrompt: prompt.userPrompt });
+        const result = await createProjectAssistantGateway(model.runtime, { apiKey: model.apiKey }).generate({ model: model.modelId, disableThinkingForJson: model.disableThinkingForJson, purpose: "requirement_overview", systemPrompt: prompt.systemPrompt, userPrompt: prompt.userPrompt });
         const items = parseRequirementOverviewCandidateItems(result.text, current.items, citations);
         await getDb().update(guidedRequirementOverviewComparisonCandidate).set({ status: "ready", items, actualModel: result.actualModel, inputTokens: result.inputTokens, outputTokens: result.outputTokens, totalTokens: result.totalTokens, latencyMs: result.latencyMs, completedAt: new Date() }).where(eq(guidedRequirementOverviewComparisonCandidate.id, candidateId));
       } catch (error) {

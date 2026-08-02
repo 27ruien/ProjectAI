@@ -287,11 +287,12 @@ export async function askGeneralAssistant(input: {
       scenario: "general_chat",
       generationModelId,
       });
-      const gateway = createProjectAssistantGateway(scenario.runtime);
+      const gateway = createProjectAssistantGateway(scenario.runtime, { apiKey: scenario.apiKey });
       await updateExecutionPhase(reservation.execution.id, "calling_provider");
       consumedGatewayResult = await gateway.generate({
       purpose: "answer",
       model: scenario.modelId,
+      disableThinkingForJson: scenario.disableThinkingForJson,
       systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGeneralUserPrompt({ question: parsed.data.question, history }),
       });
@@ -334,10 +335,10 @@ export async function askGeneralAssistant(input: {
       });
     }
     const scenario = await resolveGenerationScenario({ projectId, actorId: input.principal.user.id, scenario: "project_grounded_chat", generationModelId });
-    const gateway = createProjectAssistantGateway(scenario.runtime);
+    const gateway = createProjectAssistantGateway(scenario.runtime, { apiKey: scenario.apiKey });
     await updateExecutionPhase(reservation.execution.id, "calling_provider");
     consumedGatewayResult = await gateway.generate({
-      purpose: "answer", model: scenario.modelId, systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
+      purpose: "answer", model: scenario.modelId, disableThinkingForJson: scenario.disableThinkingForJson, systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGroundedUserPrompt({ question: parsed.data.question, history, evidence: retrieval.evidence }),
     });
     await updateExecutionPhase(reservation.execution.id, "validating");
@@ -448,11 +449,12 @@ export async function askProjectAssistant(input: {
         }),
       ]);
       const history = conversation.history;
-      const gateway = createProjectAssistantGateway(scenario.runtime);
+      const gateway = createProjectAssistantGateway(scenario.runtime, { apiKey: scenario.apiKey });
       await updateExecutionPhase(reservation.execution.id, "calling_provider");
       gatewayResult = await gateway.generate({
         purpose: "answer",
         model: scenario.modelId,
+        disableThinkingForJson: scenario.disableThinkingForJson,
         systemPrompt: GENERAL_ASSISTANT_SYSTEM_PROMPT,
         userPrompt: buildGeneralUserPrompt({ question: parsed.data.question, history }),
       });
@@ -534,11 +536,12 @@ export async function askProjectAssistant(input: {
       actorId: input.principal.user.id,
       scenario: "project_grounded_chat",
     });
-    const gateway = createProjectAssistantGateway(scenario.runtime);
+    const gateway = createProjectAssistantGateway(scenario.runtime, { apiKey: scenario.apiKey });
     await updateExecutionPhase(reservation.execution.id, "calling_provider");
     consumedGatewayResult = await gateway.generate({
       purpose: "answer",
       model: scenario.modelId,
+      disableThinkingForJson: scenario.disableThinkingForJson,
       systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
       userPrompt: buildGroundedUserPrompt({
         question: parsed.data.question,
@@ -555,6 +558,7 @@ export async function askProjectAssistant(input: {
       const repaired = await gateway.generate({
         purpose: "repair",
         model: scenario.modelId,
+        disableThinkingForJson: scenario.disableThinkingForJson,
         systemPrompt: PROJECT_ASSISTANT_SYSTEM_PROMPT,
         userPrompt: buildCitationRepairPrompt({
           answer: consumedGatewayResult.text,

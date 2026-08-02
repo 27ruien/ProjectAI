@@ -6,8 +6,9 @@ import { projectDocument, projectDocumentVersion } from "./project-documents";
 import { user } from "./users";
 
 /**
- * These records deliberately contain only a reference to a server-managed
- * secret.  Raw credentials are never persisted or returned through the API.
+ * Provider credentials are either a legacy deployment-secret reference or an
+ * AES-GCM ciphertext held in the adjacent server-only credential vault. Raw
+ * credentials are never returned through the API.
  */
 export const aiProviderProfile = pgTable("ai_provider_profiles", {
   id: text("id").primaryKey(),
@@ -17,10 +18,18 @@ export const aiProviderProfile = pgTable("ai_provider_profiles", {
   baseUrl: varchar("base_url", { length: 500 }).notNull(),
   region: varchar("region", { length: 80 }).notNull(),
   secretRef: varchar("secret_ref", { length: 80 }).notNull(),
+  credentialMode: varchar("credential_mode", { length: 24 })
+    .notNull()
+    .default("environment"),
+  modelDiscoverySupported: boolean("model_discovery_supported")
+    .notNull()
+    .default(false),
   enabled: boolean("enabled").notNull().default(false),
   lastTestStatus: varchar("last_test_status", { length: 24 }).notNull().default("not_tested"),
   lastTestedAt: timestamp("last_tested_at", { withTimezone: true, mode: "date" }),
   lastTestErrorCode: varchar("last_test_error_code", { length: 80 }),
+  lastTestLatencyMs: integer("last_test_latency_ms"),
+  lastTestRequestId: varchar("last_test_request_id", { length: 240 }),
   createdBy: text("created_by").notNull().references(() => user.id, { onDelete: "restrict" }),
   updatedBy: text("updated_by").notNull().references(() => user.id, { onDelete: "restrict" }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
@@ -29,7 +38,27 @@ export const aiProviderProfile = pgTable("ai_provider_profiles", {
   uniqueIndex("ai_provider_profile_org_name_uidx").on(table.organizationId, table.name),
   index("ai_provider_profile_org_enabled_idx").on(table.organizationId, table.enabled),
   check("ai_provider_profile_type_check", sql`${table.providerType} in ('dashscope', 'openai_compatible')`),
+  check("ai_provider_profile_credential_mode_check", sql`${table.credentialMode} in ('environment', 'managed')`),
   check("ai_provider_profile_test_check", sql`${table.lastTestStatus} in ('not_tested', 'passed', 'failed')`),
+]);
+
+/** Ciphertext only. The AES key is a server secret mounted into the App. */
+export const aiProviderCredential = pgTable("ai_provider_credentials", {
+  providerProfileId: text("provider_profile_id")
+    .primaryKey()
+    .references(() => aiProviderProfile.id, { onDelete: "cascade" }),
+  ciphertext: text("ciphertext").notNull(),
+  iv: varchar("iv", { length: 64 }).notNull(),
+  authTag: varchar("auth_tag", { length: 64 }).notNull(),
+  keyVersion: integer("key_version").notNull().default(1),
+  apiKeyLast4: varchar("api_key_last4", { length: 4 }).notNull(),
+  createdBy: text("created_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  updatedBy: text("updated_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  check("ai_provider_credential_key_version_check", sql`${table.keyVersion} = 1`),
+  check("ai_provider_credential_last4_check", sql`length(${table.apiKeyLast4}) = 4`),
 ]);
 
 export const aiGenerationModel = pgTable("ai_generation_models", {
@@ -40,14 +69,19 @@ export const aiGenerationModel = pgTable("ai_generation_models", {
   modelId: varchar("model_id", { length: 160 }).notNull(),
   enabled: boolean("enabled").notNull().default(false),
   supportsJson: boolean("supports_json").notNull().default(true),
+  supportsThinking: boolean("supports_thinking").notNull().default(false),
+  disableThinkingForJson: boolean("disable_thinking_for_json").notNull().default(true),
   lastTestStatus: varchar("last_test_status", { length: 24 }).notNull().default("not_tested"),
   lastTestedAt: timestamp("last_tested_at", { withTimezone: true, mode: "date" }),
+  lastTestErrorCode: varchar("last_test_error_code", { length: 80 }),
+  lastTestLatencyMs: integer("last_test_latency_ms"),
+  lastTestRequestId: varchar("last_test_request_id", { length: 240 }),
   createdBy: text("created_by").notNull().references(() => user.id, { onDelete: "restrict" }),
   updatedBy: text("updated_by").notNull().references(() => user.id, { onDelete: "restrict" }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (table) => [
-  uniqueIndex("ai_generation_model_org_model_uidx").on(table.organizationId, table.modelId),
+  uniqueIndex("ai_generation_model_org_provider_model_uidx").on(table.organizationId, table.providerProfileId, table.modelId),
   index("ai_generation_model_provider_idx").on(table.providerProfileId, table.enabled),
   check("ai_generation_model_test_check", sql`${table.lastTestStatus} in ('not_tested', 'passed', 'failed')`),
 ]);
@@ -62,6 +96,9 @@ export const aiEmbeddingModel = pgTable("ai_embedding_models", {
   enabled: boolean("enabled").notNull().default(false),
   lastTestStatus: varchar("last_test_status", { length: 24 }).notNull().default("not_tested"),
   lastTestedAt: timestamp("last_tested_at", { withTimezone: true, mode: "date" }),
+  lastTestErrorCode: varchar("last_test_error_code", { length: 80 }),
+  lastTestLatencyMs: integer("last_test_latency_ms"),
+  lastTestRequestId: varchar("last_test_request_id", { length: 240 }),
   createdBy: text("created_by").notNull().references(() => user.id, { onDelete: "restrict" }),
   updatedBy: text("updated_by").notNull().references(() => user.id, { onDelete: "restrict" }),
   createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),

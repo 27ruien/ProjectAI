@@ -27,6 +27,10 @@ export type ProjectAssistantGatewayInput = {
   purpose: ProjectAssistantProviderPurpose;
   /** Resolved server-side scenario binding; never accepted directly from UI. */
   model?: string;
+  /** Server-controlled model capability check; never accepted from the browser. */
+  forceJsonObject?: boolean;
+  /** Stored server-side per model; never accepted from the browser. */
+  disableThinkingForJson?: boolean;
 };
 
 function responseFormatForPurpose(
@@ -136,7 +140,8 @@ export class ProjectAssistantGateway {
       systemPrompt: input.systemPrompt,
       userPrompt: input.userPrompt,
       purpose: input.purpose,
-      responseFormat: responseFormatForPurpose(input.purpose),
+      responseFormat: input.forceJsonObject ? "json_object" : responseFormatForPurpose(input.purpose),
+      disableThinkingForJson: input.disableThinkingForJson ?? true,
       timeoutMs: this.config.timeoutMs,
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxOutputTokens,
@@ -169,11 +174,16 @@ export class ProjectAssistantGateway {
 
 export function createProjectAssistantGateway(
   config: AiRuntimeConfig,
+  options: { apiKey?: string } = {},
 ): ProjectAssistantGateway {
   const provider =
     config.provider === "fake"
       ? new FakeProjectAssistantProvider()
-      : new QwenProjectAssistantProvider(config.qwenBaseUrl!);
+      : new QwenProjectAssistantProvider(
+          config.qwenBaseUrl!,
+          fetch,
+          options.apiKey ? async () => options.apiKey! : undefined,
+        );
   return new ProjectAssistantGateway(
     config,
     provider,

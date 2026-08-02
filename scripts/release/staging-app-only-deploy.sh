@@ -37,12 +37,18 @@ deploy_marker="${18}"
 [[ "$base_path" == "/tool/projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 
+provider_credentials_key_file="$remote_dir/secrets/provider_credentials_key"
+
 cd "$remote_dir"
 sudo test -e "$deploy_marker"
 sudo test -f "$compose_file"
 sudo test -f "$app_only_compose_file"
 sudo test -f "$env_file"
 sudo test -f "$embedding_env_file"
+sudo test -f "$provider_credentials_key_file"
+sudo test ! -L "$provider_credentials_key_file"
+[[ "$(sudo stat -c '%a' "$provider_credentials_key_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$provider_credentials_key_file")" == "deploy:deploy" ]]
 
 for service_container in "$db_container_name" "$minio_container_name"; do
   running="$(sudo docker inspect --format '{{.State.Running}}' "$service_container")"
@@ -115,11 +121,15 @@ grep -Fxq "AI_ASSISTANT_RETRIEVAL_MODE=hybrid" <<<"$app_environment"
 grep -Fxq "AI_EMBEDDING_ENABLED=true" <<<"$app_environment"
 grep -Fxq "AI_EMBEDDING_PROFILE_ID=qwen3.7-text-embedding-cn-v2" <<<"$app_environment"
 grep -Fxq "AI_EMBEDDING_DIMENSIONS=1024" <<<"$app_environment"
+grep -Fxq "AI_PROVIDER_CREDENTIALS_KEY_FILE=/run/secrets/provider_credentials_key" <<<"$app_environment"
+[[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.RW}}|{{.Destination}}{{end}}{{end}}' "$container_name")" == "false|/run/secrets/provider_credentials_key" ]]
 
 embedding_environment="$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$embedding_worker_container_name")"
 grep -Fxq "AI_EMBEDDING_ENABLED=true" <<<"$embedding_environment"
 grep -Fxq "AI_EMBEDDING_PROFILE_ID=qwen3.7-text-embedding-cn-v2" <<<"$embedding_environment"
 grep -Fxq "AI_EMBEDDING_DIMENSIONS=1024" <<<"$embedding_environment"
+[[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.Destination}}{{end}}{{end}}' "$worker_container_name")" ]]
+[[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.Destination}}{{end}}{{end}}' "$embedding_worker_container_name")" ]]
 
 curl --fail --silent --max-time 10 \
   "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'

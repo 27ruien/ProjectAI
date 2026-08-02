@@ -44,12 +44,13 @@ export class QwenProjectAssistantProvider
   constructor(
     private readonly baseUrl: string,
     private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly readApiKey: () => Promise<string> = readQwenApiKey,
   ) {}
 
   async generate(
     request: ProjectAssistantProviderRequest,
   ): Promise<ProjectAssistantProviderResult> {
-    const apiKey = await readQwenApiKey();
+    const apiKey = await this.readApiKey();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), request.timeoutMs);
     const started = performance.now();
@@ -74,11 +75,13 @@ export class QwenProjectAssistantProvider
             stream: false,
             ...(request.responseFormat === "json_object"
               ? {
-                  // DashScope rejects JSON mode while Qwen thinking is enabled.
-                  // Requirement generation needs deterministic structured output,
-                  // so disable thinking only for JSON responses.
-                  enable_thinking: false,
                   response_format: { type: "json_object" },
+                  // DashScope rejects JSON mode while some Qwen models have
+                  // thinking enabled. This is an explicit model-profile option:
+                  // generic OpenAI-compatible Providers may reject it.
+                  ...(request.disableThinkingForJson !== false
+                    ? { enable_thinking: false }
+                    : {}),
                 }
               : {}),
           }),
