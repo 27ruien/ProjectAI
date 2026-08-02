@@ -122,14 +122,39 @@ grep -Fxq "AI_EMBEDDING_ENABLED=true" <<<"$app_environment"
 grep -Fxq "AI_EMBEDDING_PROFILE_ID=qwen3.7-text-embedding-cn-v2" <<<"$app_environment"
 grep -Fxq "AI_EMBEDDING_DIMENSIONS=1024" <<<"$app_environment"
 grep -Fxq "AI_PROVIDER_CREDENTIALS_KEY_FILE=/run/secrets/provider_credentials_key" <<<"$app_environment"
-[[ "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.RW}}|{{.Destination}}{{end}}{{end}}' "$container_name")" == "false|/run/secrets/provider_credentials_key" ]]
+
+provider_credential_mount_template='{{range .Mounts}}{{if eq .Destination "/run/secrets/provider_credentials_key"}}{{.RW}}|{{.Destination}}{{end}}{{end}}'
+if ! provider_credential_mount="$(
+  sudo docker inspect --format "$provider_credential_mount_template" "$container_name"
+)"; then
+  printf 'STAGING_PROVIDER_CREDENTIAL_KEY_MOUNT_INSPECT_FAILED: App credential mount could not be inspected.\n' >&2
+  exit 1
+fi
+if [[ "$provider_credential_mount" != "false|/run/secrets/provider_credentials_key" ]]; then
+  printf 'STAGING_PROVIDER_CREDENTIAL_KEY_MOUNT_MISSING: App credential mount is missing or writable.\n' >&2
+  exit 1
+fi
+if ! sudo docker exec "$container_name" node -e 'require("node:fs").accessSync("/run/secrets/provider_credentials_key")'; then
+  printf 'STAGING_PROVIDER_CREDENTIAL_KEY_UNREADABLE: App cannot read its credential mount.\n' >&2
+  exit 1
+fi
 
 embedding_environment="$(sudo docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$embedding_worker_container_name")"
 grep -Fxq "AI_EMBEDDING_ENABLED=true" <<<"$embedding_environment"
 grep -Fxq "AI_EMBEDDING_PROFILE_ID=qwen3.7-text-embedding-cn-v2" <<<"$embedding_environment"
 grep -Fxq "AI_EMBEDDING_DIMENSIONS=1024" <<<"$embedding_environment"
-[[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.Destination}}{{end}}{{end}}' "$worker_container_name")" ]]
-[[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.Destination}}{{end}}{{end}}' "$embedding_worker_container_name")" ]]
+for worker_container in "$worker_container_name" "$embedding_worker_container_name"; do
+  if ! worker_credential_mount="$(
+    sudo docker inspect --format "$provider_credential_mount_template" "$worker_container"
+  )"; then
+    printf 'STAGING_PROVIDER_CREDENTIAL_KEY_MOUNT_INSPECT_FAILED: Worker credential mount could not be inspected.\n' >&2
+    exit 1
+  fi
+  if [[ -n "$worker_credential_mount" ]]; then
+    printf 'STAGING_PROVIDER_CREDENTIAL_KEY_UNEXPECTED_WORKER_MOUNT: Worker received the App credential mount.\n' >&2
+    exit 1
+  fi
+done
 
 if ! curl --fail --silent --max-time 10 \
   --header "Host: gridworks.cn" \
