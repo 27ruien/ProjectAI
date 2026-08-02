@@ -344,7 +344,7 @@ describe("Qwen adapter and Gateway", () => {
     );
   });
 
-  it("does not retry 401 or 403 and returns only a controlled error", async () => {
+  it("does not retry 401 or 403 and classifies model authorization safely", async () => {
     for (const marker of ["FAKE_401", "FAKE_403"]) {
       const provider = new FakeProjectAssistantProvider();
       const gateway = new ProjectAssistantGateway(
@@ -360,12 +360,58 @@ describe("Qwen adapter and Gateway", () => {
         }),
         (error: unknown) => {
           assert.ok(error instanceof ProjectAssistantError);
-          assert.equal(error.code, "AI_PROVIDER_UNAVAILABLE");
+          assert.equal(error.status, 403);
+          assert.equal(error.code, "MODEL_UNAUTHORIZED");
           assert.equal(error.message.includes("raw body"), false);
           return true;
         },
       );
       assert.equal(provider.calls.length, 1);
+    }
+  });
+
+  it("keeps Qwen model status failures distinguishable without exposing upstream bodies", async () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "development";
+    process.env.QWEN_API_KEY = "unit-test-qwen-secret";
+    const cases = [
+      { upstreamStatus: 400, status: 400, code: "MODEL_REQUEST_INVALID" },
+      { upstreamStatus: 404, status: 404, code: "MODEL_NOT_FOUND" },
+      { upstreamStatus: 429, status: 429, code: "MODEL_RATE_LIMITED" },
+      { upstreamStatus: 500, status: 503, code: "AI_PROVIDER_UNAVAILABLE" },
+    ] as const;
+
+    for (const expected of cases) {
+      let calls = 0;
+      const provider = new QwenProjectAssistantProvider(
+        "https://example.invalid/compatible-mode/v1",
+        async () => {
+          calls += 1;
+          return new Response('{"error":"upstream body must never surface"}', {
+            status: expected.upstreamStatus,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      );
+      const gateway = new ProjectAssistantGateway(
+        fakeConfig(),
+        provider,
+        async () => undefined,
+      );
+      await assert.rejects(
+        gateway.generate({
+          purpose: "answer",
+          systemPrompt: "system",
+          userPrompt: "user",
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof ProjectAssistantError);
+          assert.equal(error.status, expected.status);
+          assert.equal(error.code, expected.code);
+          assert.equal(error.message.includes("upstream body"), false);
+          return true;
+        },
+      );
+      assert.equal(calls, expected.upstreamStatus === 400 || expected.upstreamStatus === 404 ? 1 : 3);
     }
   });
 

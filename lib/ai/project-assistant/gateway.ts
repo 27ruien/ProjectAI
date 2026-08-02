@@ -50,12 +50,42 @@ function responseFormatForPurpose(
 
 function controlledProviderFailure(error: unknown): ProjectAssistantError {
   if (error instanceof ProjectAssistantError) return error;
-  if (error instanceof AiProviderError && error.code === "TIMEOUT") {
-    return new ProjectAssistantError(
-      503,
-      "AI_PROVIDER_TIMEOUT",
-      "AI 服务响应超时，请稍后重试",
-    );
+  if (error instanceof AiProviderError) {
+    if (error.code === "TIMEOUT") {
+      return new ProjectAssistantError(
+        503,
+        "AI_PROVIDER_TIMEOUT",
+        "AI 服务响应超时，请稍后重试",
+      );
+    }
+    if (error.code === "UNAUTHORIZED" || error.code === "FORBIDDEN") {
+      return new ProjectAssistantError(
+        403,
+        "MODEL_UNAUTHORIZED",
+        "当前密钥无权调用此模型，请检查模型授权后重试",
+      );
+    }
+    if (error.code === "NOT_FOUND") {
+      return new ProjectAssistantError(
+        404,
+        "MODEL_NOT_FOUND",
+        "当前模型不存在或当前工作区不可用",
+      );
+    }
+    if (error.code === "RATE_LIMITED") {
+      return new ProjectAssistantError(
+        429,
+        "MODEL_RATE_LIMITED",
+        "当前模型请求过于频繁，请稍后重试",
+      );
+    }
+    if (error.code === "BAD_REQUEST" || error.code === "INVALID_RESPONSE") {
+      return new ProjectAssistantError(
+        400,
+        "MODEL_REQUEST_INVALID",
+        "当前模型请求参数或返回格式无效",
+      );
+    }
   }
   return new ProjectAssistantError(
     503,

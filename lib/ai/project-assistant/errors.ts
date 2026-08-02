@@ -4,6 +4,10 @@ export type ProjectAssistantErrorCode =
   | "AI_MODEL_PROFILE_NOT_FOUND"
   | "AI_MODEL_PROFILE_DISABLED"
   | "AI_SECRET_NOT_CONFIGURED"
+  | "MODEL_UNAUTHORIZED"
+  | "MODEL_NOT_FOUND"
+  | "MODEL_RATE_LIMITED"
+  | "MODEL_REQUEST_INVALID"
   | "AI_PROVIDER_UNAVAILABLE"
   | "AI_PROVIDER_TIMEOUT"
   | "AI_EXECUTION_FAILED"
@@ -20,7 +24,7 @@ export type ProjectAssistantErrorCode =
 
 export class ProjectAssistantError extends Error {
   constructor(
-    public readonly status: 400 | 404 | 409 | 429 | 502 | 503,
+    public readonly status: 400 | 403 | 404 | 409 | 429 | 502 | 503,
     public readonly code: ProjectAssistantErrorCode,
     message: string,
   ) {
@@ -36,6 +40,7 @@ export type ProviderFailureCode =
   | "SERVER_ERROR"
   | "UNAUTHORIZED"
   | "FORBIDDEN"
+  | "NOT_FOUND"
   | "BAD_REQUEST"
   | "INVALID_RESPONSE";
 

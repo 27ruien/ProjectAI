@@ -32,6 +32,7 @@ function httpFailure(status: number): AiProviderError {
   if (status >= 500) return new AiProviderError("SERVER_ERROR", true);
   if (status === 401) return new AiProviderError("UNAUTHORIZED", false);
   if (status === 403) return new AiProviderError("FORBIDDEN", false);
+  if (status === 404) return new AiProviderError("NOT_FOUND", false);
   return new AiProviderError("BAD_REQUEST", false);
 }
 
