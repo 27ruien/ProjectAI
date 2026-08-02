@@ -45,8 +45,12 @@ test("model management keeps keys server-side and only accepts 1024 dimensions",
   assert.match(route, /secretReference/);
   assert.doesNotMatch(route, /apiKey/);
   assert.match(route, /test_embedding_model/);
+  assert.match(route, /set_generation_model_enabled/);
+  assert.match(route, /AI_MODEL_PROFILE_DISABLED/);
+  assert.match(route, /文本模型需先通过 JSON 能力测试后才能启用/);
   assert.match(ui, /浏览器不会显示、提交或保存 API Key/);
   assert.match(ui, /添加 1024 维向量模型/);
+  assert.match(ui, /已启用/);
 });
 
 test("project chat resolves the server-side scenario rather than taking a browser model", async () => {
