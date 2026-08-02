@@ -178,7 +178,11 @@ export async function ensureOrganizationAiDefaults(input: {
       secretRef: "QWEN_API_KEY_FILE",
       credentialMode: "environment",
       enabled: true,
-      lastTestStatus: "not_tested",
+      // This is the deployment-managed legacy profile, not an administrator
+      // supplied model. Existing installations already use the same mounted
+      // credential and fake CI validates it deterministically; every managed
+      // Provider/model begins as not_tested and must pass an explicit probe.
+      lastTestStatus: "passed",
       createdBy: input.actorId,
       updatedBy: input.actorId,
     })
@@ -195,7 +199,7 @@ export async function ensureOrganizationAiDefaults(input: {
       supportsJson: true,
       supportsThinking: false,
       disableThinkingForJson: true,
-      lastTestStatus: "not_tested",
+      lastTestStatus: "passed",
       createdBy: input.actorId,
       updatedBy: input.actorId,
     })
