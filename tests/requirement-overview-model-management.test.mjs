@@ -16,10 +16,21 @@ test("guided requirement overview stays structured, cited, and Markdown-only", a
   assert.match(service, /sourceDigest/);
   assert.match(service, /REQUIREMENT_OVERVIEW_FIELD_REGISTRY/);
   assert.match(service, /renderRequirementOverviewMarkdown/);
+  assert.match(service, /generateRequirementOverviewCandidates/);
+  assert.match(service, /selectRequirementOverviewCandidate/);
+  assert.match(service, /REQUIREMENT_OVERVIEW_FIELD_REGISTRY.length/);
+  assert.match(service, /SOURCE_CHANGED/);
   assert.match(service, /项目整体架构（弥知、客户、三方等）/);
   assert.match(service, /MVP需求/);
   assert.doesNotMatch(service, /## 已确认/);
   assert.match(ui, /下载 Markdown/);
+  assert.match(ui, /比较两个候选/);
+  assert.match(ui, /选择此候选并形成草稿/);
+  assert.match(ui, /requirement-overview-generate-dialog-trigger/);
+  assert.match(ui, /当前只有一个测试成功的文本模型，暂时无法执行模型对比。/);
+  assert.match(ui, /完成度/);
+  assert.match(service, /syncRequirementSource/);
+  assert.match(service, /selectedCandidateId/);
   assert.doesNotMatch(ui, /DOCX/);
 });
 
@@ -43,4 +54,19 @@ test("project chat resolves the server-side scenario rather than taking a browse
   assert.match(service, /scenario: "general_chat"/);
   assert.match(service, /scenario: "project_grounded_chat"/);
   assert.match(service, /model: scenario\.modelId/);
+});
+
+test("requirement overview model selection remains server-controlled", async () => {
+  const [models, route, schema] = await Promise.all([
+    source("lib/ai/model-management.ts"),
+    source("app/api/projects/[projectId]/requirement-overviews/comparison-models/route.ts"),
+    source("lib/db/schema/ai-model-management.ts"),
+  ]);
+  assert.match(models, /requirement_overview_prefill/);
+  assert.match(models, /isProductSuperAdmin/);
+  assert.match(models, /supportsJson, true/);
+  assert.match(models, /lastTestStatus, "passed"/);
+  assert.match(route, /requireApiPrincipal/);
+  assert.match(schema, /guided_requirement_overview_comparison_runs/);
+  assert.match(schema, /guided_requirement_overview_comparison_candidates/);
 });

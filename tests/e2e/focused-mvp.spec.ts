@@ -188,6 +188,11 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await overview.getByRole("button", { name: "保存确认", exact: true }).click();
   await expect(overview.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
   await overview.getByRole("button", { name: "生成需求概览", exact: true }).click();
+  const generationDialog = page.getByRole("dialog", { name: "生成需求概览" });
+  await expect(generationDialog).toBeVisible();
+  await generationDialog.getByRole("button", { name: "生成一个候选", exact: true }).click();
+  await expect(overview.getByText("可选择", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await overview.getByRole("button", { name: "选择此候选并形成草稿", exact: true }).click();
   await expect(overview.getByText("已生成", { exact: true })).toBeVisible({ timeout: 60_000 });
   const overviewPreview = overview.locator("pre");
   await expect(overviewPreview).toContainText("|项目地区|中国");
@@ -203,7 +208,6 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   runtimeMonitor.allowAbortedRequestOnce(new URL(overviewHref!, page.url()).pathname);
   const [overviewFile] = await Promise.all([page.waitForEvent("download"), overviewDownload.click()]);
   await verifyDownload(overviewFile, ".md");
-  await overview.getByRole("button", { name: "保存到项目", exact: true }).click();
   await expect(overview.getByRole("button", { name: "已保存到项目", exact: true })).toBeVisible();
 
   await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));

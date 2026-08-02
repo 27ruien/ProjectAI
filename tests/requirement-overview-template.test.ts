@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   REQUIREMENT_OVERVIEW_FIELD_REGISTRY,
+  parseRequirementOverviewCandidateItems,
   renderRequirementOverviewMarkdown,
 } from "../lib/focused-mvp/requirement-overview";
 import type { RequirementOverviewItem } from "../lib/db/schema";
@@ -48,4 +49,30 @@ test("renderer ignores unknown model fields and always renders all 24 registry f
   ]);
   assert.doesNotMatch(markdown, /目标与成功标准/);
   assert.equal(markdown.split("\n").filter((line) => line.startsWith("|") && !line.startsWith("|---")).length, 26);
+});
+
+test("comparison candidates keep the fixed field registry, citations, and manager-confirmed values", () => {
+  const initial = blankItems();
+  initial[0] = { ...initial[0], status: "user_confirmed", value: "项目经理确认的时间", citationLabels: [] };
+  const candidate = {
+    items: REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => ({
+      id: field.key,
+      label: "模型尝试改写的标签",
+      status: "inferred",
+      value: `${field.exactLabel} 的受控候选`,
+      citationLabels: ["E1"],
+    })),
+  };
+  const parsed = parseRequirementOverviewCandidateItems(JSON.stringify(candidate), initial, new Set(["E1"]));
+  assert.equal(parsed.length, REQUIREMENT_OVERVIEW_FIELD_REGISTRY.length);
+  assert.deepEqual(parsed[0], initial[0]);
+  assert.equal(parsed[1]?.label, REQUIREMENT_OVERVIEW_FIELD_REGISTRY[1]?.exactLabel);
+});
+
+test("comparison candidates reject an altered field list or an out-of-scope citation", () => {
+  const item = blankItems()[0]!;
+  const invalidRegistry = JSON.stringify({ items: [{ ...item, citationLabels: ["E1"] }] });
+  assert.throws(() => parseRequirementOverviewCandidateItems(invalidRegistry, blankItems(), new Set(["E1"])), /候选模型未返回固定需求概览格式|固定需求概览字段/);
+  const invalidCitation = JSON.stringify({ items: REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => ({ id: field.key, label: field.exactLabel, status: "inferred", value: "候选", citationLabels: ["E2"] })) });
+  assert.throws(() => parseRequirementOverviewCandidateItems(invalidCitation, blankItems(), new Set(["E1"])), /当前资料范围以外/);
 });

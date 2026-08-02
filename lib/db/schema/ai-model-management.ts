@@ -143,3 +143,49 @@ export const guidedRequirementOverviewCitation = pgTable("guided_requirement_ove
   excerpt: text("excerpt").notNull(),
   sourceLocator: jsonb("source_locator").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
 }, (table) => [uniqueIndex("guided_requirement_overview_citation_uidx").on(table.overviewId, table.label)]);
+
+/** An auditable, temporary model run. Choosing a candidate is the only path to a formal overview draft. */
+export const guidedRequirementOverviewComparisonRun = pgTable("guided_requirement_overview_comparison_runs", {
+  id: text("id").primaryKey(),
+  overviewId: text("overview_id").notNull().references(() => guidedRequirementOverview.id, { onDelete: "cascade" }),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  sourceDigest: varchar("source_digest", { length: 64 }).notNull(),
+  promptVersion: varchar("prompt_version", { length: 64 }).notNull(),
+  promptDigest: varchar("prompt_digest", { length: 64 }).notNull(),
+  temperatureMilli: integer("temperature_milli").notNull(),
+  maxOutputTokens: integer("max_output_tokens").notNull(),
+  citationCount: integer("citation_count").notNull(),
+  status: varchar("status", { length: 24 }).notNull().default("running"),
+  selectedCandidateId: text("selected_candidate_id"),
+  createdBy: text("created_by").notNull().references(() => user.id, { onDelete: "restrict" }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  index("guided_requirement_overview_comparison_overview_idx").on(table.overviewId, table.createdAt),
+  index("guided_requirement_overview_comparison_project_idx").on(table.projectId, table.createdAt),
+  check("guided_requirement_overview_comparison_status_check", sql`${table.status} in ('running','ready','failed','selected')`),
+  check("guided_requirement_overview_comparison_config_check", sql`${table.temperatureMilli} between 0 and 2000 and ${table.maxOutputTokens} between 128 and 16384 and ${table.citationCount} >= 0`),
+]);
+
+export const guidedRequirementOverviewComparisonCandidate = pgTable("guided_requirement_overview_comparison_candidates", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull().references(() => guidedRequirementOverviewComparisonRun.id, { onDelete: "cascade" }),
+  candidateOrder: integer("candidate_order").notNull(),
+  generationModelId: text("generation_model_id").notNull().references(() => aiGenerationModel.id, { onDelete: "restrict" }),
+  modelDisplayName: varchar("model_display_name", { length: 120 }).notNull(),
+  providerName: varchar("provider_name", { length: 120 }).notNull(),
+  actualModel: varchar("actual_model", { length: 160 }),
+  status: varchar("status", { length: 24 }).notNull().default("running"),
+  items: jsonb("items").$type<RequirementOverviewItem[]>().notNull().default(sql`'[]'::jsonb`),
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  totalTokens: integer("total_tokens"),
+  latencyMs: integer("latency_ms"),
+  failureCode: varchar("failure_code", { length: 80 }),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true, mode: "date" }),
+}, (table) => [
+  uniqueIndex("guided_requirement_overview_candidate_run_order_uidx").on(table.runId, table.candidateOrder),
+  check("guided_requirement_overview_candidate_status_check", sql`${table.status} in ('running','ready','failed')`),
+  check("guided_requirement_overview_candidate_usage_check", sql`(${table.inputTokens} is null or ${table.inputTokens} >= 0) and (${table.outputTokens} is null or ${table.outputTokens} >= 0) and (${table.totalTokens} is null or ${table.totalTokens} >= 0) and (${table.latencyMs} is null or ${table.latencyMs} >= 0)`),
+]);

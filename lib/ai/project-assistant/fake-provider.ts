@@ -93,7 +93,22 @@ export class FakeProjectAssistantProvider
 
     let text: string;
     if (request.purpose === "requirement_overview") {
-      text = JSON.stringify({ summary: "- 已根据当前有效项目资料和项目经理确认项生成结构化摘要。\n- 未被资料支持的结论保持为待确认，不作为事实。" });
+      const keys = taggedJsonValue(request.userPrompt, "requirement_overview_field_keys_json");
+      const currentItems = taggedJsonValue(request.userPrompt, "current_items_json") as Array<{ id?: unknown; label?: unknown; status?: unknown; value?: unknown; citationLabels?: unknown }> | null;
+      const label = request.userPrompt.match(/<evidence id="(E(?:[1-9]|[12][0-9]|30))"/)?.[1] ?? "E1";
+      if (Array.isArray(keys)) {
+        text = JSON.stringify({
+          items: keys.filter((key): key is string => typeof key === "string").map((id) => {
+            const current = currentItems?.find((item) => item.id === id);
+            const locked = current?.status === "user_confirmed" || current?.status === "not_applicable";
+            return locked
+              ? { id, label: typeof current?.label === "string" ? current.label : id, status: current.status, value: typeof current?.value === "string" ? current.value : "", citationLabels: Array.isArray(current?.citationLabels) ? current.citationLabels.filter((value): value is string => typeof value === "string") : [] }
+              : { id, label: typeof current?.label === "string" ? current.label : id, status: "inferred", value: "根据当前有效项目资料整理，仍需项目经理确认。", citationLabels: [label] };
+          }),
+        });
+      } else {
+        text = JSON.stringify({ summary: "- 已根据当前有效项目资料和项目经理确认项生成结构化摘要。\n- 未被资料支持的结论保持为待确认，不作为事实。" });
+      }
     } else if (
       request.purpose === "requirement_document" ||
       request.purpose === "requirement_document_repair"

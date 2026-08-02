@@ -3,7 +3,7 @@ import { createProjectAssistantGateway, getAiRuntimeConfig, validateQwenBaseUrl 
 import { createEmbeddingGateway, getEmbeddingRuntimeConfig } from "@/lib/ai/embeddings";
 import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import { aiEmbeddingModel, aiGenerationModel, aiProviderProfile, aiScenarioBinding, project } from "@/lib/db/schema";
-import type { AuthenticatedPrincipal } from "@/lib/auth/session";
+import { isProductSuperAdmin, type AuthenticatedPrincipal } from "@/lib/auth/session";
 import { ProjectAssistantError } from "./project-assistant/errors";
 
 export const AI_SCENARIOS = [
@@ -58,7 +58,7 @@ export async function ensureOrganizationAiDefaults(input: { organizationId: stri
   }
 }
 
-export async function resolveGenerationScenario(input: { projectId: string; actorId: string; scenario: Exclude<AiScenario, "requirement_overview_prefill">; generationModelId?: string | null; db?: DatabaseExecutor }) {
+export async function resolveGenerationScenario(input: { projectId: string; actorId: string; scenario: AiScenario; generationModelId?: string | null; db?: DatabaseExecutor }) {
   const db = input.db ?? getDb();
   const organizationId = await organizationForProject(input.projectId, db);
   await ensureOrganizationAiDefaults({ organizationId, actorId: input.actorId, db });
@@ -92,6 +92,75 @@ export async function listEnabledGenerationModels(input: { projectId: string; ac
   return db.select({ id: aiGenerationModel.id, displayName: aiGenerationModel.displayName, modelId: aiGenerationModel.modelId })
     .from(aiGenerationModel).innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
     .where(and(eq(aiGenerationModel.organizationId, organizationId), eq(aiGenerationModel.enabled, true), eq(aiProviderProfile.enabled, true)));
+}
+
+export type RequirementOverviewModelOption = {
+  id: string;
+  displayName: string;
+  modelId: string;
+  isDefault: boolean;
+  lastTestStatus: string;
+};
+
+/**
+ * The scenario binding remains the only default. Extra models are deliberately
+ * exposed only to super administrators after a successful JSON-capability test.
+ */
+export async function listRequirementOverviewModelOptions(input: { principal: AuthenticatedPrincipal; projectId: string; db?: DatabaseExecutor }) {
+  const db = input.db ?? getDb();
+  const organizationId = await organizationForProject(input.projectId, db);
+  await ensureOrganizationAiDefaults({ organizationId, actorId: input.principal.user.id, db });
+  const [defaultRow] = await db.select({ model: aiGenerationModel }).from(aiScenarioBinding)
+    .innerJoin(aiGenerationModel, eq(aiScenarioBinding.generationModelId, aiGenerationModel.id))
+    .innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
+    .where(and(
+      eq(aiScenarioBinding.organizationId, organizationId),
+      eq(aiScenarioBinding.scenario, "requirement_overview_prefill"),
+      eq(aiScenarioBinding.enabled, true),
+      eq(aiGenerationModel.enabled, true),
+      eq(aiGenerationModel.supportsJson, true),
+      eq(aiProviderProfile.enabled, true),
+    )).limit(1);
+  if (!defaultRow) throw new ProjectAssistantError(503, "AI_MODEL_PROFILE_DISABLED", "需求概览默认模型不可用");
+  const defaultOption: RequirementOverviewModelOption = {
+    id: defaultRow.model.id,
+    displayName: defaultRow.model.displayName,
+    modelId: defaultRow.model.modelId,
+    isDefault: true,
+    lastTestStatus: defaultRow.model.lastTestStatus,
+  };
+  if (!isProductSuperAdmin(input.principal.user.productRole)) return { defaultModel: defaultOption, alternatives: [], canCompare: false, canSelectOther: false };
+  const alternatives = await db.select({ id: aiGenerationModel.id, displayName: aiGenerationModel.displayName, modelId: aiGenerationModel.modelId, lastTestStatus: aiGenerationModel.lastTestStatus })
+    .from(aiGenerationModel).innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
+    .where(and(
+      eq(aiGenerationModel.organizationId, organizationId),
+      eq(aiGenerationModel.enabled, true),
+      eq(aiGenerationModel.supportsJson, true),
+      eq(aiGenerationModel.lastTestStatus, "passed"),
+      eq(aiProviderProfile.enabled, true),
+    ));
+  const options = alternatives.map((model) => ({ ...model, isDefault: model.id === defaultOption.id }));
+  return {
+    defaultModel: defaultOption,
+    alternatives: options.filter((model) => !model.isDefault),
+    canCompare: defaultOption.lastTestStatus === "passed" && options.length >= 2,
+    canSelectOther: true,
+  };
+}
+
+export async function resolveRequirementOverviewGenerationModel(input: { principal: AuthenticatedPrincipal; projectId: string; generationModelId?: string | null; db?: DatabaseExecutor }) {
+  const db = input.db ?? getDb();
+  const options = await listRequirementOverviewModelOptions({ principal: input.principal, projectId: input.projectId, db });
+  const requestedId = input.generationModelId ?? options.defaultModel.id;
+  if (requestedId === options.defaultModel.id) {
+    const resolved = await resolveGenerationScenario({ projectId: input.projectId, actorId: input.principal.user.id, scenario: "requirement_overview_prefill", generationModelId: requestedId, db });
+    return { ...resolved, displayName: options.defaultModel.displayName, isDefault: true };
+  }
+  if (!options.canSelectOther || !isProductSuperAdmin(input.principal.user.productRole)) throw new ProjectAssistantError(409, "AI_MODEL_PROFILE_DISABLED", "仅超级管理员可以选择其他需求概览模型");
+  const alternative = options.alternatives.find((item) => item.id === requestedId);
+  if (!alternative) throw new ProjectAssistantError(409, "AI_MODEL_PROFILE_DISABLED", "所选模型未通过 JSON 能力测试或不可用");
+  const resolved = await resolveGenerationScenario({ projectId: input.projectId, actorId: input.principal.user.id, scenario: "requirement_overview_prefill", generationModelId: requestedId, db });
+  return { ...resolved, displayName: alternative.displayName, isDefault: false };
 }
 
 export async function testGenerationModel(input: { principal: AuthenticatedPrincipal; projectId: string; modelId: string; db?: DatabaseExecutor }) {
