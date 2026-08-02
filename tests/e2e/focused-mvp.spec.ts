@@ -198,7 +198,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(overviewPreview).toContainText("|项目地区|中国");
   await expect(overviewPreview).toContainText("|平台类型|微信小程序");
   await expect(overviewPreview).toContainText("|7|MVP需求|会员注册和 CRM 同步");
-  await expect(overviewPreview).toContainText("|适配类型|TBD（待项目经理确认）|");
+  await expect(overviewPreview).toContainText("|适配类型|AI 推断（待确认）：");
   await expect(overviewPreview).not.toContainText("目标与成功标准");
   await expect(overviewPreview).not.toContainText("用户与关键场景");
   await evidence(page, "06-requirement-success-local-fake.png");

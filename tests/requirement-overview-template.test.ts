@@ -51,9 +51,10 @@ test("renderer ignores unknown model fields and always renders all 24 registry f
   assert.equal(markdown.split("\n").filter((line) => line.startsWith("|") && !line.startsWith("|---")).length, 26);
 });
 
-test("comparison candidates keep the fixed field registry, citations, and manager-confirmed values", () => {
+test("comparison candidates keep the fixed field registry, citations, and already-confirmed values", () => {
   const initial = blankItems();
   initial[0] = { ...initial[0], status: "user_confirmed", value: "项目经理确认的时间", citationLabels: [] };
+  initial[1] = { ...initial[1], status: "confirmed", value: "资料已确认的平台", citationLabels: ["E1"] };
   const candidate = {
     items: REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => ({
       id: field.key,
@@ -66,7 +67,8 @@ test("comparison candidates keep the fixed field registry, citations, and manage
   const parsed = parseRequirementOverviewCandidateItems(JSON.stringify(candidate), initial, new Set(["E1"]));
   assert.equal(parsed.length, REQUIREMENT_OVERVIEW_FIELD_REGISTRY.length);
   assert.deepEqual(parsed[0], initial[0]);
-  assert.equal(parsed[1]?.label, REQUIREMENT_OVERVIEW_FIELD_REGISTRY[1]?.exactLabel);
+  assert.deepEqual(parsed[1], initial[1]);
+  assert.equal(parsed[2]?.label, REQUIREMENT_OVERVIEW_FIELD_REGISTRY[2]?.exactLabel);
 });
 
 test("comparison candidates reject an altered field list or an out-of-scope citation", () => {

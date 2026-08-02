@@ -216,7 +216,7 @@ export function parseRequirementOverviewCandidateItems(text: string, currentItem
   if (byKey.size !== REQUIREMENT_OVERVIEW_FIELD_REGISTRY.length || REQUIREMENT_OVERVIEW_FIELD_REGISTRY.some((field) => !byKey.has(field.key))) {
     throw new ProjectManagementError(422, "REQUIREMENT_COMPARISON_OUTPUT_INVALID", "候选模型修改了固定需求概览字段");
   }
-  const locked = new Map(canonicalItems(currentItems).filter((item) => item.status === "user_confirmed" || item.status === "not_applicable").map((item) => [item.id, item]));
+  const locked = new Map(canonicalItems(currentItems).filter((item) => item.status === "confirmed" || item.status === "user_confirmed" || item.status === "not_applicable").map((item) => [item.id, item]));
   return REQUIREMENT_OVERVIEW_FIELD_REGISTRY.map((field) => {
     const candidate = byKey.get(field.key)!;
     if (!candidate.citationLabels.every((label) => citationLabels.has(label)) || candidate.alternatives?.some((alternative) => !alternative.citationLabels.every((label) => citationLabels.has(label)))) {
