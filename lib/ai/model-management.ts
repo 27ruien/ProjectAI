@@ -814,7 +814,6 @@ export async function resolveGenerationScenario(input: {
       "AI_MODEL_PROFILE_DISABLED",
       "当前场景尚未绑定可用的文本模型",
     );
-  const apiKey = await requireUsableProvider(row.provider, db);
   const runtime = {
     ...getAiRuntimeConfig(),
     qwenBaseUrl: validateProviderBaseUrl(
@@ -822,6 +821,13 @@ export async function resolveGenerationScenario(input: {
       row.provider.baseUrl,
     ),
   };
+  // CI's Fake Provider never receives, reads, or validates a real Provider
+  // credential. Real runtimes resolve the currently configured credential at
+  // the point of each server-side invocation.
+  const apiKey =
+    runtime.provider === "fake"
+      ? undefined
+      : await requireUsableProvider(row.provider, db);
   return {
     modelId: row.model.modelId,
     modelRecordId: row.model.id,

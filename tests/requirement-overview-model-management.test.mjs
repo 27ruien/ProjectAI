@@ -62,6 +62,7 @@ test("model management encrypts managed keys server-side and preserves the fixed
   assert.match(management, /organizationMember\.role, "organization_admin"/);
   assert.match(management, /hasAiConfigurationAdmin/);
   assert.match(management, /Provider\/model begins as not_tested/);
+  assert.match(management, /runtime\.provider === "fake"/);
   assert.match(ui, /保存后不会回显/);
   assert.match(ui, /替换 API Key/);
   assert.match(ui, /登记 1024 维模型/);
