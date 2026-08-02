@@ -131,8 +131,12 @@ grep -Fxq "AI_EMBEDDING_DIMENSIONS=1024" <<<"$embedding_environment"
 [[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.Destination}}{{end}}{{end}}' "$worker_container_name")" ]]
 [[ -z "$(sudo docker inspect --format '{{range .Mounts}}{{if eq .Destination \"/run/secrets/provider_credentials_key\"}}{{.Destination}}{{end}}{{end}}' "$embedding_worker_container_name")" ]]
 
-curl --fail --silent --max-time 10 \
-  "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'
+if ! curl --fail --silent --max-time 10 \
+  --header "Host: gridworks.cn" \
+  "http://127.0.0.1:3101${base_path}/api/health" | grep -q '"status":"ok"'; then
+  printf 'STAGING_APP_HEALTHCHECK_FAILED: local health endpoint rejected the deployment.\n' >&2
+  exit 1
+fi
 
 after_counts="$(database_counts)"
 [[ "$after_counts" == "$before_counts" ]]

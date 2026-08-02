@@ -31,6 +31,8 @@ test("app-only helper cannot migrate, seed, reset credentials, or mutate busines
   assert.match(helper, /before_counts="\$\(database_counts\)"/);
   assert.match(helper, /after_counts="\$\(database_counts\)"/);
   assert.match(helper, /\[\[ "\$after_counts" == "\$before_counts" \]\]/);
+  assert.match(helper, /--header "Host: gridworks\.cn"/);
+  assert.match(helper, /STAGING_APP_HEALTHCHECK_FAILED/);
   assert.match(helper, /projectai-document-worker projectai-embedding-worker projectai-staging/);
 });
 
