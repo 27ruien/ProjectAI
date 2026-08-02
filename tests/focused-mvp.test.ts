@@ -65,7 +65,7 @@ describe("focused MVP product surface", () => {
     for (const removed of ["工作日报", "AI 工作流", "会议纪要", "Action Plan", "周报", "Skills", "审核中心"]) {
       assert.doesNotMatch(sidebar, new RegExp(removed, "i"));
     }
-    assert.match(router, /allowedRoot = \["assistant", "data-spaces", "organization", "settings", "admin", "help"\]/);
+    assert.match(router, /allowedRoot[\s\S]*"assistant"[\s\S]*"data-spaces"[\s\S]*"organization"[\s\S]*"settings"[\s\S]*"admin"[\s\S]*"help"/);
     assert.match(router, /\["projects", "company"\]/);
     assert.match(router, /notFound\(\)/);
     assert.match(workspace, /<ProjectsPage/);

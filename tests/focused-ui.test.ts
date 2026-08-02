@@ -6,34 +6,228 @@ const root = new URL("../", import.meta.url);
 const source = (path: string) => readFile(new URL(path, root), "utf8");
 
 describe("focused MVP lightweight UI states", () => {
-  it("1. renders the project list as a table", async () => { assert.match(await source("components/project/ProjectsPage.tsx"), /<Table/); });
-  it("2. opens project creation in a dialog", async () => { assert.match(await source("components/project/CreateProjectPage.tsx"), /data-testid="create-project-dialog"/); });
-  it("3. renders project overview as a description list", async () => { const page = await source("components/project/ProjectOverviewPage.tsx"); assert.match(page, /<dl/); assert.doesNotMatch(page, /SummaryCard/); });
-  it("4. renders project files in a data table", async () => { assert.match(await source("components/project/DocumentsPage.tsx"), /<Table className="min-w-\[900px\]"/); });
-  it("5. opens file upload in a dialog", async () => { assert.match(await source("components/project/DocumentUploadDrawer.tsx"), /data-testid="project-upload-dialog"/); });
-  it("6. exposes the parsing state", async () => { assert.match(await source("components/project/DocumentsPage.tsx"), /正在解析/); });
-  it("7. exposes a compact parsing failure state", async () => { const page = await source("components/project/DocumentsPage.tsx"); assert.match(page, /解析失败/); assert.match(page, /bg-destructive-soft/); });
-  it("8. exposes an empty requirement state", async () => { assert.match(await source("components/project/RequirementDocumentsPage.tsx"), /data-testid="requirement-empty"/); });
-  it("9. exposes requirement generation progress and skeletons", async () => { const page = await source("components/project/RequirementDocumentsPage.tsx"); assert.match(page, /data-testid="requirement-generating"/); assert.match(page, /<Progress/); assert.match(page, /<Skeleton/); });
-  it("10. renders successful requirement classification markers", async () => { const page = await source("components/project/RequirementDocumentsPage.tsx"); for (const marker of ["Fact", "Company Standard", "AI Inference", "TBD"]) assert.match(page, new RegExp(marker)); });
-  it("11. renders a human provider failure without a visible failure-code field", async () => { const page = await source("components/project/RequirementDocumentsPage.tsx"); assert.match(page, /AI 服务暂时不可用/); assert.match(page, /当前项目资料已完整保留/); assert.doesNotMatch(page, /失败码：/); });
-  it("11a. keeps failed history out of the default empty state", async () => { const page = await source("components/project/RequirementDocumentsPage.tsx"); assert.match(page, /rows\.find\(\(item\) => item\.status !== "failed"\)/); assert.match(page, /尚未生成不是错误/); });
-  it("12. keeps the Markdown download entry", async () => { assert.match(await source("components/project/RequirementDocumentsPage.tsx"), /下载 Markdown/); });
-  it("13. keeps the DOCX download entry", async () => { assert.match(await source("components/project/RequirementDocumentsPage.tsx"), /下载 DOCX/); });
-  it("14. exposes the AI conversation empty state", async () => { assert.match(await source("components/knowledge/ProjectAssistantPanel.tsx"), /data-testid="ai-assistant-empty"/); });
-  it("15. provides searchable private conversation history", async () => { const page = await source("components/knowledge/ProjectAssistantPanel.tsx"); assert.match(page, /搜索会话/); assert.match(page, /visibleThreads/); });
-  it("16. renders AI citations with project and company source labels", async () => { const page = await source("components/knowledge/ProjectAssistantPanel.tsx"); assert.match(page, /data-testid="assistant-citations"/); assert.match(page, /\[项目资料\]/); assert.match(page, /\[公司资料\]/); });
-  it("17. renders a human AI provider failure", async () => { assert.match(await source("components/knowledge/ProjectAssistantPanel.tsx"), /AI 服务暂时没有完成回答，你的输入和资料没有丢失，请稍后重试。/); });
-  it("17a. binds the guided overview to the active conversation only", async () => { const page = await source("components/knowledge/ProjectAssistantPanel.tsx"); assert.match(page, /requirementOverviewThreadId/); assert.match(page, /assistant-skill-artifact/); assert.match(page, /生成需求概览/); assert.doesNotMatch(page, /requirement-documents/); });
-  it("18. renders company knowledge as a filtered table", async () => { const page = await source("components/knowledge/CompanyKnowledgePage.tsx"); assert.match(page, /<Table/); assert.match(page, /全部类别/); assert.match(page, /全部状态/); });
-  it("19. opens company upload in a strict dialog", async () => { assert.match(await source("components/knowledge/CompanyKnowledgePage.tsx"), /data-testid="company-upload-dialog"/); });
-  it("20. uses sheets for mobile navigation and AI history", async () => { const [sidebar, assistant] = await Promise.all([source("components/layout/sidebar.tsx"), source("components/knowledge/ProjectAssistantPanel.tsx")]); assert.match(sidebar, /<Sheet/); assert.match(assistant, /<Sheet/); });
-  it("21. separates quick actions from explicit context references", async () => { const page = await source("components/knowledge/ProjectAssistantPanel.tsx"); assert.match(page, /自动资料范围/); assert.match(page, /快捷操作/); assert.match(page, /本次引用/); assert.match(page, /quick-action-requirement-overview/); assert.match(page, /quick-action-project-summary/); assert.match(page, /quick-action-pending-items/); assert.match(page, /assistant-context-references/); assert.match(page, /project-reference-token/); assert.match(page, /document-reference-token/); assert.match(page, /输入 # 引用项目，输入 \$ 引用具体资料。Enter 发送，Shift\+Enter 换行。/); assert.doesNotMatch(page, /<Switch/); });
-  it("21a. renders assistant answers with a safe readable Markdown surface", async () => { const [panel, markdown] = await Promise.all([source("components/knowledge/ProjectAssistantPanel.tsx"), source("components/knowledge/AssistantMarkdown.tsx")]); assert.match(panel, /<AssistantMarkdown>/); assert.match(markdown, /rehypeSanitize/); assert.match(markdown, /remarkGfm/); for (const heading of ["h1", "h2", "h3", "h4"]) assert.match(markdown, new RegExp(`${heading}:`)); assert.match(markdown, /<table/); });
-  it("21b. provides re-authorized citation previews and visible historical-context labels", async () => { const [panel, preview, historyPreview] = await Promise.all([source("components/knowledge/ProjectAssistantPanel.tsx"), source("components/knowledge/AssistantCitationPreview.tsx"), source("components/knowledge/AssistantHistoryCitationPreview.tsx")]); assert.match(panel, /AssistantCitationPreview/); assert.match(panel, /AssistantHistoryCitationPreview/); assert.match(panel, /assistant-history-references/); assert.match(preview, /HoverCard/); assert.match(preview, /Sheet/); assert.match(preview, /内容快照/); assert.match(preview, /credentials: "include"/); assert.match(historyPreview, /HoverCard/); assert.match(historyPreview, /Sheet/); assert.match(historyPreview, /重新核验当前会话和资料权限/); });
-  it("25. exposes the guided requirement overview workflow without DOCX generation", async () => { const page = await source("components/requirement-overview/RequirementOverviewWorkspace.tsx"); assert.match(page, /需求概览/); assert.match(page, /请集中确认/); assert.match(page, /下载 Markdown/); assert.doesNotMatch(page, /DOCX/); });
-  it("26. keeps AI provider settings inside the administrator-only management surface", async () => { const [page, route] = await Promise.all([source("components/system/AiModelManagementPage.tsx"), source("app/[...slug]/page.tsx")]); assert.match(page, /保存后不会回显/); assert.match(page, /vectorDimensions/); assert.match(route, /area !== "models"/); assert.match(route, /requireAiConfigurationAdmin/); });
-  it("22. exposes vectorization states and precise retry", async () => { const page = await source("components/project/DocumentsPage.tsx"); assert.match(page, /等待向量化/); assert.match(page, /向量化失败/); assert.match(page, /重试向量化/); assert.match(page, /qwen3\.7-text-embedding/); });
-  it("23. sends general chat without a knowledge-source preflight", async () => { const page = await source("components/knowledge/ProjectAssistantPanel.tsx"); assert.match(page, /intentNeedsProjectEvidence\(intent\)/); assert.match(page, /setOptimisticQuestion\(normalized\)/); assert.match(page, /setQuestion\(""\)/); assert.match(page, /正在思考/); assert.match(page, /使用资料时会由服务端校验引用权限/); });
-  it("24. blocks duplicate sends and keeps an explicit user-visible error path", async () => { const page = await source("components/knowledge/ProjectAssistantPanel.tsx"); assert.match(page, /if \(sending\) return/); assert.match(page, /role="alert"/); assert.match(page, /data-testid="optimistic-user-message"/); });
+  it("1. renders the project list as a table", async () => {
+    assert.match(await source("components/project/ProjectsPage.tsx"), /<Table/);
+  });
+  it("2. opens project creation in a dialog", async () => {
+    assert.match(
+      await source("components/project/CreateProjectPage.tsx"),
+      /data-testid="create-project-dialog"/,
+    );
+  });
+  it("3. renders project overview as a description list", async () => {
+    const page = await source("components/project/ProjectOverviewPage.tsx");
+    assert.match(page, /<dl/);
+    assert.doesNotMatch(page, /SummaryCard/);
+  });
+  it("4. renders project files in a data table", async () => {
+    assert.match(
+      await source("components/project/DocumentsPage.tsx"),
+      /<Table className="min-w-\[900px\]"/,
+    );
+  });
+  it("5. opens file upload in a dialog", async () => {
+    assert.match(
+      await source("components/project/DocumentUploadDrawer.tsx"),
+      /data-testid="project-upload-dialog"/,
+    );
+  });
+  it("6. exposes the parsing state", async () => {
+    assert.match(
+      await source("components/project/DocumentsPage.tsx"),
+      /正在解析/,
+    );
+  });
+  it("7. exposes a compact parsing failure state", async () => {
+    const page = await source("components/project/DocumentsPage.tsx");
+    assert.match(page, /解析失败/);
+    assert.match(page, /bg-destructive-soft/);
+  });
+  it("8. exposes an empty requirement state", async () => {
+    assert.match(
+      await source("components/project/RequirementDocumentsPage.tsx"),
+      /data-testid="requirement-empty"/,
+    );
+  });
+  it("9. exposes requirement generation progress and skeletons", async () => {
+    const page = await source(
+      "components/project/RequirementDocumentsPage.tsx",
+    );
+    assert.match(page, /data-testid="requirement-generating"/);
+    assert.match(page, /<Progress/);
+    assert.match(page, /<Skeleton/);
+  });
+  it("10. renders successful requirement classification markers", async () => {
+    const page = await source(
+      "components/project/RequirementDocumentsPage.tsx",
+    );
+    for (const marker of ["Fact", "Company Standard", "AI Inference", "TBD"])
+      assert.match(page, new RegExp(marker));
+  });
+  it("11. renders a human provider failure without a visible failure-code field", async () => {
+    const page = await source(
+      "components/project/RequirementDocumentsPage.tsx",
+    );
+    assert.match(page, /AI 服务暂时不可用/);
+    assert.match(page, /当前项目资料已完整保留/);
+    assert.doesNotMatch(page, /失败码：/);
+  });
+  it("11a. keeps failed history out of the default empty state", async () => {
+    const page = await source(
+      "components/project/RequirementDocumentsPage.tsx",
+    );
+    assert.match(page, /rows\.find\(\(item\) => item\.status !== "failed"\)/);
+    assert.match(page, /尚未生成不是错误/);
+  });
+  it("12. keeps the Markdown download entry", async () => {
+    assert.match(
+      await source("components/project/RequirementDocumentsPage.tsx"),
+      /下载 Markdown/,
+    );
+  });
+  it("13. keeps the DOCX download entry", async () => {
+    assert.match(
+      await source("components/project/RequirementDocumentsPage.tsx"),
+      /下载 DOCX/,
+    );
+  });
+  it("14. exposes the AI conversation empty state", async () => {
+    assert.match(
+      await source("components/knowledge/ProjectAssistantPanel.tsx"),
+      /data-testid="ai-assistant-empty"/,
+    );
+  });
+  it("15. provides searchable private conversation history", async () => {
+    const page = await source("components/knowledge/ProjectAssistantPanel.tsx");
+    assert.match(page, /搜索会话/);
+    assert.match(page, /visibleThreads/);
+  });
+  it("16. renders AI citations with project and company source labels", async () => {
+    const page = await source("components/knowledge/ProjectAssistantPanel.tsx");
+    assert.match(page, /data-testid="assistant-citations"/);
+    assert.match(page, /\[项目资料\]/);
+    assert.match(page, /\[公司资料\]/);
+  });
+  it("17. renders a human AI provider failure", async () => {
+    assert.match(
+      await source("components/knowledge/ProjectAssistantPanel.tsx"),
+      /AI 服务暂时没有完成回答，你的输入和资料没有丢失，请稍后重试。/,
+    );
+  });
+  it("17a. binds the guided overview to the active conversation only", async () => {
+    const page = await source("components/knowledge/ProjectAssistantPanel.tsx");
+    assert.match(page, /requirementOverviewThreadId/);
+    assert.match(page, /assistant-skill-artifact/);
+    assert.match(page, /生成需求概览/);
+    assert.doesNotMatch(page, /requirement-documents/);
+  });
+  it("18. renders company knowledge as a filtered table", async () => {
+    const page = await source("components/knowledge/CompanyKnowledgePage.tsx");
+    assert.match(page, /<Table/);
+    assert.match(page, /全部类别/);
+    assert.match(page, /全部状态/);
+  });
+  it("19. opens company upload in a strict dialog", async () => {
+    assert.match(
+      await source("components/knowledge/CompanyKnowledgePage.tsx"),
+      /data-testid="company-upload-dialog"/,
+    );
+  });
+  it("20. uses sheets for mobile navigation and AI history", async () => {
+    const [sidebar, assistant] = await Promise.all([
+      source("components/layout/sidebar.tsx"),
+      source("components/knowledge/ProjectAssistantPanel.tsx"),
+    ]);
+    assert.match(sidebar, /<Sheet/);
+    assert.match(assistant, /<Sheet/);
+  });
+  it("21. separates quick actions from explicit context references", async () => {
+    const page = await source("components/knowledge/ProjectAssistantPanel.tsx");
+    assert.match(page, /自动资料范围/);
+    assert.match(page, /快捷操作/);
+    assert.match(page, /本次引用/);
+    assert.match(page, /quick-action-requirement-overview/);
+    assert.match(page, /quick-action-project-summary/);
+    assert.match(page, /quick-action-pending-items/);
+    assert.match(page, /assistant-context-references/);
+    assert.match(page, /project-reference-token/);
+    assert.match(page, /document-reference-token/);
+    assert.match(
+      page,
+      /输入 # 引用项目，输入 \$ 引用具体资料。Enter 发送，Shift\+Enter 换行。/,
+    );
+    assert.doesNotMatch(page, /<Switch/);
+  });
+  it("21a. renders assistant answers with a safe readable Markdown surface", async () => {
+    const [panel, markdown] = await Promise.all([
+      source("components/knowledge/ProjectAssistantPanel.tsx"),
+      source("components/knowledge/AssistantMarkdown.tsx"),
+    ]);
+    assert.match(panel, /<AssistantMarkdown>/);
+    assert.match(markdown, /rehypeSanitize/);
+    assert.match(markdown, /remarkGfm/);
+    for (const heading of ["h1", "h2", "h3", "h4"])
+      assert.match(markdown, new RegExp(`${heading}:`));
+    assert.match(markdown, /<table/);
+  });
+  it("21b. provides re-authorized citation previews and visible historical-context labels", async () => {
+    const [panel, preview, historyPreview] = await Promise.all([
+      source("components/knowledge/ProjectAssistantPanel.tsx"),
+      source("components/knowledge/AssistantCitationPreview.tsx"),
+      source("components/knowledge/AssistantHistoryCitationPreview.tsx"),
+    ]);
+    assert.match(panel, /AssistantCitationPreview/);
+    assert.match(panel, /AssistantHistoryCitationPreview/);
+    assert.match(panel, /assistant-history-references/);
+    assert.match(preview, /HoverCard/);
+    assert.match(preview, /Sheet/);
+    assert.match(preview, /内容快照/);
+    assert.match(preview, /credentials: "include"/);
+    assert.match(historyPreview, /HoverCard/);
+    assert.match(historyPreview, /Sheet/);
+    assert.match(historyPreview, /重新核验当前会话和资料权限/);
+  });
+  it("25. exposes the guided requirement overview workflow without DOCX generation", async () => {
+    const page = await source(
+      "components/requirement-overview/RequirementOverviewWorkspace.tsx",
+    );
+    assert.match(page, /需求概览/);
+    assert.match(page, /请集中确认/);
+    assert.match(page, /下载 Markdown/);
+    assert.doesNotMatch(page, /DOCX/);
+  });
+  it("26. keeps AI provider settings inside the administrator-only management surface", async () => {
+    const [page, route, workspace] = await Promise.all([
+      source("components/system/AiModelManagementPage.tsx"),
+      source("app/[...slug]/page.tsx"),
+      source("components/workspace.tsx"),
+    ]);
+    assert.match(page, /保存后不会回显/);
+    assert.match(page, /vectorDimensions/);
+    assert.match(route, /area !== "models"/);
+    assert.match(route, /requireAiConfigurationAdmin/);
+    assert.match(route, /aiConfigurationOrganizationId/);
+    assert.match(workspace, /aiConfigurationOrganizationId/);
+  });
+  it("22. exposes vectorization states and precise retry", async () => {
+    const page = await source("components/project/DocumentsPage.tsx");
+    assert.match(page, /等待向量化/);
+    assert.match(page, /向量化失败/);
+    assert.match(page, /重试向量化/);
+    assert.match(page, /qwen3\.7-text-embedding/);
+  });
+  it("23. sends general chat without a knowledge-source preflight", async () => {
+    const page = await source("components/knowledge/ProjectAssistantPanel.tsx");
+    assert.match(page, /intentNeedsProjectEvidence\(intent\)/);
+    assert.match(page, /setOptimisticQuestion\(normalized\)/);
+    assert.match(page, /setQuestion\(""\)/);
+    assert.match(page, /正在思考/);
+    assert.match(page, /使用资料时会由服务端校验引用权限/);
+  });
+  it("24. blocks duplicate sends and keeps an explicit user-visible error path", async () => {
+    const page = await source("components/knowledge/ProjectAssistantPanel.tsx");
+    assert.match(page, /if \(sending\) return/);
+    assert.match(page, /role="alert"/);
+    assert.match(page, /data-testid="optimistic-user-message"/);
+  });
 });
