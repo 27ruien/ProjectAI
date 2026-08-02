@@ -1,9 +1,6 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
 import {
   AlertCircle,
   Archive,
@@ -11,11 +8,13 @@ import {
   ChevronRight,
   Download,
   FileText,
+  FolderKanban,
   ListChecks,
   LoaderCircle,
   MessageSquarePlus,
   MoreHorizontal,
   PanelLeft,
+  Paperclip,
   RefreshCw,
   Search,
   Send,
@@ -52,12 +51,16 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTr
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { RequirementOverviewWorkspace } from "@/components/requirement-overview/RequirementOverviewWorkspace";
 import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
+import { AssistantMarkdown } from "./AssistantMarkdown";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type PanelPhase =
   | "loading"
   | "ready"
   | "disabled"
   | "error";
+
+type QuickAction = "requirement_overview" | "project_summary" | "pending_items";
 
 function sourceLabel(citation: ProjectAssistantCitationDto): string {
   const source = citation.source;
@@ -132,9 +135,11 @@ export function ProjectAssistantPanel({
   } | null>(null);
   const [threadSearch, setThreadSearch] = useState("");
   const [requirementOverviewThreadId, setRequirementOverviewThreadId] = useState<string | null>(null);
+  const [requirementOverviewProjectId, setRequirementOverviewProjectId] = useState<string | null>(null);
   const [contextOptions, setContextOptions] = useState<{ projects: Array<{ id: string; label: string }>; documents: Array<{ id: string; label: string; sourceType?: "project" | "company" }> }>({ projects: [], documents: [] });
   const [contextReferences, setContextReferences] = useState<AssistantContextReference[]>([]);
   const [picker, setPicker] = useState<"project" | "document" | null>(null);
+  const [pendingQuickAction, setPendingQuickAction] = useState<QuickAction | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [models, setModels] = useState<Array<{ id: string; displayName: string; modelId: string }>>([]);
   const [changingModel, setChangingModel] = useState(false);
@@ -148,13 +153,20 @@ export function ProjectAssistantPanel({
   const templateSourceCount = availableSources.length - projectSourceCount;
   const referencedProjectId = contextReferences.find((item): item is Extract<AssistantContextReference, { type: "project" }> => item.type === "project")?.projectId ?? null;
   const artifactProjectId = projectId ?? referencedProjectId;
-  const hasProjectContext = Boolean(projectId || referencedProjectId);
   const visibleThreads = useMemo(() => { const query = threadSearch.trim().toLocaleLowerCase("zh-CN"); return query ? threads.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(query)) : threads; }, [threadSearch, threads]);
   const visibleContextOptions = useMemo(() => {
     const query = pickerSearch.trim().toLocaleLowerCase("zh-CN");
     const values = picker === "project" ? contextOptions.projects : contextOptions.documents;
     return query ? values.filter((item) => item.label.toLocaleLowerCase("zh-CN").includes(query)) : values;
   }, [contextOptions, picker, pickerSearch]);
+  const referencedProjectCount = useMemo(
+    () => contextReferences.filter((item) => item.type === "project").length,
+    [contextReferences],
+  );
+  const referencedDocumentCount = useMemo(
+    () => contextReferences.filter((item) => item.type === "document").length,
+    [contextReferences],
+  );
 
   const loadThread = useCallback(
     async (threadId: string, signal?: AbortSignal) => {
@@ -270,7 +282,10 @@ export function ProjectAssistantPanel({
     }
   };
 
-  const sendQuestion = async (nextQuestion: string) => {
+  const sendQuestion = async (
+    nextQuestion: string,
+    references: AssistantContextReference[] = contextReferences,
+  ) => {
     if (sending) return;
     const normalized = nextQuestion.trim();
     if (normalized.length < 2) {
@@ -297,7 +312,7 @@ export function ProjectAssistantPanel({
         normalized,
         crypto.randomUUID(),
         projectId && intentNeedsProjectEvidence(intent) ? selectedSourceIds : [],
-        contextReferences,
+        references,
       );
       await refreshThreads(result.thread.id);
     } catch (caught) {
@@ -318,13 +333,47 @@ export function ProjectAssistantPanel({
     const reference: AssistantContextReference = picker === "project"
       ? { type: "project", projectId: item.id, label: item.label }
       : { type: "document", documentId: item.id, sourceType: item.sourceType ?? "project", label: item.label };
-    setContextReferences((current) => {
-      const referenceKey = reference.type === "project" ? `p:${reference.projectId}` : `d:${reference.documentId}`;
-      const duplicate = current.some((value) => (value.type === "project" ? `p:${value.projectId}` : `d:${value.documentId}`) === referenceKey);
-      return duplicate ? current : [...current, reference];
-    });
+    const referenceKey = reference.type === "project" ? `p:${reference.projectId}` : `d:${reference.documentId}`;
+    const nextReferences = (() => {
+      const duplicate = contextReferences.some((value) => (value.type === "project" ? `p:${value.projectId}` : `d:${value.documentId}`) === referenceKey);
+      return duplicate ? contextReferences : [...contextReferences, reference];
+    })();
+    setContextReferences(nextReferences);
+    const action = picker === "project" ? pendingQuickAction : null;
+    setPendingQuickAction(null);
     setPicker(null);
     setPickerSearch("");
+    if (!action || reference.type !== "project") return;
+    if (action === "requirement_overview") {
+      void openRequirementOverview(reference.projectId);
+      return;
+    }
+    const prompt = action === "project_summary"
+      ? "请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。"
+      : "请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。";
+    void sendQuestion(prompt, nextReferences);
+  };
+
+  const removeContext = (reference: AssistantContextReference) => {
+    setContextReferences((current) => current.filter((item) => item !== reference));
+  };
+
+  const startQuickAction = (action: QuickAction) => {
+    if (!artifactProjectId) {
+      setPendingQuickAction(action);
+      setPicker("project");
+      setPickerSearch("");
+      return;
+    }
+    if (action === "requirement_overview") {
+      void openRequirementOverview(artifactProjectId);
+      return;
+    }
+    void sendQuestion(
+      action === "project_summary"
+        ? "请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。"
+        : "请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。",
+    );
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -344,13 +393,16 @@ export function ProjectAssistantPanel({
     finally { setChangingModel(false); }
   };
 
-  const openRequirementOverview = async () => {
-    if (!artifactProjectId) {
+  const openRequirementOverview = async (targetProjectId = artifactProjectId) => {
+    if (!targetProjectId) {
       setError("生成需求概览需要先用 # 关联一个项目。");
       return;
     }
     const target = thread?.status === "active" ? thread : await createThread();
-    if (target) setRequirementOverviewThreadId(target.id);
+    if (target) {
+      setRequirementOverviewProjectId(targetProjectId);
+      setRequirementOverviewThreadId(target.id);
+    }
   };
 
   const archive = async () => {
@@ -512,9 +564,7 @@ export function ProjectAssistantPanel({
                         <LoaderCircle className="size-4 animate-spin" />正在检索证据并生成回答
                       </span>
                     ) : (
-                      <div className="prose prose-sm max-w-none break-words text-inherit prose-p:my-2 prose-headings:mt-4 prose-headings:mb-2 prose-ul:my-2 prose-ol:my-2">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{message.content}</ReactMarkdown>
-                      </div>
+                      <AssistantMarkdown>{message.content}</AssistantMarkdown>
                     )}
                   </div>
                   {message.citations.length ? (
@@ -581,16 +631,22 @@ export function ProjectAssistantPanel({
             ) : null}
           </div>
 
-          {artifactProjectId && requirementOverviewThreadId === thread?.id ? <section className="border-t" data-testid="assistant-skill-artifact"><div className="border-b bg-muted/20 px-4 py-3 text-xs text-muted-foreground">需求概览只属于这条当前会话。切换或新建会话后不会悬挂在新消息流中。</div><RequirementOverviewWorkspace projectId={artifactProjectId} /></section> : null}
+          {requirementOverviewProjectId && requirementOverviewThreadId === thread?.id ? <section className="border-t" data-testid="assistant-skill-artifact"><div className="border-b bg-muted/20 px-4 py-3 text-xs text-muted-foreground">需求概览只属于这条当前会话。切换或新建会话后不会悬挂在新消息流中。</div><RequirementOverviewWorkspace projectId={requirementOverviewProjectId} /></section> : null}
 
           <form onSubmit={submit} className="border-t border-border p-4">
-            {(projectId || contextReferences.some((item) => item.type === "project")) ? <div className="mb-3 flex flex-wrap gap-2" aria-label="会话快捷操作">
-              <Button type="button" size="sm" variant="outline" onClick={() => void openRequirementOverview()} disabled={creating || (projectId ? selectedSourceIds.length === 0 : !artifactProjectId)}><FileText className="size-3.5" />生成需求概览</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。") } disabled={sending || !hasProjectContext}><Sparkles className="size-3.5" />总结项目现状</Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => void sendQuestion("请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。") } disabled={sending || !hasProjectContext}><ListChecks className="size-3.5" />列出待确认事项</Button>
-            </div> : null}
+            <section className="mb-4" aria-label="快捷操作">
+              <p className="mb-2 text-xs font-medium text-foreground">快捷操作</p>
+              <div className="flex flex-wrap gap-2">
+                <Tooltip><TooltipTrigger asChild><Button type="button" size="sm" variant="outline" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)}><FileText className="size-3.5" />生成需求概览</Button></TooltipTrigger><TooltipContent>执行固定模板的需求概览 Skill，不代表资料范围。</TooltipContent></Tooltip>
+                <Tooltip><TooltipTrigger asChild><Button type="button" size="sm" variant="outline" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending}><Sparkles className="size-3.5" />总结项目现状</Button></TooltipTrigger><TooltipContent>使用已授权项目资料执行预设任务。</TooltipContent></Tooltip>
+                <Tooltip><TooltipTrigger asChild><Button type="button" size="sm" variant="outline" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending}><ListChecks className="size-3.5" />列出待确认事项</Button></TooltipTrigger><TooltipContent>使用已授权项目资料执行预设任务。</TooltipContent></Tooltip>
+              </div>
+            </section>
+            <section className="mb-4 rounded-lg border border-dashed bg-muted/20 px-3 py-2.5" aria-label="本次引用" data-testid="assistant-context-references">
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-medium text-foreground">本次引用</p><span className="text-[10px] text-muted-foreground">已引用 {referencedProjectCount} 个项目、{referencedDocumentCount} 份资料</span></div>
+              {contextReferences.length ? <div className="mt-2 flex flex-wrap gap-1.5">{contextReferences.map((reference) => <Badge key={reference.type === "project" ? `project-${reference.projectId}` : `document-${reference.documentId}`} variant="outline" className="h-7 gap-1.5 bg-background pr-1.5 text-xs"><span data-testid={reference.type === "project" ? "project-reference-token" : "document-reference-token"} className="inline-flex items-center gap-1">{reference.type === "project" ? <FolderKanban className="size-3" /> : <Paperclip className="size-3" />}{reference.type === "project" ? "#" : "$"}{reference.label}</span><button type="button" aria-label={`移除 ${reference.label}`} onClick={() => removeContext(reference)} className="rounded-sm px-1 text-muted-foreground hover:bg-muted hover:text-foreground">×</button></Badge>)}</div> : <p className="mt-1 text-xs leading-5 text-muted-foreground">未指定引用，AI 会根据你的权限自动查找相关资料。</p>}
+            </section>
             <label className="block">
-              {!projectId && contextReferences.length ? <span className="mb-2 flex flex-wrap gap-1">{contextReferences.map((reference) => <Badge key={reference.type === "project" ? reference.projectId : reference.documentId} variant="outline" className="gap-1"><span>{reference.type === "project" ? "#" : "$"}{reference.label}</span><button type="button" aria-label={`移除 ${reference.label}`} onClick={() => setContextReferences((current) => current.filter((item) => item !== reference))}>×</button></Badge>)}</span> : null}
               <span className="sr-only">向 AI 助手提问</span>
               <textarea
                 aria-label="向 AI 助手提问"
@@ -613,8 +669,10 @@ export function ProjectAssistantPanel({
               />
             </label>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <ShieldCheck className="size-3 text-success" />使用资料时会由服务端校验引用权限
+              <span className="inline-flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground" data-testid="assistant-composer-help">
+                <ShieldCheck className="size-3 text-success" />
+                <span>输入 # 引用项目，输入 $ 引用具体资料。Enter 发送，Shift+Enter 换行。</span>
+                <span className="ml-1">使用资料时会由服务端校验引用权限。</span>
               </span>
               <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"} data-testid="assistant-send-button">
                 <Send className="size-3.5" />发送
@@ -628,7 +686,7 @@ export function ProjectAssistantPanel({
         <p>AI 可直接完成通用聊天、写作、润色和方案讨论；涉及资料事实时才会检索。</p>
         <p className="sm:text-right">项目资料与公司资料会明确标注；资料不足时不会猜测。</p>
       </footer>
-      <Dialog open={picker !== null} onOpenChange={(open) => { if (!open) setPicker(null); }}>
+      <Dialog open={picker !== null} onOpenChange={(open) => { if (!open) { setPicker(null); setPendingQuickAction(null); } }}>
         <DialogContent>
           <DialogHeader><DialogTitle>{picker === "project" ? "限定项目资料" : "限定一份资料"}</DialogTitle><DialogDescription>只显示你已经有权访问的内容；选择后会缩小本次提问的资料范围。</DialogDescription></DialogHeader>
           <Input value={pickerSearch} onChange={(event) => setPickerSearch(event.target.value)} placeholder="搜索名称" autoFocus />

@@ -122,6 +122,10 @@ describe("focused MVP product surface", () => {
     });
     assert.match(result.text, /本回答未使用项目或公司资料/);
     assert.doesNotMatch(result.text, /\[E\d+\]/);
+    assert.match(result.text, /^# 我可以帮你处理这些工作/m);
+    assert.match(result.text, /\*\*写作与润色\*\*/);
+    assert.match(result.text, /使用 `#` 引用项目/);
+    assert.doesNotMatch(GENERAL_ASSISTANT_SYSTEM_PROMPT, /适合时优先使用/);
   });
 
   it("keeps focused project statuses and hides the internal company storage project", async () => {
