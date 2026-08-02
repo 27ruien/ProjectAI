@@ -52,6 +52,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { RequirementOverviewWorkspace } from "@/components/requirement-overview/RequirementOverviewWorkspace";
 import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
 import { AssistantMarkdown } from "./AssistantMarkdown";
+import { AssistantCitationPreview } from "./AssistantCitationPreview";
+import { AssistantHistoryCitationPreview } from "./AssistantHistoryCitationPreview";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type PanelPhase =
@@ -112,10 +114,12 @@ export function ProjectAssistantPanel({
   project,
   focused = false,
   viewer,
+  initialThreadId,
 }: {
   project: Pick<AuthorizedProjectSummary, "id"> | null;
   focused?: boolean;
   viewer?: ViewerContext;
+  initialThreadId?: string | null;
 }) {
   const projectId = project?.id ?? null;
   const loadController = useRef<AbortController | null>(null);
@@ -201,7 +205,7 @@ export function ProjectAssistantPanel({
     const controller = new AbortController();
     loadController.current = controller;
     const timer = window.setTimeout(() => {
-      void refreshThreads(undefined, controller.signal)
+      void refreshThreads(initialThreadId ?? undefined, controller.signal)
         .then(() => setPhase("ready"))
         .catch((caught: unknown) => {
           if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -220,7 +224,7 @@ export function ProjectAssistantPanel({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [projectId, refreshThreads]);
+  }, [initialThreadId, projectId, refreshThreads]);
 
   useEffect(() => {
     if (projectId) return;
@@ -428,7 +432,6 @@ export function ProjectAssistantPanel({
   };
 
   const download = async (citation: ProjectAssistantCitationDto) => {
-    if (!projectId) return;
     setDownloading(citation.versionId);
     setError(null);
     try {
@@ -442,6 +445,7 @@ export function ProjectAssistantPanel({
         anchor.click();
         URL.revokeObjectURL(url);
       } else {
+        if (!projectId) throw new Error("project source unavailable");
         await downloadProjectDocumentVersion(projectId, citation.documentId, citation.versionId, citation.displayName);
       }
     } catch (caught) {
@@ -588,6 +592,8 @@ export function ProjectAssistantPanel({
                                 </p>
                               </div>
                             </div>
+                            <div className="flex items-center gap-1">
+                            <AssistantCitationPreview citation={citation} projectId={projectId} onOpenSource={() => void download(citation)} />
                             <Button
                               type="button"
                               variant="ghost"
@@ -598,6 +604,7 @@ export function ProjectAssistantPanel({
                             >
                               <Download className="size-3.5" />原文件
                             </Button>
+                            </div>
                           </div>
                           {citation.headingPath.length ? (
                             <p className="mt-2 text-[10px] font-medium text-primary">
@@ -611,6 +618,7 @@ export function ProjectAssistantPanel({
                       ))}
                     </div>
                   ) : null}
+                  {message.historyReferences.length ? <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground" data-testid="assistant-history-references"><span className="font-medium text-foreground">已引用历史对话：</span>{message.historyReferences.map((reference) => { const openHistory = () => { if (reference.openInCurrentConversation) { void loadThread(reference.threadId); return; } window.location.assign(withBasePath(`/assistant?project=${encodeURIComponent(reference.projectId)}&thread=${encodeURIComponent(reference.threadId)}`)); }; return <span key={reference.threadId} className="ml-1 inline-flex items-center gap-1"><button type="button" className="text-primary underline-offset-2 hover:underline" onClick={openHistory}>[历史会话] {reference.title} · {new Date(reference.updatedAt).toLocaleDateString("zh-CN")}</button><AssistantHistoryCitationPreview projectId={projectId} threadId={reference.threadId} onOpen={openHistory} /></span>; })}<span className="ml-1">（仅作上下文，不是项目事实）</span></div> : null}
                 </article>
               ))
             )}

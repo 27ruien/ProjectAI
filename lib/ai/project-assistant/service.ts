@@ -37,13 +37,15 @@ import {
   finalizeInsufficientEvidence,
   finalizeSuccessfulExecution,
   listOwnedThreadSummaries,
-  loadConversationHistory,
+  loadConversationContext,
   loadOwnedThread,
   refreshedExecution,
   reserveAssistantExecution,
   responseForExecution,
   resolveGeneralChatProjectId,
   getOwnedThreadGenerationModel,
+  recordConversationHistoryCitations,
+  refreshConversationMemory,
   setOwnedThreadGenerationModel,
   updateExecutionPhase,
 } from "./repository";
@@ -91,6 +93,19 @@ function combinedGatewayResult(
     providerRequestId: second.providerRequestId,
     latencyMs: first.latencyMs + second.latencyMs,
   };
+}
+
+async function persistConversationMemory(input: {
+  projectId: string;
+  threadId: string;
+  actorUserId: string;
+  assistantMessageId: string;
+  historicalMemories: Array<{ threadId: string; title: string; summary: string; updatedAt: Date }>;
+}) {
+  await Promise.all([
+    refreshConversationMemory({ projectId: input.projectId, threadId: input.threadId, actorUserId: input.actorUserId }),
+    recordConversationHistoryCitations({ projectId: input.projectId, threadId: input.threadId, assistantMessageId: input.assistantMessageId, memories: input.historicalMemories }),
+  ]).catch(() => undefined);
 }
 
 export async function createProjectAssistantThread(input: {
@@ -255,12 +270,16 @@ export async function askGeneralAssistant(input: {
   let consumedGatewayResult: AiGatewayResult | null = null;
   try {
     const generationModelId = await getOwnedThreadGenerationModel({ principal: input.principal, projectId, threadId: input.threadId, scope: "general" });
-    const history = await loadConversationHistory({
+    const conversation = await loadConversationContext({
+      principal: input.principal,
       projectId,
       threadId: input.threadId,
       actorUserId: input.principal.user.id,
       excludeMessageId: reservation.execution.userMessageId,
+      question: parsed.data.question,
+      scope: "general",
     });
+    const history = conversation.history;
     if (intent === "general_chat" || intent === "artifact_request") {
       const scenario = await resolveGenerationScenario({
       projectId,
@@ -287,6 +306,7 @@ export async function askGeneralAssistant(input: {
       gateway: consumedGatewayResult,
       requestHeaders: input.requestHeaders,
       });
+      await persistConversationMemory({ projectId, threadId: input.threadId, actorUserId: input.principal.user.id, assistantMessageId: reservation.execution.assistantMessageId, historicalMemories: conversation.historicalMemories });
       const execution = await refreshedExecution(reservation.execution.id);
       return responseForExecution({
       principal: input.principal,
@@ -411,12 +431,15 @@ export async function askProjectAssistant(input: {
   if (intent === "general_chat") {
     let gatewayResult: AiGatewayResult | null = null;
     try {
-      const [history, scenario] = await Promise.all([
-        loadConversationHistory({
+      const [conversation, scenario] = await Promise.all([
+        loadConversationContext({
+          principal: input.principal,
           projectId: input.projectId,
           threadId: input.threadId,
           actorUserId: input.principal.user.id,
           excludeMessageId: reservation.execution.userMessageId,
+          question: parsed.data.question,
+          scope: "project",
         }),
         resolveGenerationScenario({
           projectId: input.projectId,
@@ -424,6 +447,7 @@ export async function askProjectAssistant(input: {
           scenario: "general_chat",
         }),
       ]);
+      const history = conversation.history;
       const gateway = createProjectAssistantGateway(scenario.runtime);
       await updateExecutionPhase(reservation.execution.id, "calling_provider");
       gatewayResult = await gateway.generate({
@@ -441,6 +465,7 @@ export async function askProjectAssistant(input: {
         gateway: gatewayResult,
         requestHeaders: input.requestHeaders,
       });
+      await persistConversationMemory({ projectId: input.projectId, threadId: input.threadId, actorUserId: input.principal.user.id, assistantMessageId: reservation.execution.assistantMessageId, historicalMemories: conversation.historicalMemories });
       return responseForExecution({
         principal: input.principal,
         projectId: input.projectId,
@@ -466,12 +491,15 @@ export async function askProjectAssistant(input: {
   let evidenceCount = 0;
   try {
     await updateExecutionPhase(reservation.execution.id, "retrieving");
-    const [history, retrieval] = await Promise.all([
-      loadConversationHistory({
+    const [conversation, retrieval] = await Promise.all([
+      loadConversationContext({
+        principal: input.principal,
         projectId: input.projectId,
         threadId: input.threadId,
         actorUserId: input.principal.user.id,
         excludeMessageId: reservation.execution.userMessageId,
+        question: parsed.data.question,
+        scope: "project",
       }),
       retrieveProjectEvidence({
         principal: input.principal,
@@ -484,6 +512,7 @@ export async function askProjectAssistant(input: {
         sourceDocumentIds: selectedSourceIds,
       }),
     ]);
+    const history = conversation.history;
     const evidence = retrieval.evidence;
     evidenceCount = evidence.length;
     if (evidence.length === 0) {
@@ -552,6 +581,7 @@ export async function askProjectAssistant(input: {
       evidenceCount: evidence.length,
       requestHeaders: input.requestHeaders,
     });
+    await persistConversationMemory({ projectId: input.projectId, threadId: input.threadId, actorUserId: input.principal.user.id, assistantMessageId: reservation.execution.assistantMessageId, historicalMemories: conversation.historicalMemories });
     const execution = await refreshedExecution(reservation.execution.id);
     return responseForExecution({
       principal: input.principal,

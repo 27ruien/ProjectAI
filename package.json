@@ -11,7 +11,7 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "test": "npm run build && node --test --test-concurrency=1 tests/rendered-html.test.mjs tests/proxy-redirect.test.mjs",
     "test:e2e": "playwright test",
-    "test:focused": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v2 node --import tsx --test --test-concurrency=1 tests/project-permissions.test.ts tests/focused-mvp.test.ts tests/focused-ui.test.ts tests/requirement-overview-template.test.ts tests/requirement-overview-model-management.test.mjs",
+    "test:focused": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true AI_REGION=cn-beijing AI_PROJECT_ASSISTANT_PROFILE_ID=qwen-project-assistant-cn-v2 node --import tsx --test --test-concurrency=1 tests/project-permissions.test.ts tests/focused-mvp.test.ts tests/focused-ui.test.ts tests/requirement-overview-template.test.ts tests/requirement-overview-model-management.test.mjs tests/assistant-conversation-memory.test.mjs",
     "test:staging-deploy-policy": "node --test tests/staging-deploy-seed-decoupling.test.mjs",
     "test:focused:e2e": "playwright test --config=playwright.focused-mvp.config.ts",
     "test:e2e:headed": "playwright test --headed",

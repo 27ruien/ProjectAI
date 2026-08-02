@@ -4,6 +4,7 @@ export const PROJECT_ASSISTANT_MODEL_PROFILE_ID =
   "qwen-project-assistant-cn-v2" as const;
 
 export type ProjectAssistantCitationDto = {
+  id: string;
   index: number;
   displayName: string;
   versionNumber: number;
@@ -36,6 +37,13 @@ export type ProjectAssistantMessageDto = {
   sequence: number;
   contextReferences: AssistantContextReference[];
   citations: ProjectAssistantCitationDto[];
+  historyReferences: Array<{
+    threadId: string;
+    projectId: string;
+    openInCurrentConversation: boolean;
+    title: string;
+    updatedAt: string;
+  }>;
   fallbackUsed: boolean;
 };
 

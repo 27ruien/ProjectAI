@@ -10,7 +10,7 @@ import {
   ne,
   sql,
 } from "drizzle-orm";
-import { requireProjectAccess } from "@/lib/auth/authorization";
+import { canReadProject, requireProjectAccess } from "@/lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 import { AuthorizationError } from "@/lib/auth/session";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
@@ -18,8 +18,10 @@ import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import {
   aiExecution,
+  aiConversationMemory,
   aiMessage,
   aiMessageCitation,
+  aiMessageHistoryCitation,
   aiRetrievalQueryEmbeddingCall,
   aiRetrievalRun,
   aiThread,
@@ -31,6 +33,7 @@ import {
   type AiExecutionRecord,
   type AiRetrievalMode,
 } from "@/lib/db/schema";
+import { createEmbeddingGateway, EMBEDDING_PROFILE_ID, getEmbeddingRuntimeConfig } from "@/lib/ai/embeddings";
 import { validateSourceLocator } from "@/lib/documents/processing/source-locator";
 import type {
   ProjectAssistantMessageResponse,
@@ -363,7 +366,7 @@ export async function loadOwnedThread(input: {
       .filter((item) => item.sourceScope !== "organization" || publishedCompanyIds.has(item.documentId))
       .map((item) => [item.documentId, item] as const),
   );
-  const [messages, citations, executions] = await Promise.all([
+  const [messages, citations, executions, historyCitations] = await Promise.all([
     getDb()
       .select()
       .from(aiMessage)
@@ -401,6 +404,18 @@ export async function loadOwnedThread(input: {
           eq(aiExecution.actorUserId, input.principal.user.id),
         ),
       ),
+    getDb().select({
+      assistantMessageId: aiMessageHistoryCitation.assistantMessageId,
+      threadId: aiMessageHistoryCitation.sourceThreadId,
+      title: aiThread.title,
+      updatedAt: aiConversationMemory.updatedAt,
+      sourceProjectId: aiConversationMemory.projectId,
+      sourceDocumentIds: aiConversationMemory.sourceDocumentIds,
+      ownerUserId: aiConversationMemory.ownerUserId,
+    }).from(aiMessageHistoryCitation)
+      .innerJoin(aiConversationMemory, eq(aiMessageHistoryCitation.sourceThreadId, aiConversationMemory.threadId))
+      .innerJoin(aiThread, eq(aiConversationMemory.threadId, aiThread.id))
+      .where(and(eq(aiMessageHistoryCitation.projectId, input.projectId), eq(aiMessageHistoryCitation.threadId, input.threadId))),
   ]);
   const citationsByMessage = new Map<
     string,
@@ -446,6 +461,14 @@ export async function loadOwnedThread(input: {
       execution.fallbackUsed,
     ]),
   );
+  const historyByMessage = new Map<string, Array<{ threadId: string; projectId: string; openInCurrentConversation: boolean; title: string; updatedAt: string }>>();
+  const readableHistoryProjects = new Map(await Promise.all(historyCitations.map(async (citation) => [citation.threadId, citation.sourceProjectId === input.projectId || await canReadProject(input.principal, citation.sourceProjectId)] as const)));
+  for (const citation of historyCitations) {
+    if (!readableHistoryProjects.get(citation.threadId) || citation.ownerUserId !== input.principal.user.id || !Array.isArray(citation.sourceDocumentIds) || !citation.sourceDocumentIds.every((documentId) => authorizedDocuments.has(documentId))) continue;
+    const values = historyByMessage.get(citation.assistantMessageId) ?? [];
+    values.push({ threadId: citation.threadId, projectId: citation.sourceProjectId, openInCurrentConversation: citation.sourceProjectId === input.projectId, title: citation.title, updatedAt: citation.updatedAt.toISOString() });
+    historyByMessage.set(citation.assistantMessageId, values);
+  }
   return {
     id: thread.id,
     title: thread.title,
@@ -470,10 +493,12 @@ export async function loadOwnedThread(input: {
           ? message.contextReferences as AssistantContextReference[]
           : [],
         fallbackUsed: fallbackByMessage.get(message.id) ?? false,
+        historyReferences: revoked ? [] : (historyByMessage.get(message.id) ?? []),
         citations: revoked
           ? []
           : (citationsByMessage.get(message.id) ?? []).map(
               (citation) => ({
+                id: citation.id,
                 index: citation.citationIndex,
                 displayName: citation.displayName,
                 versionNumber: citation.versionNumber,
@@ -1138,6 +1163,325 @@ export async function loadConversationHistory(input: {
     characters += content.length;
   }
   return selected.reverse();
+}
+
+type HistoricalConversationMemory = {
+  threadId: string;
+  title: string;
+  summary: string;
+  updatedAt: Date;
+};
+
+function historyRequested(question: string) {
+  return /(?:之前|以前|历史|上次|曾经|过去|前面|聊过|对话记录|previous|history|earlier)/iu.test(question);
+}
+
+function safeMemoryTopics(title: string, summary: string) {
+  return [...new Set(`${title} ${summary}`.split(/[\s,，。；;、/]+/u).map((item) => item.trim()).filter((item) => item.length >= 2 && item.length <= 32))].slice(0, 12);
+}
+
+async function conversationMemoryEmbedding(summary: string): Promise<number[] | null> {
+  try {
+    const runtime = getEmbeddingRuntimeConfig();
+    if (!runtime.enabled) return null;
+    const result = await createEmbeddingGateway(runtime).embed([summary.slice(0, runtime.batchMaxCharacters)]);
+    return result.vectors[0] ?? null;
+  } catch {
+    // Memory remains usable through its GIN-backed summary index. A failed optional
+    // embedding must never block an answer or expose provider details.
+    return null;
+  }
+}
+
+async function currentAuthorizedMemoryDocumentIds(principal: AuthenticatedPrincipal) {
+  const [authorizedScope, companyKnowledge] = await Promise.all([
+    listAllAuthorizedDocumentScope(principal),
+    listCompanyKnowledge({ principal }),
+  ]);
+  const publishedCompanyIds = new Set(
+    companyKnowledge.documents
+      .filter((item) => item.lifecycleStatus === "published")
+      .map((item) => item.id),
+  );
+  return new Set(
+    authorizedScope
+      .filter(
+        (item) =>
+          item.sourceScope !== "organization" ||
+          publishedCompanyIds.has(item.documentId),
+      )
+      .map((item) => item.documentId),
+  );
+}
+
+/** Refreshes a private, derived summary after a completed answer. It never changes project facts. */
+export async function refreshConversationMemory(input: {
+  projectId: string;
+  threadId: string;
+  actorUserId: string;
+}): Promise<void> {
+  const db = getDb();
+  const [thread] = await db.select({ title: aiThread.title }).from(aiThread).where(and(
+    eq(aiThread.id, input.threadId),
+    eq(aiThread.projectId, input.projectId),
+    eq(aiThread.createdBy, input.actorUserId),
+    isNull(aiThread.deletedAt),
+  )).limit(1);
+  if (!thread) return;
+  const messages = await db.select({ role: aiMessage.role, content: aiMessage.content, createdAt: aiMessage.createdAt }).from(aiMessage).where(and(
+    eq(aiMessage.projectId, input.projectId),
+    eq(aiMessage.threadId, input.threadId),
+    eq(aiMessage.createdBy, input.actorUserId),
+    inArray(aiMessage.status, ["completed", "insufficient_evidence"]),
+  )).orderBy(desc(aiMessage.sequence), desc(aiMessage.id)).limit(10);
+  if (!messages.length) return;
+  const chronological = [...messages].reverse();
+  const summary = [
+    `对话主题：${thread.title}。`,
+    ...chronological.map((message) => `${message.role === "user" ? "用户问题" : "历史 AI 回答"}：${message.content.replace(/\s+/g, " ").trim().slice(0, 420)}`),
+    "以上为历史对话派生摘要，不是项目事实或资料证据。",
+  ].join("\n").slice(0, 6000);
+  const citations = await db.select({ documentId: aiMessageCitation.documentId }).from(aiMessageCitation).where(and(
+    eq(aiMessageCitation.projectId, input.projectId),
+    eq(aiMessageCitation.threadId, input.threadId),
+  ));
+  const sourceDocumentIds = [...new Set(citations.map((citation) => citation.documentId))];
+  const lastMessageAt = chronological.at(-1)!.createdAt;
+  const summaryEmbedding = await conversationMemoryEmbedding(summary);
+  await db.insert(aiConversationMemory).values({
+    threadId: input.threadId,
+    projectId: input.projectId,
+    ownerUserId: input.actorUserId,
+    summary,
+    keyTopics: safeMemoryTopics(thread.title, summary),
+    sourceDocumentIds,
+    summaryEmbedding,
+    embeddingModelProfileId: EMBEDDING_PROFILE_ID,
+    embeddingDimensions: 1024,
+    sourceMessageCount: chronological.length,
+    lastMessageAt,
+    updatedAt: new Date(),
+  }).onConflictDoUpdate({
+    target: aiConversationMemory.threadId,
+    set: { summary, keyTopics: safeMemoryTopics(thread.title, summary), sourceDocumentIds, summaryEmbedding, embeddingModelProfileId: EMBEDDING_PROFILE_ID, embeddingDimensions: 1024, sourceMessageCount: chronological.length, lastMessageAt, updatedAt: new Date() },
+  });
+}
+
+async function loadRelevantConversationMemories(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  threadId: string;
+  question: string;
+  scope: AssistantConversationScope;
+}): Promise<HistoricalConversationMemory[]> {
+  if (!historyRequested(input.question)) return [];
+  const db = getDb();
+  const [currentProject] = await db.select({ organizationId: project.organizationId }).from(project).where(eq(project.id, input.projectId)).limit(1);
+  if (!currentProject) return [];
+  const rows = await db.select({
+    threadId: aiConversationMemory.threadId,
+    projectId: aiConversationMemory.projectId,
+    title: aiThread.title,
+    summary: aiConversationMemory.summary,
+    sourceDocumentIds: aiConversationMemory.sourceDocumentIds,
+    updatedAt: aiConversationMemory.updatedAt,
+  }).from(aiConversationMemory)
+    .innerJoin(aiThread, and(eq(aiThread.id, aiConversationMemory.threadId), eq(aiThread.createdBy, aiConversationMemory.ownerUserId)))
+    .innerJoin(project, eq(project.id, aiConversationMemory.projectId))
+    .where(and(
+      eq(aiConversationMemory.ownerUserId, input.principal.user.id),
+      eq(project.organizationId, currentProject.organizationId),
+      ne(aiConversationMemory.threadId, input.threadId),
+      isNull(aiThread.deletedAt),
+      sql`${aiConversationMemory.searchVector} @@ websearch_to_tsquery('simple', ${input.question})`,
+    )).orderBy(desc(aiConversationMemory.lastMessageAt)).limit(3);
+  if (!rows.length) return [];
+  const authorizedDocuments = await currentAuthorizedMemoryDocumentIds(input.principal);
+  const readableProjects = new Map(await Promise.all(rows.map(async (row) => [row.threadId, row.projectId === input.projectId || await canReadProject(input.principal, row.projectId)] as const)));
+  return rows.filter((row) => readableProjects.get(row.threadId) && Array.isArray(row.sourceDocumentIds) && row.sourceDocumentIds.every((documentId) => authorizedDocuments.has(documentId))).map((row) => ({
+    threadId: row.threadId,
+    title: row.title,
+    summary: row.summary.slice(0, 2400),
+    updatedAt: row.updatedAt,
+  }));
+}
+
+export async function loadConversationContext(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  threadId: string;
+  actorUserId: string;
+  excludeMessageId: string;
+  question: string;
+  scope: AssistantConversationScope;
+}): Promise<{ history: ProjectAssistantHistoryMessage[]; historicalMemories: HistoricalConversationMemory[] }> {
+  const [currentThread, historicalMemories] = await Promise.all([
+    loadConversationHistory(input),
+    loadRelevantConversationMemories(input),
+  ]);
+  return {
+    history: [
+      ...currentThread.map((message) => ({ ...message, source: "current_thread" as const })),
+      ...historicalMemories.map((memory) => ({ role: "assistant" as const, source: "historical_summary" as const, sourceThreadId: memory.threadId, content: `历史对话“${memory.title}”摘要：${memory.summary}` })),
+    ],
+    historicalMemories,
+  };
+}
+
+export async function recordConversationHistoryCitations(input: {
+  projectId: string;
+  threadId: string;
+  assistantMessageId: string;
+  memories: HistoricalConversationMemory[];
+}): Promise<void> {
+  if (!input.memories.length) return;
+  await getDb().insert(aiMessageHistoryCitation).values(input.memories.map((memory) => ({
+    id: crypto.randomUUID(),
+    projectId: input.projectId,
+    threadId: input.threadId,
+    assistantMessageId: input.assistantMessageId,
+    sourceThreadId: memory.threadId,
+    sourceMemoryUpdatedAt: memory.updatedAt,
+  }))).onConflictDoNothing();
+}
+
+function locatorDescription(locator: ReturnType<typeof validateSourceLocator>) {
+  switch (locator.type) {
+    case "pdf_page": return `第 ${locator.pageNumber} 页`;
+    case "docx_section": return `${locator.headingPath.join(" / ") || "正文"}，第 ${locator.paragraphStart}-${locator.paragraphEnd} 段`;
+    case "xlsx_range": return `${locator.sheetName}，第 ${locator.rowStart}-${locator.rowEnd} 行`;
+    case "pptx_slide": return `第 ${locator.slideNumber} 张`;
+    case "text_lines": return `第 ${locator.lineStart}-${locator.lineEnd} 行`;
+    case "markdown_section": return `${locator.headingPath.join(" / ") || "正文"}，第 ${locator.lineStart}-${locator.lineEnd} 行`;
+  }
+}
+
+function citationPreviewLocation(locator: ReturnType<typeof validateSourceLocator>) {
+  switch (locator.type) {
+    case "pdf_page":
+      return { pageNumber: locator.pageNumber, slideNumber: null, sheetName: null, cellRange: null, lineStart: null, lineEnd: null };
+    case "pptx_slide":
+      return { pageNumber: null, slideNumber: locator.slideNumber, sheetName: null, cellRange: null, lineStart: null, lineEnd: null };
+    case "xlsx_range":
+      return { pageNumber: null, slideNumber: null, sheetName: locator.sheetName, cellRange: `R${locator.rowStart}:R${locator.rowEnd}`, lineStart: null, lineEnd: null };
+    case "docx_section":
+      return { pageNumber: null, slideNumber: null, sheetName: null, cellRange: null, lineStart: locator.paragraphStart, lineEnd: locator.paragraphEnd };
+    case "text_lines":
+      return { pageNumber: null, slideNumber: null, sheetName: null, cellRange: null, lineStart: locator.lineStart, lineEnd: locator.lineEnd };
+    case "markdown_section":
+      return { pageNumber: null, slideNumber: null, sheetName: null, cellRange: null, lineStart: locator.lineStart, lineEnd: locator.lineEnd };
+  }
+}
+
+/** Each preview request repeats ownership and document-access checks; a citation id never grants access by itself. */
+export async function loadAssistantCitationPreview(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  citationId: string;
+  requestHeaders: Headers;
+  scope: AssistantConversationScope;
+}) {
+  await requireAssistantConversationAccess({ ...input, db: getDb() });
+  const [citation] = await getDb().select({ citation: aiMessageCitation, thread: aiThread }).from(aiMessageCitation)
+    .innerJoin(aiThread, and(
+      eq(aiMessageCitation.threadId, aiThread.id),
+      eq(aiMessageCitation.projectId, aiThread.projectId),
+    ))
+    .where(and(
+      eq(aiMessageCitation.id, input.citationId),
+      eq(aiMessageCitation.projectId, input.projectId),
+      eq(aiThread.createdBy, input.principal.user.id),
+      isNull(aiThread.deletedAt),
+    )).limit(1);
+  if (!citation) throw new ProjectAssistantError(404, "AI_CITATION_NOT_FOUND", "引用不存在");
+  const [authorizedScope, companyKnowledge, currentVersion] = await Promise.all([
+    input.scope === "general"
+      ? listAllAuthorizedDocumentScope(input.principal)
+      : listAuthorizedDocumentScope({ principal: input.principal, projectId: input.projectId, permission: "view" }),
+    listCompanyKnowledge({ principal: input.principal }),
+    getDb().select({ documentStatus: projectDocument.status, versionId: projectDocumentVersion.id, storageStatus: projectDocumentVersion.storageStatus }).from(projectDocument)
+      .innerJoin(projectDocumentVersion, and(eq(projectDocumentVersion.documentId, projectDocument.id), eq(projectDocumentVersion.projectId, projectDocument.projectId), eq(projectDocumentVersion.isCurrent, true)))
+      .where(eq(projectDocument.id, citation.citation.documentId)).limit(1),
+  ]);
+  const publishedCompanyIds = new Set(companyKnowledge.documents.filter((item) => item.lifecycleStatus === "published").map((item) => item.id));
+  const source = authorizedScope.find((item) => item.documentId === citation.citation.documentId && (item.sourceScope !== "organization" || publishedCompanyIds.has(item.documentId)));
+  const version = currentVersion[0];
+  if (!source || !version || version.documentStatus !== "active" || version.storageStatus !== "stored" || version.versionId !== citation.citation.versionId) throw new ProjectAssistantError(404, "AI_CITATION_NOT_FOUND", "引用不存在");
+  const locator = validateSourceLocator(citation.citation.sourceLocator);
+  return {
+    citationId: citation.citation.id,
+    sourceType: source.sourceScope === "organization" ? "company_document" : "project_document",
+    sourceId: citation.citation.documentId,
+    displayName: citation.citation.displayName,
+    versionNumber: citation.citation.versionNumber,
+    documentVersionId: citation.citation.versionId,
+    chunkId: citation.citation.chunkId,
+    mimeType: citation.citation.mimeType,
+    sourceScope: source.sourceScope,
+    locator: locatorDescription(locator),
+    headingPath: Array.isArray(citation.citation.headingPath) ? citation.citation.headingPath : [],
+    excerpt: citation.citation.excerpt,
+    thumbnailUrl: null,
+    ...citationPreviewLocation(locator),
+  };
+}
+
+/**
+ * Historical summaries are private derived context. Previewing one repeats the
+ * owner, organization, project, and source-document checks before returning a
+ * bounded excerpt.
+ */
+export async function loadAssistantHistoryCitationPreview(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  sourceThreadId: string;
+  requestHeaders: Headers;
+  scope: AssistantConversationScope;
+}) {
+  const db = getDb();
+  await requireAssistantConversationAccess({ ...input, db });
+  const [currentProject] = await db
+    .select({ organizationId: project.organizationId })
+    .from(project)
+    .where(eq(project.id, input.projectId))
+    .limit(1);
+  const [memory] = await db
+    .select({
+      threadId: aiConversationMemory.threadId,
+      projectId: aiConversationMemory.projectId,
+      ownerUserId: aiConversationMemory.ownerUserId,
+      summary: aiConversationMemory.summary,
+      sourceDocumentIds: aiConversationMemory.sourceDocumentIds,
+      updatedAt: aiConversationMemory.updatedAt,
+      title: aiThread.title,
+      organizationId: project.organizationId,
+    })
+    .from(aiConversationMemory)
+    .innerJoin(aiThread, eq(aiConversationMemory.threadId, aiThread.id))
+    .innerJoin(project, eq(aiConversationMemory.projectId, project.id))
+    .where(and(
+      eq(aiConversationMemory.threadId, input.sourceThreadId),
+      eq(aiConversationMemory.ownerUserId, input.principal.user.id),
+      isNull(aiThread.deletedAt),
+    ))
+    .limit(1);
+  if (!currentProject || !memory || memory.organizationId !== currentProject.organizationId) {
+    throw new ProjectAssistantError(404, "AI_CITATION_NOT_FOUND", "引用不存在");
+  }
+  if (memory.projectId !== input.projectId && !(await canReadProject(input.principal, memory.projectId))) {
+    throw new ProjectAssistantError(404, "AI_CITATION_NOT_FOUND", "引用不存在");
+  }
+  const authorizedDocumentIds = await currentAuthorizedMemoryDocumentIds(input.principal);
+  if (!Array.isArray(memory.sourceDocumentIds) || !memory.sourceDocumentIds.every((documentId) => authorizedDocumentIds.has(documentId))) {
+    throw new ProjectAssistantError(404, "AI_CITATION_NOT_FOUND", "引用不存在");
+  }
+  return {
+    sourceType: "conversation" as const,
+    sourceId: memory.threadId,
+    title: memory.title,
+    updatedAt: memory.updatedAt.toISOString(),
+    excerpt: memory.summary.slice(0, 2400),
+  };
 }
 
 export async function finalizeInsufficientEvidence(input: {

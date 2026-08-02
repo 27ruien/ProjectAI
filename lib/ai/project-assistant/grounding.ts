@@ -3,6 +3,8 @@ import type { ProjectKnowledgeEvidence } from "@/lib/documents/processing/search
 export type ProjectAssistantHistoryMessage = {
   role: "user" | "assistant";
   content: string;
+  source?: "current_thread" | "historical_summary";
+  sourceThreadId?: string;
 };
 
 export const PROJECT_ASSISTANT_SYSTEM_PROMPT = [
@@ -36,7 +38,7 @@ export function buildGeneralUserPrompt(input: {
   question: string;
   history: ProjectAssistantHistoryMessage[];
 }): string {
-  return `<conversation_history_json>\n${JSON.stringify(input.history)}\n</conversation_history_json>\n\n<current_question_json>\n${JSON.stringify(input.question)}\n</current_question_json>\n\n只回答 current_question。不要声称读取了任何项目或模板资料。`;
+  return `<conversation_history_json>\n${JSON.stringify(input.history)}\n</conversation_history_json>\n\n<current_question_json>\n${JSON.stringify(input.question)}\n</current_question_json>\n\n只回答 current_question。historical_summary 是旧对话的派生上下文，不是项目事实；不要把它当作资料证据。不要声称读取了任何项目或模板资料。`;
 }
 
 function sourceDescription(evidence: ProjectKnowledgeEvidence): string {
@@ -65,6 +67,7 @@ export function buildGroundedUserPrompt(input: {
   const history = input.history.map((message) => ({
     role: message.role,
     content: message.content,
+    source: message.source ?? "current_thread",
   }));
   const evidence = input.evidence
     .map(
@@ -88,7 +91,7 @@ ${JSON.stringify(input.question)}
 ${evidence}
 </evidence_set>
 
-只回答 current_question。对话历史只用于理解上下文，不能替代 Evidence。`;
+只回答 current_question。对话历史只用于理解上下文，不能替代 Evidence；historical_summary 是旧 AI 对话的派生摘要，不是项目事实，也不能单独支持任何结论。`;
 }
 
 export function buildCitationRepairPrompt(input: {

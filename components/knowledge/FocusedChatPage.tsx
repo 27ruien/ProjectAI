@@ -10,6 +10,7 @@ export function FocusedChatPage({ viewer }: { viewer: ViewerContext }) {
   // assistant APIs still resolve and authorize this ID on every request, so a
   // URL can narrow a conversation but can never expand access.
   const requestedProjectId = searchParams.get("project");
+  const requestedThreadId = searchParams.get("thread");
   const project = requestedProjectId ? { id: requestedProjectId } : null;
   return (
     <main className="min-h-full px-5 py-7 sm:px-6 lg:px-8" data-testid="focused-chat-page">
@@ -19,7 +20,12 @@ export function FocusedChatPage({ viewer }: { viewer: ViewerContext }) {
           直接提问、写作或分析；涉及项目事实和公司规范时，助手会按你的权限自动查找相关资料。
         </p>
       </header>
-      <ProjectAssistantPanel project={project} focused viewer={viewer} />
+      <ProjectAssistantPanel
+        project={project}
+        focused
+        viewer={viewer}
+        initialThreadId={requestedThreadId}
+      />
     </main>
   );
 }
