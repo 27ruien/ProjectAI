@@ -247,13 +247,6 @@ early_cleanup() {
   exit "$exit_code"
 }
 
-release_guard_on_error() {
-  local status=$?
-  set +e
-  release_guard_record_unhandled_failure "$status" || true
-  return "$status"
-}
-
 trap release_guard_on_error ERR
 trap early_cleanup EXIT
 
@@ -1114,6 +1107,7 @@ if [[ "$USE_PREBUILT_APP_IMAGE" == "1" ]]; then
   log "Using the reviewed prebuilt Staging application image without rebuilding it"
 else
   release_guard_set_phase "BUILD_CANDIDATE_IMAGE"
+  release_error_code="STAGING_RELEASE_IMAGE_BUILD_FAILED"
   log "Building reviewed Staging images locally for ${REMOTE_DOCKER_PLATFORM}"
   docker version >/dev/null
   docker build \
@@ -1130,6 +1124,7 @@ else
   APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
   [[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
   [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+  log_release_event "PASS" "BUILD_CANDIDATE_IMAGE" "0" "NONE"
 fi
 DB_TOOLS_IMAGE_ID=""
 if [[ "$DEPLOY_MODE" != "app" ]]; then
@@ -1167,6 +1162,7 @@ sudo test ! -L "$remote_dir/backups"
 REMOTE_RELEASE
 
 release_guard_set_phase "SYNC_RELEASE_SOURCE"
+release_error_code="STAGING_RELEASE_SOURCE_SYNC_FAILED"
 log "Syncing tracked release ${SHORT_SHA} to ${REMOTE_HOST}:${REMOTE_DIR}"
 
 rsync --archive --compress --delete \
@@ -1201,12 +1197,14 @@ rsync --archive --compress --delete \
   --exclude '*.log' \
   --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
+log_release_event "PASS" "SYNC_RELEASE_SOURCE" "0" "NONE"
 
 if [[ "$USE_PREBUILT_APP_IMAGE" == "1" ]]; then
   release_guard_set_phase "VERIFY_PREBUILT_CANDIDATE"
   log_release_event "PASS" "PREBUILT_IMAGE_REUSE" "0" "NONE"
 else
   release_guard_set_phase "LOAD_CANDIDATE_IMAGE"
+  release_error_code="STAGING_RELEASE_IMAGE_TRANSFER_FAILED"
   log "Transferring locally built Staging images without building on the shared host"
   if [[ "$DEPLOY_MODE" == "app" ]]; then
     docker save "$APP_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
@@ -1215,6 +1213,7 @@ else
       | gzip -1 \
       | "${SSH[@]}" 'sudo docker load >/dev/null'
   fi
+  log_release_event "PASS" "LOAD_CANDIDATE_IMAGE" "0" "NONE"
 fi
 
 release_guard_set_phase "VERIFY_CANDIDATE_IMAGE"

@@ -60,6 +60,12 @@ release_guard_record_unhandled_failure() {
   release_guard_emit "FAIL" "$release_phase" "$status" "$release_error_code"
 }
 
+release_guard_on_error() {
+  local status=$?
+  release_guard_record_unhandled_failure "$status" || true
+  return "$status"
+}
+
 release_guard_mark_committed() {
   release_committed=1
   release_guard_emit "COMMIT" "RELEASE_TRANSACTION" "0" "STAGING_RELEASE_COMMITTED"

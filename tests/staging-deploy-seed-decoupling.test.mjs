@@ -70,6 +70,27 @@ test("release guard preserves the original failure status and only rolls back be
   assert.match(output, /COMMIT\|RELEASE_TRANSACTION\|0\|STAGING_RELEASE_COMMITTED/);
 });
 
+test("release guard exits immediately after an unhandled command failure", () => {
+  const guard = new URL("../scripts/release/staging-release-guard-state.sh", import.meta.url);
+  const program = String.raw`
+    set -Eeuo pipefail
+    source "$1"
+    log_release_event() { printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4"; }
+    release_guard_init
+    release_guard_set_phase "BUILD_CANDIDATE_IMAGE"
+    release_error_code="STAGING_RELEASE_IMAGE_BUILD_FAILED"
+    trap release_guard_on_error ERR
+    bash -c 'exit 37'
+    printf 'UNSAFE_CONTINUATION\n'
+  `;
+  const result = spawnSync("bash", ["-c", program, "release-guard-test", guard.pathname], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 37);
+  assert.match(result.stdout, /FAIL\|BUILD_CANDIDATE_IMAGE\|37\|STAGING_RELEASE_IMAGE_BUILD_FAILED/);
+  assert.doesNotMatch(result.stdout, /UNSAFE_CONTINUATION/);
+});
+
 test("release deployment separates script Head from prebuilt application Head and persists guard evidence", async () => {
   const deploy = await read("scripts/deploy-staging.sh");
   assert.match(deploy, /PROJECTAI_STAGING_APPLICATION_IMAGE_HEAD/);
@@ -80,6 +101,9 @@ test("release deployment separates script Head from prebuilt application Head an
   assert.match(deploy, /application_image_head="\$3"/);
   assert.match(deploy, /org\.opencontainers\.image\.revision/);
   assert.match(deploy, /release_guard_mark_committed/);
+  assert.match(deploy, /STAGING_RELEASE_IMAGE_BUILD_FAILED/);
+  assert.match(deploy, /STAGING_RELEASE_SOURCE_SYNC_FAILED/);
+  assert.match(deploy, /STAGING_RELEASE_IMAGE_TRANSFER_FAILED/);
   assert.match(deploy, /STAGING_POST_COMMIT_CLEANUP_WARNING/);
   assert.match(deploy, /deploy-logs\/provider-self-service-/);
   assert.match(deploy, /protect \/deploy-logs\/\*\*\*/);
