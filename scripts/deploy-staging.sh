@@ -26,6 +26,9 @@ REMOTE_QWEN_SECRET_FILE="${REMOTE_DIR}/secrets/qwen_api_key"
 REMOTE_PROVIDER_CREDENTIALS_KEY_FILE="${REMOTE_DIR}/secrets/provider_credentials_key"
 DEPLOY_MARKER="${REMOTE_DIR}/.staging-deploy-in-progress"
 DEPLOY_LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
+APPLICATION_IMAGE_HEAD_INPUT="${PROJECTAI_STAGING_APPLICATION_IMAGE_HEAD:-}"
+PREBUILT_APP_IMAGE_REF="${PROJECTAI_STAGING_APPLICATION_IMAGE_REF:-}"
+PREBUILT_APP_IMAGE_ID="${PROJECTAI_STAGING_APPLICATION_IMAGE_DIGEST:-}"
 readonly BACKUP_RETENTION=10
 BASE_PATH="/tool/projectai-staging"
 APP_VERSION="${NEXT_PUBLIC_APP_VERSION:-}"
@@ -81,6 +84,7 @@ require_command gzip
 
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "Run this script from a Git checkout"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/release/staging-release-guard-state.sh"
 
 if [[ -z "$APP_VERSION" ]]; then
   APP_VERSION="$(node -p 'require("./package.json").version')"
@@ -109,11 +113,27 @@ git diff --check --cached
 
 COMMIT_SHA="$(git rev-parse HEAD)"
 [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "Unable to determine a full Commit SHA"
+APPLICATION_IMAGE_HEAD="${APPLICATION_IMAGE_HEAD_INPUT:-$COMMIT_SHA}"
+[[ "$APPLICATION_IMAGE_HEAD" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "PROJECTAI_STAGING_APPLICATION_IMAGE_HEAD must be a full Git SHA"
+
+USE_PREBUILT_APP_IMAGE=0
+if [[ -n "$PREBUILT_APP_IMAGE_REF" || -n "$PREBUILT_APP_IMAGE_ID" || -n "$APPLICATION_IMAGE_HEAD_INPUT" ]]; then
+  [[ "$DEPLOY_MODE" == "app" ]] \
+    || fail "A prebuilt application image is only permitted for app-only Staging deployment"
+  [[ -n "$APPLICATION_IMAGE_HEAD_INPUT" && -n "$PREBUILT_APP_IMAGE_REF" && -n "$PREBUILT_APP_IMAGE_ID" ]] \
+    || fail "Prebuilt Staging deployment requires application image Head, reference, and digest"
+  [[ "$PREBUILT_APP_IMAGE_REF" == "project-ai-os-staging:${APPLICATION_IMAGE_HEAD}" ]] \
+    || fail "Prebuilt application image reference must be bound to its application Head"
+  [[ "$PREBUILT_APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "Prebuilt application image digest is invalid"
+  USE_PREBUILT_APP_IMAGE=1
+fi
 SHORT_SHA="${COMMIT_SHA:0:8}"
 DEPLOY_ID="${COMMIT_SHA}-$(date -u +'%Y%m%dT%H%M%SZ')-$$-${RANDOM}"
 BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 export NEXT_PUBLIC_APP_VERSION="$APP_VERSION"
-export NEXT_PUBLIC_COMMIT_SHA="$COMMIT_SHA"
+export NEXT_PUBLIC_COMMIT_SHA="$APPLICATION_IMAGE_HEAD"
 export NEXT_PUBLIC_BUILD_TIME="$BUILD_TIME"
 
 SSH=(
@@ -124,6 +144,68 @@ SSH=(
   -o ConnectTimeout=10
   "$REMOTE_HOST"
 )
+
+RELEASE_LOG_DIR="${REMOTE_DIR}/deploy-logs"
+RELEASE_LOG_FILE="${RELEASE_LOG_DIR}/provider-self-service-$(date -u +'%Y%m%dT%H%M%SZ')-${SHORT_SHA}-${RANDOM}.log"
+APPLICATION_IMAGE_ID="${PREBUILT_APP_IMAGE_ID:-pending}"
+
+initialize_release_log() {
+  "${SSH[@]}" bash -s -- \
+    "$RELEASE_LOG_DIR" "$RELEASE_LOG_FILE" "$COMMIT_SHA" "$APPLICATION_IMAGE_HEAD" "$APPLICATION_IMAGE_ID" <<'REMOTE_RELEASE_LOG'
+set -Eeuo pipefail
+log_dir="$1"
+log_file="$2"
+script_head="$3"
+application_head="$4"
+application_digest="$5"
+[[ "$log_dir" == "/srv/projectai-staging/deploy-logs" ]]
+[[ "$log_file" == "$log_dir"/provider-self-service-*.log ]]
+[[ "$script_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_digest" == "pending" || "$application_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+sudo install -d -m 0700 -o root -g root "$log_dir"
+sudo install -m 0600 -o root -g root /dev/null "$log_file"
+printf '%s event=METADATA script_head=%s application_head=%s application_digest=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$script_head" "$application_head" "$application_digest" | sudo tee -a "$log_file" >/dev/null
+REMOTE_RELEASE_LOG
+}
+
+log_release_event() {
+  local event="$1"
+  local check_name="$2"
+  local exit_code="$3"
+  local error_code="$4"
+  [[ "$event" =~ ^(PHASE|PASS|FAIL|EXIT|ROLLBACK_START|ROLLBACK_COMPLETE|COMMIT|WARNING)$ ]]
+  [[ "$check_name" =~ ^[A-Z][A-Z0-9_]{2,80}$ ]]
+  [[ "$exit_code" =~ ^[0-9]+$ ]]
+  [[ "$error_code" =~ ^(NONE|STAGING_[A-Z0-9_]{3,120})$ ]]
+  "${SSH[@]}" bash -s -- \
+    "$RELEASE_LOG_FILE" "$COMMIT_SHA" "$APPLICATION_IMAGE_HEAD" "$APPLICATION_IMAGE_ID" \
+    "$release_phase" "$event" "$check_name" "$exit_code" "$error_code" <<'REMOTE_RELEASE_EVENT'
+set -Eeuo pipefail
+log_file="$1"
+script_head="$2"
+application_head="$3"
+application_digest="$4"
+phase="$5"
+event="$6"
+check_name="$7"
+exit_code="$8"
+error_code="$9"
+[[ "$log_file" == /srv/projectai-staging/deploy-logs/provider-self-service-*.log ]]
+[[ "$script_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_digest" == "pending" || "$application_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "$phase" =~ ^[A-Z][A-Z0-9_]{2,80}$ ]]
+[[ "$event" =~ ^(PHASE|PASS|FAIL|EXIT|ROLLBACK_START|ROLLBACK_COMPLETE|COMMIT|WARNING)$ ]]
+[[ "$check_name" =~ ^[A-Z][A-Z0-9_]{2,80}$ ]]
+[[ "$exit_code" =~ ^[0-9]+$ ]]
+[[ "$error_code" =~ ^(NONE|STAGING_[A-Z0-9_]{3,120})$ ]]
+printf '%s phase=%s event=%s check=%s exit_code=%s error_code=%s script_head=%s application_head=%s application_digest=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$phase" "$event" "$check_name" "$exit_code" "$error_code" "$script_head" "$application_head" "$application_digest" | sudo tee -a "$log_file" >/dev/null
+REMOTE_RELEASE_EVENT
+}
+
+initialize_release_log
+release_guard_init
 
 release_deploy_lock() {
   [[ "$LOCK_ACQUIRED" == "1" ]] || return 0
@@ -155,18 +237,35 @@ early_cleanup() {
   local exit_code=$?
   trap - EXIT
   set +e
+  if [[ "$exit_code" -ne 0 ]]; then
+    release_guard_record_unhandled_failure "$exit_code" || true
+  fi
+  log_release_event "EXIT" "EARLY_CLEANUP" "$exit_code" "$release_error_code" || true
   release_deploy_lock
   [[ $? -eq 0 ]] || exit_code=1
   cleanup_release_root
   exit "$exit_code"
 }
+
+release_guard_on_error() {
+  local status=$?
+  set +e
+  release_guard_record_unhandled_failure "$status" || true
+  return "$status"
+}
+
+trap release_guard_on_error ERR
 trap early_cleanup EXIT
 
+release_guard_set_phase "VERIFY_SSH_IDENTITY"
 log "Verifying required SSH identity and passwordless sudo"
-"${SSH[@]}" 'echo connected && whoami && hostname && sudo -n true && echo sudo-ok'
+release_guard_run_check "SSH_IDENTITY" "STAGING_RELEASE_SSH_IDENTITY_FAILED" \
+  "${SSH[@]}" 'echo connected && whoami && hostname && sudo -n true && echo sudo-ok'
 
+release_guard_set_phase "ACQUIRE_DEPLOY_LOCK"
 log "Acquiring the isolated Staging deployment lock"
-"${SSH[@]}" bash -s -- "$REMOTE_DIR" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_LOCK'
+release_guard_run_check "ACQUIRE_DEPLOY_LOCK" "STAGING_RELEASE_LOCK_ACQUIRE_FAILED" \
+  "${SSH[@]}" bash -s -- "$REMOTE_DIR" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_LOCK'
 set -Eeuo pipefail
 remote_dir="$1"
 lock_dir="$2"
@@ -185,8 +284,10 @@ sudo chmod 600 "$lock_dir/deploy-id"
 REMOTE_LOCK
 LOCK_ACQUIRED=1
 
+release_guard_set_phase "VERIFY_REMOTE_PREREQUISITES"
 log "Checking isolated remote prerequisites and protected environment file"
-"${SSH[@]}" bash -s -- \
+release_guard_run_check "REMOTE_PREREQUISITES" "STAGING_RELEASE_REMOTE_PREFLIGHT_FAILED" \
+  "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
   "$REMOTE_QWEN_SECRET_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
   "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
@@ -588,6 +689,7 @@ fi
 
 REMOTE_PREFLIGHT
 
+release_guard_set_phase "VERIFY_CANDIDATE_PLATFORM"
 REMOTE_DOCKER_INFO="$(
   "${SSH[@]}" "sudo docker info --format '{{.OSType}}|{{.Architecture}}'"
 )" || fail "Unable to determine the remote Docker platform"
@@ -607,6 +709,7 @@ get_production_state() {
     "sudo docker inspect --format '{{.Id}} {{.State.Running}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' project-ai-os"
 }
 
+release_guard_set_phase "VERIFY_PRODUCTION_BASELINE"
 PRODUCTION_STATE_BEFORE="$(get_production_state)" \
   || fail "Production container project-ai-os must be running before staging deployment"
 read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
@@ -614,6 +717,8 @@ read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
 [[ "$production_health" == "healthy" || "$production_health" == "none" ]] \
   || fail "Production container is not healthy before staging deployment"
 
+log_release_event "PASS" "PRODUCTION_BASELINE" "0" "NONE"
+release_guard_set_phase "CAPTURE_STAGING_BASELINE"
 PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- \
   "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$EMBEDDING_WORKER_CONTAINER_NAME" \
   "$BASE_PATH" <<'REMOTE_IMAGE'
@@ -719,6 +824,8 @@ if [[ "$PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING" == "1" ]]; then
     || fail "Unable to capture the immutable previous Staging Embedding Worker image ID"
 fi
 
+log_release_event "PASS" "STAGING_BASELINE" "0" "NONE"
+release_guard_set_phase "READY_TO_REPLACE"
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
@@ -932,13 +1039,27 @@ finish_deployment() {
   set +e
 
   if [[ "$exit_code" -ne 0 ]]; then
+    release_guard_record_unhandled_failure "$exit_code" || true
+  fi
+  log_release_event "EXIT" "RELEASE_TRANSACTION" "$exit_code" "$release_error_code" || true
+
+  if release_guard_should_rollback "$exit_code"; then
+    log_release_event "ROLLBACK_START" "RELEASE_TRANSACTION" "$exit_code" "$release_error_code" || true
     rollback_staging_if_marked
     rollback_code=$?
+    if [[ "$rollback_code" -eq 0 ]]; then
+      log_release_event "ROLLBACK_COMPLETE" "RELEASE_TRANSACTION" "0" "NONE" || true
+    else
+      log_release_event "ROLLBACK_COMPLETE" "RELEASE_TRANSACTION" "$rollback_code" "STAGING_RELEASE_ROLLBACK_FAILED" || true
+    fi
+  elif [[ "$exit_code" -ne 0 ]]; then
+    log_release_event "WARNING" "POST_COMMIT_FAILURE" "$exit_code" "STAGING_POST_COMMIT_CLEANUP_WARNING" || true
   fi
 
   production_state_after="$(get_production_state)"
   if [[ -z "$production_state_after" || "$production_state_after" != "$PRODUCTION_STATE_BEFORE" ]]; then
     printf '[projectai-staging] ERROR: Production container identity, health, or restart state changed during Staging deployment\n' >&2
+    log_release_event "FAIL" "PRODUCTION_INVARIANCE" "1" "STAGING_RELEASE_PRODUCTION_INVARIANCE_FAILED" || true
     exit_code=1
   fi
   if [[ "$rollback_code" -ne 0 ]]; then
@@ -949,6 +1070,7 @@ finish_deployment() {
   release_deploy_lock
   if [[ $? -ne 0 ]]; then
     printf '[projectai-staging] ERROR: Staging deployment lock could not be released safely\n' >&2
+    log_release_event "WARNING" "DEPLOY_LOCK_RELEASE" "1" "STAGING_POST_COMMIT_CLEANUP_WARNING" || true
     exit_code=1
   fi
   cleanup_release_root
@@ -957,6 +1079,7 @@ finish_deployment() {
 }
 trap finish_deployment EXIT
 
+release_guard_set_phase "PREPARE_RELEASE_SOURCE"
 log "Creating a tracked-file-only release for Commit ${SHORT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-release.XXXXXX")"
 git archive --format=tar "$COMMIT_SHA" | tar -xf - -C "$RELEASE_ROOT"
@@ -964,6 +1087,8 @@ git archive --format=tar "$COMMIT_SHA" | tar -xf - -C "$RELEASE_ROOT"
 [[ -f "$RELEASE_ROOT/$APP_ONLY_COMPOSE_FILE" ]] || fail "Tracked release is missing ${APP_ONLY_COMPOSE_FILE}"
 [[ -f "$RELEASE_ROOT/scripts/release/staging-app-only-deploy.sh" ]] \
   || fail "Tracked release is missing the app-only deployment helper"
+[[ -f "$RELEASE_ROOT/scripts/release/staging-release-guard-state.sh" ]] \
+  || fail "Tracked release is missing the Staging release guard state helper"
 if [[ "$DEPLOY_MODE" == "app-migrate" ]]; then
   [[ -f "$RELEASE_ROOT/scripts/release/staging-app-migrate-deploy.sh" ]] \
     || fail "Tracked release is missing the app-migrate deployment helper"
@@ -979,25 +1104,33 @@ sensitive_release_paths="$(
 )"
 [[ -z "$sensitive_release_paths" ]] || fail "Tracked release contains a prohibited secret-like path"
 
-APP_IMAGE_REF="project-ai-os-staging:${COMMIT_SHA}"
+APP_IMAGE_REF="project-ai-os-staging:${APPLICATION_IMAGE_HEAD}"
 DB_TOOLS_IMAGE_REF="project-ai-os-staging-db-tools:${COMMIT_SHA}"
 
-log "Building reviewed Staging images locally for ${REMOTE_DOCKER_PLATFORM}"
-docker version >/dev/null
-docker build \
-  --pull \
-  --platform "$REMOTE_DOCKER_PLATFORM" \
-  --target runner \
-  --build-arg "NEXT_PUBLIC_BASE_PATH=$BASE_PATH" \
-  --build-arg "NEXT_PUBLIC_APP_ENV=staging" \
-  --build-arg "NEXT_PUBLIC_APP_VERSION=$APP_VERSION" \
-  --build-arg "NEXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA" \
-  --build-arg "NEXT_PUBLIC_BUILD_TIME=$BUILD_TIME" \
-  --tag "$APP_IMAGE_REF" \
-  "$RELEASE_ROOT"
-APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
-[[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
-[[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+if [[ "$USE_PREBUILT_APP_IMAGE" == "1" ]]; then
+  APP_IMAGE_REF="$PREBUILT_APP_IMAGE_REF"
+  APP_IMAGE_ID="$PREBUILT_APP_IMAGE_ID"
+  release_guard_set_phase "VERIFY_PREBUILT_CANDIDATE"
+  log "Using the reviewed prebuilt Staging application image without rebuilding it"
+else
+  release_guard_set_phase "BUILD_CANDIDATE_IMAGE"
+  log "Building reviewed Staging images locally for ${REMOTE_DOCKER_PLATFORM}"
+  docker version >/dev/null
+  docker build \
+    --pull \
+    --platform "$REMOTE_DOCKER_PLATFORM" \
+    --target runner \
+    --build-arg "NEXT_PUBLIC_BASE_PATH=$BASE_PATH" \
+    --build-arg "NEXT_PUBLIC_APP_ENV=staging" \
+    --build-arg "NEXT_PUBLIC_APP_VERSION=$APP_VERSION" \
+    --build-arg "NEXT_PUBLIC_COMMIT_SHA=$APPLICATION_IMAGE_HEAD" \
+    --build-arg "NEXT_PUBLIC_BUILD_TIME=$BUILD_TIME" \
+    --tag "$APP_IMAGE_REF" \
+    "$RELEASE_ROOT"
+  APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
+  [[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+fi
 DB_TOOLS_IMAGE_ID=""
 if [[ "$DEPLOY_MODE" != "app" ]]; then
   docker build \
@@ -1012,8 +1145,10 @@ if [[ "$DEPLOY_MODE" != "app" ]]; then
 fi
 DB_TOOLS_IMAGE_ID_ARG="${DB_TOOLS_IMAGE_ID:-__projectai_empty__}"
 
+release_guard_set_phase "CREATE_RELEASE_MARKER"
 log "Preparing fixed Staging release directory without moving its protected environment"
-"${SSH[@]}" bash -s -- \
+release_guard_run_check "CREATE_RELEASE_MARKER" "STAGING_RELEASE_MARKER_CREATE_FAILED" \
+  "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_RELEASE'
 set -Eeuo pipefail
 remote_dir="$1"
@@ -1031,10 +1166,12 @@ sudo test ! -L "$remote_dir/backups"
 [[ "$(sudo readlink -f -- "$remote_dir/backups")" == "$remote_dir/backups" ]]
 REMOTE_RELEASE
 
+release_guard_set_phase "SYNC_RELEASE_SOURCE"
 log "Syncing tracked release ${SHORT_SHA} to ${REMOTE_HOST}:${REMOTE_DIR}"
 
 rsync --archive --compress --delete \
   --filter='protect /backups/***' \
+  --filter='protect /deploy-logs/***' \
   --filter='protect /.local/***' \
   --filter='protect /.env.auth-staging' \
   --filter='protect /.env.ai' \
@@ -1053,6 +1190,7 @@ rsync --archive --compress --delete \
   --exclude '/test-results/' \
   --exclude '/coverage/' \
   --exclude '/backups/' \
+  --exclude '/deploy-logs/' \
   --exclude '/.local/' \
   --exclude '/.env' \
   --exclude '/.env.*' \
@@ -1064,28 +1202,39 @@ rsync --archive --compress --delete \
   --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
 
-log "Transferring locally built Staging images without building on the shared host"
-if [[ "$DEPLOY_MODE" == "app" ]]; then
-  docker save "$APP_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+if [[ "$USE_PREBUILT_APP_IMAGE" == "1" ]]; then
+  release_guard_set_phase "VERIFY_PREBUILT_CANDIDATE"
+  log_release_event "PASS" "PREBUILT_IMAGE_REUSE" "0" "NONE"
 else
-  docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" \
-    | gzip -1 \
-    | "${SSH[@]}" 'sudo docker load >/dev/null'
+  release_guard_set_phase "LOAD_CANDIDATE_IMAGE"
+  log "Transferring locally built Staging images without building on the shared host"
+  if [[ "$DEPLOY_MODE" == "app" ]]; then
+    docker save "$APP_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+  else
+    docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" \
+      | gzip -1 \
+      | "${SSH[@]}" 'sudo docker load >/dev/null'
+  fi
 fi
 
-"${SSH[@]}" bash -s -- \
-  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID_ARG" \
+release_guard_set_phase "VERIFY_CANDIDATE_IMAGE"
+release_guard_run_check "CANDIDATE_IMAGE" "STAGING_RELEASE_IMAGE_PROVENANCE_FAILED" \
+  "${SSH[@]}" bash -s -- \
+  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$APPLICATION_IMAGE_HEAD" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID_ARG" \
   "$REMOTE_DOCKER_PLATFORM" "$DEPLOY_MODE" <<'REMOTE_IMAGE_VERIFY'
 set -Eeuo pipefail
 app_image_ref="$1"
 app_image_id="$2"
-db_tools_image_ref="$3"
-db_tools_image_id="$4"
-expected_platform="$5"
-deploy_mode="$6"
+application_image_head="$3"
+db_tools_image_ref="$4"
+db_tools_image_id="$5"
+expected_platform="$6"
+deploy_mode="$7"
 [[ "$deploy_mode" == "app" || "$deploy_mode" == "app-migrate" || "$deploy_mode" == "full" ]]
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$app_image_ref")" == "$app_image_id" ]]
 [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$app_image_ref")" == "$expected_platform" ]]
+[[ "$application_image_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$(sudo docker image inspect --format '{{index .Config.Labels `org.opencontainers.image.revision`}}' "$app_image_ref")" == "$application_image_head" ]]
 if [[ "$deploy_mode" != "app" ]]; then
   [[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
   [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$db_tools_image_ref")" == "$expected_platform" ]]
@@ -1100,21 +1249,45 @@ if [[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "app-migrate" ]]; then
     log "Backing up Staging PostgreSQL, applying committed migrations only, then replacing App and Workers without Seed, password reset, or credential E2E"
     deploy_helper="staging-app-migrate-deploy.sh"
   fi
-  "${SSH[@]}" sudo bash \
+  release_guard_set_phase "REPLACE_STAGING_RUNTIME"
+  release_guard_run_check "REPLACE_STAGING_RUNTIME" "STAGING_RELEASE_RUNTIME_REPLACEMENT_FAILED" \
+    "${SSH[@]}" sudo bash \
     "$REMOTE_DIR/scripts/release/${deploy_helper}" \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_EMBEDDING_ENV_FILE" \
     "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$APP_ONLY_COMPOSE_FILE" \
-    "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$COMMIT_SHA" "$APP_VERSION" "$BUILD_TIME" \
+    "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$APPLICATION_IMAGE_HEAD" "$APP_VERSION" "$BUILD_TIME" \
     "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$EMBEDDING_WORKER_CONTAINER_NAME" \
-    "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER"
-  [[ "$(get_production_state)" == "$PRODUCTION_STATE_BEFORE" ]] \
-    || fail "Production changed before the app-only Staging transaction could commit"
+    "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER" "$RELEASE_LOG_FILE"
+  release_guard_set_phase "VERIFY_PRODUCTION_INVARIANCE"
+  if [[ "$(get_production_state)" != "$PRODUCTION_STATE_BEFORE" ]]; then
+    release_error_code="STAGING_RELEASE_PRODUCTION_INVARIANCE_FAILED"
+    fail "Production changed before the app-only Staging transaction could commit"
+  fi
+  log_release_event "PASS" "PRODUCTION_INVARIANCE" "0" "NONE"
+  release_guard_set_phase "VERIFY_PUBLIC_HEALTH"
   public_health_code="$(http_code "${PUBLIC_STAGING_URL}/api/health")"
-  [[ "$public_health_code" == "200" ]] \
-    || fail "Public Staging health returned ${public_health_code}"
-  "${SSH[@]}" "sudo rm -f '$DEPLOY_MARKER'"
+  if [[ "$public_health_code" != "200" ]]; then
+    release_error_code="STAGING_RELEASE_PUBLIC_HEALTH_FAILED"
+    fail "Public Staging health returned ${public_health_code}"
+  fi
+  log_release_event "PASS" "PUBLIC_HEALTH" "0" "NONE"
+  release_guard_set_phase "VERIFY_LOGIN_PAGE"
+  public_login_code="$(http_code "${PUBLIC_STAGING_URL}/login")"
+  if [[ "$public_login_code" != "200" ]]; then
+    release_error_code="STAGING_RELEASE_LOGIN_FAILED"
+    fail "Public Staging login returned ${public_login_code}"
+  fi
+  log_release_event "PASS" "LOGIN_PAGE" "0" "NONE"
+  release_guard_set_phase "COMMIT_RELEASE"
+  release_guard_mark_committed
+  if ! "${SSH[@]}" "sudo rm -f '$DEPLOY_MARKER'"; then
+    log_release_event "WARNING" "POST_COMMIT_MARKER_CLEANUP" "1" "STAGING_POST_COMMIT_CLEANUP_WARNING" || true
+    printf '[projectai-staging] WARNING: STAGING_POST_COMMIT_CLEANUP_WARNING\n' >&2
+  else
+    log_release_event "PASS" "POST_COMMIT_MARKER_CLEANUP" "0" "NONE"
+  fi
   log "App-only Staging deployment verified"
-  log "Environment=staging Version=${APP_VERSION} Commit=${COMMIT_SHA} BuildTime=${BUILD_TIME}"
+  log "Environment=staging Version=${APP_VERSION} ApplicationHead=${APPLICATION_IMAGE_HEAD} ScriptHead=${COMMIT_SHA} BuildTime=${BUILD_TIME}"
   exit 0
 fi
 

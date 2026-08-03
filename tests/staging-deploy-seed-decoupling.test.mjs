@@ -41,6 +41,60 @@ test("app-only helper cannot migrate, seed, reset credentials, or mutate busines
   assert.match(helper, /STAGING_PROVIDER_CREDENTIAL_KEY_MOUNT_MISSING/);
   assert.doesNotMatch(helper, /eq \.Destination \\\"\/run\/secrets\/provider_credentials_key\\\"/);
   assert.match(helper, /projectai-document-worker projectai-embedding-worker projectai-staging/);
+  assert.match(helper, /VERIFY_SECRET_MOUNTS/);
+  assert.match(helper, /VERIFY_LOCAL_LOGIN/);
+  assert.match(helper, /release_guard_record_unhandled_failure/);
+});
+
+test("release guard preserves the original failure status and only rolls back before commit", () => {
+  const guard = new URL("../scripts/release/staging-release-guard-state.sh", import.meta.url);
+  const program = String.raw`
+    set -Eeuo pipefail
+    source "$1"
+    log_release_event() { printf '%s|%s|%s|%s\\n' "$1" "$2" "$3" "$4"; }
+    release_guard_init
+    release_guard_set_phase "VERIFY_CANDIDATE_IMAGE"
+    if release_guard_run_check "CANDIDATE_IMAGE" "STAGING_RELEASE_IMAGE_PROVENANCE_FAILED" bash -c 'exit 23'; then
+      exit 99
+    fi
+    if ! release_guard_should_rollback 23; then
+      exit 98
+    fi
+    release_guard_mark_committed
+    if release_guard_should_rollback 23; then
+      exit 97
+    fi
+  `;
+  const output = execFileSync("bash", ["-c", program, "release-guard-test", guard.pathname], { encoding: "utf8" });
+  assert.match(output, /FAIL\|CANDIDATE_IMAGE\|23\|STAGING_RELEASE_IMAGE_PROVENANCE_FAILED/);
+  assert.match(output, /COMMIT\|RELEASE_TRANSACTION\|0\|STAGING_RELEASE_COMMITTED/);
+});
+
+test("release deployment separates script Head from prebuilt application Head and persists guard evidence", async () => {
+  const deploy = await read("scripts/deploy-staging.sh");
+  assert.match(deploy, /PROJECTAI_STAGING_APPLICATION_IMAGE_HEAD/);
+  assert.match(deploy, /PROJECTAI_STAGING_APPLICATION_IMAGE_REF/);
+  assert.match(deploy, /PROJECTAI_STAGING_APPLICATION_IMAGE_DIGEST/);
+  assert.match(deploy, /A prebuilt application image is only permitted for app-only Staging deployment/);
+  assert.match(deploy, /APP_IMAGE_REF="project-ai-os-staging:\$\{APPLICATION_IMAGE_HEAD\}"/);
+  assert.match(deploy, /application_image_head="\$3"/);
+  assert.match(deploy, /org\.opencontainers\.image\.revision/);
+  assert.match(deploy, /release_guard_mark_committed/);
+  assert.match(deploy, /STAGING_POST_COMMIT_CLEANUP_WARNING/);
+  assert.match(deploy, /deploy-logs\/provider-self-service-/);
+  assert.match(deploy, /protect \/deploy-logs\/\*\*\*/);
+  assert.doesNotMatch(deploy, /--remove-orphans/);
+});
+
+test("guard rehearsal stays isolated and leaves no Worker, Migration, or public binding", async () => {
+  const rehearsal = await read("scripts/release/staging-release-guard-rehearsal.sh");
+  assert.match(rehearsal, /projectai-staging-release-guard-rehearsal/);
+  assert.match(rehearsal, /projectai-staging-internal/);
+  assert.match(rehearsal, /RELEASE_GUARD_REHEARSAL_PASSED/);
+  assert.match(rehearsal, /provider_credentials_key/);
+  assert.doesNotMatch(rehearsal, /--publish|--publish-all|--network host/);
+  assert.doesNotMatch(rehearsal, /worker:|db:migrate|db:seed|projectai-document-worker|projectai-embedding-worker/);
+  assert.doesNotMatch(rehearsal, /qwen_api_key/);
 });
 
 test("credential mount template is valid Docker Go template and rejects the historical escaping", async (t) => {
