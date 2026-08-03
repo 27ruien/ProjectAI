@@ -208,6 +208,10 @@ describe("focused MVP lightweight UI states", () => {
     assert.match(page, /启用 Provider/);
     assert.match(page, /Model ID 是什么/);
     assert.match(page, /选择模型/);
+    assert.match(
+      page,
+      /item\.enabled\s*\?\s*"Provider 连接测试通过。下方已显示可添加的文本模型。"/,
+    );
     assert.match(help, /正确启用顺序/);
     assert.match(help, /withBasePath/);
     assert.match(route, /area !== "models"/);

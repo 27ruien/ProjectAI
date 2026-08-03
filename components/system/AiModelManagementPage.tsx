@@ -668,7 +668,9 @@ export function AiModelManagementPage({
                           onClick={() =>
                             void mutate(
                               { action: "test_provider", providerId: item.id },
-                              "Provider 连接测试通过。下一步请启用 Provider，再从下方选择模型。",
+                              item.enabled
+                                ? "Provider 连接测试通过。下方已显示可添加的文本模型。"
+                                : "Provider 连接测试通过。下一步请启用 Provider，再从下方选择模型。",
                             ).then((operation) => {
                               if (operation?.modelIds?.length) {
                                 setDiscoveredModels({
