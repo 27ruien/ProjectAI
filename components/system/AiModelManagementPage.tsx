@@ -106,6 +106,11 @@ type ProviderDraft = {
   region: string;
   apiKey: string;
 };
+type DiscoveredModelResult = {
+  providerId: string;
+  providerName: string;
+  modelIds: string[];
+};
 
 const names: Record<string, string> = {
   general_chat: "默认文本生成 / 通用对话",
@@ -151,6 +156,34 @@ function providerName(providers: Provider[], id: string) {
   );
 }
 
+function isTextGenerationModel(modelId: string): boolean {
+  return !/(?:audio|asr|embedding|image|ocr|rerank|speech|sre|tts|vision)(?:[./:_-]|$)/i.test(
+    modelId,
+  );
+}
+
+function modelDisplayName(modelId: string): string {
+  return modelId
+    .split(/[-_/]+/)
+    .filter(Boolean)
+    .map((part) => {
+      if (/^qwen\d/i.test(part))
+        return part.replace(/^qwen/i, "Qwen ").replace(/(\d)([a-z])/i, "$1 $2");
+      if (/^\d/.test(part)) return part;
+      return part.charAt(0).toUpperCase() + part.slice(1);
+    })
+    .join(" ");
+}
+
+function providerActivationHint(provider: Provider): string {
+  if (provider.enabled && provider.lastTestStatus === "failed")
+    return "已启用，但最近连接测试失败";
+  if (provider.enabled) return "已启用，可添加并测试模型";
+  if (provider.lastTestStatus === "passed") return "连接已通过，下一步请启用";
+  if (!provider.hasApiKey) return "请先配置 API Key";
+  return "请先执行连接测试";
+}
+
 export function AiModelManagementPage({
   organizationId,
   verificationProjectId,
@@ -184,7 +217,9 @@ export function AiModelManagementPage({
     modelId: "",
     providerId: "",
   });
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([]);
+  const [discoveredModels, setDiscoveredModels] =
+    useState<DiscoveredModelResult | null>(null);
+  const [discoveredModelSearch, setDiscoveredModelSearch] = useState("");
 
   const load = useCallback(async () => {
     const response = await fetch(
@@ -233,8 +268,6 @@ export function AiModelManagementPage({
       };
       if (!response.ok) throw new Error(body.error?.message ?? "配置未保存");
       setData(body);
-      if (body.operation?.modelIds)
-        setDiscoveredModels(body.operation.modelIds);
       if (successMessage) setNotice(successMessage);
       return body.operation ?? null;
     } catch (caught) {
@@ -252,6 +285,24 @@ export function AiModelManagementPage({
       ) ?? [],
     [data],
   );
+  const selectedProvider = useMemo(
+    () =>
+      data?.providers.find((provider) => provider.id === model.providerId) ??
+      null,
+    [data, model.providerId],
+  );
+  const selectedProviderReady = Boolean(
+    selectedProvider?.enabled && selectedProvider.lastTestStatus === "passed",
+  );
+  const discoveredTextModels = useMemo(() => {
+    const normalizedSearch = discoveredModelSearch.trim().toLowerCase();
+    return (discoveredModels?.modelIds ?? [])
+      .filter(isTextGenerationModel)
+      .filter(
+        (modelId) =>
+          !normalizedSearch || modelId.toLowerCase().includes(normalizedSearch),
+      );
+  }, [discoveredModelSearch, discoveredModels]);
   if (!data)
     return (
       <div className="p-6 text-sm text-muted-foreground">
@@ -558,23 +609,37 @@ export function AiModelManagementPage({
                       ) : null}
                     </td>
                     <td className="px-2 py-3">
-                      <Switch
-                        checked={item.enabled}
+                      <Button
+                        size="sm"
+                        variant={item.enabled ? "outline" : "default"}
                         disabled={
                           busy ||
                           (item.lastTestStatus !== "passed" && !item.enabled)
                         }
-                        onCheckedChange={(enabled) =>
+                        onClick={() =>
                           void mutate(
                             {
                               action: "set_provider_enabled",
                               providerId: item.id,
-                              enabled,
+                              enabled: !item.enabled,
                             },
-                            enabled ? "Provider 已启用。" : "Provider 已停用。",
+                            item.enabled
+                              ? "Provider 已停用。"
+                              : "Provider 已启用。现在可以从下方选择并添加文本模型。",
                           )
                         }
-                      />
+                      >
+                        {item.enabled ? "停用" : "启用 Provider"}
+                      </Button>
+                      <p
+                        className={`mt-1 max-w-36 text-[10px] ${
+                          item.enabled && item.lastTestStatus === "failed"
+                            ? "text-rose-700"
+                            : "text-muted-foreground"
+                        }`}
+                      >
+                        {providerActivationHint(item)}
+                      </p>
                     </td>
                     <td className="px-2 py-3 text-right">
                       <div className="flex justify-end gap-1">
@@ -603,8 +668,17 @@ export function AiModelManagementPage({
                           onClick={() =>
                             void mutate(
                               { action: "test_provider", providerId: item.id },
-                              "Provider 测试完成。可自动读取的模型已显示在文本模型区域。",
-                            )
+                              "Provider 连接测试通过。下一步请启用 Provider，再从下方选择模型。",
+                            ).then((operation) => {
+                              if (operation?.modelIds?.length) {
+                                setDiscoveredModels({
+                                  providerId: item.id,
+                                  providerName: item.name,
+                                  modelIds: operation.modelIds,
+                                });
+                                setDiscoveredModelSearch("");
+                              }
+                            })
                           }
                         >
                           {" "}
@@ -641,18 +715,10 @@ export function AiModelManagementPage({
             </tbody>
           </table>
         </div>
-        {discoveredModels.length ? (
-          <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
-            <b>Provider 自动发现模型：</b>
-            <span className="ml-2 text-muted-foreground">
-              {discoveredModels.join("、")}
-            </span>
-          </div>
-        ) : (
-          <p className="mt-4 text-xs text-muted-foreground">
-            若 Provider 不支持自动读取模型列表，可直接手动添加 Model ID。
-          </p>
-        )}
+        <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
+          <b className="text-foreground">启用顺序：</b>保存 Provider → 测试连接 →
+          点击“启用 Provider” → 在下方选择文本模型。连接测试通过不会自动启用，避免未经确认的 Provider 被业务使用。
+        </div>
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
@@ -662,24 +728,115 @@ export function AiModelManagementPage({
             <div>
               <h2 className="text-sm font-semibold">2. 文本模型</h2>
               <p className="text-xs text-muted-foreground">
-                测试成功、Provider 已启用且支持 JSON 的模型才可启用。
+                从 Provider 返回的模型列表中选择；添加后测试 JSON，再启用模型。
               </p>
             </div>
           </div>
+          <div className="mt-4 rounded-lg border border-primary/20 bg-primary/5 p-4 text-xs">
+            <p className="font-medium text-foreground">Model ID 是什么？</p>
+            <p className="mt-1 leading-5 text-muted-foreground">
+              Model ID 是服务商提供的“模型调用名称”，例如
+              <code className="mx-1 rounded bg-background px-1.5 py-0.5">
+                qwen3.7-max
+              </code>
+              。它不是账号 ID、Provider ID 或数据库 ID。完成上方连接测试后，直接从自动发现列表选择即可，不需要手抄。
+            </p>
+          </div>
+          {discoveredModels ? (
+            <div className="mt-4 rounded-lg border p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">
+                    从 {discoveredModels.providerName} 选择文本模型
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                    Provider 共返回 {discoveredModels.modelIds.length} 个模型；这里已过滤音频、图片、OCR、向量等非文本模型。
+                  </p>
+                </div>
+                {data.providers.find(
+                  (provider) => provider.id === discoveredModels.providerId,
+                )?.enabled ? (
+                  <Badge variant="outline">Provider 已启用</Badge>
+                ) : (
+                  <Button
+                    size="sm"
+                    disabled={busy}
+                    onClick={() =>
+                      void mutate(
+                        {
+                          action: "set_provider_enabled",
+                          providerId: discoveredModels.providerId,
+                          enabled: true,
+                        },
+                        "Provider 已启用。请选择一个文本模型。",
+                      )
+                    }
+                  >
+                    启用 Provider
+                  </Button>
+                )}
+              </div>
+              <Input
+                className="mt-3"
+                value={discoveredModelSearch}
+                onChange={(event) =>
+                  setDiscoveredModelSearch(event.target.value)
+                }
+                placeholder="搜索模型，例如 qwen3.7-max"
+              />
+              <div className="mt-3 flex max-h-48 flex-wrap gap-2 overflow-y-auto">
+                {discoveredTextModels.slice(0, 40).map((modelId) => (
+                  <Button
+                    key={modelId}
+                    size="sm"
+                    variant={model.modelId === modelId ? "default" : "outline"}
+                    aria-label={`选择模型 ${modelId}`}
+                    onClick={() => {
+                      setModel({
+                        ...model,
+                        name: modelDisplayName(modelId),
+                        modelId,
+                        providerId: discoveredModels.providerId,
+                      });
+                      setNotice(
+                        `已选择 ${modelId}。确认显示名称后，点击“添加文本模型”。`,
+                      );
+                    }}
+                  >
+                    {modelId}
+                  </Button>
+                ))}
+                {!discoveredTextModels.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    没有找到匹配的文本生成模型，请换一个关键词。
+                  </p>
+                ) : null}
+              </div>
+              {discoveredTextModels.length > 40 ? (
+                <p className="mt-2 text-[10px] text-muted-foreground">
+                  当前显示前 40 个结果，请输入更具体的名称缩小范围。
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <p className="mt-4 text-xs leading-5 text-muted-foreground">
+              还没有自动发现结果。请先在上方对目标 Provider 执行“测试”；如果服务商不支持模型列表，再手动填写其官方文档中的 Model ID。
+            </p>
+          )}
           <div className="mt-4 grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto]">
             <Input
               value={model.name}
               onChange={(event) =>
                 setModel({ ...model, name: event.target.value })
               }
-              placeholder="显示名称"
+              placeholder="显示名称，例如 Qwen 3.7 Max"
             />
             <Input
               value={model.modelId}
               onChange={(event) =>
                 setModel({ ...model, modelId: event.target.value })
               }
-              placeholder="Model ID"
+              placeholder="Model ID，例如 qwen3.7-max"
             />
             <Select
               value={model.providerId}
@@ -690,15 +847,30 @@ export function AiModelManagementPage({
               </SelectTrigger>
               <SelectContent>
                 {data.providers.map((item) => (
-                  <SelectItem key={item.id} value={item.id}>
+                  <SelectItem
+                    key={item.id}
+                    value={item.id}
+                    disabled={
+                      !item.enabled || item.lastTestStatus !== "passed"
+                    }
+                  >
                     {item.name}
+                    {!item.enabled
+                      ? "（未启用）"
+                      : item.lastTestStatus !== "passed"
+                        ? "（连接未通过）"
+                        : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
             <Button
               disabled={
-                busy || !model.name || !model.modelId || !model.providerId
+                busy ||
+                !model.name ||
+                !model.modelId ||
+                !model.providerId ||
+                !selectedProviderReady
               }
               onClick={() =>
                 void mutate(
@@ -739,9 +911,14 @@ export function AiModelManagementPage({
                 })
               }
             >
-              {editingModelId ? "保存修改" : "添加"}
+              {editingModelId ? "保存修改" : "添加文本模型"}
             </Button>
           </div>
+          {selectedProvider && !selectedProviderReady ? (
+            <p className="mt-2 text-xs text-amber-700">
+              当前 Provider 尚未同时满足“连接测试通过”和“已启用”，暂时不能添加模型。请先完成上方启用步骤。
+            </p>
+          ) : null}
           {editingModelId ? (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
               正在编辑文本模型；保存后会停用并清除原测试结果。
@@ -841,23 +1018,30 @@ export function AiModelManagementPage({
                       ) : null}
                     </td>
                     <td>
-                      <Switch
-                        checked={item.enabled}
+                      <Button
+                        size="sm"
+                        variant={item.enabled ? "outline" : "default"}
                         disabled={
                           busy ||
                           (!item.enabled && item.lastTestStatus !== "passed")
                         }
-                        onCheckedChange={(enabled) =>
+                        onClick={() =>
                           void mutate(
                             {
                               action: "set_generation_model_enabled",
                               modelId: item.id,
-                              enabled,
+                              enabled: !item.enabled,
                             },
-                            enabled ? "模型已启用。" : "模型已停用。",
+                            item.enabled ? "模型已停用。" : "模型已启用。",
                           )
                         }
-                      />
+                      >
+                        {item.enabled
+                          ? "停用"
+                          : item.lastTestStatus === "passed"
+                            ? "启用模型"
+                            : "先测试模型"}
+                      </Button>
                     </td>
                     <td className="text-right">
                       <div className="flex justify-end gap-1">
@@ -896,7 +1080,7 @@ export function AiModelManagementPage({
                             }
                           >
                             <RefreshCw />
-                            测试
+                            测试 JSON
                           </Button>
                         ) : (
                           <span className="text-muted-foreground">

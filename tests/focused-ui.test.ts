@@ -197,13 +197,19 @@ describe("focused MVP lightweight UI states", () => {
     assert.doesNotMatch(page, /DOCX/);
   });
   it("26. keeps AI provider settings inside the administrator-only management surface", async () => {
-    const [page, route, workspace] = await Promise.all([
+    const [page, help, route, workspace] = await Promise.all([
       source("components/system/AiModelManagementPage.tsx"),
+      source("components/system/ModelsAndApiHelpPage.tsx"),
       source("app/[...slug]/page.tsx"),
       source("components/workspace.tsx"),
     ]);
     assert.match(page, /保存后不会回显/);
     assert.match(page, /vectorDimensions/);
+    assert.match(page, /启用 Provider/);
+    assert.match(page, /Model ID 是什么/);
+    assert.match(page, /选择模型/);
+    assert.match(help, /正确启用顺序/);
+    assert.match(help, /withBasePath/);
     assert.match(route, /area !== "models"/);
     assert.match(route, /requireAiConfigurationAdmin/);
     assert.match(route, /aiConfigurationOrganizationId/);

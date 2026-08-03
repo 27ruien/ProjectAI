@@ -268,18 +268,30 @@ async function requireUsableProvider(
   provider: ProviderRow,
   db: DatabaseExecutor,
 ): Promise<string> {
-  if (
-    !provider.enabled ||
-    (provider.credentialMode === "managed" &&
-      provider.lastTestStatus !== "passed")
-  ) {
+  if (!provider.enabled) {
     throw new ProjectAssistantError(
       503,
       "PROVIDER_NOT_CONFIGURED",
       "Provider 尚未通过连接测试或未启用",
     );
   }
+  assertProviderCanBeEnabled(provider);
   return resolveProviderApiKey(provider.id, db);
+}
+
+export function assertProviderCanBeEnabled(
+  provider: Pick<ProviderRow, "credentialMode" | "lastTestStatus">,
+): void {
+  if (
+    provider.credentialMode === "managed" &&
+    provider.lastTestStatus !== "passed"
+  ) {
+    throw new ProjectAssistantError(
+      409,
+      "PROVIDER_NOT_CONFIGURED",
+      "Provider 需要先通过连接测试",
+    );
+  }
 }
 
 async function audit(
@@ -661,7 +673,10 @@ export async function setProviderEnabled(input: {
       "AI_CONFIGURATION_INVALID",
       "Provider 不存在",
     );
-  if (input.enabled) await requireUsableProvider(provider, db);
+  if (input.enabled) {
+    assertProviderCanBeEnabled(provider);
+    await resolveProviderApiKey(provider.id, db);
+  }
   await db
     .update(aiProviderProfile)
     .set({

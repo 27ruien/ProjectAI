@@ -36,10 +36,11 @@ test("guided requirement overview stays structured, cited, and Markdown-only", a
 });
 
 test("model management encrypts managed keys server-side and preserves the fixed vector boundary", async () => {
-  const [schema, route, ui, credentials, management] = await Promise.all([
+  const [schema, route, ui, help, credentials, management] = await Promise.all([
     source("lib/db/schema/ai-model-management.ts"),
     source("app/api/admin/ai-configuration/route.ts"),
     source("components/system/AiModelManagementPage.tsx"),
+    source("components/system/ModelsAndApiHelpPage.tsx"),
     source("lib/ai/provider-credentials.ts"),
     source("lib/ai/model-management.ts"),
   ]);
@@ -65,8 +66,15 @@ test("model management encrypts managed keys server-side and preserves the fixed
   assert.match(management, /runtime\.provider === "fake"/);
   assert.match(ui, /保存后不会回显/);
   assert.match(ui, /替换 API Key/);
+  assert.match(ui, /Model ID 是什么/);
+  assert.match(ui, /选择模型/);
+  assert.match(ui, /启用 Provider/);
+  assert.match(ui, /添加文本模型/);
   assert.match(ui, /登记 1024 维模型/);
   assert.match(ui, /已启用/);
+  assert.match(help, /正确启用顺序/);
+  assert.match(help, /Model ID 到底是什么/);
+  assert.match(help, /withBasePath\(`\/help\/models-and-api\/\$\{image\}\.svg`\)/);
 });
 
 test("project chat resolves the server-side scenario rather than taking a browser model", async () => {
