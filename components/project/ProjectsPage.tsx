@@ -59,7 +59,7 @@ export function ProjectsPage({ viewer }: { viewer: ViewerContext }) {
     {deleteError ? <Alert color="red" title="操作未完成" mb="md">{deleteError}</Alert> : null}
     <Group mb="md" align="end">
       <TextInput aria-label="搜索项目、部门或负责人" value={query} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="搜索项目、部门或负责人" leftSection={<Search size={16} />} miw={260} style={{ flex: 1 }} />
-      <Select aria-label="项目状态筛选" value={status} onChange={(value) => setStatus(value ?? "all")} w={150} data={[{ value: "all", label: "全部状态" }, { value: "planning", label: "规划中" }, { value: "active", label: "进行中" }, { value: "completed", label: "已完成" }]} />
+      <Select aria-label="筛选" value={status} onChange={(value) => setStatus(value ?? "all")} w={150} data={[{ value: "all", label: "全部状态" }, { value: "planning", label: "规划中" }, { value: "active", label: "进行中" }, { value: "completed", label: "已完成" }]} />
     </Group>
     {filtered.length ? <Box bd="1px solid var(--mantine-color-gray-3)" bg="white" style={{ borderRadius: "var(--mantine-radius-md)", overflow: "hidden" }}>
       <Table.ScrollContainer minWidth={900}><Table striped highlightOnHover verticalSpacing="sm"><Table.Thead><Table.Tr><Table.Th>项目名称</Table.Th><Table.Th>描述</Table.Th><Table.Th>状态</Table.Th><Table.Th>所属部门</Table.Th><Table.Th>项目负责人</Table.Th><Table.Th>更新时间</Table.Th><Table.Th><span className="sr-only">操作</span></Table.Th></Table.Tr></Table.Thead><Table.Tbody>{filtered.map((project) => {
