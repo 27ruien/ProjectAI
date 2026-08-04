@@ -125,15 +125,18 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByTestId("project-documents-tab").click();
   const documentsPanel = page.getByTestId("project-documents-panel");
   await expect(documentsPanel).toBeVisible();
-  await documentsPanel.getByTestId("project-document-upload-button").click();
-  const upload = page.getByRole("dialog", { name: "上传项目资料" });
-  await upload.getByLabel("选择上传文件").setInputFiles(fictitiousText(
+  await documentsPanel.getByRole("button", { name: "新建文件夹", exact: true }).click();
+  const folderDialog = page.getByRole("dialog", { name: "新建文件夹" });
+  await folderDialog.getByLabel("文件夹名称").fill("验收资料");
+  await folderDialog.getByRole("button", { name: "创建", exact: true }).click();
+  await expect(documentsPanel.getByRole("link", { name: "验收资料", exact: true })).toBeVisible();
+  await documentsPanel.getByRole("link", { name: "验收资料", exact: true }).click();
+  await expect(page).toHaveURL(/\?folder=/);
+  await documentsPanel.locator("#project-workspace-upload").setInputFiles(fictitiousText(
     projectFileName,
     "时间：2026 年 10 月 15 日\n平台：微信小程序\n项目地区：中国\nMVP需求：会员注册和 CRM 同步",
   ));
-  await upload.getByRole("button", { name: "开始上传", exact: true }).click();
-  await expect(upload.getByText("项目资料上传成功", { exact: true })).toBeVisible();
-  await upload.getByRole("button", { name: "关闭", exact: true }).last().click();
+  await expect(documentsPanel.getByText(projectDisplayName, { exact: true })).toBeVisible();
   const projectList = await page.request.get(appPath(`/api/projects/${projectId}/documents?status=active`));
   const projectBody = await json<{ documents: Array<{ id: string; displayName: string }> }>(projectList);
   const projectDocument = projectBody.documents.find((item) => item.displayName === projectDisplayName);
@@ -144,6 +147,34 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   );
   await page.reload();
   await expect(page.getByText("可用于 AI", { exact: true })).toBeVisible();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const sourceRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: projectDisplayName, exact: true }) });
+  await sourceRow.getByRole("button", { name: `${projectDisplayName} 操作`, exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "分享", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "复制链接", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "创建副本", exact: true })).toBeVisible();
+  await page.getByRole("menuitem", { name: "分享", exact: true }).click();
+  const shareDialog = page.getByRole("dialog", { name: "分享内部访问链接" });
+  await expect(shareDialog.getByText("只对已有权限成员有效", { exact: true })).toBeVisible();
+  await shareDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await sourceRow.getByRole("button", { name: `${projectDisplayName} 操作`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "复制链接", exact: true }).click();
+  await expect(page.getByText("内部访问链接已复制", { exact: true })).toBeVisible();
+  await sourceRow.getByRole("button", { name: `${projectDisplayName} 操作`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "创建副本", exact: true }).click();
+  const copiedName = `${projectDisplayName} 副本`;
+  await expect(page.getByRole("link", { name: copiedName, exact: true })).toBeVisible({ timeout: 60_000 });
+  const copiedRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: copiedName, exact: true }) });
+  await copiedRow.getByRole("button", { name: `${copiedName} 操作`, exact: true }).click();
+  await page.getByRole("menuitem", { name: "删除", exact: true }).click();
+  const deleteDialog = page.getByRole("dialog", { name: "确认删除" });
+  await deleteDialog.getByRole("button", { name: "确认删除", exact: true }).click();
+  await expect(page.getByRole("link", { name: copiedName, exact: true })).toHaveCount(0);
+  const viewerLink = page.getByRole("link", { name: projectDisplayName, exact: true });
+  await expect(viewerLink).toHaveAttribute("href", new RegExp(`/documents/${projectDocument!.id}/versions/`));
+  await viewerLink.click();
+  await expect(page.getByTestId("text-viewer")).toBeVisible();
+  await page.goBack();
   await evidence(page, "03-project-files.png");
 
   await page.goto(appPath("/data-spaces/company"));
@@ -193,14 +224,25 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await generationDialog.getByRole("button", { name: "生成一个候选", exact: true }).click();
   await expect(overview.getByText("可选择", { exact: true })).toBeVisible({ timeout: 60_000 });
   await overview.getByRole("button", { name: "选择此候选并形成草稿", exact: true }).click();
-  await expect(overview.getByText("已生成", { exact: true })).toBeVisible({ timeout: 60_000 });
-  const overviewPreview = overview.locator("pre");
-  await expect(overviewPreview).toContainText("|项目地区|中国");
-  await expect(overviewPreview).toContainText("|平台类型|微信小程序");
-  await expect(overviewPreview).toContainText("|7|MVP需求|会员注册和 CRM 同步");
-  await expect(overviewPreview).toContainText("|适配类型|AI 推断（待确认）：");
-  await expect(overviewPreview).not.toContainText("目标与成功标准");
-  await expect(overviewPreview).not.toContainText("用户与关键场景");
+  await expect(overview.getByText("可编辑草稿", { exact: true })).toBeVisible({ timeout: 60_000 });
+  const overviewPreview = overview.getByLabel("Markdown 草稿");
+  await expect(overviewPreview).toHaveValue(/\|项目地区\|中国/);
+  await expect(overviewPreview).toHaveValue(/\|平台类型\|微信小程序/);
+  await expect(overviewPreview).toHaveValue(/\|7\|MVP需求\|会员注册和 CRM 同步/);
+  await expect(overviewPreview).toHaveValue(/\|适配类型\|AI 推断（待确认）：/);
+  await expect(overviewPreview).not.toHaveValue(/目标与成功标准/);
+  await expect(overviewPreview).not.toHaveValue(/用户与关键场景/);
+  await overviewPreview.fill(`${await overviewPreview.inputValue()}\n\n项目经理复核：第一版。`);
+  await overview.getByRole("button", { name: "另存为新版本", exact: true }).click();
+  await expect(overview.getByText("已保存为正式版本", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await overview.getByRole("button", { name: "重新生成", exact: true }).click();
+  const regeneratedDialog = page.getByRole("dialog", { name: "生成需求概览" });
+  await regeneratedDialog.getByRole("button", { name: "生成一个候选", exact: true }).click();
+  await expect(overview.getByText("可选择", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await overview.getByRole("button", { name: "选择此候选并形成草稿", exact: true }).click();
+  await expect(overview.getByText("需求概览 v2", { exact: true })).toBeVisible({ timeout: 60_000 });
+  await overview.getByRole("button", { name: "另存为新版本", exact: true }).click();
+  await expect(overview.getByText("已保存为正式版本", { exact: true })).toBeVisible({ timeout: 60_000 });
   await evidence(page, "06-requirement-success-local-fake.png");
   const overviewDownload = overview.getByRole("link", { name: "下载 Markdown", exact: true });
   const overviewHref = await overviewDownload.getAttribute("href");
@@ -208,7 +250,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   runtimeMonitor.allowAbortedRequestOnce(new URL(overviewHref!, page.url()).pathname);
   const [overviewFile] = await Promise.all([page.waitForEvent("download"), overviewDownload.click()]);
   await verifyDownload(overviewFile, ".md");
-  await expect(overview.getByRole("button", { name: "已保存到项目", exact: true })).toBeVisible();
+  await expect(overview.getByText("已保存为正式版本", { exact: true })).toBeVisible();
 
   await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));
   await page.getByTestId("assistant-composer-input").fill("项目资料中 2026 年 10 月 15 日的内部上线事实是什么？");

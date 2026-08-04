@@ -156,6 +156,8 @@ jobs:
           npm run typecheck
           npm run lint
           npm run test:focused
+          npm run test:file-workspace
+          npm run test:storage
           npm run test:staging-deploy-policy
           npm run build
           git diff --check
