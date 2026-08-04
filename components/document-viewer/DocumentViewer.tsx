@@ -47,7 +47,6 @@ import {
   readProjectDocumentTextPreview,
 } from "@/lib/documents/client";
 import type { ProjectDocumentDto, ProjectDocumentVersionDto } from "@/types/documents";
-import { withBasePath } from "@/lib/base-path";
 
 type Props = {
   project: AuthorizedProjectSummary;
@@ -295,7 +294,8 @@ export function DocumentViewer({ project, document, version }: Props) {
     if (["xlsx", "pptx"].includes(version.extension)) return <OfficeUnavailable extension={version.extension} />;
     return <Alert color="gray" title="该格式暂不支持在线预览">你仍然可以下载原文件。</Alert>;
   }, [document, version]);
-  const filesHref = withBasePath(`/data-spaces/projects/${encodeURIComponent(project.id)}/files`);
+  // `next/link` receives an application-relative path and applies basePath.
+  const filesHref = `/data-spaces/projects/${encodeURIComponent(project.id)}/files`;
   const download = () => downloadProjectDocumentVersion(project.id, document.id, version.id, version.originalFilename);
   return (
     <Box px={{ base: "md", md: "xl" }} py="lg">

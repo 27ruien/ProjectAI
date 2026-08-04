@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Tooltip } from "@mantine/core";
 import {
   AlertCircle,
   Archive,
@@ -53,9 +54,8 @@ import { RequirementOverviewWorkspace } from "@/components/requirement-overview/
 import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AssistantCitationPreview } from "./AssistantCitationPreview";
-import { documentViewerPath, type DocumentLocator } from "@/lib/documents/viewer-route";
+import { publicDocumentViewerPath, type DocumentLocator } from "@/lib/documents/viewer-route";
 import { AssistantHistoryCitationPreview } from "./AssistantHistoryCitationPreview";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 type PanelPhase =
   | "loading"
@@ -459,7 +459,7 @@ export function ProjectAssistantPanel({
         else if (source.type === "markdown_section") locator = { lineStart: source.lineStart, lineEnd: source.lineEnd, heading: source.headingPath.at(-1) };
         else if (source.type === "docx_section") locator = { heading: source.headingPath.at(-1) };
         window.open(
-          documentViewerPath({
+          publicDocumentViewerPath({
             projectId,
             documentId: citation.documentId,
             versionId: citation.versionId,
@@ -666,9 +666,9 @@ export function ProjectAssistantPanel({
             <section className="mb-4" aria-label="快捷操作">
               <p className="mb-2 text-xs font-medium text-foreground">快捷操作</p>
               <div className="flex flex-wrap gap-2">
-                <Tooltip><TooltipTrigger asChild><Button type="button" size="sm" variant="outline" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)}><FileText className="size-3.5" />生成需求概览</Button></TooltipTrigger><TooltipContent>执行固定模板的需求概览 Skill，不代表资料范围。</TooltipContent></Tooltip>
-                <Tooltip><TooltipTrigger asChild><Button type="button" size="sm" variant="outline" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending}><Sparkles className="size-3.5" />总结项目现状</Button></TooltipTrigger><TooltipContent>使用已授权项目资料执行预设任务。</TooltipContent></Tooltip>
-                <Tooltip><TooltipTrigger asChild><Button type="button" size="sm" variant="outline" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending}><ListChecks className="size-3.5" />列出待确认事项</Button></TooltipTrigger><TooltipContent>使用已授权项目资料执行预设任务。</TooltipContent></Tooltip>
+                <Tooltip label="执行固定模板的需求概览 Skill，不代表资料范围。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)}><FileText className="size-3.5" />生成需求概览</Button></Tooltip>
+                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending}><Sparkles className="size-3.5" />总结项目现状</Button></Tooltip>
+                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending}><ListChecks className="size-3.5" />列出待确认事项</Button></Tooltip>
               </div>
             </section>
             <section className="mb-4 rounded-lg border border-dashed bg-muted/20 px-3 py-2.5" aria-label="本次引用" data-testid="assistant-context-references">

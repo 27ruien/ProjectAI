@@ -74,6 +74,26 @@ test("the viewer separates original-file preview from AI extraction", async () =
   assert.match(viewer, /rehypeSanitize/);
 });
 
+test("viewer links stay application-relative while imperative opens use the public base path", async () => {
+  const [route, workspace, assistant] = await Promise.all([
+    source("lib/documents/viewer-route.ts"),
+    source("components/project/ProjectFileWorkspace.tsx"),
+    source("components/knowledge/ProjectAssistantPanel.tsx"),
+  ]);
+  assert.match(route, /export function publicDocumentViewerPath/);
+  assert.match(route, /return withBasePath\(documentViewerPath\(input\)\)/);
+  assert.doesNotMatch(route, /const path = withBasePath\(/);
+  assert.match(workspace, /publicDocumentViewerPath/);
+  assert.match(assistant, /publicDocumentViewerPath/);
+});
+
+test("assistant quick actions use Mantine tooltips and do not require the retired Radix provider", async () => {
+  const assistant = await source("components/knowledge/ProjectAssistantPanel.tsx");
+  assert.match(assistant, /import \{ Tooltip \} from "@mantine\/core"/);
+  assert.doesNotMatch(assistant, /@\/components\/ui\/tooltip/);
+  assert.doesNotMatch(assistant, /TooltipProvider/);
+});
+
 test("requirement overview regeneration creates lineage and saves only explicitly", async () => {
   const [service, ui, schema, migration] = await Promise.all([
     source("lib/focused-mvp/requirement-overview.ts"),

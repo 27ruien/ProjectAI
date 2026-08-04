@@ -16,11 +16,13 @@ export function documentViewerPath(input: {
   versionId: string;
   locator?: DocumentLocator;
 }): string {
-  const path = withBasePath(
+  // Keep this route relative to the Next.js application.  `next/link` adds the
+  // configured basePath itself; returning a public path here would otherwise
+  // produce `/tool/projectai/tool/projectai/...` behind the Staging proxy.
+  const path =
     `/data-spaces/projects/${encodeURIComponent(input.projectId)}` +
-      `/documents/${encodeURIComponent(input.documentId)}` +
-      `/versions/${encodeURIComponent(input.versionId)}/view`,
-  );
+    `/documents/${encodeURIComponent(input.documentId)}` +
+    `/versions/${encodeURIComponent(input.versionId)}/view`;
   const query = new URLSearchParams();
   const locator = input.locator;
   if (locator?.pageNumber) query.set("page", String(locator.pageNumber));
@@ -31,4 +33,9 @@ export function documentViewerPath(input: {
   if (locator?.lineEnd) query.set("lineEnd", String(locator.lineEnd));
   if (locator?.heading) query.set("heading", locator.heading);
   return query.size ? `${path}?${query.toString()}` : path;
+}
+
+/** Use for clipboard values and imperative browser navigation, not `next/link`. */
+export function publicDocumentViewerPath(input: Parameters<typeof documentViewerPath>[0]): string {
+  return withBasePath(documentViewerPath(input));
 }

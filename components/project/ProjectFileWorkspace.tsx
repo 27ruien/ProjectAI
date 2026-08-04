@@ -72,7 +72,7 @@ import {
   updateProjectFolder,
   uploadProjectDocument,
 } from "@/lib/documents/client";
-import { documentViewerPath } from "@/lib/documents/viewer-route";
+import { documentViewerPath, publicDocumentViewerPath } from "@/lib/documents/viewer-route";
 import type {
   DocumentListPermissionsDto,
   DocumentUploadPolicyDto,
@@ -406,7 +406,13 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
     if (entry.kind === "folder") {
       return new URL(internalFolderUrl(pathname, entry.folder.id), window.location.origin).toString();
     }
-    const href = currentVersionUrl(entry.document);
+    const href = entry.document.currentVersion
+      ? publicDocumentViewerPath({
+          projectId: entry.document.projectId,
+          documentId: entry.document.id,
+          versionId: entry.document.currentVersion.id,
+        })
+      : null;
     return href ? new URL(href, window.location.origin).toString() : window.location.href;
   };
 
@@ -907,7 +913,7 @@ function EntryCard(props: Parameters<typeof EntryRow>[0]) {
   return (
     <Paper withBorder p="md" radius="md" bg={props.selected ? "var(--mantine-color-projectBlue-0)" : "white"} onClick={() => props.onSelect(entry)} style={{ cursor: "pointer" }}>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
-        <ActionIcon variant="light" size="xl" color={entry.kind === "folder" ? "projectBlue" : "gray"} aria-label={`打开${entryName(entry)}`} onClick={(event) => { event.stopPropagation(); if (entry.kind === "folder") props.onOpenFolder(entry.folder.id); else { const href = currentVersionUrl(entry.document); if (href) window.location.assign(href); } }}><EntryIcon entry={entry} size={22} /></ActionIcon>
+        <ActionIcon variant="light" size="xl" color={entry.kind === "folder" ? "projectBlue" : "gray"} aria-label={`打开${entryName(entry)}`} onClick={(event) => { event.stopPropagation(); if (entry.kind === "folder") props.onOpenFolder(entry.folder.id); else if (entry.document.currentVersion) { window.location.assign(publicDocumentViewerPath({ projectId: entry.document.projectId, documentId: entry.document.id, versionId: entry.document.currentVersion.id })); } }}><EntryIcon entry={entry} size={22} /></ActionIcon>
         <Box onClick={(event) => event.stopPropagation()}><EntryActions entry={entry} disabled={props.busy} onShare={props.onShare} onCopy={props.onCopy} onDuplicate={props.onDuplicate} onDelete={props.onDelete} /></Box>
       </Group>
       <Box mt="md"><EntryName entry={entry} pathname={props.pathname} onOpenFolder={props.onOpenFolder} /><Text size="xs" c="dimmed" mt={4}>{entryType(entry)} · {formatDate(entryUpdatedAt(entry))}</Text></Box>
