@@ -39,7 +39,7 @@ test("project files use folders, stable viewer links and the four-item action co
   assert.match(route, /child === "artifacts"/);
   assert.match(route, /\/files/);
   assert.match(workflow, /npm run test:file-workspace/);
-  assert.match(workflow, /npm run test:storage/);
+  assert.match(workflow, /npm run test:file-workspace-integration/);
 });
 
 test("delete, duplicate and preview remain server-authorized and fail closed", async () => {
