@@ -159,7 +159,7 @@ export async function POST(
       documentRoles.upload,
       request.headers,
     );
-    const { file, displayName, versionNote, knowledgeSpaceId, temporaryWorkflowId } = await readUploadForm(request);
+    const { file, displayName, versionNote, knowledgeSpaceId, folderId, temporaryWorkflowId } = await readUploadForm(request);
     const result = await uploadDocument({
       principal,
       projectId,
@@ -169,6 +169,7 @@ export async function POST(
       displayName,
       versionNote,
       knowledgeSpaceId,
+      folderId,
       temporaryWorkflowId: temporaryWorkflowId ?? undefined,
     });
     const versions = await listProjectDocumentVersions(projectId, result.document.id);

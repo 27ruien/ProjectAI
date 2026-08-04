@@ -27,6 +27,7 @@ const patchSchema = z
     visibility: z
       .enum(["private", "organization_shared", "department_shared", "restricted"])
       .optional(),
+    folderId: z.string().min(1).max(200).nullable().optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0);

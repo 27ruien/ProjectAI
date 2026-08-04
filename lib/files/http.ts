@@ -12,6 +12,7 @@ export async function readUploadForm(request: Request): Promise<{
   displayName: string | null;
   versionNote: string | null;
   knowledgeSpaceId: string | null;
+  folderId: string | null;
   temporaryWorkflowId: string | null;
 }> {
   const contentLength = Number(request.headers.get("content-length") || 0);
@@ -31,6 +32,7 @@ export async function readUploadForm(request: Request): Promise<{
   const displayName = form.get("displayName");
   const versionNote = form.get("versionNote");
   const knowledgeSpaceId = form.get("knowledgeSpaceId");
+  const folderId = form.get("folderId");
   const temporaryWorkflowId = form.get("temporaryWorkflowId");
   if (!(file instanceof File)) {
     throw new FileOperationError(400, "INVALID_REQUEST", "请选择一个文件");
@@ -53,6 +55,12 @@ export async function readUploadForm(request: Request): Promise<{
     throw new FileOperationError(400, "INVALID_REQUEST", "知识空间无效");
   }
   if (
+    folderId !== null &&
+    (typeof folderId !== "string" || folderId.length < 1 || folderId.length > 200)
+  ) {
+    throw new FileOperationError(400, "INVALID_REQUEST", "目标文件夹无效");
+  }
+  if (
     temporaryWorkflowId !== null &&
     (typeof temporaryWorkflowId !== "string" ||
       !/^[0-9a-f-]{16,80}$/i.test(temporaryWorkflowId))
@@ -66,6 +74,7 @@ export async function readUploadForm(request: Request): Promise<{
       ? versionNote.trim()
       : null,
     knowledgeSpaceId,
+    folderId,
     temporaryWorkflowId,
   };
 }

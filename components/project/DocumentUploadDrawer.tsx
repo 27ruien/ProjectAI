@@ -54,6 +54,7 @@ interface DocumentUploadDrawerProps {
   target: DocumentUploadTarget;
   policy: DocumentUploadPolicyDto;
   destinations: KnowledgeSpaceUploadDestinationDto[];
+  folderId?: string | null;
   onClose: () => void;
   onUploaded: (response: ProjectDocumentUploadResponse) => void | Promise<void>;
 }
@@ -234,6 +235,7 @@ export function DocumentUploadDrawer({
   target,
   policy,
   destinations,
+  folderId = null,
   onClose,
   onUploaded,
 }: DocumentUploadDrawerProps) {
@@ -313,6 +315,7 @@ export function DocumentUploadDrawer({
         displayName: isVersionUpload ? undefined : normalizedName,
         versionNote,
         knowledgeSpaceId: isVersionUpload ? undefined : knowledgeSpaceId,
+        folderId: isVersionUpload ? undefined : folderId ?? undefined,
         idempotencyKey: idempotencyKey || crypto.randomUUID(),
         signal: controller.signal,
         onProgress: ({ percent }) => setProgress(percent),

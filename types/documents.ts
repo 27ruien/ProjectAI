@@ -100,6 +100,7 @@ export interface ProjectDocumentDto {
   id: string;
   projectId: string;
   knowledgeSpaceId: string;
+  folderId: string | null;
   visibility: "private" | "organization_shared" | "department_shared" | "restricted";
   displayName: string;
   workflowTemporary: boolean;

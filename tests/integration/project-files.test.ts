@@ -8,7 +8,19 @@ import {
   GET as listDocumentsRoute,
   POST as createDocumentRoute,
 } from "../../app/api/projects/[projectId]/documents/route";
-import { GET as getDocumentRoute } from "../../app/api/projects/[projectId]/documents/[documentId]/route";
+import {
+  DELETE as deleteDocumentRoute,
+  GET as getDocumentRoute,
+} from "../../app/api/projects/[projectId]/documents/[documentId]/route";
+import { POST as duplicateDocumentRoute } from "../../app/api/projects/[projectId]/documents/[documentId]/duplicate/route";
+import {
+  GET as listFoldersRoute,
+  POST as createFolderRoute,
+} from "../../app/api/projects/[projectId]/folders/route";
+import {
+  DELETE as deleteFolderRoute,
+  PATCH as updateFolderRoute,
+} from "../../app/api/projects/[projectId]/folders/[folderId]/route";
 import { POST as archiveDocumentRoute } from "../../app/api/projects/[projectId]/documents/[documentId]/archive/route";
 import { POST as restoreDocumentRoute } from "../../app/api/projects/[projectId]/documents/[documentId]/restore/route";
 import {
@@ -27,6 +39,7 @@ import {
   documentSection,
   project,
   projectDocument,
+  projectDocumentFolder,
   projectDocumentVersion,
   projectMember,
   rateLimit,
@@ -199,6 +212,7 @@ async function uploadViaRoute(input: {
   idempotencyKey?: string;
   displayName?: string;
   knowledgeSpaceId?: string;
+  folderId?: string;
 }): Promise<Response> {
   const form = new FormData();
   form.set("file", input.file);
@@ -206,6 +220,7 @@ async function uploadViaRoute(input: {
   if (input.knowledgeSpaceId !== undefined) {
     form.set("knowledgeSpaceId", input.knowledgeSpaceId);
   }
+  if (input.folderId !== undefined) form.set("folderId", input.folderId);
   const headers = actorHeaders(input.actor);
   headers.set("idempotency-key", input.idempotencyKey ?? crypto.randomUUID());
   return createDocumentRoute(
@@ -267,6 +282,64 @@ async function getDocument(
   return getDocumentRoute(
     new Request(routeUrl(`/api/projects/${projectId}/documents/${documentId}`), {
       headers: actorHeaders(actor),
+    }),
+    { params: Promise.resolve({ projectId, documentId }) },
+  );
+}
+
+async function folderMutation(input: {
+  actor: ApiActor;
+  projectId: string;
+  folderId?: string;
+  method: "POST" | "PATCH" | "DELETE";
+  body?: Record<string, unknown>;
+}): Promise<Response> {
+  const url = input.folderId
+    ? `/api/projects/${input.projectId}/folders/${input.folderId}`
+    : `/api/projects/${input.projectId}/folders`;
+  const request = new Request(routeUrl(url), {
+    method: input.method,
+    headers: new Headers({
+      ...Object.fromEntries(actorHeaders(input.actor)),
+      ...(input.body ? { "content-type": "application/json" } : {}),
+    }),
+    body: input.body ? JSON.stringify(input.body) : undefined,
+  });
+  const context = input.folderId
+    ? { params: Promise.resolve({ projectId: input.projectId, folderId: input.folderId }) }
+    : { params: Promise.resolve({ projectId: input.projectId }) };
+  if (input.method === "POST") return createFolderRoute(request, context as never);
+  if (input.method === "PATCH") return updateFolderRoute(request, context as never);
+  return deleteFolderRoute(request, context as never);
+}
+
+async function deleteDocumentViaRoute(
+  actor: ApiActor,
+  projectId: string,
+  documentId: string,
+): Promise<Response> {
+  return deleteDocumentRoute(
+    new Request(routeUrl(`/api/projects/${projectId}/documents/${documentId}`), {
+      method: "DELETE",
+      headers: actorHeaders(actor),
+    }),
+    { params: Promise.resolve({ projectId, documentId }) },
+  );
+}
+
+async function duplicateDocumentViaRoute(
+  actor: ApiActor,
+  projectId: string,
+  documentId: string,
+  targetFolderId: string | null,
+): Promise<Response> {
+  const headers = actorHeaders(actor);
+  headers.set("content-type", "application/json");
+  return duplicateDocumentRoute(
+    new Request(routeUrl(`/api/projects/${projectId}/documents/${documentId}/duplicate`), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ targetFolderId }),
     }),
     { params: Promise.resolve({ projectId, documentId }) },
   );
@@ -659,6 +732,9 @@ after(async () => {
         .delete(projectDocument)
         .where(inArray(projectDocument.projectId, projectIds));
       await getDb()
+        .delete(projectDocumentFolder)
+        .where(inArray(projectDocumentFolder.projectId, projectIds));
+      await getDb()
         .delete(projectMember)
         .where(inArray(projectMember.projectId, projectIds));
       await getDb().delete(project).where(inArray(project.id, projectIds));
@@ -819,6 +895,116 @@ describe("Project Files real PostgreSQL and MinIO integration", () => {
       assert.equal(object.sha256, record.sha256);
       assertNoPrivateResponseFields(payload);
     }
+  });
+
+  it("manages nested folders, duplicates immutable objects, and deletes every derived row", async () => {
+    const destinations = await listDocuments(managerA, projectAId);
+    assert.equal(destinations.status, 200);
+    const destinationBody = await responseJson<{
+      permissions: { uploadDestinations: Array<{ id: string; projectId: string | null }> };
+    }>(destinations);
+    const projectSpace = destinationBody.permissions.uploadDestinations.find(
+      (item) => item.projectId === projectAId,
+    );
+    assert.ok(projectSpace);
+
+    const rootResponse = await folderMutation({
+      actor: managerA,
+      projectId: projectAId,
+      method: "POST",
+      body: { name: "虚构交付资料", knowledgeSpaceId: projectSpace.id, parentFolderId: null },
+    });
+    assert.equal(rootResponse.status, 201);
+    const root = await responseJson<{ folder: { id: string; createdBy: { displayName: string } } }>(rootResponse);
+    assert.ok(root.folder.createdBy.displayName);
+
+    const childResponse = await folderMutation({
+      actor: managerA,
+      projectId: projectAId,
+      method: "POST",
+      body: { name: "子文件夹", knowledgeSpaceId: projectSpace.id, parentFolderId: root.folder.id },
+    });
+    assert.equal(childResponse.status, 201);
+    const child = await responseJson<{ folder: { id: string } }>(childResponse);
+
+    const cycle = await folderMutation({
+      actor: managerA,
+      projectId: projectAId,
+      folderId: root.folder.id,
+      method: "PATCH",
+      body: { parentFolderId: child.folder.id },
+    });
+    assert.equal(cycle.status, 409);
+    assert.equal((await responseJson<ErrorResponse>(cycle)).error.code, "FOLDER_CYCLE");
+
+    const file = createMarkdownFixture("可删除中文资料.md", "# 中文资料\n\n用于删除链路集成测试。");
+    const uploadedResponse = await uploadViaRoute({
+      actor: managerA,
+      projectId: projectAId,
+      file,
+      knowledgeSpaceId: projectSpace.id,
+      folderId: child.folder.id,
+    });
+    assert.equal(uploadedResponse.status, 201);
+    const uploaded = await responseJson<UploadResponse>(uploadedResponse);
+    const [sourceVersion] = await getDb()
+      .select()
+      .from(projectDocumentVersion)
+      .where(eq(projectDocumentVersion.id, uploaded.version.id));
+    assert.ok(sourceVersion);
+    assert.ok(await storage.headObject(sourceVersion.objectKey));
+
+    const duplicatedResponse = await duplicateDocumentViaRoute(
+      managerA,
+      projectAId,
+      uploaded.document.id,
+      child.folder.id,
+    );
+    assert.equal(duplicatedResponse.status, 201);
+    const duplicated = await responseJson<{ document: DocumentDto; version: VersionDto }>(duplicatedResponse);
+    assert.notEqual(duplicated.document.id, uploaded.document.id);
+    assert.notEqual(duplicated.version.id, uploaded.version.id);
+    const [duplicateVersion] = await getDb()
+      .select()
+      .from(projectDocumentVersion)
+      .where(eq(projectDocumentVersion.id, duplicated.version.id));
+    assert.ok(duplicateVersion);
+    assert.notEqual(duplicateVersion.objectKey, sourceVersion.objectKey);
+    assert.ok(await storage.headObject(duplicateVersion.objectKey));
+
+    const listedFolders = await listFoldersRoute(
+      new Request(routeUrl(`/api/projects/${projectAId}/folders`), { headers: actorHeaders(managerA) }),
+      { params: Promise.resolve({ projectId: projectAId }) },
+    );
+    assert.equal(listedFolders.status, 200);
+    assert.equal((await responseJson<{ folders: unknown[] }>(listedFolders)).folders.length >= 2, true);
+
+    const nonEmptyDelete = await folderMutation({
+      actor: managerA,
+      projectId: projectAId,
+      folderId: child.folder.id,
+      method: "DELETE",
+    });
+    assert.equal(nonEmptyDelete.status, 409);
+    assert.equal((await responseJson<ErrorResponse>(nonEmptyDelete)).error.code, "FOLDER_NOT_EMPTY");
+
+    const deniedDelete = await deleteDocumentViaRoute(memberA, projectAId, uploaded.document.id);
+    assert.equal(deniedDelete.status, 403);
+    assert.equal((await responseJson<ErrorResponse>(deniedDelete)).error.code, "FORBIDDEN");
+
+    const sourceDelete = await deleteDocumentViaRoute(managerA, projectAId, uploaded.document.id);
+    assert.equal(sourceDelete.status, 204);
+    assert.equal(await storage.headObject(sourceVersion.objectKey), null);
+    assert.equal((await getDb().select().from(projectDocument).where(eq(projectDocument.id, uploaded.document.id))).length, 0);
+    assert.equal((await getDb().select().from(projectDocumentVersion).where(eq(projectDocumentVersion.documentId, uploaded.document.id))).length, 0);
+    assert.equal((await getDb().select().from(documentIngestionJob).where(eq(documentIngestionJob.documentId, uploaded.document.id))).length, 0);
+    assert.equal((await getDb().select().from(documentChunk).where(eq(documentChunk.documentId, uploaded.document.id))).length, 0);
+
+    const duplicateDelete = await deleteDocumentViaRoute(managerA, projectAId, duplicated.document.id);
+    assert.equal(duplicateDelete.status, 204);
+    assert.equal(await storage.headObject(duplicateVersion.objectKey), null);
+    assert.equal((await folderMutation({ actor: managerA, projectId: projectAId, folderId: child.folder.id, method: "DELETE" })).status, 204);
+    assert.equal((await folderMutation({ actor: managerA, projectId: projectAId, folderId: root.folder.id, method: "DELETE" })).status, 204);
   });
 
   it("rejects oversize, unsupported, signature-mismatched, and invalid OOXML files", async () => {

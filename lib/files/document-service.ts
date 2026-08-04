@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { requireProjectRole } from "@/lib/auth/authorization";
 import {
   AuthorizationError,
@@ -24,6 +24,7 @@ import { KnowledgeManagementError } from "@/lib/knowledge/errors";
 import { requireUploadableKnowledgeSpace } from "@/lib/knowledge/management";
 import {
   projectDocument,
+  projectDocumentFolder,
   projectDocumentVersion,
   type ProjectDocumentRecord,
   type ProjectDocumentVersionRecord,
@@ -259,6 +260,7 @@ async function reserveUpload(input: {
   uploadId: string;
   displayName: string;
   knowledgeSpaceId: string | null;
+  folderId: string | null;
   knowledgeVisibility:
     | "private"
     | "organization_shared"
@@ -348,6 +350,7 @@ async function reserveUpload(input: {
             projectId: input.projectId,
             knowledgeSpaceId: destination.id,
             visibility: destination.visibility,
+            folderId: input.folderId,
             displayName: input.displayName,
             workflowTemporary: Boolean(input.temporaryWorkflowId),
             temporaryWorkflowId: input.temporaryWorkflowId ?? null,
@@ -673,6 +676,7 @@ export async function uploadDocument(input: {
   displayName: string | null;
   versionNote?: string | null;
   knowledgeSpaceId?: string | null;
+  folderId?: string | null;
   temporaryWorkflowId?: string;
   documentId?: string;
   storage?: ObjectStorage;
@@ -703,7 +707,8 @@ export async function uploadDocument(input: {
   if (
     replay &&
     destination &&
-    replay.document.knowledgeSpaceId !== destination.id
+    (replay.document.knowledgeSpaceId !== destination.id ||
+      replay.document.folderId !== (input.folderId ?? null))
   ) {
     throw new FileOperationError(
       409,
@@ -712,6 +717,23 @@ export async function uploadDocument(input: {
     );
   }
   const validated = await validateUploadFile(input.file);
+  if (input.folderId && destination) {
+    const [folder] = await getDb()
+      .select({
+        projectId: projectDocumentFolder.projectId,
+        knowledgeSpaceId: projectDocumentFolder.knowledgeSpaceId,
+      })
+      .from(projectDocumentFolder)
+      .where(eq(projectDocumentFolder.id, input.folderId))
+      .limit(1);
+    if (
+      !folder ||
+      folder.projectId !== input.projectId ||
+      folder.knowledgeSpaceId !== destination.id
+    ) {
+      throw new FileOperationError(404, "FOLDER_NOT_FOUND", "目标文件夹不存在或不可访问");
+    }
+  }
   if (replay && !uploadMetadataMatches(replay.version, validated)) {
     throw new FileOperationError(
       409,
@@ -736,6 +758,7 @@ export async function uploadDocument(input: {
         uploadId,
         displayName: normalizedDisplayName(input.displayName, validated.displayName),
         knowledgeSpaceId: destination?.id ?? null,
+        folderId: input.folderId ?? null,
         knowledgeVisibility: destination?.visibility ?? null,
         originalFilename: validated.originalFilename,
         versionNote: input.versionNote?.trim() || null,
@@ -1112,6 +1135,7 @@ export async function updateDocumentMetadata(input: {
   documentId: string;
   displayName?: string;
   visibility?: ProjectDocumentRecord["visibility"];
+  folderId?: string | null;
   requestHeaders: Headers;
 }): Promise<ProjectDocumentRecord> {
   const displayName =
@@ -1134,6 +1158,23 @@ export async function updateDocumentMetadata(input: {
       if (!document) {
         throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "资料不存在");
       }
+      if (input.folderId) {
+        const [folder] = await tx
+          .select({
+            projectId: projectDocumentFolder.projectId,
+            knowledgeSpaceId: projectDocumentFolder.knowledgeSpaceId,
+          })
+          .from(projectDocumentFolder)
+          .where(eq(projectDocumentFolder.id, input.folderId))
+          .limit(1);
+        if (
+          !folder ||
+          folder.projectId !== input.projectId ||
+          folder.knowledgeSpaceId !== document.knowledgeSpaceId
+        ) {
+          throw new FileOperationError(404, "FOLDER_NOT_FOUND", "目标文件夹不存在或不可访问");
+        }
+      }
       const [updated] = await tx
         .update(projectDocument)
         .set({
@@ -1141,6 +1182,7 @@ export async function updateDocumentMetadata(input: {
           ...(input.visibility === undefined
             ? {}
             : { visibility: input.visibility }),
+          ...(input.folderId === undefined ? {} : { folderId: input.folderId }),
           updatedAt: new Date(),
         })
         .where(eq(projectDocument.id, document.id))
@@ -1157,6 +1199,7 @@ export async function updateDocumentMetadata(input: {
             changedFields: [
               ...(displayName === undefined ? [] : ["displayName"]),
               ...(input.visibility === undefined ? [] : ["visibility"]),
+              ...(input.folderId === undefined ? [] : ["folderId"]),
             ],
           },
           ...getRequestAuditContext(input.requestHeaders),
@@ -1166,6 +1209,137 @@ export async function updateDocumentMetadata(input: {
       return updated;
     },
   });
+}
+
+/** Create a storage-independent copy that re-enters parsing and embedding. */
+export async function duplicateProjectDocument(input: {
+  principal: AuthenticatedPrincipal;
+  projectId: string;
+  documentId: string;
+  targetFolderId?: string | null;
+  requestHeaders: Headers;
+  storage?: ObjectStorage;
+}): Promise<{
+  document: ProjectDocumentRecord;
+  version: ProjectDocumentVersionRecord;
+}> {
+  await requireProjectRole(
+    input.principal,
+    input.projectId,
+    documentRoles.manage,
+    input.requestHeaders,
+  );
+  const document = await findProjectDocument(input.projectId, input.documentId);
+  if (!document || document.status !== "active") {
+    throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "资料不存在或当前不可复制");
+  }
+  const versions = await listProjectDocumentVersions(input.projectId, input.documentId);
+  const currentVersion = versions.find(
+    (version) => version.isCurrent && version.storageStatus === "stored",
+  );
+  if (!currentVersion) {
+    throw new FileOperationError(409, "VERSION_NOT_AVAILABLE", "当前版本尚不可复制");
+  }
+  const storage = input.storage ?? getObjectStorage();
+  const source = await storage.getObject(currentVersion.objectKey);
+  const body = new Uint8Array(await new Response(source.body).arrayBuffer());
+  const sourceDigest = createHash("sha256").update(body).digest("hex");
+  if (
+    body.byteLength !== currentVersion.sizeBytes ||
+    sourceDigest !== currentVersion.sha256
+  ) {
+    throw new FileOperationError(503, "STORAGE_UNAVAILABLE", "原文件完整性检查失败");
+  }
+  const file = new File([body], currentVersion.originalFilename, {
+    type: currentVersion.detectedMimeType,
+  });
+  const duplicated = await uploadDocument({
+    principal: input.principal,
+    projectId: input.projectId,
+    requestHeaders: input.requestHeaders,
+    idempotencyKey: crypto.randomUUID(),
+    file,
+    displayName: `${document.displayName} 副本`.slice(0, 240),
+    versionNote: `由“${document.displayName}”创建副本`,
+    knowledgeSpaceId: document.knowledgeSpaceId,
+    folderId:
+      input.targetFolderId === undefined ? document.folderId : input.targetFolderId,
+    storage,
+  });
+  await writeAuditEvent({
+    actorUserId: input.principal.user.id,
+    projectId: input.projectId,
+    eventType: "document_duplicated",
+    entityType: "project_document",
+    entityId: duplicated.document.id,
+    result: "succeeded",
+    metadata: {
+      sourceDocumentId: document.id,
+      sourceVersionId: currentVersion.id,
+      targetFolderId: duplicated.document.folderId,
+    },
+    ...getRequestAuditContext(input.requestHeaders),
+  });
+  return duplicated;
+}
+
+async function prepareDocumentDependencyDeletion(
+  tx: DatabaseTransaction,
+  input: { projectId: string; documentId: string },
+): Promise<void> {
+  const formalReferences = await tx.execute(sql`
+    select (
+      (select count(*) from requirement_drafts d
+        inner join requirement_reviews r on r.draft_id = d.id
+        where d.project_id = ${input.projectId}
+          and d.source_document_id = ${input.documentId})
+      + (select count(*) from requirement_sources s
+        where s.project_id = ${input.projectId}
+          and s.document_id = ${input.documentId})
+      + (select count(*) from focused_requirement_citations c
+        inner join focused_requirement_documents d
+          on d.id = c.requirement_document_id
+        where c.project_id = ${input.projectId}
+          and c.document_id = ${input.documentId}
+          and d.status = 'published')
+      + (select count(*) from action_item_sources s
+        where s.project_id = ${input.projectId}
+          and s.source_type = 'document'
+          and s.source_id = ${input.documentId})
+      + (select count(*) from risk_sources s
+        where s.project_id = ${input.projectId}
+          and s.source_type = 'document'
+          and s.source_id = ${input.documentId})
+    )::int as count
+  `) as unknown as
+    | { rows: Array<{ count: number | string }> }
+    | Array<{ count: number | string }>;
+  const rows = Array.isArray(formalReferences) ? formalReferences : formalReferences.rows;
+  const count = Number(rows[0]?.count ?? 0);
+  if (count > 0) {
+    throw new FileOperationError(
+      409,
+      "DOCUMENT_HAS_FORMAL_REFERENCES",
+      "这份资料已进入人工审核记录。请先归档资料，或由项目经理解除正式引用后再删除",
+    );
+  }
+
+  // Unreviewed AI drafts and generated citation rows are derived state. Formal
+  // requirements, overview versions and message text remain intact while their
+  // now-invalid source links are removed before chunks and versions disappear.
+  await tx.execute(sql`
+    delete from requirement_drafts
+    where project_id = ${input.projectId}
+      and source_document_id = ${input.documentId}
+  `);
+  await tx.execute(sql`
+    delete from guided_requirement_overview_citations
+    where document_id = ${input.documentId}
+      and overview_id in (
+        select id from guided_requirement_overviews
+        where project_id = ${input.projectId}
+      )
+  `);
 }
 
 /** Permanently remove a project document, its versions, indexes and objects. */
@@ -1196,11 +1370,24 @@ export async function deleteProjectDocument(input: {
         input.documentId,
         tx,
       );
+      await prepareDocumentDependencyDeletion(tx, {
+        projectId: input.projectId,
+        documentId: input.documentId,
+      });
       const deletedRows = await deleteScopedRows(tx, {
         projectId: input.projectId,
         documentId: input.documentId,
       });
-      if (deletedRows === 0) {
+      const [deletedDocument] = await tx
+        .delete(projectDocument)
+        .where(
+          and(
+            eq(projectDocument.id, input.documentId),
+            eq(projectDocument.projectId, input.projectId),
+          ),
+        )
+        .returning({ id: projectDocument.id });
+      if (!deletedDocument) {
         throw new FileOperationError(404, "DOCUMENT_NOT_FOUND", "资料不存在");
       }
       await writeAuditEvent(
@@ -1214,6 +1401,7 @@ export async function deleteProjectDocument(input: {
           metadata: {
             documentId: input.documentId,
             versionCount: versions.length,
+            derivedRowsDeleted: deletedRows,
           },
           ...getRequestAuditContext(input.requestHeaders),
         },

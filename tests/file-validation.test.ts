@@ -165,6 +165,7 @@ function uploadDocument(
     id: "document-a",
     projectId: "project-a",
     knowledgeSpaceId: "knowledge-space-a",
+    folderId: null,
     visibility: "private",
     displayName: "项目计划",
     workflowTemporary: false,
