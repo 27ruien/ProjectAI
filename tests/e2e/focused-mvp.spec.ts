@@ -110,9 +110,12 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await page.getByLabel("项目名称").fill(projectName);
   await page.getByLabel("项目描述").fill("仅用于聚焦 MVP 自动化验收的虚构项目，不含客户信息。");
-  await page.getByLabel("项目状态").click();
+  await page.getByRole("combobox", { name: "项目状态", exact: true }).click();
   await page.getByRole("option", { name: "进行中", exact: true }).click();
-  await page.getByRole("button", { name: "创建项目", exact: true }).click();
+  await page
+    .getByTestId("create-project-dialog")
+    .getByRole("button", { name: "创建项目", exact: true })
+    .click();
   await page.waitForURL(/\/data-spaces\/projects\/project-[^/]+(?:\/overview)?$/);
   await evidence(page, "02-project-overview.png");
   await page.setViewportSize({ width: 1024, height: 900 });
@@ -164,14 +167,25 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByRole("menuitem", { name: "创建副本", exact: true }).click();
   const copiedName = `${projectDisplayName} 副本`;
   await expect(page.getByRole("link", { name: copiedName, exact: true })).toBeVisible({ timeout: 60_000 });
+  const copiedList = await page.request.get(appPath(`/api/projects/${projectId}/documents?status=active`));
+  const copiedBody = await json<{ documents: Array<{ id: string; displayName: string }> }>(copiedList);
+  const copiedDocument = copiedBody.documents.find((item) => item.displayName === copiedName);
+  expect(copiedDocument).toBeTruthy();
+  await waitUntilAiReady(page, projectId, copiedDocument!.id);
   const copiedRow = page.getByRole("row").filter({ has: page.getByRole("link", { name: copiedName, exact: true }) });
   await copiedRow.getByRole("button", { name: `${copiedName} 操作`, exact: true }).click();
   await page.getByRole("menuitem", { name: "删除", exact: true }).click();
   const deleteDialog = page.getByRole("dialog", { name: "确认删除" });
+  runtimeMonitor.allowAbortedRequestOnce(
+    appPath(`/api/projects/${projectId}/documents/${copiedDocument!.id}`),
+  );
   await deleteDialog.getByRole("button", { name: "确认删除", exact: true }).click();
   await expect(page.getByRole("link", { name: copiedName, exact: true })).toHaveCount(0);
   const viewerLink = page.getByRole("link", { name: projectDisplayName, exact: true });
   await expect(viewerLink).toHaveAttribute("href", new RegExp(`/documents/${projectDocument!.id}/versions/`));
+  runtimeMonitor.allowAbortedRequestOnce(
+    appPath(`/api/projects/${projectId}/documents/${projectDocument!.id}`),
+  );
   await viewerLink.click();
   await expect(page.getByTestId("text-viewer")).toBeVisible();
   await page.goBack();
@@ -179,8 +193,11 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
 
   await page.goto(appPath("/data-spaces/company"));
   await evidence(page, "10-company-knowledge.png");
-  await page.getByRole("button", { name: "上传公司资料", exact: true }).first().click();
-  await settleAnimations(page.getByTestId("company-upload-dialog"));
+  await page
+    .getByTestId("company-knowledge-page")
+    .getByRole("button", { name: "上传公司资料", exact: true })
+    .click();
+  await settleAnimations(page.getByRole("dialog", { name: "上传模板", exact: true }));
   await evidence(page, "11-company-upload-dialog.png");
   const companyUploadResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/api/company-knowledge"),
@@ -189,7 +206,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
     companyFileName,
     "公司项目管理规范：需求文档发布前必须由项目负责人确认，并保留来源引用。",
   ));
-  await page.getByLabel("分类").click();
+  await page.getByRole("combobox", { name: "分类", exact: true }).click();
   await page.getByRole("option", { name: "项目管理规范", exact: true }).click();
   await page.getByRole("button", { name: "上传草稿", exact: true }).click();
   const uploadedCompany = (await (await companyUploadResponse).json()) as { documentId: string };
@@ -200,6 +217,9 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.getByRole("menuitem", { name: "发布", exact: true }).click();
   await expect(companyRow.getByText("已发布", { exact: false })).toBeVisible();
 
+  runtimeMonitor.allowAbortedRequestOnce(
+    appPath(`/api/company-knowledge/${uploadedCompany.documentId}`),
+  );
   await page.goto(appPath(`/assistant?project=${encodeURIComponent(projectId)}`));
   await expect(page.getByRole("heading", { name: "项目 AI 助手", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "生成需求概览", exact: true })).toBeEnabled();
@@ -284,8 +304,9 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await page.setViewportSize({ width: 375, height: 812 });
   await page.goto(appPath("/data-spaces/projects"));
   await page.getByRole("button", { name: "打开导航", exact: true }).click();
-  const mobileNavigation = page.getByRole("dialog", { name: "主导航" });
+  const mobileNavigation = page.getByRole("navigation");
   await settleAnimations(mobileNavigation);
+  await expect(mobileNavigation.getByRole("link", { name: "项目资料", exact: true })).toBeVisible();
   await expectNoPageOverflow(page);
   await evidence(page, "12-mobile-navigation-375.png");
 });
