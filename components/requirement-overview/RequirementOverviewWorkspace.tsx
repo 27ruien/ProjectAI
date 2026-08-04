@@ -266,9 +266,10 @@ export function RequirementOverviewWorkspace({ projectId }: { projectId: string 
     try {
       const available = models ?? await loadModels();
       if (!available) throw new Error("没有测试成功且已启用的文本模型");
-      // Every generation click reserves a new immutable overview version when
-      // the current version already contains a chosen candidate.
-      const target = overview.status === "generated"
+      // A comparison run is immutable. A second click must not reuse that
+      // run's overview record, even before a candidate has been selected.
+      // This keeps every generation request in its own versioned draft.
+      const target = overview.status === "generated" || overview.comparisonRun
         ? await createVersion("continue", overview)
         : overview;
       await generateFor(target, mode, available);

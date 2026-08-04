@@ -1,15 +1,10 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Alert, Button, Group, Modal, Select, Stack, Text, TextInput, Textarea, Title } from "@mantine/core";
 import { LoaderCircle, Plus } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
-import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 
 type Department = { id: string; name: string };
 
@@ -19,7 +14,7 @@ export function CreateProjectDialog({ managerName, trigger, defaultOpen = false 
   const [departments, setDepartments] = useState<Department[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [departmentId, setDepartmentId] = useState("");
+  const [departmentId, setDepartmentId] = useState<string | null>(null);
   const [status, setStatus] = useState("planning");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,41 +27,60 @@ export function CreateProjectDialog({ managerName, trigger, defaultOpen = false 
         if (!response.ok) throw new Error(payload.error?.message ?? "部门列表加载失败");
         return payload;
       })
-      .then((payload) => { setDepartments(payload.departments ?? []); setDepartmentId((current) => current || payload.departments?.[0]?.id || ""); })
-      .catch((caught: unknown) => { if (!(caught instanceof DOMException && caught.name === "AbortError")) setError("部门列表加载失败"); });
+      .then((payload) => {
+        setDepartments(payload.departments ?? []);
+        setDepartmentId((current) => current ?? payload.departments?.[0]?.id ?? null);
+      })
+      .catch((caught: unknown) => {
+        if (!(caught instanceof DOMException && caught.name === "AbortError")) setError("部门列表加载失败");
+      });
     return () => controller.abort();
   }, []);
 
+  const close = () => {
+    setOpen(false);
+    if (defaultOpen) router.push("/data-spaces/projects");
+  };
+
   const submit = async (event: FormEvent) => {
-    event.preventDefault(); setSaving(true); setError(null);
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
     try {
-      const response = await fetch(withBasePath("/api/projects"), { method: "POST", credentials: "include", headers: { "content-type": "application/json" }, body: JSON.stringify({ name, clientName: "内部项目", description, departmentId, status, stage: "discovery", health: "healthy", targetLaunchDate: null }) });
+      const response = await fetch(withBasePath("/api/projects"), {
+        method: "POST", credentials: "include", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, clientName: "内部项目", description, departmentId, status, stage: "discovery", health: "healthy", targetLaunchDate: null }),
+      });
       const payload = await response.json() as { project?: { id: string }; error?: { message?: string } };
       if (!response.ok || !payload.project) throw new Error(payload.error?.message ?? "创建项目失败");
       setOpen(false);
       router.push(`/data-spaces/projects/${payload.project.id}`);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "创建项目失败"); } finally { setSaving(false); }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "创建项目失败");
+    } finally { setSaving(false); }
   };
 
-  return <Dialog open={open} onOpenChange={(next) => { setOpen(next); if (!next && defaultOpen) router.push("/data-spaces/projects"); }}>
-    {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
-    <DialogContent className="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-xl" data-testid="create-project-dialog">
-      <DialogHeader><DialogTitle>创建项目</DialogTitle><DialogDescription>填写启动内部项目所需的最少信息。</DialogDescription></DialogHeader>
-      <form onSubmit={submit} className="space-y-4">
-        <label className="grid gap-1.5 text-sm font-medium">项目名称<Input required minLength={2} maxLength={200} value={name} onChange={(event) => setName(event.target.value)} autoFocus /></label>
-        <label className="grid gap-1.5 text-sm font-medium">项目描述<Textarea maxLength={4000} rows={4} value={description} onChange={(event) => setDescription(event.target.value)} /></label>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <label className="grid gap-1.5 text-sm font-medium">所属部门<Select value={departmentId} onValueChange={setDepartmentId}><SelectTrigger className="w-full"><SelectValue placeholder="请选择部门" /></SelectTrigger><SelectContent>{departments.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}</SelectContent></Select></label>
-          <label className="grid gap-1.5 text-sm font-medium">项目状态<Select value={status} onValueChange={setStatus}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="planning">规划中</SelectItem><SelectItem value="active">进行中</SelectItem><SelectItem value="completed">已完成</SelectItem></SelectContent></Select></label>
-        </div>
-        <label className="grid gap-1.5 text-sm font-medium">项目负责人<Input readOnly value={managerName} className="bg-muted text-muted-foreground" /></label>
-        {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
-        <DialogFooter><Button type="button" variant="outline" onClick={() => setOpen(false)}>取消</Button><Button type="submit" disabled={saving || !departmentId}>{saving ? <LoaderCircle className="animate-spin" /> : null}创建项目</Button></DialogFooter>
+  return <>
+    {trigger ? <span onClick={() => setOpen(true)}>{trigger}</span> : null}
+    <Modal opened={open} onClose={close} title={<Title order={3}>创建项目</Title>} centered size="lg" data-testid="create-project-dialog">
+      <Text size="sm" c="dimmed" mb="md">填写启动内部项目所需的最少信息。</Text>
+      <form onSubmit={submit}>
+        <Stack gap="md">
+          <TextInput label="项目名称" required minLength={2} maxLength={200} value={name} onChange={(event) => setName(event.currentTarget.value)} autoFocus />
+          <Textarea label="项目描述" maxLength={4000} minRows={4} value={description} onChange={(event) => setDescription(event.currentTarget.value)} />
+          <Group grow align="flex-start">
+            <Select label="所属部门" required value={departmentId} onChange={setDepartmentId} data={departments.map((item) => ({ value: item.id, label: item.name }))} placeholder="请选择部门" />
+            <Select label="项目状态" value={status} onChange={(value) => setStatus(value ?? "planning")} data={[{ value: "planning", label: "规划中" }, { value: "active", label: "进行中" }, { value: "completed", label: "已完成" }]} />
+          </Group>
+          <TextInput label="项目负责人" readOnly value={managerName} />
+          {error ? <Alert color="red" title="创建失败">{error}</Alert> : null}
+          <Group justify="flex-end"><Button variant="default" type="button" onClick={close}>取消</Button><Button type="submit" disabled={saving || !departmentId} leftSection={saving ? <LoaderCircle size={16} className="animate-spin" /> : <Plus size={16} />}>创建项目</Button></Group>
+        </Stack>
       </form>
-    </DialogContent>
-  </Dialog>;
+    </Modal>
+  </>;
 }
 
 export function CreateProjectPage({ managerName }: { managerName: string }) {
-  return <main className="min-h-[70vh]"><CreateProjectDialog managerName={managerName} defaultOpen trigger={<Button className="sr-only"><Plus />创建项目</Button>} /></main>;
+  return <main className="min-h-[70vh]"><CreateProjectDialog managerName={managerName} defaultOpen trigger={<Button className="sr-only" leftSection={<Plus size={16} />}>创建项目</Button>} /></main>;
 }

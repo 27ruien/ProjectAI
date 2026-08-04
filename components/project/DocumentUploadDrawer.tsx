@@ -8,8 +8,7 @@ import {
   RotateCw,
   UploadCloud,
 } from "lucide-react";
-import { Button } from "@/components/common/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/mantine/legacy-primitives";
 import {
   DocumentApiError,
   documentErrorMessage,

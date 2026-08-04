@@ -89,7 +89,7 @@ test("viewer links stay application-relative while imperative opens use the publ
 
 test("assistant quick actions use Mantine tooltips and do not require the retired Radix provider", async () => {
   const assistant = await source("components/knowledge/ProjectAssistantPanel.tsx");
-  assert.match(assistant, /import \{ Tooltip \} from "@mantine\/core"/);
+  assert.match(assistant, /Tooltip.*from "@mantine\/core"/);
   assert.doesNotMatch(assistant, /@\/components\/ui\/tooltip/);
   assert.doesNotMatch(assistant, /TooltipProvider/);
 });
@@ -108,7 +108,7 @@ test("requirement overview regeneration creates lineage and saves only explicitl
   assert.match(ui, /重新生成/);
   assert.match(ui, /基于当前版本继续编辑/);
   assert.match(ui, /另存为新版本/);
-  assert.match(ui, /Every generation click reserves a new immutable overview version/);
+  assert.match(ui, /This keeps every generation request in its own versioned draft/);
   assert.match(schema, /basedOnOverviewId/);
   assert.match(migration, /based_on_overview_id/);
 });

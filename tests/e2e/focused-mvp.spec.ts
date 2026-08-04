@@ -223,7 +223,11 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   await expect(generationDialog).toBeVisible();
   await generationDialog.getByRole("button", { name: "生成一个候选", exact: true }).click();
   await expect(overview.getByText("可选择", { exact: true })).toBeVisible({ timeout: 60_000 });
+  const firstSelection = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.includes("/comparisons/") && new URL(response.url()).pathname.endsWith("/select"),
+  );
   await overview.getByRole("button", { name: "选择此候选并形成草稿", exact: true }).click();
+  expect((await firstSelection).status(), "首次候选必须能形成独立草稿").toBe(200);
   await expect(overview.getByText("可编辑草稿", { exact: true })).toBeVisible({ timeout: 60_000 });
   const overviewPreview = overview.getByLabel("Markdown 草稿");
   await expect(overviewPreview).toHaveValue(/\|项目地区\|中国/);
@@ -239,7 +243,11 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const regeneratedDialog = page.getByRole("dialog", { name: "生成需求概览" });
   await regeneratedDialog.getByRole("button", { name: "生成一个候选", exact: true }).click();
   await expect(overview.getByText("可选择", { exact: true })).toBeVisible({ timeout: 60_000 });
+  const secondSelection = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname.includes("/comparisons/") && new URL(response.url()).pathname.endsWith("/select"),
+  );
   await overview.getByRole("button", { name: "选择此候选并形成草稿", exact: true }).click();
+  expect((await secondSelection).status(), "再次生成不得被历史正式版本阻塞").toBe(200);
   await expect(overview.getByText("需求概览 v2", { exact: true })).toBeVisible({ timeout: 60_000 });
   await overview.getByRole("button", { name: "另存为新版本", exact: true }).click();
   await expect(overview.getByText("已保存为正式版本", { exact: true })).toBeVisible({ timeout: 60_000 });

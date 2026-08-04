@@ -32,7 +32,15 @@ test("guided requirement overview stays structured, cited, and Markdown-only", a
   assert.match(ui, /完成度/);
   assert.match(service, /syncRequirementSource/);
   assert.match(service, /selectedCandidateId/);
+  assert.match(ui, /overview\.comparisonRun/);
   assert.doesNotMatch(ui, /DOCX/);
+});
+
+test("saved requirement overview artifacts never mutate their next regeneration evidence snapshot", async () => {
+  const evidence = await source("lib/focused-mvp/requirement-documents.ts");
+  assert.match(evidence, /guided_requirement_overviews saved_overview/);
+  assert.match(evidence, /saved_overview\.saved_document_id = d\.id/);
+  assert.match(evidence, /generated output, not new[\s\S]*project evidence/);
 });
 
 test("model management encrypts managed keys server-side and preserves the fixed vector boundary", async () => {

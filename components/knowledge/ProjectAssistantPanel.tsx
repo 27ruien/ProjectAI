@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Tooltip } from "@mantine/core";
+import { Badge, Button, Drawer, Menu, Modal, Text, TextInput, Tooltip } from "@mantine/core";
 import {
   AlertCircle,
   Archive,
@@ -23,7 +23,6 @@ import {
   Sparkles,
   Trash2,
 } from "lucide-react";
-import { Button } from "@/components/common/button";
 import { withBasePath } from "@/lib/base-path";
 import type { AuthorizedProjectSummary, ViewerContext } from "@/lib/auth/ui-types";
 import {
@@ -45,11 +44,6 @@ import type {
   ProjectAssistantThreadSummaryDto,
   AssistantContextReference,
 } from "@/types/project-assistant";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { RequirementOverviewWorkspace } from "@/components/requirement-overview/RequirementOverviewWorkspace";
 import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
 import { AssistantMarkdown } from "./AssistantMarkdown";
@@ -144,6 +138,7 @@ export function ProjectAssistantPanel({
   const [contextOptions, setContextOptions] = useState<{ projects: Array<{ id: string; label: string }>; documents: Array<{ id: string; label: string; sourceType?: "project" | "company" }> }>({ projects: [], documents: [] });
   const [contextReferences, setContextReferences] = useState<AssistantContextReference[]>([]);
   const [picker, setPicker] = useState<"project" | "document" | null>(null);
+  const [historyOpened, setHistoryOpened] = useState(false);
   const [pendingQuickAction, setPendingQuickAction] = useState<QuickAction | null>(null);
   const [pickerSearch, setPickerSearch] = useState("");
   const [models, setModels] = useState<Array<{ id: string; displayName: string; modelId: string }>>([]);
@@ -477,7 +472,7 @@ export function ProjectAssistantPanel({
   };
 
   const historyPanel = <div className="flex h-full min-h-0 flex-col">
-    <div className="border-b p-3"><Button type="button" className="w-full" onClick={() => void createThread()} loading={creating}><MessageSquarePlus className="size-3.5" />新建对话</Button><label className="relative mt-3 block"><Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" /><Input value={threadSearch} onChange={(event) => setThreadSearch(event.target.value)} placeholder="搜索会话" className="pl-8" /></label></div>
+    <div className="border-b p-3"><Button type="button" fullWidth onClick={() => void createThread()} loading={creating} leftSection={<MessageSquarePlus size={14} />}>新建对话</Button><TextInput mt="sm" value={threadSearch} onChange={(event) => setThreadSearch(event.currentTarget.value)} placeholder="搜索会话" leftSection={<Search size={14} />} /></div>
     <div className="min-h-0 flex-1 overflow-y-auto p-2">{visibleThreads.length === 0 ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{threads.length ? "没有匹配的会话" : "还没有对话"}</p> : visibleThreads.map((item) => <button key={item.id} type="button" onClick={() => void loadThread(item.id)} className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${thread?.id === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Bot className="size-3.5 shrink-0" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{item.title}</span><span className="mt-0.5 block text-[10px]">{item.messageCount} 条消息{item.status === "archived" ? " · 已归档" : ""}</span></span><ChevronRight className="size-3 shrink-0" /></button>)}</div>
   </div>;
 
@@ -523,7 +518,7 @@ export function ProjectAssistantPanel({
               : "可以直接聊天、写作、润色和分析；只有需要公司制度或项目事实时才会使用资料。"}
           </p>
         </div>
-        <Sheet><SheetTrigger asChild><Button type="button" variant="outline" size="sm" className="lg:hidden"><PanelLeft className="size-3.5" />会话历史</Button></SheetTrigger><SheetContent side="left" className="w-[min(88vw,320px)] p-0"><SheetHeader className="sr-only"><SheetTitle>会话历史</SheetTitle><SheetDescription>搜索并打开私人会话</SheetDescription></SheetHeader>{historyPanel}</SheetContent></Sheet>
+        <Button type="button" variant="default" size="sm" className="lg:hidden" leftSection={<PanelLeft size={14} />} onClick={() => setHistoryOpened(true)}>会话历史</Button>
       </header>
 
       {error ? (
@@ -538,7 +533,7 @@ export function ProjectAssistantPanel({
         </div>
       ) : null}
 
-      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">自动资料范围</span>{projectId ? <><Badge variant="outline">项目资料 {projectSourceCount} 份</Badge><Badge variant="outline">公司资料 {templateSourceCount} 份</Badge></> : <><Badge variant="outline">按当前权限自动检索</Badge><span className="text-[10px] text-muted-foreground">输入 # 可限定项目，输入 $ 可限定资料；这些引用不会扩大你的访问权限。</span></>}</div></div>
+      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">自动资料范围</span>{projectId ? <><Badge variant="light">项目资料 {projectSourceCount} 份</Badge><Badge variant="light">公司资料 {templateSourceCount} 份</Badge></> : <><Badge variant="light">按当前权限自动检索</Badge><span className="text-[10px] text-muted-foreground">输入 # 可限定项目，输入 $ 可限定资料；这些引用不会扩大你的访问权限。</span></>}</div></div>
 
       <div className="grid min-h-[560px] lg:grid-cols-[280px_1fr]">
         <aside className="hidden border-r bg-muted/20 lg:block">{historyPanel}</aside>
@@ -553,7 +548,7 @@ export function ProjectAssistantPanel({
                 </p>
                 {viewer?.user.productRole === "super_admin" && !projectId ? <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><span>本会话模型</span><select aria-label="本会话模型" value={thread.generationModelId ?? "default"} onChange={(event) => void changeModel(event.target.value)} disabled={changingModel} className="h-7 max-w-44 rounded border bg-background px-1 text-[10px]"><option value="default">默认场景模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label> : null}
               </div>
-              <DropdownMenu><DropdownMenuTrigger asChild><Button type="button" variant="ghost" size="icon" aria-label="会话操作"><MoreHorizontal /></Button></DropdownMenuTrigger><DropdownMenuContent align="end">{thread.status === "active" ? <DropdownMenuItem onSelect={() => void archive()}><Archive />归档会话</DropdownMenuItem> : null}{thread.status === "active" ? <DropdownMenuSeparator /> : null}<DropdownMenuItem variant="destructive" onSelect={() => void removeThread()}><Trash2 />删除会话</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+              <Menu position="bottom-end"><Menu.Target><Button type="button" variant="subtle" size="compact-sm" aria-label="会话操作"><MoreHorizontal size={18} /></Button></Menu.Target><Menu.Dropdown>{thread.status === "active" ? <Menu.Item leftSection={<Archive size={14} />} onClick={() => void archive()}>归档会话</Menu.Item> : null}{thread.status === "active" ? <Menu.Divider /> : null}<Menu.Item color="red" leftSection={<Trash2 size={14} />} onClick={() => void removeThread()}>删除会话</Menu.Item></Menu.Dropdown></Menu>
             </div>
           ) : null}
 
@@ -617,7 +612,7 @@ export function ProjectAssistantPanel({
                             <AssistantCitationPreview citation={citation} projectId={projectId} onOpenSource={() => void openSource(citation)} />
                             <Button
                               type="button"
-                              variant="ghost"
+                              variant="subtle"
                               size="sm"
                               loading={downloading === citation.versionId}
                               disabled={Boolean(downloading)}
@@ -666,14 +661,14 @@ export function ProjectAssistantPanel({
             <section className="mb-4" aria-label="快捷操作">
               <p className="mb-2 text-xs font-medium text-foreground">快捷操作</p>
               <div className="flex flex-wrap gap-2">
-                <Tooltip label="执行固定模板的需求概览 Skill，不代表资料范围。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)}><FileText className="size-3.5" />生成需求概览</Button></Tooltip>
-                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending}><Sparkles className="size-3.5" />总结项目现状</Button></Tooltip>
-                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending}><ListChecks className="size-3.5" />列出待确认事项</Button></Tooltip>
+                <Tooltip label="执行固定模板的需求概览 Skill，不代表资料范围。"><Button type="button" size="sm" variant="default" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)} leftSection={<FileText size={14} />}>生成需求概览</Button></Tooltip>
+                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="default" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending} leftSection={<Sparkles size={14} />}>总结项目现状</Button></Tooltip>
+                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="default" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending} leftSection={<ListChecks size={14} />}>列出待确认事项</Button></Tooltip>
               </div>
             </section>
             <section className="mb-4 rounded-lg border border-dashed bg-muted/20 px-3 py-2.5" aria-label="本次引用" data-testid="assistant-context-references">
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-medium text-foreground">本次引用</p><span className="text-[10px] text-muted-foreground">已引用 {referencedProjectCount} 个项目、{referencedDocumentCount} 份资料</span></div>
-              {contextReferences.length ? <div className="mt-2 flex flex-wrap gap-1.5">{contextReferences.map((reference) => <Badge key={reference.type === "project" ? `project-${reference.projectId}` : `document-${reference.documentId}`} variant="outline" className="h-7 gap-1.5 bg-background pr-1.5 text-xs"><span data-testid={reference.type === "project" ? "project-reference-token" : "document-reference-token"} className="inline-flex items-center gap-1">{reference.type === "project" ? <FolderKanban className="size-3" /> : <Paperclip className="size-3" />}{reference.type === "project" ? "#" : "$"}{reference.label}</span><button type="button" aria-label={`移除 ${reference.label}`} onClick={() => removeContext(reference)} className="rounded-sm px-1 text-muted-foreground hover:bg-muted hover:text-foreground">×</button></Badge>)}</div> : <p className="mt-1 text-xs leading-5 text-muted-foreground">未指定引用，AI 会根据你的权限自动查找相关资料。</p>}
+              {contextReferences.length ? <div className="mt-2 flex flex-wrap gap-1.5">{contextReferences.map((reference) => <Badge key={reference.type === "project" ? `project-${reference.projectId}` : `document-${reference.documentId}`} variant="light" className="h-7 gap-1.5 bg-background pr-1.5 text-xs"><span data-testid={reference.type === "project" ? "project-reference-token" : "document-reference-token"} className="inline-flex items-center gap-1">{reference.type === "project" ? <FolderKanban className="size-3" /> : <Paperclip className="size-3" />}{reference.type === "project" ? "#" : "$"}{reference.label}</span><button type="button" aria-label={`移除 ${reference.label}`} onClick={() => removeContext(reference)} className="rounded-sm px-1 text-muted-foreground hover:bg-muted hover:text-foreground">×</button></Badge>)}</div> : <p className="mt-1 text-xs leading-5 text-muted-foreground">未指定引用，AI 会根据你的权限自动查找相关资料。</p>}
             </section>
             <label className="block">
               <span className="sr-only">向 AI 助手提问</span>
@@ -703,9 +698,7 @@ export function ProjectAssistantPanel({
                 <span>输入 # 引用项目，输入 $ 引用具体资料。Enter 发送，Shift+Enter 换行。</span>
                 <span className="ml-1">使用资料时会由服务端校验引用权限。</span>
               </span>
-              <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"} data-testid="assistant-send-button">
-                <Send className="size-3.5" />发送
-              </Button>
+              <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"} data-testid="assistant-send-button" leftSection={<Send size={14} />}>发送</Button>
             </div>
           </form>
         </div>
@@ -715,16 +708,15 @@ export function ProjectAssistantPanel({
         <p>AI 可直接完成通用聊天、写作、润色和方案讨论；涉及资料事实时才会检索。</p>
         <p className="sm:text-right">项目资料与公司资料会明确标注；资料不足时不会猜测。</p>
       </footer>
-      <Dialog open={picker !== null} onOpenChange={(open) => { if (!open) { setPicker(null); setPendingQuickAction(null); } }}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{picker === "project" ? "限定项目资料" : "限定一份资料"}</DialogTitle><DialogDescription>只显示你已经有权访问的内容；选择后会缩小本次提问的资料范围。</DialogDescription></DialogHeader>
-          <Input value={pickerSearch} onChange={(event) => setPickerSearch(event.target.value)} placeholder="搜索名称" autoFocus />
+      <Drawer opened={historyOpened} onClose={() => setHistoryOpened(false)} title="会话历史" size="md">{historyPanel}</Drawer>
+      <Modal opened={picker !== null} onClose={() => { setPicker(null); setPendingQuickAction(null); }} title={picker === "project" ? "限定项目资料" : "限定一份资料"} centered>
+          <Text size="sm" c="dimmed" mb="md">只显示你已经有权访问的内容；选择后会缩小本次提问的资料范围。</Text>
+          <TextInput value={pickerSearch} onChange={(event) => setPickerSearch(event.currentTarget.value)} placeholder="搜索名称" autoFocus />
           <div className="max-h-64 space-y-1 overflow-y-auto">
-            {visibleContextOptions.map((item) => <Button key={item.id} type="button" variant="ghost" className="w-full justify-start" onClick={() => chooseContext(item)}>{item.label}</Button>)}
+            {visibleContextOptions.map((item) => <Button key={item.id} type="button" variant="subtle" fullWidth justify="flex-start" onClick={() => chooseContext(item)}>{item.label}</Button>)}
             {!visibleContextOptions.length ? <p className="py-6 text-center text-sm text-muted-foreground">没有匹配的可用资料</p> : null}
           </div>
-        </DialogContent>
-      </Dialog>
+      </Modal>
     </section>
   );
 }

@@ -319,6 +319,16 @@ export async function collectRequirementEvidence(input: {
         and d.document_status = 'active'
         and v.storage_status = 'stored' and v.is_current
         and j.status = 'succeeded'
+        -- A confirmed requirement overview is a generated output, not new
+        -- project evidence. Without this exclusion, its asynchronous parsing
+        -- can change the evidence digest between candidate generation and
+        -- candidate selection, making a valid second regeneration fail 409.
+        and not exists (
+          select 1
+          from guided_requirement_overviews saved_overview
+          where saved_overview.project_id = ${input.projectId}
+            and saved_overview.saved_document_id = d.id
+        )
         and (
           (authorized.source_scope = 'project' and authorized.source_project_id = ${input.projectId})
           or (

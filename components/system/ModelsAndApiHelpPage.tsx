@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, CircleHelp } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Box, Button, Card, Group, SimpleGrid, Text, ThemeIcon, Title } from "@mantine/core";
 import { withBasePath } from "@/lib/base-path";
 
 const guides = [
@@ -60,75 +60,74 @@ const steps = [
 
 export function ModelsAndApiHelpPage() {
   return (
-    <main className="mx-auto max-w-5xl space-y-7 px-5 py-7 sm:px-6 lg:px-8">
-      <header>
-        <p className="text-xs font-medium text-primary">帮助中心</p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
+    <Box component="main" maw={1120} mx="auto" px={{ base: "md", sm: "lg" }} py="xl">
+      <Box component="header">
+        <Text size="xs" fw={700} c="projectBlue.7">
+          帮助中心
+        </Text>
+        <Title order={1} mt={4}>
           模型与 API 使用说明
-        </h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+        </Title>
+        <Text maw={760} mt="sm" size="sm" lh={1.8} c="dimmed">
           管理员在这里完成 Provider、API Key、模型和业务场景配置。API Key
           只在保存时提交给服务端加密保存，不会显示在页面、审计或日志中；普通用户直接使用管理员配置的默认模型。
-        </p>
-        <Button className="mt-4" asChild>
-          <Link href="/admin/models">
-            打开 Provider 与模型设置
-            <ArrowRight />
-          </Link>
+        </Text>
+        <Button component={Link} href="/admin/models" mt="lg" rightSection={<ArrowRight size={16} />}>
+          打开 Provider 与模型设置
         </Button>
-      </header>
+      </Box>
 
-      <section className="rounded-xl border bg-card p-5">
-        <div className="flex items-center gap-2">
-          <CheckCircle2 className="size-4 text-primary" />
-          <h2 className="text-sm font-semibold">正确启用顺序</h2>
-        </div>
-        <ol className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <Card withBorder radius="md" p="lg" mt="xl">
+        <Group gap="xs">
+          <CheckCircle2 size={17} color="var(--mantine-color-projectBlue-6)" />
+          <Text fw={650}>正确启用顺序</Text>
+        </Group>
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mt="md" spacing="sm">
           {steps.map((step, index) => (
-            <li key={step} className="flex items-center gap-3 rounded-lg bg-muted/40 p-3 text-sm">
-              <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+            <Group key={step} align="center" gap="sm" p="sm" bg="projectBlue.0" style={{ borderRadius: "var(--mantine-radius-md)" }}>
+              <ThemeIcon variant="filled" radius="xl" size="sm">
                 {index + 1}
-              </span>
-              {step}
-            </li>
+              </ThemeIcon>
+              <Text size="sm">{step}</Text>
+            </Group>
           ))}
-        </ol>
-      </section>
+        </SimpleGrid>
+      </Card>
 
-      <section className="rounded-xl border border-primary/20 bg-primary/5 p-5">
-        <div className="flex items-center gap-2">
-          <CircleHelp className="size-4 text-primary" />
-          <h2 className="text-sm font-semibold">Model ID 到底是什么？</h2>
-        </div>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          Model ID 是服务商 API 使用的模型调用名称，例如
-          <code className="mx-1 rounded bg-background px-1.5 py-0.5 text-foreground">
-            qwen3.7-max
-          </code>
-          。它不是账号 ID、Provider ID 或 ProjectAI 数据库 ID。Provider
-          测试成功后，系统会自动读取可用模型；直接搜索并选择即可。只有服务商不提供模型列表时，才需要从其官方文档复制 Model ID。
-        </p>
-      </section>
+      <Card withBorder radius="md" p="lg" mt="md" bg="projectBlue.0">
+        <Group gap="xs">
+          <CircleHelp size={17} color="var(--mantine-color-projectBlue-6)" />
+          <Title order={2} size="h4">
+            Model ID 到底是什么？
+          </Title>
+        </Group>
+        <Text mt="sm" size="sm" lh={1.8} c="dimmed">
+          Model ID 是服务商 API 使用的模型调用名称，例如 <code>qwen3.7-max</code>。
+          它不是账号 ID、Provider ID 或 ProjectAI 数据库 ID。Provider 测试成功后，系统会自动读取可用模型；直接搜索并选择即可。只有服务商不提供模型列表时，才需要从其官方文档复制 Model ID。
+        </Text>
+      </Card>
 
-      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mt="xl" spacing="md">
         {guides.map(({ title, description, image }) => (
-          <article key={image} className="overflow-hidden rounded-lg border bg-card">
+          <Card key={image} withBorder radius="md" padding={0} style={{ overflow: "hidden" }}>
             <Image
               src={withBasePath(`/help/models-and-api/${image}.svg`)}
               width={640}
               height={360}
               alt={`${title} 操作示意图`}
-              className="h-auto w-full border-b"
+              style={{ display: "block", width: "100%", height: "auto" }}
             />
-            <div className="p-4">
-              <h2 className="text-sm font-semibold">{title}</h2>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            <Box p="md">
+              <Title order={2} size="h5">
+                {title}
+              </Title>
+              <Text mt={6} size="xs" lh={1.7} c="dimmed">
                 {description}
-              </p>
-            </div>
-          </article>
+              </Text>
+            </Box>
+          </Card>
         ))}
-      </section>
-    </main>
+      </SimpleGrid>
+    </Box>
   );
 }
