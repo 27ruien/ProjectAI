@@ -384,6 +384,7 @@ export async function syncRequirementSource(input: {
   projectName: string;
   markdown: string;
   linkedDocumentId?: string | null;
+  artifactTitle?: string;
 }) {
   const [space] = await getDb().select({ id: knowledgeSpace.id }).from(knowledgeSpace).where(and(
     eq(knowledgeSpace.projectId, input.projectId),
@@ -393,7 +394,7 @@ export async function syncRequirementSource(input: {
   if (!space) throw new ProjectManagementError(409, "PROJECT_KNOWLEDGE_NOT_READY", "项目知识空间不可用");
   const file = new File(
     [input.markdown],
-    `${input.projectName.replace(/[\\/:*?"<>|]/g, "-")}-需求文档.md`,
+    `${(input.artifactTitle ?? `${input.projectName} 需求文档`).replace(/[\\/:*?"<>|]/g, "-")}.md`,
     { type: "text/markdown" },
   );
   return uploadDocument({
@@ -402,7 +403,7 @@ export async function syncRequirementSource(input: {
     requestHeaders: input.requestHeaders,
     idempotencyKey: input.requirementId,
     file,
-    displayName: `${input.projectName} 需求文档`,
+    displayName: input.artifactTitle ?? `${input.projectName} 需求文档`,
     knowledgeSpaceId: input.linkedDocumentId ? undefined : space.id,
     documentId: input.linkedDocumentId ?? undefined,
   });

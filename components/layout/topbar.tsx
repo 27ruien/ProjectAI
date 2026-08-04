@@ -1,26 +1,55 @@
 "use client";
 
 import Link from "next/link";
+import { ActionIcon, Breadcrumbs, Group, Text } from "@mantine/core";
 import { Menu } from "lucide-react";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import { EnvironmentBadge } from "./environment-banner";
-import { Button } from "@/components/ui/button";
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
 
-const labels: Record<string, string> = { assistant: "AI 助手", "data-spaces": "资料空间", projects: "项目资料", company: "公司资料", new: "创建项目", overview: "基本信息", files: "项目文件", artifacts: "AI 生成文档", members: "成员与权限", settings: "管理设置", organization: "组织与账号" };
+const labels: Record<string, string> = {
+  assistant: "AI 助手",
+  "data-spaces": "资料空间",
+  projects: "项目资料",
+  company: "公司资料",
+  new: "创建项目",
+  overview: "基本信息",
+  files: "项目文件",
+  documents: "文件",
+  versions: "版本",
+  view: "查看",
+  members: "成员与权限",
+  settings: "管理设置",
+  organization: "组织与账号",
+  admin: "管理后台",
+  models: "Provider 与模型",
+};
 
-export function Topbar({ currentProject, currentPath, onMenuOpen }: { currentProject?: AuthorizedProjectSummary; currentPath: string; onMenuOpen: () => void }) {
+function safeLabel(segment: string, index: number, segments: string[], project?: AuthorizedProjectSummary) {
+  if (project && segments[0] === "data-spaces" && segments[1] === "projects" && index === 2) return project.name;
+  if (labels[segment]) return labels[segment];
+  if (/^(project|document|version)-/iu.test(segment) || /^[0-9a-f]{8}-[0-9a-f-]{27,}$/iu.test(segment)) return "详情";
+  return segment;
+}
+
+export function Topbar({
+  currentProject,
+  currentPath,
+  onMenuOpen,
+}: {
+  currentProject?: AuthorizedProjectSummary;
+  currentPath: string;
+  onMenuOpen: () => void;
+}) {
   const segments = currentPath.split("/").filter(Boolean);
-  const items = segments.map((item, index) => {
-    if (segments[0] === "knowledge" && segments[1] === "projects" && index === 2 && currentProject) return currentProject.name;
-    return labels[item] ?? item;
-  });
-  return <header className="sticky top-0 z-30 flex h-14 items-center border-b bg-background/95 px-4 backdrop-blur sm:px-6 lg:px-8">
-    <Button variant="ghost" size="icon" className="mr-2 lg:hidden" onClick={onMenuOpen} aria-label="打开导航"><Menu /></Button>
-    <Breadcrumb className="min-w-0"><BreadcrumbList className="flex-nowrap text-xs">
-      <BreadcrumbItem className="hidden sm:flex"><BreadcrumbLink asChild><Link href="/assistant">ProjectAI</Link></BreadcrumbLink></BreadcrumbItem>
-      {items.map((item, index) => <span key={`${item}-${index}`} className="contents"><BreadcrumbSeparator className="hidden sm:block" /><BreadcrumbItem className={index === items.length - 1 ? "min-w-0" : "hidden sm:flex"}>{index === items.length - 1 ? <BreadcrumbPage className="truncate">{item}</BreadcrumbPage> : <span>{item}</span>}</BreadcrumbItem></span>)}
-    </BreadcrumbList></Breadcrumb>
-    <div className="ml-auto"><EnvironmentBadge /></div>
-  </header>;
+  const items = segments.map((item, index) => safeLabel(item, index, segments, currentProject));
+  return (
+    <Group h="100%" px={{ base: "md", sm: "lg", lg: "xl" }} wrap="nowrap">
+      <ActionIcon variant="subtle" hiddenFrom="lg" onClick={onMenuOpen} aria-label="打开导航"><Menu size={19} /></ActionIcon>
+      <Breadcrumbs fz="xs" style={{ minWidth: 0 }}>
+        <Text component={Link} href="/assistant" c="dimmed" visibleFrom="sm">ProjectAI</Text>
+        {items.map((item, index) => <Text key={`${item}-${index}`} truncate fw={index === items.length - 1 ? 600 : 400} c={index === items.length - 1 ? "dark" : "dimmed"}>{item}</Text>)}
+      </Breadcrumbs>
+      <Group ml="auto"><EnvironmentBadge /></Group>
+    </Group>
+  );
 }

@@ -1,24 +1,76 @@
 "use client";
 
+import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
+import { Badge, Box, Breadcrumbs, Group, Tabs, Text, Title } from "@mantine/core";
 import { Eye } from "lucide-react";
-import type { ReactNode } from "react";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
-import { statusClasses, statusLabel } from "./mock-view";
-import { Badge } from "@/components/ui/badge";
-import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb";
+import { statusLabel } from "./mock-view";
 
 export type ProjectTab = "overview" | "files" | "artifacts" | "members";
-const tabs: { id: ProjectTab; label: string; path: string }[] = [
-  { id: "overview", label: "基本信息", path: "overview" }, { id: "files", label: "项目资料", path: "files" }, { id: "artifacts", label: "AI 生成文档", path: "artifacts" }, { id: "members", label: "成员与权限", path: "members" },
+
+const tabs: { id: Exclude<ProjectTab, "artifacts">; label: string; path: string }[] = [
+  { id: "overview", label: "基本信息", path: "overview" },
+  { id: "files", label: "项目资料", path: "files" },
+  { id: "members", label: "成员与权限", path: "members" },
 ];
 
-export function ProjectContextHeader({ project, activeTab, actions }: { project: AuthorizedProjectSummary; activeTab: ProjectTab; actions?: ReactNode }) {
-  return <div className="border-b bg-card">
-    <div className="px-5 pt-5 sm:px-6 lg:px-8">
-      <Breadcrumb className="mb-3"><BreadcrumbList className="text-xs"><BreadcrumbItem><BreadcrumbLink asChild><Link href="/data-spaces/projects">项目资料</Link></BreadcrumbLink></BreadcrumbItem><BreadcrumbSeparator /><BreadcrumbItem><BreadcrumbPage>{project.name}</BreadcrumbPage></BreadcrumbItem></BreadcrumbList></Breadcrumb>
-      <div className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2.5"><h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1><Badge variant="outline" className={statusClasses(project.status)}>{statusLabel(project.status)}</Badge>{!project.permissions.canEditProject ? <Badge variant="outline" className="border-info/20 bg-info-soft text-info"><Eye />只读</Badge> : null}</div><p className="mt-1.5 max-w-3xl text-sm leading-6 text-muted-foreground">{project.description || "暂无项目描述"}</p></div>{actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}</div>
-      <nav className="mt-5 flex gap-1 overflow-x-auto" aria-label="项目详情导航" role="tablist">{tabs.map((tab) => <Link key={tab.id} href={tab.id === "overview" ? `/data-spaces/projects/${project.id}` : `/data-spaces/projects/${project.id}/${tab.path}`} role="tab" aria-selected={activeTab === tab.id} aria-controls={`project-${project.id}-${tab.id}-panel`} id={`project-${project.id}-${tab.id}-tab`} data-testid={tab.id === "files" ? "project-documents-tab" : undefined} className={`relative whitespace-nowrap px-3 py-3 text-sm font-medium transition-colors ${activeTab === tab.id ? "text-primary after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{tab.label}</Link>)}</nav>
-    </div>
-  </div>;
+function statusColor(status: string) {
+  if (["active", "in_progress"].includes(status)) return "green";
+  if (["blocked", "at_risk"].includes(status)) return "orange";
+  return "gray";
+}
+
+export function ProjectContextHeader({
+  project,
+  activeTab,
+  actions,
+}: {
+  project: AuthorizedProjectSummary;
+  activeTab: ProjectTab;
+  actions?: ReactNode;
+}) {
+  useEffect(() => {
+    document.title = `${project.name} · Project AI OS`;
+  }, [project.name]);
+
+  const selected = activeTab === "artifacts" ? "files" : activeTab;
+  return (
+    <Box bg="white" bd="0 0 1px 0 solid var(--mantine-color-gray-3)">
+      <Box px={{ base: "md", sm: "lg", lg: "xl" }} pt="lg">
+        <Breadcrumbs fz="xs" mb="sm">
+          <Text component={Link} href="/data-spaces/projects" c="dimmed">项目资料</Text>
+          <Text>{project.name}</Text>
+        </Breadcrumbs>
+        <Group justify="space-between" align="flex-start" gap="lg">
+          <Box miw={0}>
+            <Group gap="sm">
+              <Title order={1} size="h2" lineClamp={1}>{project.name}</Title>
+              <Badge variant="light" color={statusColor(project.status)}>{statusLabel(project.status)}</Badge>
+              {!project.permissions.canEditProject ? <Badge variant="light" leftSection={<Eye size={12} />}>只读</Badge> : null}
+            </Group>
+            <Text c="dimmed" size="sm" mt={6} maw={760}>{project.description || "暂无项目描述"}</Text>
+          </Box>
+          {actions ? <Group gap="xs">{actions}</Group> : null}
+        </Group>
+        <Tabs value={selected} mt="lg" variant="outline">
+          <Tabs.List>
+            {tabs.map((tab) => (
+              <Tabs.Tab
+                key={tab.id}
+                value={tab.id}
+                renderRoot={(props) => (
+                  <Link
+                    {...props}
+                    href={tab.id === "overview" ? `/data-spaces/projects/${project.id}` : `/data-spaces/projects/${project.id}/${tab.path}`}
+                  />
+                )}
+                data-testid={tab.id === "files" ? "project-documents-tab" : undefined}
+              >{tab.label}</Tabs.Tab>
+            ))}
+          </Tabs.List>
+        </Tabs>
+      </Box>
+    </Box>
+  );
 }

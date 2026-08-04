@@ -1,9 +1,23 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import {
+  Avatar,
+  Box,
+  Divider,
+  Group,
+  Menu,
+  NavLink,
+  ScrollArea,
+  Stack,
+  Text,
+  UnstyledButton,
+} from "@mantine/core";
 import {
   Bot,
   Building2,
+  ChevronRight,
   FileText,
   FolderOpen,
   LogOut,
@@ -11,26 +25,9 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
-import { useState } from "react";
 import { initials } from "@/components/project/mock-view";
 import { navigateToLogin, signOut } from "@/components/auth/auth-client";
 import { productRoleLabel, type ViewerContext } from "@/lib/auth/ui-types";
-import { cn } from "@/lib/utils";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 
 const navigation = [
   { label: "AI 助手", href: "/assistant", icon: Bot },
@@ -44,24 +41,11 @@ interface SidebarProps {
   onMobileClose: () => void;
 }
 
-function SidebarContent({
-  viewer,
-  currentPath,
-  onNavigate,
-}: {
-  viewer: ViewerContext;
-  currentPath: string;
-  onNavigate?: () => void;
-}) {
+export function Sidebar({ viewer, currentPath, onMobileClose }: SidebarProps) {
   const [loggingOut, setLoggingOut] = useState(false);
-  const active = (href: string) =>
-    currentPath === href || currentPath.startsWith(`${href}/`);
-  const admin =
-    viewer.user.systemRole === "system_admin" ||
-    viewer.user.productRole === "admin";
-  const canManageAiModels =
-    viewer.user.systemRole === "system_admin" ||
-    Boolean(viewer.aiConfigurationOrganizationId);
+  const active = (href: string) => currentPath === href || currentPath.startsWith(`${href}/`);
+  const admin = viewer.user.systemRole === "system_admin" || viewer.user.productRole === "admin";
+  const canManageAiModels = viewer.user.systemRole === "system_admin" || Boolean(viewer.aiConfigurationOrganizationId);
   const logout = async () => {
     if (loggingOut) return;
     setLoggingOut(true);
@@ -73,184 +57,63 @@ function SidebarContent({
     }
   };
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-[58px] items-center border-b border-sidebar-border px-4">
-        <Link
-          href="/assistant"
-          className="flex min-w-0 items-center gap-2.5"
-          onClick={onNavigate}
-        >
-          <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-primary/15 bg-accent text-primary">
-            <Building2 className="size-[17px]" />
-          </span>
-          <span className="truncate text-[15px] font-semibold tracking-tight">
-            ProjectAI
-          </span>
-        </Link>
-      </div>
-      <nav className="flex-1 overflow-y-auto p-3" aria-label="主导航">
-        <p className="mb-2 px-2 text-[10px] font-medium uppercase tracking-[0.14em] text-sidebar-muted">
-          工作区
-        </p>
-        <div className="space-y-1">
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={onNavigate}
-                className={cn(
-                  "flex h-10 items-center gap-3 rounded-lg px-3 text-sm transition-colors",
-                  active(item.href)
-                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                    : "text-sidebar-muted hover:bg-muted hover:text-sidebar-foreground",
-                )}
-              >
-                <Icon className="size-[17px] shrink-0" />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </div>
-        {active("/data-spaces") ? (
-          <div
-            className="mt-1 space-y-0.5 border-l border-sidebar-border pl-3 ml-4"
-            aria-label="资料空间导航"
-          >
-            <Link
-              href="/data-spaces/projects"
-              onClick={onNavigate}
-              className={cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 text-xs",
-                active("/data-spaces/projects")
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-muted hover:bg-muted hover:text-sidebar-foreground",
-              )}
-            >
-              <FolderOpen className="size-3.5" />
-              项目资料
-            </Link>
-            <Link
-              href="/data-spaces/company"
-              onClick={onNavigate}
-              className={cn(
-                "flex h-8 items-center gap-2 rounded-md px-2 text-xs",
-                active("/data-spaces/company")
-                  ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                  : "text-sidebar-muted hover:bg-muted hover:text-sidebar-foreground",
-              )}
-            >
-              <FileText className="size-3.5" />
-              公司资料
-            </Link>
-          </div>
-        ) : null}
-      </nav>
-      <div className="border-t border-sidebar-border p-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="flex w-full items-center gap-3 rounded-lg p-2 text-left hover:bg-muted"
-              aria-label="账户菜单"
-            >
-              <span className="grid size-8 shrink-0 place-items-center rounded-full bg-accent text-[10px] font-semibold text-primary">
-                {initials(viewer.user.displayName)}
-              </span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs font-medium">
-                  {viewer.user.displayName}
-                </span>
-                <span className="block truncate text-[10px] text-muted-foreground">
-                  {productRoleLabel(viewer.user.productRole)}
-                </span>
-              </span>
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuLabel className="flex items-center gap-2 text-xs">
-              <ShieldCheck className="size-3.5 text-primary" />
-              {productRoleLabel(viewer.user.productRole)}
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {admin ? (
-              <>
-                <DropdownMenuItem asChild>
-                  <Link href="/organization" onClick={onNavigate}>
-                    <Users />
-                    组织与账号
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/settings" onClick={onNavigate}>
-                    <Settings />
-                    管理设置
-                  </Link>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            ) : null}
-            {canManageAiModels ? (
-              <DropdownMenuItem asChild>
-                <Link href="/admin/models" onClick={onNavigate}>
-                  <Bot />
-                  Provider 与模型
-                </Link>
-              </DropdownMenuItem>
-            ) : null}
-            <DropdownMenuItem asChild>
-              <Link href="/help/models-and-api" onClick={onNavigate}>
-                模型与 API 帮助
-              </Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onSelect={() => void logout()}
-              disabled={loggingOut}
-            >
-              <LogOut />
-              {loggingOut ? "正在退出" : "退出登录"}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-    </div>
-  );
-}
-
-export function Sidebar({
-  viewer,
-  currentPath,
-  mobileOpen,
-  onMobileClose,
-}: SidebarProps) {
-  return (
-    <>
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-60 border-r border-sidebar-border bg-sidebar text-sidebar-foreground lg:block">
-        <SidebarContent viewer={viewer} currentPath={currentPath} />
-      </aside>
-      <Sheet
-        open={mobileOpen}
-        onOpenChange={(open) => {
-          if (!open) onMobileClose();
-        }}
-      >
-        <SheetContent
-          side="left"
-          className="w-[min(86vw,280px)] border-sidebar-border bg-sidebar p-0"
-          showCloseButton
-        >
-          <SheetHeader className="sr-only">
-            <SheetTitle>主导航</SheetTitle>
-            <SheetDescription>ProjectAI 移动端导航</SheetDescription>
-          </SheetHeader>
-          <SidebarContent
-            viewer={viewer}
-            currentPath={currentPath}
-            onNavigate={onMobileClose}
-          />
-        </SheetContent>
-      </Sheet>
-    </>
+    <Stack h="100%" gap={0}>
+      <Group h={56} px="md" wrap="nowrap">
+        <Avatar color="projectBlue" variant="light" radius="md" size={34}><Building2 size={18} /></Avatar>
+        <Text component={Link} href="/assistant" fw={700} c="dark" onClick={onMobileClose}>ProjectAI</Text>
+      </Group>
+      <Divider />
+      <ScrollArea style={{ flex: 1 }} p="sm">
+        <Text size="xs" fw={700} c="dimmed" tt="uppercase" px="sm" py={8}>工作区</Text>
+        <Stack gap={4}>
+          {navigation.map((item) => (
+            <NavLink
+              key={item.href}
+              component={Link}
+              href={item.href}
+              label={item.label}
+              leftSection={<item.icon size={17} />}
+              active={active(item.href)}
+              color="projectBlue"
+              variant="light"
+              onClick={onMobileClose}
+              rightSection={item.href === "/data-spaces" ? <ChevronRight size={14} /> : undefined}
+            />
+          ))}
+          {active("/data-spaces") ? (
+            <Box ml="lg" pl="xs" bd="0 0 0 1px solid var(--mantine-color-gray-3)">
+              <NavLink component={Link} href="/data-spaces/projects" label="项目资料" leftSection={<FolderOpen size={15} />} active={active("/data-spaces/projects")} color="projectBlue" variant="light" onClick={onMobileClose} />
+              <NavLink component={Link} href="/data-spaces/company" label="公司资料" leftSection={<FileText size={15} />} active={active("/data-spaces/company")} color="projectBlue" variant="light" onClick={onMobileClose} />
+            </Box>
+          ) : null}
+        </Stack>
+      </ScrollArea>
+      <Divider />
+      <Box p="sm">
+        <Menu width={240} position="top-start" shadow="md">
+          <Menu.Target>
+            <UnstyledButton w="100%" p="xs" style={{ borderRadius: "var(--mantine-radius-md)" }} aria-label="账户菜单">
+              <Group wrap="nowrap">
+                <Avatar color="projectBlue" variant="light" size={34}>{initials(viewer.user.displayName)}</Avatar>
+                <Box miw={0} style={{ flex: 1 }}><Text size="sm" fw={600} truncate>{viewer.user.displayName}</Text><Text size="xs" c="dimmed" truncate>{productRoleLabel(viewer.user.productRole)}</Text></Box>
+                <ChevronRight size={15} />
+              </Group>
+            </UnstyledButton>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Label><Group gap={6}><ShieldCheck size={14} />{productRoleLabel(viewer.user.productRole)}</Group></Menu.Label>
+            <Menu.Divider />
+            {admin ? <>
+              <Menu.Item component={Link} href="/organization" leftSection={<Users size={15} />} onClick={onMobileClose}>组织与账号</Menu.Item>
+              <Menu.Item component={Link} href="/settings" leftSection={<Settings size={15} />} onClick={onMobileClose}>管理设置</Menu.Item>
+            </> : null}
+            {canManageAiModels ? <Menu.Item component={Link} href="/admin/models" leftSection={<Bot size={15} />} onClick={onMobileClose}>Provider 与模型</Menu.Item> : null}
+            <Menu.Item component={Link} href="/help/models-and-api" leftSection={<FileText size={15} />} onClick={onMobileClose}>模型与 API 帮助</Menu.Item>
+            <Menu.Divider />
+            <Menu.Item color="red" leftSection={<LogOut size={15} />} disabled={loggingOut} onClick={() => void logout()}>{loggingOut ? "正在退出" : "退出登录"}</Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      </Box>
+    </Stack>
   );
 }

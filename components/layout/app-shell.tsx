@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { Alert, AppShell as MantineAppShell, Box } from "@mantine/core";
+import { Eye } from "lucide-react";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { ToastProvider } from "@/components/common/toast";
-import { Eye } from "lucide-react";
 import type { AuthorizedProjectSummary, ViewerContext } from "@/lib/auth/ui-types";
 
 interface AppShellProps {
@@ -19,5 +20,25 @@ export function AppShell({ viewer, currentProject, currentPath, children, featur
   const [mobileOpen, setMobileOpen] = useState(false);
   const readOnly = currentProject ? !currentProject.permissions.canEditProject : false;
   void featureFlags;
-  return <ToastProvider><div className="min-h-screen bg-background"><Sidebar viewer={viewer} currentPath={currentPath} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} /><div className="min-h-screen lg:pl-60"><Topbar currentProject={currentProject} currentPath={currentPath} onMenuOpen={() => setMobileOpen(true)} />{readOnly ? <div className="flex min-h-9 items-center justify-center gap-2 border-b border-info/15 bg-info-soft px-4 py-2 text-center text-xs text-info" role="status"><Eye className="size-3.5" />你以只读成员身份访问此项目，修改、审核和删除操作已关闭。</div> : null}<main className="min-h-[calc(100vh-56px)]"><div className="mx-auto w-full max-w-7xl page-enter">{children}</div></main></div></div></ToastProvider>;
+  return (
+    <ToastProvider>
+      <MantineAppShell
+        header={{ height: 56 }}
+        navbar={{ width: 240, breakpoint: "lg", collapsed: { mobile: !mobileOpen } }}
+        padding={0}
+        bg="var(--mantine-color-gray-0)"
+      >
+        <MantineAppShell.Header bg="rgba(255,255,255,.94)" style={{ backdropFilter: "blur(12px)" }}>
+          <Topbar currentProject={currentProject} currentPath={currentPath} onMenuOpen={() => setMobileOpen(true)} />
+        </MantineAppShell.Header>
+        <MantineAppShell.Navbar bg="white">
+          <Sidebar viewer={viewer} currentPath={currentPath} mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
+        </MantineAppShell.Navbar>
+        <MantineAppShell.Main>
+          {readOnly ? <Alert radius={0} color="projectBlue" icon={<Eye size={15} />}>你以只读成员身份访问此项目，修改、审核和删除操作已关闭。</Alert> : null}
+          <Box component="main" mih="calc(100vh - 56px)" maw={1600} mx="auto">{children}</Box>
+        </MantineAppShell.Main>
+      </MantineAppShell>
+    </ToastProvider>
+  );
 }

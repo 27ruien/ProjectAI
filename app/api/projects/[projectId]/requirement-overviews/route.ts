@@ -9,6 +9,6 @@ export async function GET(request: Request, context: Context) {
   catch (error) { return projectManagementErrorResponse(error); }
 }
 export async function POST(request: Request, context: Context) {
-  try { requireTrustedMutationRequest(request); const { projectId } = await context.params; const principal = await requireApiPrincipal(request.headers); const overview = await createRequirementOverview({ principal, projectId, requestHeaders: request.headers }); return jsonResponse({ overview }, { status: 201 }); }
+  try { requireTrustedMutationRequest(request); const { projectId } = await context.params; const principal = await requireApiPrincipal(request.headers); const overview = await createRequirementOverview({ principal, projectId, payload: await request.json(), requestHeaders: request.headers }); return jsonResponse({ overview }, { status: 201 }); }
   catch (error) { return projectManagementErrorResponse(error); }
 }

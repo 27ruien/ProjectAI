@@ -6,7 +6,7 @@ import {
   Archive,
   Bot,
   ChevronRight,
-  Download,
+  ExternalLink,
   FileText,
   FolderKanban,
   ListChecks,
@@ -36,7 +36,7 @@ import {
   listGeneralAssistantModels,
   setGeneralAssistantThreadModel,
 } from "@/lib/ai/project-assistant/client";
-import { documentErrorMessage, downloadProjectDocumentVersion } from "@/lib/documents/client";
+import { documentErrorMessage } from "@/lib/documents/client";
 import type { ProjectDocumentDto } from "@/types/documents";
 import type {
   ProjectAssistantCitationDto,
@@ -53,6 +53,7 @@ import { RequirementOverviewWorkspace } from "@/components/requirement-overview/
 import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
 import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AssistantCitationPreview } from "./AssistantCitationPreview";
+import { documentViewerPath, type DocumentLocator } from "@/lib/documents/viewer-route";
 import { AssistantHistoryCitationPreview } from "./AssistantHistoryCitationPreview";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -431,7 +432,7 @@ export function ProjectAssistantPanel({
     }
   };
 
-  const download = async (citation: ProjectAssistantCitationDto) => {
+  const openSource = async (citation: ProjectAssistantCitationDto) => {
     setDownloading(citation.versionId);
     setError(null);
     try {
@@ -446,7 +447,27 @@ export function ProjectAssistantPanel({
         URL.revokeObjectURL(url);
       } else {
         if (!projectId) throw new Error("project source unavailable");
-        await downloadProjectDocumentVersion(projectId, citation.documentId, citation.versionId, citation.displayName);
+        const source = citation.source;
+        let locator: DocumentLocator = {};
+        if (source.type === "pdf_page") locator = { pageNumber: source.pageNumber };
+        else if (source.type === "pptx_slide") locator = { slideNumber: source.slideNumber };
+        else if (source.type === "xlsx_range") locator = {
+          sheetName: source.sheetName,
+          cellRange: `R${source.rowStart}C${source.columnStart}:R${source.rowEnd}C${source.columnEnd}`,
+        };
+        else if (source.type === "text_lines") locator = { lineStart: source.lineStart, lineEnd: source.lineEnd };
+        else if (source.type === "markdown_section") locator = { lineStart: source.lineStart, lineEnd: source.lineEnd, heading: source.headingPath.at(-1) };
+        else if (source.type === "docx_section") locator = { heading: source.headingPath.at(-1) };
+        window.open(
+          documentViewerPath({
+            projectId,
+            documentId: citation.documentId,
+            versionId: citation.versionId,
+            locator,
+          }),
+          "_blank",
+          "noopener,noreferrer",
+        );
       }
     } catch (caught) {
       setError(documentErrorMessage(caught));
@@ -593,16 +614,16 @@ export function ProjectAssistantPanel({
                               </div>
                             </div>
                             <div className="flex items-center gap-1">
-                            <AssistantCitationPreview citation={citation} projectId={projectId} onOpenSource={() => void download(citation)} />
+                            <AssistantCitationPreview citation={citation} projectId={projectId} onOpenSource={() => void openSource(citation)} />
                             <Button
                               type="button"
                               variant="ghost"
                               size="sm"
                               loading={downloading === citation.versionId}
                               disabled={Boolean(downloading)}
-                              onClick={() => void download(citation)}
+                              onClick={() => void openSource(citation)}
                             >
-                              <Download className="size-3.5" />原文件
+                              <ExternalLink className="size-3.5" />打开来源
                             </Button>
                             </div>
                           </div>

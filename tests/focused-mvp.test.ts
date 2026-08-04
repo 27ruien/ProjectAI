@@ -73,7 +73,8 @@ describe("focused MVP product surface", () => {
     assert.match(workspace, /<CompanyKnowledgePage/);
     assert.match(projectHeader, /基本信息/);
     assert.match(projectHeader, /项目资料/);
-    assert.match(projectHeader, /AI 生成文档/);
+    assert.doesNotMatch(projectHeader, /label: "AI 生成文档"/);
+    assert.match(router, /child === "artifacts"[\s\S]*\/files/);
     assert.match(projectHeader, /成员与权限/);
   });
 

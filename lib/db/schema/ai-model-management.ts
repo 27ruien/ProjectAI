@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, boolean, check, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
 import { organization } from "./organizations";
 import { project } from "./projects";
 import { projectDocument, projectDocumentVersion } from "./project-documents";
@@ -147,6 +147,10 @@ export type RequirementOverviewQuestion = {
 export const guidedRequirementOverview = pgTable("guided_requirement_overviews", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull().references(() => project.id, { onDelete: "cascade" }),
+  basedOnOverviewId: text("based_on_overview_id").references(
+    (): AnyPgColumn => guidedRequirementOverview.id,
+    { onDelete: "set null" },
+  ),
   versionNumber: integer("version_number").notNull(),
   status: varchar("status", { length: 32 }).notNull().default("prefilled"),
   items: jsonb("items").$type<RequirementOverviewItem[]>().notNull().default(sql`'[]'::jsonb`),
@@ -165,6 +169,7 @@ export const guidedRequirementOverview = pgTable("guided_requirement_overviews",
 }, (table) => [
   uniqueIndex("guided_requirement_overview_project_version_uidx").on(table.projectId, table.versionNumber),
   index("guided_requirement_overview_project_updated_idx").on(table.projectId, table.updatedAt),
+  index("guided_requirement_overview_lineage_idx").on(table.projectId, table.basedOnOverviewId),
   check("guided_requirement_overview_status_check", sql`${table.status} in ('prefilled','needs_confirmation','ready','generated','failed')`),
 ]);
 

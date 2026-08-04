@@ -1,56 +1,54 @@
 @import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
 :root {
-  --background: #fbfcfc;
-  --foreground: #202625;
+  --background: #f6f8fc;
+  --foreground: #182033;
   --card: #ffffff;
-  --card-foreground: #202625;
+  --card-foreground: #182033;
   --popover: #ffffff;
-  --popover-foreground: #202625;
-  --muted: #f3f6f5;
-  --muted-foreground: #707a78;
-  --border: #e1e8e6;
-  --input: #dce5e3;
-  --primary: #20ae9f;
-  --primary-hover: #168f83;
+  --popover-foreground: #182033;
+  --muted: #eef1f7;
+  --muted-foreground: #667085;
+  --border: #dde3ee;
+  --input: #d5ddeb;
+  --primary: #4058d6;
+  --primary-hover: #3448b8;
   --primary-foreground: #ffffff;
-  --secondary: #f1f6f5;
-  --secondary-foreground: #31504c;
-  --accent: #e8f5f2;
-  --accent-foreground: #176f66;
-  --success: #3d7f6e;
-  --success-soft: #edf6f2;
-  --warning: #94703e;
-  --warning-soft: #f8f3e9;
-  --destructive: #a85f63;
-  --destructive-soft: #f8eeee;
-  --info: #567579;
-  --info-soft: #eef4f4;
-  --ring: #52bdb1;
-  --sidebar: #f7f9f8;
-  --sidebar-foreground: #28302f;
-  --sidebar-muted: #707a78;
-  --sidebar-accent: #e7f4f1;
-  --sidebar-accent-foreground: #176f66;
-  --sidebar-border: #e1e8e6;
-  --sidebar-ring: #52bdb1;
-  --sidebar-primary: #20ae9f;
+  --secondary: #eef1ff;
+  --secondary-foreground: #3448b8;
+  --accent: #eef1ff;
+  --accent-foreground: #3448b8;
+  --success: #287a5d;
+  --success-soft: #edf8f3;
+  --warning: #95651b;
+  --warning-soft: #fff7e8;
+  --destructive: #b44450;
+  --destructive-soft: #fff0f2;
+  --info: #4058d6;
+  --info-soft: #eef1ff;
+  --ring: #6277e5;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #182033;
+  --sidebar-muted: #667085;
+  --sidebar-accent: #eef1ff;
+  --sidebar-accent-foreground: #3448b8;
+  --sidebar-border: #dde3ee;
+  --sidebar-ring: #6277e5;
+  --sidebar-primary: #4058d6;
   --sidebar-primary-foreground: #ffffff;
-  --surface: #f8fbfa;
-  --overlay: rgb(20 42 39 / 42%);
-  --radius: 0.5rem;
+  --surface: #ffffff;
+  --overlay: rgb(24 32 51 / 44%);
+  --radius: 0.625rem;
   --radius-sm: 6px;
   --radius-lg: 10px;
   --spacing-page: clamp(20px, 3vw, 40px);
   --shadow-sm: none;
   --shadow-float: 0 12px 32px rgb(37 37 41 / 10%);
-  --chart-1: #20ae9f;
-  --chart-2: #3d7f6e;
-  --chart-3: #567579;
-  --chart-4: #94703e;
-  --chart-5: #a85f63;
+  --chart-1: #4058d6;
+  --chart-2: #6277e5;
+  --chart-3: #287a5d;
+  --chart-4: #95651b;
+  --chart-5: #b44450;
 }
 
 @theme inline {
@@ -157,7 +155,7 @@ textarea:focus-visible {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c9d8d5;
+  background: #c9d2e3;
   border: 2px solid transparent;
   border-radius: 999px;
   background-clip: padding-box;

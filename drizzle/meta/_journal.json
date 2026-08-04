@@ -225,6 +225,13 @@
       "when": 1785916800000,
       "tag": "0031_provider_credentials_self_service",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1786003200000,
+      "tag": "0032_mantine_file_workspace",
+      "breakpoints": true
     }
   ]
 }

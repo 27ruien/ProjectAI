@@ -1,12 +1,8 @@
 "use client";
 
-/* eslint-disable @next/next/no-img-element */
-
 import { useCallback, useState } from "react";
-import { ExternalLink, FileSearch, LoaderCircle } from "lucide-react";
-import { Button } from "@/components/common/button";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Button, Drawer, Group, HoverCard, Image, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
+import { ExternalLink, FileSearch, Loader } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 import type { ProjectAssistantCitationDto } from "@/types/project-assistant";
 
@@ -36,6 +32,7 @@ export function AssistantCitationPreview({ citation, projectId, onOpenSource }: 
   const [preview, setPreview] = useState<CitationPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [mobileOpened, setMobileOpened] = useState(false);
   const load = useCallback(async () => {
     if (preview || loading || unavailable) return;
     setLoading(true);
@@ -44,9 +41,8 @@ export function AssistantCitationPreview({ citation, projectId, onOpenSource }: 
         ? `/api/projects/${encodeURIComponent(projectId)}/ai/citations/${encodeURIComponent(citation.id)}/preview`
         : `/api/ai/citations/${encodeURIComponent(citation.id)}/preview`;
       const response = await fetch(withBasePath(path), { credentials: "include", cache: "no-store" });
-      if (!response.ok) throw new Error("citation unavailable");
       const body = await response.json() as { citation?: CitationPreview };
-      if (!body.citation) throw new Error("citation unavailable");
+      if (!response.ok || !body.citation) throw new Error("citation unavailable");
       setPreview(body.citation);
     } catch {
       setUnavailable(true);
@@ -55,6 +51,23 @@ export function AssistantCitationPreview({ citation, projectId, onOpenSource }: 
     }
   }, [citation.id, loading, preview, projectId, unavailable]);
   const sourceLabel = preview?.sourceType === "company_document" ? "公司资料" : preview?.sourceType === "conversation" ? "历史会话" : "项目资料";
-  const content = <div className="space-y-2" data-testid="assistant-citation-preview-content">{loading ? <p className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-3 animate-spin" />正在核验引用权限…</p> : unavailable ? <p className="text-xs text-muted-foreground">该引用已不可访问或资料版本已变化。</p> : preview ? <><div><p className="text-xs font-semibold">{preview.displayName}</p><p className="mt-0.5 text-[11px] text-muted-foreground">v{preview.versionNumber} · {sourceLabel} · {preview.locator}</p></div>{preview.headingPath.length ? <p className="text-[11px] font-medium text-primary">{preview.headingPath.join(" / ")}</p> : null}{preview.thumbnailUrl ? <><span className="sr-only">已缓存来源缩略图</span>{/* The server only returns a short-lived, re-authorized cached preview URL. */}<img src={preview.thumbnailUrl} alt={`${preview.displayName} 来源缩略图`} className="max-h-40 w-full rounded border object-cover" /></> : null}<div className="rounded border bg-muted/30 p-3"><p className="mb-1 text-[11px] font-medium text-foreground">内容快照</p><blockquote className="border-l-2 border-primary/30 pl-3 text-xs leading-5 text-muted-foreground">{preview.excerpt}</blockquote></div><Button type="button" size="sm" variant="outline" onClick={onOpenSource}><ExternalLink className="size-3.5" />打开来源</Button></> : <p className="text-xs text-muted-foreground">将鼠标停留在引用上即可核验来源。</p>}</div>;
-  return <><HoverCard openDelay={180} onOpenChange={(open) => { if (open) void load(); }}><HoverCardTrigger asChild><button type="button" className="hidden items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 sm:inline-flex" data-testid="assistant-citation-hover-trigger"><FileSearch className="size-3" />预览引用</button></HoverCardTrigger><HoverCardContent>{content}</HoverCardContent></HoverCard><Sheet onOpenChange={(open) => { if (open) void load(); }}><SheetTrigger asChild><button type="button" className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 sm:hidden" data-testid="assistant-citation-sheet-trigger"><FileSearch className="size-3" />预览引用</button></SheetTrigger><SheetContent side="bottom"><SheetHeader><SheetTitle>引用预览</SheetTitle><SheetDescription>每次打开都会重新校验当前资料权限。</SheetDescription></SheetHeader><div className="px-4 pb-5">{content}</div></SheetContent></Sheet></>;
+  const content = (
+    <Stack gap="sm" data-testid="assistant-citation-preview-content">
+      {loading ? <Group gap="xs"><Loader size={14} /><Text size="xs" c="dimmed">正在核验引用权限…</Text></Group> : unavailable ? <Text size="xs" c="dimmed">该引用已不可访问或资料版本已变化。</Text> : preview ? <>
+        <Stack gap={2}><Text size="sm" fw={700}>{preview.displayName}</Text><Text size="xs" c="dimmed">v{preview.versionNumber} · {sourceLabel} · {preview.locator}</Text></Stack>
+        {preview.headingPath.length ? <Text size="xs" fw={600} c="projectBlue">{preview.headingPath.join(" / ")}</Text> : null}
+        {preview.thumbnailUrl ? <Image src={preview.thumbnailUrl} alt={`${preview.displayName} 来源缩略图`} mah={180} radius="md" fit="cover" /> : null}
+        <Paper withBorder p="sm" radius="md" bg="gray.0"><Text size="xs" fw={600} mb={4}>内容快照</Text><Text component="blockquote" size="xs" c="dimmed" m={0} pl="sm" bd="0 0 0 2px solid var(--mantine-color-projectBlue-2)">{preview.excerpt}</Text></Paper>
+        <Button size="xs" variant="light" leftSection={<ExternalLink size={13} />} onClick={onOpenSource}>打开来源</Button>
+      </> : <Text size="xs" c="dimmed">将鼠标停留在引用上即可核验来源。</Text>}
+    </Stack>
+  );
+  return <>
+    <HoverCard openDelay={180} width={360} shadow="md" onOpen={() => void load()}>
+      <HoverCard.Target><UnstyledButton visibleFrom="sm" c="projectBlue" fz="xs" fw={600} data-testid="assistant-citation-hover-trigger"><Group gap={4}><FileSearch size={13} />预览引用</Group></UnstyledButton></HoverCard.Target>
+      <HoverCard.Dropdown>{content}</HoverCard.Dropdown>
+    </HoverCard>
+    <UnstyledButton hiddenFrom="sm" c="projectBlue" fz="xs" fw={600} data-testid="assistant-citation-sheet-trigger" onClick={() => { setMobileOpened(true); void load(); }}><Group gap={4}><FileSearch size={13} />预览引用</Group></UnstyledButton>
+    <Drawer opened={mobileOpened} onClose={() => setMobileOpened(false)} title="引用预览" position="bottom" size="70%"><Text size="xs" c="dimmed" mb="md">每次打开都会重新校验当前资料权限。</Text>{content}</Drawer>
+  </>;
 }

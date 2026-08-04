@@ -133,12 +133,13 @@ describe("focused MVP lightweight UI states", () => {
       /data-testid="company-upload-dialog"/,
     );
   });
-  it("20. uses sheets for mobile navigation and AI history", async () => {
+  it("20. uses Mantine responsive navigation and a sheet for AI history", async () => {
     const [sidebar, assistant] = await Promise.all([
       source("components/layout/sidebar.tsx"),
       source("components/knowledge/ProjectAssistantPanel.tsx"),
     ]);
-    assert.match(sidebar, /<Sheet/);
+    assert.match(sidebar, /@mantine\/core/);
+    assert.match(sidebar, /NavLink/);
     assert.match(assistant, /<Sheet/);
   });
   it("21. separates quick actions from explicit context references", async () => {
@@ -180,11 +181,11 @@ describe("focused MVP lightweight UI states", () => {
     assert.match(panel, /AssistantHistoryCitationPreview/);
     assert.match(panel, /assistant-history-references/);
     assert.match(preview, /HoverCard/);
-    assert.match(preview, /Sheet/);
+    assert.match(preview, /Drawer/);
     assert.match(preview, /内容快照/);
     assert.match(preview, /credentials: "include"/);
     assert.match(historyPreview, /HoverCard/);
-    assert.match(historyPreview, /Sheet/);
+    assert.match(historyPreview, /Drawer/);
     assert.match(historyPreview, /重新核验当前会话和资料权限/);
   });
   it("25. exposes the guided requirement overview workflow without DOCX generation", async () => {

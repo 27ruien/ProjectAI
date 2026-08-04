@@ -3,9 +3,13 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { APP_RUNTIME } from "@/config/app-runtime";
 import { withBasePath } from "@/lib/base-path";
+import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
+import "@mantine/dropzone/styles.css";
 import "./globals.css";
-import { Toaster } from "@/components/ui/sonner";
-import { TooltipProvider } from "@/components/ui/tooltip";
+import { MantineProvider } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
+import { projectTheme } from "@/theme/project-theme";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -66,10 +70,10 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <TooltipProvider>
+        <MantineProvider theme={projectTheme} defaultColorScheme="light">
           {children}
-          <Toaster position="top-right" />
-        </TooltipProvider>
+          <Notifications position="top-right" limit={4} />
+        </MantineProvider>
       </body>
     </html>
   );

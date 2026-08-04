@@ -56,7 +56,14 @@ export default async function CatchAllPage({ params }: Props) {
     entityId &&
     child === "requirements"
   )
-    redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/artifacts`);
+    redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/files`);
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId &&
+    child === "artifacts"
+  )
+    redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/files`);
   const allowedRoot = [
     "assistant",
     "data-spaces",
@@ -76,7 +83,7 @@ export default async function CatchAllPage({ params }: Props) {
     entityId &&
     entityId !== "new" &&
     child &&
-    !["overview", "files", "artifacts", "members"].includes(child)
+    !["overview", "files", "members"].includes(child)
   )
     notFound();
   if (

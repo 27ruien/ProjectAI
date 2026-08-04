@@ -1,10 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { ExternalLink, History, LoaderCircle } from "lucide-react";
-import { Button } from "@/components/common/button";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Button, Drawer, Group, HoverCard, Loader, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
+import { ExternalLink, History } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 
 type HistoryPreview = { title: string; updatedAt: string; excerpt: string };
@@ -13,6 +11,7 @@ export function AssistantHistoryCitationPreview({ projectId, threadId, onOpen }:
   const [preview, setPreview] = useState<HistoryPreview | null>(null);
   const [loading, setLoading] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
+  const [mobileOpened, setMobileOpened] = useState(false);
   const load = useCallback(async () => {
     if (preview || loading || unavailable) return;
     setLoading(true);
@@ -30,6 +29,10 @@ export function AssistantHistoryCitationPreview({ projectId, threadId, onOpen }:
       setLoading(false);
     }
   }, [loading, preview, projectId, threadId, unavailable]);
-  const content = <div className="space-y-2" data-testid="assistant-history-preview-content">{loading ? <p className="flex items-center gap-2 text-xs text-muted-foreground"><LoaderCircle className="size-3 animate-spin" />正在核验历史会话权限…</p> : unavailable ? <p className="text-xs text-muted-foreground">该历史会话已不可访问。</p> : preview ? <><div><p className="text-xs font-semibold">{preview.title}</p><p className="mt-0.5 text-[11px] text-muted-foreground">{new Date(preview.updatedAt).toLocaleDateString("zh-CN")} · 历史对话</p></div><div className="rounded border bg-muted/30 p-3"><p className="mb-1 text-[11px] font-medium text-foreground">相关消息摘录</p><blockquote className="border-l-2 border-primary/30 pl-3 text-xs leading-5 text-muted-foreground">{preview.excerpt}</blockquote></div><Button type="button" size="sm" variant="outline" onClick={onOpen}><ExternalLink className="size-3.5" />打开会话</Button></> : <p className="text-xs text-muted-foreground">将鼠标停留在历史会话上即可查看摘录。</p>}</div>;
-  return <><HoverCard openDelay={180} onOpenChange={(open) => { if (open) void load(); }}><HoverCardTrigger asChild><button type="button" className="hidden items-center gap-1 text-primary underline-offset-2 hover:underline sm:inline-flex" data-testid="assistant-history-hover-trigger"><History className="size-3" />历史会话</button></HoverCardTrigger><HoverCardContent>{content}</HoverCardContent></HoverCard><Sheet onOpenChange={(open) => { if (open) void load(); }}><SheetTrigger asChild><button type="button" className="inline-flex items-center gap-1 text-primary underline-offset-2 hover:underline sm:hidden" data-testid="assistant-history-sheet-trigger"><History className="size-3" />历史会话</button></SheetTrigger><SheetContent side="bottom"><SheetHeader><SheetTitle>历史会话引用</SheetTitle><SheetDescription>打开前会重新核验当前会话和资料权限。</SheetDescription></SheetHeader><div className="px-4 pb-5">{content}</div></SheetContent></Sheet></>;
+  const content = <Stack gap="sm" data-testid="assistant-history-preview-content">{loading ? <Group gap="xs"><Loader size={14} /><Text size="xs" c="dimmed">正在核验历史会话权限…</Text></Group> : unavailable ? <Text size="xs" c="dimmed">该历史会话已不可访问。</Text> : preview ? <><Stack gap={2}><Text size="sm" fw={700}>{preview.title}</Text><Text size="xs" c="dimmed">{new Date(preview.updatedAt).toLocaleDateString("zh-CN")} · 历史对话</Text></Stack><Paper withBorder p="sm" bg="gray.0"><Text size="xs" fw={600} mb={4}>相关消息摘录</Text><Text component="blockquote" size="xs" c="dimmed" m={0} pl="sm" bd="0 0 0 2px solid var(--mantine-color-projectBlue-2)">{preview.excerpt}</Text></Paper><Button size="xs" variant="light" leftSection={<ExternalLink size={13} />} onClick={onOpen}>打开会话</Button></> : <Text size="xs" c="dimmed">将鼠标停留在历史会话上即可查看摘录。</Text>}</Stack>;
+  return <>
+    <HoverCard openDelay={180} width={340} shadow="md" onOpen={() => void load()}><HoverCard.Target><UnstyledButton visibleFrom="sm" c="projectBlue" fz="xs" data-testid="assistant-history-hover-trigger"><Group gap={4}><History size={13} />历史会话</Group></UnstyledButton></HoverCard.Target><HoverCard.Dropdown>{content}</HoverCard.Dropdown></HoverCard>
+    <UnstyledButton hiddenFrom="sm" c="projectBlue" fz="xs" data-testid="assistant-history-sheet-trigger" onClick={() => { setMobileOpened(true); void load(); }}><Group gap={4}><History size={13} />历史会话</Group></UnstyledButton>
+    <Drawer opened={mobileOpened} onClose={() => setMobileOpened(false)} title="历史会话引用" position="bottom" size="60%"><Text size="xs" c="dimmed" mb="md">打开前会重新核验当前会话和资料权限。</Text>{content}</Drawer>
+  </>;
 }

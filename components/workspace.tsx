@@ -4,11 +4,10 @@ import { AppShell } from "@/components/layout";
 import { FocusedChatPage } from "@/components/knowledge/FocusedChatPage";
 import { CompanyKnowledgePage } from "@/components/knowledge/CompanyKnowledgePage";
 import { CreateProjectPage } from "@/components/project/CreateProjectPage";
-import { DocumentsPage } from "@/components/project/DocumentsPage";
+import { ProjectFileWorkspace } from "@/components/project/ProjectFileWorkspace";
 import { ProjectMembersPage } from "@/components/project/ProjectMembersPage";
 import { ProjectOverviewPage } from "@/components/project/ProjectOverviewPage";
 import { ProjectsPage } from "@/components/project/ProjectsPage";
-import { RequirementDocumentsPage } from "@/components/project/RequirementDocumentsPage";
 import { OrganizationPage } from "@/components/organization";
 import {
   AccessDeniedPage,
@@ -62,9 +61,9 @@ export function Workspace({
   else if (project && (!child || child === "overview"))
     page = <ProjectOverviewPage project={project} />;
   else if (project && child === "files")
-    page = <DocumentsPage key={project.id} project={project} />;
+    page = <ProjectFileWorkspace key={project.id} project={project} />;
   else if (project && child === "artifacts")
-    page = <RequirementDocumentsPage key={project.id} project={project} />;
+    page = <ProjectFileWorkspace key={project.id} project={project} />;
   else if (project && child === "members")
     page = <ProjectMembersPage key={project.id} project={project} />;
   else if (isDataSpace && area === "company" && !entityId)

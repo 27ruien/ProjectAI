@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireProjectAccess, requireProjectRole } from "@/lib/auth/authorization";
 import type { AuthenticatedPrincipal } from "@/lib/auth/session";
@@ -93,7 +93,13 @@ const requiredConfirmationFieldKeys = [
 ] as const;
 
 const updateSchema = z.object({
-  answers: z.array(z.object({ id: z.string().min(1).max(100), answer: z.string().max(5000), notApplicable: z.boolean().optional() })).max(50),
+  answers: z.array(z.object({ id: z.string().min(1).max(100), answer: z.string().max(5000), notApplicable: z.boolean().optional() })).max(50).optional(),
+  markdown: z.string().min(1).max(200_000).optional(),
+}).strict().refine((value) => Boolean(value.answers || value.markdown), "至少提交一项修改");
+
+const createOverviewSchema = z.object({
+  basedOnOverviewId: z.string().min(1).max(200).optional(),
+  mode: z.enum(["fresh", "continue", "edit"]).default("fresh"),
 }).strict();
 
 const comparisonGenerateSchema = z.object({
@@ -169,6 +175,37 @@ function initialQuestions(items: RequirementOverviewItem[]): RequirementOverview
       reason: "模板关键字段需由项目经理逐项确认。",
       highRisk: true,
     };
+  });
+}
+
+function continuedItems(
+  evidence: RequirementEvidence[],
+  baseItems: RequirementOverviewItem[],
+): RequirementOverviewItem[] {
+  const previous = new Map(canonicalItems(baseItems).map((item) => [item.id, item]));
+  return initialItems(evidence).map((item) => {
+    const old = previous.get(item.id);
+    if (old?.status !== "user_confirmed" && old?.status !== "not_applicable") return item;
+    return {
+      ...item,
+      status: old.status,
+      value: old.value,
+      // Human decisions survive regeneration, but citations are always rebuilt
+      // from the new immutable evidence snapshot.
+      citationLabels: [],
+    };
+  });
+}
+
+function continuedQuestions(
+  items: RequirementOverviewItem[],
+  baseQuestions: RequirementOverviewQuestion[],
+): RequirementOverviewQuestion[] {
+  const previous = new Map(baseQuestions.map((question) => [question.id, question]));
+  return initialQuestions(items).map((question) => {
+    const old = previous.get(question.id);
+    if (old?.status !== "answered" && old?.status !== "not_applicable") return question;
+    return { ...question, answer: old.answer, status: old.status };
   });
 }
 
@@ -264,17 +301,66 @@ function statusFor(questions: RequirementOverviewQuestion[]) {
   return questions.some((question) => question.required && question.status === "pending") ? "needs_confirmation" : "ready" as const;
 }
 
-export async function createRequirementOverview(input: { principal: AuthenticatedPrincipal; projectId: string; requestHeaders: Headers }) {
+export async function createRequirementOverview(input: { principal: AuthenticatedPrincipal; projectId: string; payload: unknown; requestHeaders: Headers }) {
   await requireProjectRole(input.principal, input.projectId, ["project_manager"], input.requestHeaders);
+  const request = createOverviewSchema.parse(input.payload);
   const evidence = await collectRequirementEvidence(input);
   const db = getDb();
-  const [latest] = await db.select({ versionNumber: guidedRequirementOverview.versionNumber }).from(guidedRequirementOverview).where(eq(guidedRequirementOverview.projectId, input.projectId)).orderBy(desc(guidedRequirementOverview.versionNumber)).limit(1);
-  const items = initialItems(evidence);
-  const questions = initialQuestions(items);
   const id = crypto.randomUUID();
   const [overview] = await db.transaction(async (tx) => {
-    const [created] = await tx.insert(guidedRequirementOverview).values({ id, projectId: input.projectId, versionNumber: (latest?.versionNumber ?? 0) + 1, status: statusFor(questions), items, questions, sourceDigest: digest(evidence), sourceSnapshotAt: new Date(), createdBy: input.principal.user.id, updatedBy: input.principal.user.id }).returning();
-    if (evidence.length) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`requirement-overview:${input.projectId}`}))`);
+    const [latest] = await tx.select({ versionNumber: guidedRequirementOverview.versionNumber }).from(guidedRequirementOverview).where(eq(guidedRequirementOverview.projectId, input.projectId)).orderBy(desc(guidedRequirementOverview.versionNumber)).limit(1);
+    const [base] = request.basedOnOverviewId
+      ? await tx.select().from(guidedRequirementOverview).where(and(eq(guidedRequirementOverview.id, request.basedOnOverviewId), eq(guidedRequirementOverview.projectId, input.projectId))).limit(1)
+      : [];
+    if (request.mode !== "fresh" && !base) throw new ProjectManagementError(404, "REQUIREMENT_NOT_FOUND", "要继续处理的需求概览不存在");
+    const editingExistingDraft = Boolean(base && request.mode === "edit");
+    if (editingExistingDraft && (base?.status !== "generated" || !base.markdown?.trim())) {
+      throw new ProjectManagementError(409, "REQUIREMENT_EDIT_SOURCE_INVALID", "只有已生成的需求概览版本可以继续编辑");
+    }
+    const items = editingExistingDraft
+      ? canonicalItems(base!.items)
+      : base && request.mode === "continue"
+        ? continuedItems(evidence, base.items)
+        : initialItems(evidence);
+    const questions = editingExistingDraft
+      ? base!.questions.map((question) => ({ ...question }))
+      : base && request.mode === "continue"
+        ? continuedQuestions(items, base.questions)
+        : initialQuestions(items);
+    const citations = editingExistingDraft
+      ? await tx.select().from(guidedRequirementOverviewCitation).where(eq(guidedRequirementOverviewCitation.overviewId, base!.id))
+      : [];
+    const [created] = await tx.insert(guidedRequirementOverview).values({
+      id,
+      projectId: input.projectId,
+      basedOnOverviewId: base?.id ?? null,
+      versionNumber: (latest?.versionNumber ?? 0) + 1,
+      status: editingExistingDraft ? "generated" : statusFor(questions),
+      items,
+      questions,
+      markdown: editingExistingDraft ? base?.markdown ?? "" : "",
+      sourceDigest: editingExistingDraft ? base!.sourceDigest : digest(evidence),
+      sourceSnapshotAt: editingExistingDraft ? base!.sourceSnapshotAt : new Date(),
+      generationModelId: editingExistingDraft ? base?.generationModelId ?? null : null,
+      actualModel: editingExistingDraft ? base?.actualModel ?? null : null,
+      createdBy: input.principal.user.id,
+      updatedBy: input.principal.user.id,
+    }).returning();
+    if (editingExistingDraft && citations.length) {
+      await tx.insert(guidedRequirementOverviewCitation).values(citations.map((item) => ({
+        id: crypto.randomUUID(),
+        overviewId: id,
+        label: item.label,
+        documentId: item.documentId,
+        versionId: item.versionId,
+        chunkId: item.chunkId,
+        sourceScope: item.sourceScope,
+        displayName: item.displayName,
+        excerpt: item.excerpt,
+        sourceLocator: item.sourceLocator,
+      })));
+    } else if (evidence.length) {
       await tx.insert(guidedRequirementOverviewCitation).values(evidence.map((item) => ({ id: crypto.randomUUID(), overviewId: id, label: item.label, documentId: item.documentId, versionId: item.versionId, chunkId: item.chunkId, sourceScope: item.sourceScope, displayName: item.displayName, excerpt: item.content.slice(0, 800), sourceLocator: item.sourceLocator })));
     }
     return [created];
@@ -292,7 +378,14 @@ export async function updateRequirementOverview(input: { principal: Authenticate
   await requireProjectRole(input.principal, input.projectId, ["project_manager"], input.requestHeaders);
   const parsed = updateSchema.parse(input.payload);
   const [current] = await getDb().select().from(guidedRequirementOverview).where(and(eq(guidedRequirementOverview.id, input.overviewId), eq(guidedRequirementOverview.projectId, input.projectId))).limit(1);
-  if (!current || current.status === "generated") throw new ProjectManagementError(404, "REQUIREMENT_NOT_FOUND", "需求概览不存在");
+  if (!current) throw new ProjectManagementError(404, "REQUIREMENT_NOT_FOUND", "需求概览不存在");
+  if (current.status === "generated") {
+    if (current.savedDocumentId) throw new ProjectManagementError(409, "REQUIREMENT_VERSION_IMMUTABLE", "已保存版本不可覆盖，请基于当前版本继续编辑");
+    if (!parsed.markdown || parsed.answers) throw new ProjectManagementError(409, "REQUIREMENT_DRAFT_EDIT_INVALID", "已生成草稿只能编辑 Markdown 正文");
+    const [updated] = await getDb().update(guidedRequirementOverview).set({ markdown: parsed.markdown.trim(), updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, current.id)).returning();
+    return publicOverview(input, updated);
+  }
+  if (!parsed.answers) throw new ProjectManagementError(400, "REQUIREMENT_ANSWERS_REQUIRED", "请提交需要确认的字段");
   const updates = new Map(parsed.answers.map((answer) => [answer.id, answer]));
   const questions = current.questions.map((question) => {
     const update = updates.get(question.id); if (!update) return question;
@@ -323,7 +416,7 @@ export async function generateRequirementOverviewCandidates(input: { principal: 
   const [current] = await getDb().select().from(guidedRequirementOverview).where(and(eq(guidedRequirementOverview.id, input.overviewId), eq(guidedRequirementOverview.projectId, input.projectId))).limit(1);
   if (!current) throw new ProjectManagementError(404, "REQUIREMENT_NOT_FOUND", "需求概览不存在");
   if (statusFor(current.questions) !== "ready") throw new ProjectManagementError(409, "REQUIREMENT_CONFIRMATION_REQUIRED", "请先完成必填确认项");
-  if (current.status === "generated") throw new ProjectManagementError(409, "REQUIREMENT_ALREADY_GENERATED", "需求概览已生成；请新建版本后再次生成");
+  if (current.status === "generated") throw new ProjectManagementError(409, "REQUIREMENT_VERSION_IMMUTABLE", "已生成版本不可覆盖，请创建新版本后再次生成");
   const sources = await collectRequirementEvidence(input);
   if (digest(sources) !== current.sourceDigest) throw new ProjectManagementError(409, "SOURCE_CHANGED", "资料已更新，请重新生成需求概览");
   const options = await listRequirementOverviewModelOptions({ principal: input.principal, projectId: input.projectId });
@@ -401,36 +494,23 @@ export async function selectRequirementOverviewCandidate(input: { principal: Aut
     if (!nextOverview) throw new ProjectManagementError(409, "REQUIREMENT_CANDIDATE_NOT_READY", "候选状态已变化，请刷新后重试");
     return nextOverview;
   });
-  // A candidate becomes a formal draft only after an explicit user choice. The
-  // same overview id is the upload idempotency key, so a retry cannot create a
-  // second project artifact for the chosen candidate.
-  const saved = await syncRequirementSource({
-    principal: input.principal,
-    projectId: input.projectId,
-    requestHeaders: input.requestHeaders,
-    requirementId: updated.id,
-    projectName: access.name,
-    markdown: updated.markdown,
-    linkedDocumentId: updated.savedDocumentId,
-  });
-  const [withArtifact] = await db
-    .update(guidedRequirementOverview)
-    .set({
-      savedDocumentId: saved.document.id,
-      updatedBy: input.principal.user.id,
-      updatedAt: new Date(),
-    })
-    .where(eq(guidedRequirementOverview.id, updated.id))
-    .returning();
-  return publicOverview(input, withArtifact);
+  // Choosing a candidate creates an editable, versioned draft only. Project
+  // files are written exclusively by the explicit save endpoint below.
+  return publicOverview(input, updated);
 }
 
 export async function saveRequirementOverviewToProject(input: { principal: AuthenticatedPrincipal; projectId: string; overviewId: string; requestHeaders: Headers }) {
   await requireProjectRole(input.principal, input.projectId, ["project_manager"], input.requestHeaders);
   const [overview] = await getDb().select().from(guidedRequirementOverview).where(and(eq(guidedRequirementOverview.id, input.overviewId), eq(guidedRequirementOverview.projectId, input.projectId), eq(guidedRequirementOverview.status, "generated"))).limit(1);
   if (!overview) throw new ProjectManagementError(409, "REQUIREMENT_NOT_READY", "请先生成需求概览");
+  if (overview.savedDocumentId) {
+    throw new ProjectManagementError(409, "REQUIREMENT_VERSION_IMMUTABLE", "该版本已保存，请基于当前版本继续编辑后再另存为新版本");
+  }
   const access = await requireProjectAccess(input.principal, input.projectId, input.requestHeaders);
-  const saved = await syncRequirementSource({ principal: input.principal, projectId: input.projectId, requestHeaders: input.requestHeaders, requirementId: overview.id, projectName: access.name, markdown: overview.markdown, linkedDocumentId: overview.savedDocumentId });
+  const [previousArtifact] = overview.savedDocumentId
+    ? [{ savedDocumentId: overview.savedDocumentId }]
+    : await getDb().select({ savedDocumentId: guidedRequirementOverview.savedDocumentId }).from(guidedRequirementOverview).where(and(eq(guidedRequirementOverview.projectId, input.projectId), lt(guidedRequirementOverview.versionNumber, overview.versionNumber), isNotNull(guidedRequirementOverview.savedDocumentId))).orderBy(desc(guidedRequirementOverview.versionNumber)).limit(1);
+  const saved = await syncRequirementSource({ principal: input.principal, projectId: input.projectId, requestHeaders: input.requestHeaders, requirementId: overview.id, projectName: access.name, markdown: overview.markdown, linkedDocumentId: previousArtifact?.savedDocumentId, artifactTitle: `${access.name} 需求概览` });
   const [updated] = await getDb().update(guidedRequirementOverview).set({ savedDocumentId: saved.document.id, updatedBy: input.principal.user.id, updatedAt: new Date() }).where(eq(guidedRequirementOverview.id, overview.id)).returning();
   return publicOverview(input, updated);
 }
