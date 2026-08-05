@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, CheckCircle2, CircleHelp } from "lucide-react";
-import { Box, Button, Card, Group, SimpleGrid, Text, ThemeIcon, Title } from "@mantine/core";
+import { Box, Button, Card, Group, SimpleGrid, Text, ThemeIcon, Title } from "@/components/ui/project-primitives";
 import { withBasePath } from "@/lib/base-path";
 
 const guides = [
@@ -79,12 +79,12 @@ export function ModelsAndApiHelpPage() {
 
       <Card withBorder radius="md" p="lg" mt="xl">
         <Group gap="xs">
-          <CheckCircle2 size={17} color="var(--mantine-color-projectBlue-6)" />
+          <CheckCircle2 size={17} color="var(--primary)" />
           <Text fw={650}>正确启用顺序</Text>
         </Group>
         <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} mt="md" spacing="sm">
           {steps.map((step, index) => (
-            <Group key={step} align="center" gap="sm" p="sm" bg="projectBlue.0" style={{ borderRadius: "var(--mantine-radius-md)" }}>
+            <Group key={step} align="center" gap="sm" p="sm" bg="projectBlue.0" style={{ borderRadius: "var(--radius)" }}>
               <ThemeIcon variant="filled" radius="xl" size="sm">
                 {index + 1}
               </ThemeIcon>
@@ -96,7 +96,7 @@ export function ModelsAndApiHelpPage() {
 
       <Card withBorder radius="md" p="lg" mt="md" bg="projectBlue.0">
         <Group gap="xs">
-          <CircleHelp size={17} color="var(--mantine-color-projectBlue-6)" />
+          <CircleHelp size={17} color="var(--primary)" />
           <Title order={2} size="h4">
             Model ID 到底是什么？
           </Title>
@@ -112,6 +112,7 @@ export function ModelsAndApiHelpPage() {
           <Card key={image} withBorder radius="md" padding={0} style={{ overflow: "hidden" }}>
             <Image
               src={withBasePath(`/help/models-and-api/${image}.svg`)}
+              unoptimized
               width={640}
               height={360}
               alt={`${title} 操作示意图`}

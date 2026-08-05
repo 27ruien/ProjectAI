@@ -30,9 +30,9 @@ import {
   TextInput,
   Title,
   Tooltip,
-} from "@mantine/core";
-import { Dropzone } from "@mantine/dropzone";
-import { useDisclosure, useMediaQuery } from "@mantine/hooks";
+  Dropzone,
+} from "@/components/ui/project-primitives";
+import { useDisclosure, useMediaQuery } from "@/components/ui/project-hooks";
 import {
   ChevronRight,
   Copy,
@@ -576,14 +576,14 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
   ) : (
     <Center mih={320} p="xl">
       <Stack align="center" gap="xs">
-        <Info size={24} color="var(--mantine-color-gray-5)" />
+        <Info size={24} color="var(--muted-foreground)" />
         <Text size="sm" c="dimmed" ta="center">选择一个文件或文件夹后，可在这里查看详情与管理位置。</Text>
       </Stack>
     </Center>
   );
 
   return (
-    <Box bg="var(--mantine-color-gray-0)" mih="100%">
+    <Box bg="var(--muted)" mih="100%">
       <ProjectContextHeader project={project} activeTab="files" />
       <Box p={{ base: "md", lg: "xl" }} data-testid="project-documents-panel">
         <Group justify="space-between" align="flex-start" mb="lg">
@@ -608,8 +608,8 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
           disabled={!canUpload}
           maxSize={policy.maxBytes}
           multiple
-          bd="1px dashed var(--mantine-color-projectBlue-2)"
-          bg="var(--mantine-color-projectBlue-0)"
+          bd="1px dashed color-mix(in oklch, var(--primary), transparent 70%)"
+          bg="color-mix(in oklch, var(--primary), transparent 95%)"
           mb="md"
           p="md"
           data-testid="project-file-dropzone"
@@ -625,7 +625,7 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
             }}
           />
           <Group justify="center" gap="sm" wrap="nowrap">
-            <UploadCloud size={20} color="var(--mantine-color-projectBlue-6)" />
+            <UploadCloud size={20} color="var(--primary)" />
             <Box>
               <Text size="sm" fw={600}>拖入多个文件，或点击右上角上传</Text>
               <Text size="xs" c="dimmed">单文件不超过 {Math.round(policy.maxBytes / 1024 / 1024)} MB，失败项可单独重新选择上传。</Text>
@@ -650,7 +650,7 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
         ) : null}
 
         <Paper withBorder radius="lg" style={{ overflow: "hidden" }}>
-          <Group justify="space-between" p="md" bd="0 0 1px 0 solid var(--mantine-color-gray-3)">
+          <Group justify="space-between" p="md" bd="0 0 1px 0 solid var(--border)">
             <Breadcrumbs separator={<ChevronRight size={14} />}>
               <Anchor component="button" type="button" onClick={() => openFolder(null)} fw={folderId ? 500 : 700}>全部资料</Anchor>
               {breadcrumbFolders.map((folder) => (
@@ -704,7 +704,7 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
               {loading ? <Center mih={320}><Loader size="sm" /></Center> : visibleEntries.length === 0 ? (
                 <Center mih={320}>
                   <Stack align="center" gap="xs">
-                    <Folder size={32} color="var(--mantine-color-gray-5)" />
+                    <Folder size={32} color="var(--muted-foreground)" />
                     <Text fw={600}>{search ? "没有匹配内容" : "这个文件夹是空的"}</Text>
                     <Text size="sm" c="dimmed">{canUpload ? "可拖入文件，或创建子文件夹。" : "当前没有可查看的资料。"}</Text>
                   </Stack>
@@ -762,7 +762,7 @@ export function ProjectFileWorkspace({ project }: { project: AuthorizedProjectSu
               )}
             </Box>
             {!isNarrow ? (
-              <Paper radius={0} w={320} bd="0 0 0 1px solid var(--mantine-color-gray-3)">
+              <Paper radius={0} w={320} bd="0 0 0 1px solid var(--border)">
                 {details}
               </Paper>
             ) : null}
@@ -868,7 +868,7 @@ function EntryRow(props: {
 }) {
   const { entry } = props;
   return (
-    <Table.Tr bg={props.selected ? "var(--mantine-color-projectBlue-0)" : undefined} onClick={() => props.onSelect(entry)} style={{ cursor: "pointer" }}>
+    <Table.Tr bg={props.selected ? "var(--accent)" : undefined} onClick={() => props.onSelect(entry)} style={{ cursor: "pointer" }}>
       <Table.Td>
         <Group gap="sm" wrap="nowrap">
           {entry.kind === "folder" ? (
@@ -911,7 +911,7 @@ function EntryRow(props: {
 function EntryCard(props: Parameters<typeof EntryRow>[0]) {
   const { entry } = props;
   return (
-    <Paper withBorder p="md" radius="md" bg={props.selected ? "var(--mantine-color-projectBlue-0)" : "white"} onClick={() => props.onSelect(entry)} style={{ cursor: "pointer" }}>
+    <Paper withBorder p="md" radius="md" bg={props.selected ? "var(--accent)" : "white"} onClick={() => props.onSelect(entry)} style={{ cursor: "pointer" }}>
       <Group justify="space-between" align="flex-start" wrap="nowrap">
         <ActionIcon variant="light" size="xl" color={entry.kind === "folder" ? "projectBlue" : "gray"} aria-label={`打开${entryName(entry)}`} onClick={(event) => { event.stopPropagation(); if (entry.kind === "folder") props.onOpenFolder(entry.folder.id); else if (entry.document.currentVersion) { window.location.assign(publicDocumentViewerPath({ projectId: entry.document.projectId, documentId: entry.document.id, versionId: entry.document.currentVersion.id })); } }}><EntryIcon entry={entry} size={22} /></ActionIcon>
         <Box onClick={(event) => event.stopPropagation()}><EntryActions entry={entry} disabled={props.busy} onShare={props.onShare} onCopy={props.onCopy} onDuplicate={props.onDuplicate} onDelete={props.onDelete} /></Box>

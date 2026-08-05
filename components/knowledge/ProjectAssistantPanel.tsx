@@ -1,7 +1,10 @@
 "use client";
 
 import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Button, Drawer, Menu, Modal, Text, TextInput, Tooltip } from "@mantine/core";
+import { Badge, Button, Drawer, Menu, Modal, Text, TextInput, Tooltip } from "@/components/ui/project-primitives";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertCircle,
   Archive,
@@ -498,11 +501,9 @@ export function ProjectAssistantPanel({
 
   if (phase === "loading") {
     return (
-      <section className="mt-5 grid min-h-72 place-items-center rounded-xl border border-border bg-card" role="status">
-        <div className="text-center">
-          <LoaderCircle className="mx-auto size-6 animate-spin text-primary" />
-          <p className="mt-3 text-sm text-muted-foreground">正在加载私人对话</p>
-        </div>
+      <section className="mt-5 grid min-h-[560px] gap-0 overflow-hidden rounded-xl border bg-card lg:grid-cols-[280px_1fr]" role="status" aria-label="正在加载私人对话">
+        <div className="hidden space-y-3 border-r p-4 lg:block"><Skeleton className="h-8 w-full" />{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)}</div>
+        <div className="space-y-5 p-6"><Skeleton className="h-8 w-52" /><Skeleton className="h-24 w-2/3" /><Skeleton className="ml-auto h-20 w-1/2" /><Skeleton className="h-28 w-3/4" /></div>
       </section>
     );
   }
@@ -546,7 +547,7 @@ export function ProjectAssistantPanel({
                 <p className="mt-0.5 text-[10px] text-muted-foreground">
                   {thread.status === "active" ? "进行中" : "已归档"} · {thread.messageCount} 条消息
                 </p>
-                {viewer?.user.productRole === "super_admin" && !projectId ? <label className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><span>本会话模型</span><select aria-label="本会话模型" value={thread.generationModelId ?? "default"} onChange={(event) => void changeModel(event.target.value)} disabled={changingModel} className="h-7 max-w-44 rounded border bg-background px-1 text-[10px]"><option value="default">默认场景模型</option>{models.map((model) => <option key={model.id} value={model.id}>{model.displayName}</option>)}</select></label> : null}
+                {viewer?.user.productRole === "super_admin" && !projectId ? <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><span>本会话模型</span><Select value={thread.generationModelId ?? "default"} onValueChange={(value) => void changeModel(value)} disabled={changingModel}><SelectTrigger className="h-7 w-44 text-[10px]" aria-label="本会话模型"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">默认场景模型</SelectItem>{models.map((model) => <SelectItem key={model.id} value={model.id}>{model.displayName}</SelectItem>)}</SelectContent></Select></div> : null}
               </div>
               <Menu position="bottom-end"><Menu.Target><Button type="button" variant="subtle" size="compact-sm" aria-label="会话操作"><MoreHorizontal size={18} /></Button></Menu.Target><Menu.Dropdown>{thread.status === "active" ? <Menu.Item leftSection={<Archive size={14} />} onClick={() => void archive()}>归档会话</Menu.Item> : null}{thread.status === "active" ? <Menu.Divider /> : null}<Menu.Item color="red" leftSection={<Trash2 size={14} />} onClick={() => void removeThread()}>删除会话</Menu.Item></Menu.Dropdown></Menu>
             </div>
@@ -672,7 +673,7 @@ export function ProjectAssistantPanel({
             </section>
             <label className="block">
               <span className="sr-only">向 AI 助手提问</span>
-              <textarea
+              <Textarea
                 aria-label="向 AI 助手提问"
                 data-testid="assistant-composer-input"
                 value={question}
@@ -689,7 +690,7 @@ export function ProjectAssistantPanel({
                 maxLength={2_000}
                 rows={3}
                 disabled={sending || thread?.status === "archived"}
-                className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
+                className="min-h-24 w-full resize-none text-sm"
               />
             </label>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">

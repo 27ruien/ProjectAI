@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Building2,
   ChevronDown,
@@ -15,7 +15,14 @@ import {
   Users,
 } from "lucide-react";
 import { PageHeader } from "@/components/common";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
 import { useToast } from "@/components/common/toast";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { withBasePath } from "@/lib/base-path";
 
 type Department = {
@@ -62,6 +69,8 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<Department | "new" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Department | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,18 +129,21 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
   };
 
   const remove = async (item: Department) => {
+    setDeleting(true);
     try {
       const preview = await request<{ canDelete: boolean; dependencies: { childDepartments: number; activeMembers: number; projects: number; additionalKnowledgeSpaces: number; documents: number } }>("GET", undefined, `?previewDelete=${encodeURIComponent(item.id)}`);
       if (!preview.canDelete) {
         const values = preview.dependencies;
         setError(`“${item.name}”暂时不能删除：子部门 ${values.childDepartments}、成员 ${values.activeMembers}、项目 ${values.projects}、资料 ${values.documents}、额外资料空间 ${values.additionalKnowledgeSpaces}。请先处理这些关联项。`);
+        setDeleteTarget(null);
         return;
       }
-      if (!window.confirm(`确认永久删除空部门“${item.name}”吗？`)) return;
       await request("DELETE", { departmentId: item.id });
       toast("空部门已删除", "success");
+      setDeleteTarget(null);
       await load();
     } catch (caught) { setError(caught instanceof Error ? caught.message : "部门删除失败"); }
+    finally { setDeleting(false); }
   };
 
   const renderBranch = (parentId: string | null): React.ReactNode =>
@@ -174,7 +186,7 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
                   {item.code}{heads ? ` · 负责人：${heads}` : " · 暂无负责人"}
                 </p>
               </div>
-              <span className="flex gap-1"><button type="button" onClick={() => setEditing(item)} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`编辑 ${item.name}`}><Pencil className="size-4" /></button><button type="button" onClick={() => void remove(item)} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-destructive-soft hover:text-destructive" aria-label={`删除 ${item.name}`}><Trash2 className="size-4" /></button></span>
+              <span className="flex gap-1"><Button type="button" size="icon-sm" variant="ghost" onClick={() => setEditing(item)} aria-label={`编辑 ${item.name}`}><Pencil className="size-4" /></Button><Button type="button" size="icon-sm" variant="ghost" onClick={() => setDeleteTarget(item)} className="hover:bg-destructive-soft hover:text-destructive" aria-label={`删除 ${item.name}`}><Trash2 className="size-4" /></Button></span>
             </div>
             {!isCollapsed ? renderBranch(item.id) : null}
           </div>
@@ -188,16 +200,16 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
         title={mode === "structure" ? "组织架构" : "成员与角色"}
         description={mode === "structure" ? "四级部门树由 ProjectAI 管理。部门负责人不会自动获得超级管理员权限。" : "成员角色独立于部门层级；至少保留一名超级管理员。"}
         actions={
-          mode === "structure" ? <button type="button" onClick={() => setEditing("new")} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-3 text-xs font-semibold text-primary-foreground">
+          mode === "structure" ? <Button type="button" onClick={() => setEditing("new")}>
             <Plus className="size-4" />新建部门
-          </button> : undefined
+          </Button> : undefined
         }
       />
       <nav className="flex gap-4 border-b text-sm"><Link href="/organization/structure" className={mode === "structure" ? "border-b-2 border-primary pb-2 font-medium text-primary" : "pb-2 text-muted-foreground"}>组织结构</Link><Link href="/organization/members" className={mode === "members" ? "border-b-2 border-primary pb-2 font-medium text-primary" : "pb-2 text-muted-foreground"}>成员与角色</Link></nav>
       {mode === "structure" ? <label className="flex h-10 max-w-md items-center gap-2 rounded-lg border bg-card px-3 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/10">
         <Search className="size-4 text-muted-foreground" />
         <span className="sr-only">搜索部门</span>
-        <input value={query} onChange={(event) => setQuery(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="搜索部门名称或编码" />
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} className="h-auto min-w-0 flex-1 border-0 bg-transparent p-0 shadow-none focus-visible:ring-0" placeholder="搜索部门名称或编码" />
       </label> : null}
       {error ? <div role="alert" className="rounded-xl border border-destructive/20 bg-destructive-soft p-4 text-sm text-destructive">{error}</div> : null}
       {loading ? (
@@ -219,6 +231,7 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
           onSave={save}
         />
       ) : null}
+      <ConfirmDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }} title={`删除部门「${deleteTarget?.name ?? ""}」？`} description="系统会先检查子部门、成员、项目和资料依赖；仅空部门可以永久删除。" confirmLabel="删除部门" destructive busy={deleting} onConfirm={() => { if (deleteTarget) void remove(deleteTarget); }} />
     </div>
   );
 }
@@ -247,7 +260,7 @@ function MemberRoles({ members, onSaved }: { members: Member[]; onSaved: () => P
       setSavingId(null);
     }
   };
-  return <aside className="overflow-hidden rounded-2xl border bg-card"><header className="border-b p-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><Users className="size-4 text-primary" />组织成员角色</h2><p className="mt-1 text-xs text-muted-foreground">仅超级管理员可修改；至少保留一名超级管理员。</p></header>{error ? <p role="alert" className="m-3 rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{error}</p> : null}<div className="divide-y">{members.map((member) => <div key={member.id} className="flex items-center gap-3 px-4 py-3"><span className="grid size-8 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="size-3.5" /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{member.displayName}</p></div><select aria-label={`${member.displayName} 角色`} value={member.productRole} disabled={savingId === member.id} onChange={(event) => void save(member.id, event.target.value)} className="h-8 rounded-lg border bg-background px-2 text-[11px]"><option value="super_admin">超级管理员</option><option value="admin">管理员</option><option value="member">成员</option></select></div>)}</div></aside>;
+  return <aside className="overflow-hidden rounded-2xl border bg-card"><header className="border-b p-4"><h2 className="flex items-center gap-2 text-sm font-semibold"><Users className="size-4 text-primary" />组织成员角色</h2><p className="mt-1 text-xs text-muted-foreground">仅超级管理员可修改；至少保留一名超级管理员。</p></header>{error ? <p role="alert" className="m-3 rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{error}</p> : null}<div className="divide-y">{members.map((member) => <div key={member.id} className="flex items-center gap-3 px-4 py-3"><span className="grid size-8 place-items-center rounded-full bg-primary/10 text-primary"><ShieldCheck className="size-3.5" /></span><div className="min-w-0 flex-1"><p className="truncate text-xs font-medium">{member.displayName}</p></div><Select value={member.productRole} disabled={savingId === member.id} onValueChange={(value) => void save(member.id, value)}><SelectTrigger size="sm" className="w-32" aria-label={`${member.displayName} 角色`}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="super_admin">超级管理员</SelectItem><SelectItem value="admin">管理员</SelectItem><SelectItem value="member">成员</SelectItem></SelectContent></Select></div>)}</div></aside>;
 }
 
 function DepartmentEditor({
@@ -265,20 +278,24 @@ function DepartmentEditor({
 }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
+  const [name, setName] = useState(department?.name ?? "");
+  const [code, setCode] = useState("");
+  const [parentDepartmentId, setParentDepartmentId] = useState(department?.parentDepartmentId ?? "root");
+  const [headUserIds, setHeadUserIds] = useState<string[]>(department?.headUserIds ?? []);
+  const [sortOrder, setSortOrder] = useState(String(department?.sortOrder ?? 0));
+  const [status, setStatus] = useState(department?.status ?? "active");
+  const submit = async () => {
     setSubmitting(true);
     setError(null);
     try {
       const body = {
         ...(department ? { departmentId: department.id } : {}),
-        name: String(form.get("name") || ""),
-        ...(department ? {} : { code: String(form.get("code") || "") }),
-        parentDepartmentId: String(form.get("parentDepartmentId") || "") || null,
-        headUserIds: form.getAll("headUserIds").map(String),
-        sortOrder: Number(form.get("sortOrder") || 0),
-        ...(department ? { status: String(form.get("status")) } : {}),
+        name,
+        ...(department ? {} : { code }),
+        parentDepartmentId: parentDepartmentId === "root" ? null : parentDepartmentId,
+        headUserIds,
+        sortOrder: Number(sortOrder || 0),
+        ...(department ? { status } : {}),
       };
       await onSave(body);
     } catch (caught) {
@@ -287,18 +304,19 @@ function DepartmentEditor({
     }
   };
   return (
-    <div className="fixed inset-0 z-[80] grid place-items-center bg-[var(--overlay)] p-4" role="dialog" aria-modal="true" aria-label={department ? "编辑部门" : "新建部门"}>
-      <button type="button" className="absolute inset-0" onClick={onCancel} aria-label="关闭" />
-      <form onSubmit={submit} className="relative w-full max-w-lg space-y-4 rounded-2xl border bg-card p-6 shadow-[var(--shadow-float)]">
-        <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-primary/10 text-primary"><Building2 className="size-5" /></span><div><h2 className="text-base font-semibold">{department ? "编辑部门" : "新建部门"}</h2><p className="text-xs text-muted-foreground">最大四级；移动时服务端会检查循环和子树深度。</p></div></div>
-        <label className="block text-xs font-medium">部门名称<input name="name" required minLength={2} defaultValue={department?.name} className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-primary" /></label>
-        {!department ? <label className="block text-xs font-medium">部门编码<input name="code" required minLength={2} pattern="(?:[A-Z0-9]|-)+" className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm uppercase outline-none focus:border-primary" /></label> : null}
-        <label className="block text-xs font-medium">上级部门<select name="parentDepartmentId" defaultValue={department?.parentDepartmentId ?? ""} className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm"><option value="">一级部门</option>{departments.filter((item) => item.id !== department?.id && item.status === "active").map((item) => <option key={item.id} value={item.id}>{"—".repeat(item.level - 1)} {item.name}</option>)}</select></label>
-        <fieldset><legend className="text-xs font-medium">负责人（可多选）</legend><div className="mt-2 grid max-h-32 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2">{members.map((member) => <label key={member.id} className="flex items-center gap-2 text-xs"><input type="checkbox" name="headUserIds" value={member.id} defaultChecked={department?.headUserIds.includes(member.id)} />{member.displayName}</label>)}</div></fieldset>
-        <div className="grid gap-3 sm:grid-cols-2"><label className="block text-xs font-medium">排序<input name="sortOrder" type="number" min={0} max={100000} defaultValue={department?.sortOrder ?? 0} className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm" /></label>{department ? <label className="block text-xs font-medium">状态<select name="status" defaultValue={department.status} className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm"><option value="active">启用</option><option value="inactive">停用</option></select></label> : null}</div>
-        {error ? <p role="alert" className="rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{error}</p> : null}
-        <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="h-9 rounded-lg border px-4 text-xs">取消</button><button disabled={submitting} className="inline-flex h-9 items-center gap-2 rounded-lg bg-primary px-4 text-xs font-semibold text-primary-foreground disabled:opacity-60">{submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}保存</button></div>
-      </form>
-    </div>
+    <Dialog open onOpenChange={(open) => { if (!open && !submitting) onCancel(); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader><DialogTitle className="flex items-center gap-2"><Building2 className="size-5 text-primary" />{department ? "编辑部门" : "新建部门"}</DialogTitle><DialogDescription>最大四级；移动时服务端会检查循环和子树深度。</DialogDescription></DialogHeader>
+        <div className="grid gap-4">
+          <div className="grid gap-1.5"><Label htmlFor="department-name">部门名称</Label><Input id="department-name" value={name} minLength={2} onChange={(event) => setName(event.target.value)} /></div>
+          {!department ? <div className="grid gap-1.5"><Label htmlFor="department-code">部门编码</Label><Input id="department-code" value={code} minLength={2} pattern="(?:[A-Z0-9]|-)+" className="uppercase" onChange={(event) => setCode(event.target.value.toUpperCase())} /></div> : null}
+          <div className="grid gap-1.5"><Label>上级部门</Label><Select value={parentDepartmentId} onValueChange={setParentDepartmentId}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="root">一级部门</SelectItem>{departments.filter((item) => item.id !== department?.id && item.status === "active").map((item) => <SelectItem key={item.id} value={item.id}>{"—".repeat(item.level - 1)} {item.name}</SelectItem>)}</SelectContent></Select></div>
+          <fieldset><legend className="text-sm font-medium">负责人（可多选）</legend><div className="mt-2 grid max-h-32 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2">{members.map((member) => { const checked = headUserIds.includes(member.id); return <Label key={member.id} className="flex items-center gap-2 font-normal"><Checkbox checked={checked} onCheckedChange={(next) => setHeadUserIds((current) => next === true ? [...new Set([...current, member.id])] : current.filter((id) => id !== member.id))} />{member.displayName}</Label>; })}</div></fieldset>
+          <div className="grid gap-3 sm:grid-cols-2"><div className="grid gap-1.5"><Label htmlFor="department-sort">排序</Label><Input id="department-sort" type="number" min={0} max={100000} value={sortOrder} onChange={(event) => setSortOrder(event.target.value)} /></div>{department ? <div className="grid gap-1.5"><Label>状态</Label><Select value={status} onValueChange={(value) => setStatus(value as Department["status"])}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="active">启用</SelectItem><SelectItem value="inactive">停用</SelectItem></SelectContent></Select></div> : null}</div>
+          {error ? <p role="alert" className="rounded-lg bg-destructive-soft p-3 text-xs text-destructive">{error}</p> : null}
+        </div>
+        <DialogFooter><Button type="button" variant="outline" disabled={submitting} onClick={onCancel}>取消</Button><Button type="button" disabled={submitting || name.trim().length < 2 || (!department && code.trim().length < 2)} onClick={() => void submit()}>{submitting ? <LoaderCircle className="size-4 animate-spin" /> : null}保存</Button></DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

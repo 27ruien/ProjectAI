@@ -20,8 +20,8 @@ import {
   Text,
   Textarea,
   Title,
-} from "@mantine/core";
-import { useDisclosure } from "@mantine/hooks";
+} from "@/components/ui/project-primitives";
+import { useDisclosure } from "@/components/ui/project-hooks";
 import {
   CheckCircle2,
   Download,

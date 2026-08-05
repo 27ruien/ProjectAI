@@ -133,15 +133,16 @@ describe("focused MVP lightweight UI states", () => {
       /data-testid="company-upload-dialog"/,
     );
   });
-  it("20. uses Mantine responsive navigation and a drawer for AI history", async () => {
+  it("20. uses shadcn responsive navigation and a drawer for AI history", async () => {
     const [sidebar, assistant] = await Promise.all([
       source("components/layout/sidebar.tsx"),
       source("components/knowledge/ProjectAssistantPanel.tsx"),
     ]);
-    assert.match(sidebar, /@mantine\/core/);
-    assert.match(sidebar, /NavLink/);
+    assert.doesNotMatch(sidebar, /@mantine\//);
+    assert.match(sidebar, /DropdownMenu/);
+    assert.match(sidebar, /NavigationLink/);
     assert.match(assistant, /<Drawer/);
-    assert.doesNotMatch(assistant, /<Sheet/);
+    assert.match(assistant, /components\/ui\/textarea/);
   });
   it("21. separates quick actions from explicit context references", async () => {
     const page = await source("components/knowledge/ProjectAssistantPanel.tsx");

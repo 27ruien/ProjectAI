@@ -17,7 +17,7 @@ import {
   TextInput,
   Textarea,
   Title,
-} from "@mantine/core";
+} from "@/components/ui/project-primitives";
 import { LoaderCircle, MoreHorizontal, Pencil } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
@@ -181,8 +181,8 @@ export function ProjectOverviewPage({
                 key={label}
                 p="md"
                 bg="white"
-                bd="1px solid var(--mantine-color-gray-3)"
-                style={{ borderRadius: "var(--mantine-radius-md)" }}
+                bd="1px solid var(--border)"
+                style={{ borderRadius: "var(--radius)" }}
               >
                 <Text component="dt" size="xs" c="dimmed">
                   {label}
@@ -196,8 +196,8 @@ export function ProjectOverviewPage({
               component="div"
               p="md"
               bg="white"
-              bd="1px solid var(--mantine-color-gray-3)"
-              style={{ borderRadius: "var(--mantine-radius-md)" }}
+              bd="1px solid var(--border)"
+              style={{ borderRadius: "var(--radius)" }}
             >
               <Text component="dt" size="xs" c="dimmed">
                 项目描述

@@ -8,18 +8,20 @@ import {
   Box,
   Button,
   Drawer,
+  Dropzone,
   Group,
   Menu,
   Modal,
   Select,
+  SimpleGrid,
   Stack,
   Table,
   Text,
   TextInput,
   Textarea,
   Title,
-} from "@mantine/core";
-import { Library, LoaderCircle, MoreHorizontal, RefreshCw, Search, Upload } from "lucide-react";
+} from "@/components/ui/project-primitives";
+import { Library, MoreHorizontal, RefreshCw, Search, Upload } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 import type { ProjectDocumentDto, ProjectDocumentVersionDto } from "@/types/documents";
 import { useToast } from "@/components/common/toast";
@@ -298,7 +300,7 @@ export function CompanyKnowledgePage() {
         <Select value={category} onChange={(value) => setCategory((value ?? "all") as typeof category)} data={[{ value: "all", label: "全部类别" }, ...Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))]} w={180} />
         <Select value={status} onChange={(value) => setStatus((value ?? "all") as typeof status)} data={[{ value: "all", label: "全部状态" }, ...Object.entries(lifecycleLabels).map(([value, label]) => ({ value, label }))]} w={150} />
       </Group>
-      <Box bg="white" bd="1px solid var(--mantine-color-gray-3)" style={{ borderRadius: "var(--mantine-radius-md)", overflow: "hidden" }}>
+      <Box bg="white" bd="1px solid var(--border)" style={{ borderRadius: "var(--radius)", overflow: "hidden" }}>
         {filtered.length ? (
           <Table.ScrollContainer minWidth={980}>
             <Table verticalSpacing="sm" highlightOnHover>
@@ -306,19 +308,19 @@ export function CompanyKnowledgePage() {
               <Table.Tbody>
                 {filtered.map((document) => {
                   const processing = vectorStatus(document.currentVersion);
-                  return <Table.Tr key={document.id}><Table.Td><Group gap="sm"><Box bg="gray.1" c="dimmed" p={7} style={{ borderRadius: "var(--mantine-radius-md)" }}><Library size={16} /></Box><Text fw={600} lineClamp={1} maw={260}>{document.displayName}</Text></Group></Table.Td><Table.Td>{categoryLabels[document.category]}</Table.Td><Table.Td>v{document.currentVersion?.versionNumber ?? "—"}</Table.Td><Table.Td><Badge variant="light" color={processing.color}>{processing.label}</Badge></Table.Td><Table.Td>{audienceLabels[document.audience]}</Table.Td><Table.Td><Badge variant="light" color={lifecycleColors[document.lifecycleStatus]}>{lifecycleLabels[document.lifecycleStatus]}</Badge></Table.Td><Table.Td><Text size="sm" c="dimmed" style={{ whiteSpace: "nowrap" }}>{new Date(document.updatedAt).toLocaleString("zh-CN")}</Text></Table.Td><Table.Td><DocumentActions document={document} canManage={canManage} busy={busy} onHistory={() => void openHistory(document)} onVersion={() => setVersionTarget(document)} onRetry={() => void retryEmbedding(document)} onLifecycle={(next) => void changeLifecycle(document, next)} /></Table.Td></Table.Tr>;
+                  return <Table.Tr key={document.id}><Table.Td><Group gap="sm"><Box bg="gray.1" c="dimmed" p={7} style={{ borderRadius: "var(--radius)" }}><Library size={16} /></Box><Text fw={600} lineClamp={1} maw={260}>{document.displayName}</Text></Group></Table.Td><Table.Td>{categoryLabels[document.category]}</Table.Td><Table.Td>v{document.currentVersion?.versionNumber ?? "—"}</Table.Td><Table.Td><Badge variant="light" color={processing.color}>{processing.label}</Badge></Table.Td><Table.Td>{audienceLabels[document.audience]}</Table.Td><Table.Td><Badge variant="light" color={lifecycleColors[document.lifecycleStatus]}>{lifecycleLabels[document.lifecycleStatus]}</Badge></Table.Td><Table.Td><Text size="sm" c="dimmed" style={{ whiteSpace: "nowrap" }}>{new Date(document.updatedAt).toLocaleString("zh-CN")}</Text></Table.Td><Table.Td><DocumentActions document={document} canManage={canManage} busy={busy} onHistory={() => void openHistory(document)} onVersion={() => setVersionTarget(document)} onRetry={() => void retryEmbedding(document)} onLifecycle={(next) => void changeLifecycle(document, next)} /></Table.Td></Table.Tr>;
                 })}
               </Table.Tbody>
             </Table>
           </Table.ScrollContainer>
         ) : (
-          <Stack align="center" justify="center" mih={288} p="xl"><Library size={36} color="var(--mantine-color-gray-5)" /><Text fw={600}>暂无可见常规模板</Text><Text size="sm" c="dimmed" ta="center">管理员上传并发布后，会话才会按权限检索这些资料。</Text>{canManage ? <Button mt="sm" leftSection={<Upload size={16} />} onClick={() => setUploadOpen(true)}>上传模板</Button> : null}</Stack>
+          <Stack align="center" justify="center" mih={288} p="xl"><Library size={36} color="var(--muted-foreground)" /><Text fw={600}>暂无可见常规模板</Text><Text size="sm" c="dimmed" ta="center">管理员上传并发布后，会话才会按权限检索这些资料。</Text>{canManage ? <Button mt="sm" leftSection={<Upload size={16} />} onClick={() => setUploadOpen(true)}>上传模板</Button> : null}</Stack>
         )}
       </Box>
 
       <KnowledgeUploadModal open={uploadOpen} onOpenChange={setUploadOpen} busy={busy} file={file} onFile={setFile} category={uploadCategory} onCategory={setUploadCategory} audience={audience} onAudience={setAudience} departmentId={departmentId} onDepartment={setDepartmentId} departments={departments} note={uploadVersionNote} onNote={setUploadVersionNote} onSubmit={upload} />
       <VersionUploadModal target={versionTarget} busy={busy} file={versionFile} onFile={setVersionFile} note={versionNote} onNote={setVersionNote} onClose={() => { setVersionTarget(null); setVersionFile(null); setVersionNote(""); }} onSubmit={newVersion} />
-      <Drawer opened={Boolean(history)} onClose={() => setHistory(null)} title="版本历史" position="right" size="md"><Text size="sm" c="dimmed" mb="md">{history?.document.displayName}</Text><Stack gap="sm">{history?.versions.map((version) => <Box key={version.id} p="sm" bd="1px solid var(--mantine-color-gray-3)" style={{ borderRadius: "var(--mantine-radius-md)" }}><Group justify="space-between" align="start"><Box><Text fw={600} size="sm">v{version.versionNumber}{version.isCurrent ? " · 当前" : ""}</Text><Text size="xs" c="dimmed" mt={4}>{new Date(version.createdAt).toLocaleString("zh-CN")}</Text>{version.versionNote ? <Text size="xs" mt={4}>{version.versionNote}</Text> : null}</Box><Button component="a" variant="subtle" size="compact-sm" href={withBasePath(`/api/company-knowledge/${history.document.id}/versions/${version.id}/download`)}>下载</Button></Group></Box>)}</Stack></Drawer>
+      <Drawer opened={Boolean(history)} onClose={() => setHistory(null)} title="版本历史" position="right" size="md"><Text size="sm" c="dimmed" mb="md">{history?.document.displayName}</Text><Stack gap="sm">{history?.versions.map((version) => <Box key={version.id} p="sm" bd="1px solid var(--border)" style={{ borderRadius: "var(--radius)" }}><Group justify="space-between" align="start"><Box><Text fw={600} size="sm">v{version.versionNumber}{version.isCurrent ? " · 当前" : ""}</Text><Text size="xs" c="dimmed" mt={4}>{new Date(version.createdAt).toLocaleString("zh-CN")}</Text>{version.versionNote ? <Text size="xs" mt={4}>{version.versionNote}</Text> : null}</Box><Button component="a" variant="subtle" size="compact-sm" href={withBasePath(`/api/company-knowledge/${history.document.id}/versions/${version.id}/download`)}>下载</Button></Group></Box>)}</Stack></Drawer>
     </Box>
   );
 }
@@ -329,9 +331,9 @@ function DocumentActions({ document, canManage, busy, onHistory, onVersion, onRe
 }
 
 function KnowledgeUploadModal({ open, onOpenChange, busy, file, onFile, category, onCategory, audience, onAudience, departmentId, onDepartment, departments, note, onNote, onSubmit }: { open: boolean; onOpenChange: (open: boolean) => void; busy: boolean; file: File | null; onFile: (file: File | null) => void; category: Category; onCategory: (value: Category) => void; audience: Audience; onAudience: (value: Audience) => void; departmentId: string; onDepartment: (value: string) => void; departments: Department[]; note: string; onNote: (value: string) => void; onSubmit: (event: FormEvent) => void }) {
-  return <Modal opened={open} onClose={() => onOpenChange(false)} title="上传模板" centered data-testid="company-upload-dialog"><Text size="sm" c="dimmed" mb="md">新模板先保存为草稿，人工检查后再发布。</Text><form onSubmit={onSubmit}><Stack><TextInput label="文件" type="file" required onChange={(event) => onFile(event.currentTarget.files?.[0] ?? null)} /><Select label="分类" value={category} onChange={(value) => onCategory((value ?? "project_management") as Category)} data={Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))} /><Select label="可见范围" value={audience} onChange={(value) => onAudience((value ?? "organization") as Audience)} data={[{ value: "organization", label: "全公司" }, { value: "department", label: "指定部门" }, { value: "admin", label: "仅管理员" }]} />{audience === "department" ? <Select label="部门" value={departmentId} onChange={(value) => onDepartment(value ?? "")} placeholder="请选择部门" data={departments.map((item) => ({ value: item.id, label: item.name }))} /> : null}<Textarea label="版本说明（可选）" value={note} onChange={(event) => onNote(event.currentTarget.value)} minRows={3} maxLength={500} /><TextInput label="发布状态" value="草稿（上传后人工发布）" disabled /><Group justify="flex-end"><Button type="button" variant="default" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy || !file} loading={busy} leftSection={busy ? <LoaderCircle size={16} /> : null}>上传草稿</Button></Group></Stack></form></Modal>;
+  return <Modal opened={open} onClose={() => onOpenChange(false)} title="上传公司资料" centered data-testid="company-upload-dialog"><Alert title="上传后先保存为草稿">管理员检查内容、分类与可见范围后，再手动发布给可访问成员。</Alert><form onSubmit={onSubmit}><Stack mt="md"><div><Text size="sm" fw={600} mb={6}>文件</Text><Dropzone onDrop={(files) => onFile(files[0] ?? null)} multiple={false}><Upload size={24} className="mx-auto text-primary" /><Text fw={600} mt="sm">拖放文件到这里，或点击选择</Text><Text size="xs" c="dimmed" mt={4}>支持 PDF、DOCX、XLSX、PPTX、TXT 和 Markdown</Text>{file ? <Badge mt="sm" variant="light">{file.name} · {(file.size / 1024).toFixed(1)} KB</Badge> : null}</Dropzone></div><SimpleGrid cols={{ base: 1, sm: 2 }}><Select label="分类" value={category} onChange={(value) => onCategory((value ?? "project_management") as Category)} data={Object.entries(categoryLabels).map(([value, label]) => ({ value, label }))} /><Select label="可见范围" value={audience} onChange={(value) => onAudience((value ?? "organization") as Audience)} data={[{ value: "organization", label: "全公司" }, { value: "department", label: "指定部门" }, { value: "admin", label: "仅管理员" }]} /></SimpleGrid>{audience === "department" ? <Select label="部门" value={departmentId} onChange={(value) => onDepartment(value ?? "")} placeholder="请选择部门" data={departments.map((item) => ({ value: item.id, label: item.name }))} /> : null}<Textarea label="版本说明（可选）" value={note} onChange={(event) => onNote(event.currentTarget.value)} minRows={3} maxLength={500} /><Group justify="flex-end"><Button type="button" variant="default" onClick={() => onOpenChange(false)}>取消</Button><Button type="submit" disabled={busy || !file} loading={busy}>上传草稿</Button></Group></Stack></form></Modal>;
 }
 
 function VersionUploadModal({ target, busy, file, onFile, note, onNote, onClose, onSubmit }: { target: CompanyDocument | null; busy: boolean; file: File | null; onFile: (file: File | null) => void; note: string; onNote: (value: string) => void; onClose: () => void; onSubmit: (event: FormEvent) => void }) {
-  return <Modal opened={Boolean(target)} onClose={onClose} title="上传新版本" centered><Text size="sm" c="dimmed" mb="md">{target?.displayName} · 新版本默认回到草稿。</Text><form onSubmit={onSubmit}><Stack><TextInput label="文件" type="file" required onChange={(event) => onFile(event.currentTarget.files?.[0] ?? null)} /><Textarea label="版本说明（可选）" value={note} onChange={(event) => onNote(event.currentTarget.value)} minRows={3} maxLength={500} /><Group justify="flex-end"><Button type="button" variant="default" onClick={onClose}>取消</Button><Button type="submit" disabled={busy || !file} loading={busy} leftSection={busy ? <LoaderCircle size={16} /> : null}>上传新版本</Button></Group></Stack></form></Modal>;
+  return <Modal opened={Boolean(target)} onClose={onClose} title="上传新版本" centered><Text size="sm" c="dimmed" mb="md">{target?.displayName} · 新版本默认回到草稿。</Text><form onSubmit={onSubmit}><Stack><Dropzone onDrop={(files) => onFile(files[0] ?? null)} multiple={false}><Upload size={22} className="mx-auto text-primary" /><Text fw={600} mt="sm">拖放新版本，或点击选择</Text>{file ? <Badge mt="sm" variant="light">{file.name}</Badge> : null}</Dropzone><Textarea label="版本说明（可选）" value={note} onChange={(event) => onNote(event.currentTarget.value)} minRows={3} maxLength={500} /><Group justify="flex-end"><Button type="button" variant="default" onClick={onClose}>取消</Button><Button type="submit" disabled={busy || !file} loading={busy}>上传新版本</Button></Group></Stack></form></Modal>;
 }

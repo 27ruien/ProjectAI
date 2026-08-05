@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Button, Drawer, Group, HoverCard, Image, Paper, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Button, Drawer, Group, HoverCard, Image, Paper, Stack, Text, UnstyledButton } from "@/components/ui/project-primitives";
 import { ExternalLink, FileSearch, Loader } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 import type { ProjectAssistantCitationDto } from "@/types/project-assistant";
@@ -57,7 +57,7 @@ export function AssistantCitationPreview({ citation, projectId, onOpenSource }: 
         <Stack gap={2}><Text size="sm" fw={700}>{preview.displayName}</Text><Text size="xs" c="dimmed">v{preview.versionNumber} · {sourceLabel} · {preview.locator}</Text></Stack>
         {preview.headingPath.length ? <Text size="xs" fw={600} c="projectBlue">{preview.headingPath.join(" / ")}</Text> : null}
         {preview.thumbnailUrl ? <Image src={preview.thumbnailUrl} alt={`${preview.displayName} 来源缩略图`} mah={180} radius="md" fit="cover" /> : null}
-        <Paper withBorder p="sm" radius="md" bg="gray.0"><Text size="xs" fw={600} mb={4}>内容快照</Text><Text component="blockquote" size="xs" c="dimmed" m={0} pl="sm" bd="0 0 0 2px solid var(--mantine-color-projectBlue-2)">{preview.excerpt}</Text></Paper>
+        <Paper withBorder p="sm" radius="md" bg="gray.0"><Text size="xs" fw={600} mb={4}>内容快照</Text><Text component="blockquote" size="xs" c="dimmed" m={0} pl="sm" bd="0 0 0 2px solid color-mix(in oklch, var(--primary), transparent 70%)">{preview.excerpt}</Text></Paper>
         <Button size="xs" variant="light" leftSection={<ExternalLink size={13} />} onClick={onOpenSource}>打开来源</Button>
       </> : <Text size="xs" c="dimmed">将鼠标停留在引用上即可核验来源。</Text>}
     </Stack>

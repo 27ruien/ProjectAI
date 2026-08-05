@@ -15,7 +15,14 @@ import {
   Trash2,
 } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
-import { Alert, AlertDescription, AlertTitle, Badge, Button, Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "@/components/mantine/legacy-primitives";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { ConfirmDialog } from "@/components/common/confirm-dialog";
 
 type Provider = {
   id: string;
@@ -111,9 +118,9 @@ const initialProvider: ProviderDraft = {
 function ResultBadge({ status }: { status: string }) {
   const tone =
     status === "passed"
-      ? "bg-emerald-500/10 text-emerald-700"
+      ? "border border-success/20 bg-success-soft text-success"
       : status === "failed"
-        ? "bg-rose-500/10 text-rose-700"
+        ? "border border-destructive/20 bg-destructive-soft text-destructive"
         : "bg-muted text-muted-foreground";
   const label =
     status === "passed"
@@ -176,6 +183,7 @@ export function AiModelManagementPage({
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [providerDialog, setProviderDialog] = useState(false);
+  const [providerDeleteTarget, setProviderDeleteTarget] = useState<Provider | null>(null);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(
     null,
   );
@@ -192,6 +200,8 @@ export function AiModelManagementPage({
     disableThinkingForJson: true,
   });
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
+  const [modelDeleteTarget, setModelDeleteTarget] =
+    useState<GenerationModel | null>(null);
   const [embedding, setEmbedding] = useState({
     name: "",
     modelId: "",
@@ -265,6 +275,9 @@ export function AiModelManagementPage({
       ) ?? [],
     [data],
   );
+  const defaultChatScenario = data?.scenarios.find((item) => item.scenario === "general_chat") ?? null;
+  const defaultTextModel = data?.generationModels.find((item) => item.id === defaultChatScenario?.generationModelId) ?? null;
+  const currentEmbeddingModel = data?.embeddingModels.find((item) => item.enabled) ?? data?.embeddingModels[0] ?? null;
   const selectedProvider = useMemo(
     () =>
       data?.providers.find((provider) => provider.id === model.providerId) ??
@@ -486,222 +499,30 @@ export function AiModelManagementPage({
             </DialogContent>
           </Dialog>
         </div>
-        <div className="mt-5 overflow-x-auto">
-          <table className="min-w-[1100px] w-full text-left text-xs">
-            <thead className="border-b text-muted-foreground">
-              <tr>
-                <th className="px-2 py-2">Provider</th>
-                <th className="px-2 py-2">地址 / 区域</th>
-                <th className="px-2 py-2">API Key</th>
-                <th className="px-2 py-2">模型</th>
-                <th className="px-2 py-2">连接测试</th>
-                <th className="px-2 py-2">启用</th>
-                <th className="px-2 py-2 text-right">操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.providers.map((item) => {
-                const modelCount =
-                  data.generationModels.filter(
-                    (model) => model.providerProfileId === item.id,
-                  ).length +
-                  data.embeddingModels.filter(
-                    (model) => model.providerProfileId === item.id,
-                  ).length;
-                return (
-                  <tr key={item.id} className="border-b last:border-0">
-                    <td className="px-2 py-3">
-                      <p className="font-medium">{item.name}</p>
-                      <p className="mt-1 text-[10px] text-muted-foreground">
-                        {item.providerType}
-                      </p>
-                    </td>
-                    <td className="px-2 py-3">
-                      <p className="max-w-72 truncate font-mono text-[10px]">
-                        {item.baseUrl}
-                      </p>
-                      <p className="mt-1 text-[10px] text-muted-foreground">
-                        {item.region}
-                      </p>
-                    </td>
-                    <td className="px-2 py-3">
-                      <p>
-                        {item.hasApiKey ? "已配置" : "未配置"}
-                        {item.apiKeyMasked ? ` · ${item.apiKeyMasked}` : ""}
-                      </p>
-                      <div className="mt-1 flex gap-1">
-                        <Input
-                          type="password"
-                          autoComplete="new-password"
-                          className="h-7 w-36 text-[10px]"
-                          value={replacementKey[item.id] ?? ""}
-                          onChange={(event) =>
-                            setReplacementKey({
-                              ...replacementKey,
-                              [item.id]: event.target.value,
-                            })
-                          }
-                          placeholder="替换 API Key"
-                        />
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={
-                            busy || !(replacementKey[item.id] ?? "").trim()
-                          }
-                          onClick={() =>
-                            void mutate(
-                              {
-                                action: "replace_provider_api_key",
-                                providerId: item.id,
-                                apiKey: replacementKey[item.id],
-                              },
-                              "API Key 已替换；请重新测试 Provider 和模型。",
-                            ).then(() =>
-                              setReplacementKey({
-                                ...replacementKey,
-                                [item.id]: "",
-                              }),
-                            )
-                          }
-                        >
-                          替换
-                        </Button>
-                      </div>
-                    </td>
-                    <td className="px-2 py-3">{modelCount} 个</td>
-                    <td className="px-2 py-3">
-                      <ResultBadge status={item.lastTestStatus} />
-                      {item.lastTestLatencyMs !== null ? (
-                        <p className="mt-1 text-[10px] text-muted-foreground">
-                          {item.lastTestLatencyMs} ms
-                        </p>
-                      ) : null}
-                      {item.lastTestRequestId ? (
-                        <p className="mt-1 max-w-32 truncate font-mono text-[10px] text-muted-foreground">
-                          {item.lastTestRequestId}
-                        </p>
-                      ) : null}
-                      {item.lastTestErrorCode ? (
-                        <p className="mt-1 text-[10px] text-rose-700">
-                          {item.lastTestErrorCode}
-                        </p>
-                      ) : null}
-                    </td>
-                    <td className="px-2 py-3">
-                      <Button
-                        size="sm"
-                        variant={item.enabled ? "outline" : "default"}
-                        disabled={
-                          busy ||
-                          (item.lastTestStatus !== "passed" && !item.enabled)
-                        }
-                        onClick={() =>
-                          void mutate(
-                            {
-                              action: "set_provider_enabled",
-                              providerId: item.id,
-                              enabled: !item.enabled,
-                            },
-                            item.enabled
-                              ? "Provider 已停用。"
-                              : "Provider 已启用。现在可以从下方选择并添加文本模型。",
-                          )
-                        }
-                      >
-                        {item.enabled ? "停用" : "启用 Provider"}
-                      </Button>
-                      <p
-                        className={`mt-1 max-w-36 text-[10px] ${
-                          item.enabled && item.lastTestStatus === "failed"
-                            ? "text-rose-700"
-                            : "text-muted-foreground"
-                        }`}
-                      >
-                        {providerActivationHint(item)}
-                      </p>
-                    </td>
-                    <td className="px-2 py-3 text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled={busy}
-                          onClick={() => {
-                            setEditingProviderId(item.id);
-                            setProviderDraft({
-                              name: item.name,
-                              providerType: item.providerType,
-                              baseUrl: item.baseUrl,
-                              region: item.region,
-                              apiKey: "",
-                            });
-                            setProviderDialog(true);
-                          }}
-                        >
-                          编辑
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={busy || !item.hasApiKey}
-                          onClick={() =>
-                            void mutate(
-                              { action: "test_provider", providerId: item.id },
-                              item.enabled
-                                ? "Provider 连接测试通过。下方已显示可添加的文本模型。"
-                                : "Provider 连接测试通过。下一步请启用 Provider，再从下方选择模型。",
-                            ).then((operation) => {
-                              if (operation?.modelIds?.length) {
-                                setDiscoveredModels({
-                                  providerId: item.id,
-                                  providerName: item.name,
-                                  modelIds: operation.modelIds,
-                                });
-                                setDiscoveredModelSearch("");
-                              }
-                            })
-                          }
-                        >
-                          {" "}
-                          <RefreshCw />
-                          测试
-                        </Button>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          disabled={busy}
-                          aria-label={`删除 ${item.name}`}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `确认删除 Provider「${item.name}」吗？仅未关联模型的 Provider 可以删除。`,
-                              )
-                            )
-                              void mutate(
-                                {
-                                  action: "delete_provider",
-                                  providerId: item.id,
-                                },
-                                "Provider 已删除。",
-                              );
-                          }}
-                        >
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="mt-5 grid gap-4 xl:grid-cols-2">
+          {data.providers.map((item) => {
+            const modelCount = data.generationModels.filter((entry) => entry.providerProfileId === item.id).length + data.embeddingModels.filter((entry) => entry.providerProfileId === item.id).length;
+            const tested = item.lastTestStatus === "passed";
+            return <article key={item.id} className="rounded-xl border bg-background p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{item.name}</h3><Badge variant="outline">{item.providerType}</Badge>{item.enabled ? <Badge className="border-success/20 bg-success-soft text-success">已启用</Badge> : <Badge variant="secondary">未启用</Badge>}</div><p className="mt-2 truncate font-mono text-[10px] text-muted-foreground" title={item.baseUrl}>{item.baseUrl}</p><p className="mt-1 text-xs text-muted-foreground">{item.region} · {modelCount} 个模型</p></div><ResultBadge status={item.lastTestStatus} /></div>
+              <dl className="mt-4 grid grid-cols-2 gap-3 rounded-lg bg-muted/35 p-3 text-xs"><div><dt className="text-muted-foreground">API Key</dt><dd className="mt-1 font-medium">{item.hasApiKey ? `已配置${item.apiKeyMasked ? ` · ${item.apiKeyMasked}` : ""}` : "未配置"}</dd></div><div><dt className="text-muted-foreground">连接测试</dt><dd className="mt-1 font-medium">{tested ? `通过${item.lastTestLatencyMs !== null ? ` · ${item.lastTestLatencyMs} ms` : ""}` : item.lastTestErrorCode ?? "尚未通过"}</dd></div></dl>
+              <div className="mt-4 flex gap-2"><Input type="password" autoComplete="new-password" className="min-w-0 flex-1" value={replacementKey[item.id] ?? ""} onChange={(event) => setReplacementKey({ ...replacementKey, [item.id]: event.target.value })} placeholder="输入新 API Key" /><Button variant="outline" disabled={busy || !(replacementKey[item.id] ?? "").trim()} onClick={() => void mutate({ action: "replace_provider_api_key", providerId: item.id, apiKey: replacementKey[item.id] }, "API Key 已替换；请重新测试 Provider 和模型。").then(() => setReplacementKey({ ...replacementKey, [item.id]: "" }))}>替换</Button></div>
+              <p className="mt-2 text-[11px] text-muted-foreground">{providerActivationHint(item)}</p>
+              <div className="mt-4 flex flex-wrap gap-2 border-t pt-4">
+                <Button variant="outline" disabled={busy || !item.hasApiKey} onClick={() => void mutate({ action: "test_provider", providerId: item.id }, item.enabled ? "Provider 连接测试通过。下方已显示可添加的文本模型。" : "Provider 连接测试通过。下一步请启用 Provider，再从下方选择模型。").then((operation) => { if (operation?.modelIds?.length) { setDiscoveredModels({ providerId: item.id, providerName: item.name, modelIds: operation.modelIds }); setDiscoveredModelSearch(""); } })}><RefreshCw />测试连接</Button>
+                <Button variant={item.enabled ? "outline" : "default"} disabled={busy || (!tested && !item.enabled)} onClick={() => void mutate({ action: "set_provider_enabled", providerId: item.id, enabled: !item.enabled }, item.enabled ? "Provider 已停用。" : "Provider 已启用。现在可以从下方选择并添加文本模型。")}>{item.enabled ? "停用" : "启用 Provider"}</Button>
+                <Button variant="ghost" disabled={busy} onClick={() => { setEditingProviderId(item.id); setProviderDraft({ name: item.name, providerType: item.providerType, baseUrl: item.baseUrl, region: item.region, apiKey: "" }); setProviderDialog(true); }}>编辑</Button>
+                <Button variant="ghost" size="icon" disabled={busy} aria-label={`删除 ${item.name}`} onClick={() => setProviderDeleteTarget(item)}><Trash2 /></Button>
+              </div>
+            </article>;
+          })}
         </div>
         <div className="mt-4 rounded-lg border bg-muted/20 p-3 text-xs leading-5 text-muted-foreground">
           <b className="text-foreground">启用顺序：</b>保存 Provider → 测试连接 →
           点击“启用 Provider” → 在下方选择文本模型。连接测试通过不会自动启用，避免未经确认的 Provider 被业务使用。
         </div>
       </section>
+      <ConfirmDialog open={providerDeleteTarget !== null} onOpenChange={(open) => { if (!open && !busy) setProviderDeleteTarget(null); }} title={`删除 Provider「${providerDeleteTarget?.name ?? ""}」？`} description="仅未关联模型的 Provider 可以删除。已加密保存的凭据会一并删除，操作不可撤销。" confirmLabel="删除 Provider" destructive busy={busy} onConfirm={() => { if (!providerDeleteTarget) return; void mutate({ action: "delete_provider", providerId: providerDeleteTarget.id }, "Provider 已删除。").then((result) => { if (result !== null) setProviderDeleteTarget(null); }); }} />
 
       <section className="grid gap-6 xl:grid-cols-[1.4fr_0.6fr]">
         <div className="rounded-xl border bg-card p-5 shadow-sm">
@@ -1074,20 +895,7 @@ export function AiModelManagementPage({
                           variant="ghost"
                           disabled={busy}
                           aria-label={`删除 ${item.displayName}`}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                `确认删除模型「${item.displayName}」吗？已被场景或历史产物使用的模型不能删除。`,
-                              )
-                            )
-                              void mutate(
-                                {
-                                  action: "delete_generation_model",
-                                  modelId: item.id,
-                                },
-                                "模型已删除。",
-                              );
-                          }}
+                          onClick={() => setModelDeleteTarget(item)}
                         >
                           <Trash2 />
                         </Button>
@@ -1103,7 +911,7 @@ export function AiModelManagementPage({
           <div className="flex items-center gap-2">
             <Settings2 className="size-4 text-primary" />
             <div>
-              <h2 className="text-sm font-semibold">3. 向量模型</h2>
+              <h2 className="text-sm font-semibold">2.2 向量模型</h2>
               <p className="text-xs text-muted-foreground">
                 当前索引固定为 {data.vectorDimensions}{" "}
                 维。切换向量默认模型必须进入独立的重向量化流程，不会自动混用旧向量。
@@ -1185,10 +993,18 @@ export function AiModelManagementPage({
       </section>
 
       <section className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="flex items-center gap-2"><ShieldCheck className="size-4 text-primary" /><div><h2 className="text-sm font-semibold">3. 默认模型</h2><p className="text-xs text-muted-foreground">这里只显示当前生效默认值；修改业务使用方式请在下方场景绑定中操作。</p></div></div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border bg-background p-4"><p className="text-xs text-muted-foreground">默认文本模型</p><p className="mt-2 font-medium">{defaultTextModel?.displayName ?? "尚未配置"}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{defaultTextModel?.modelId ?? "请为通用对话绑定已测试模型"}</p></div>
+          <div className="rounded-lg border bg-background p-4"><p className="text-xs text-muted-foreground">当前向量模型</p><p className="mt-2 font-medium">{currentEmbeddingModel?.displayName ?? "尚未配置"}</p><p className="mt-1 font-mono text-[10px] text-muted-foreground">{currentEmbeddingModel ? `${currentEmbeddingModel.modelId} · ${currentEmbeddingModel.dimensions} 维` : "切换需要独立重向量化流程"}</p></div>
+        </div>
+      </section>
+
+      <section className="rounded-xl border bg-card p-5 shadow-sm">
         <div className="flex items-center gap-2">
           <ShieldCheck className="size-4 text-primary" />
           <div>
-            <h2 className="text-sm font-semibold">4. 默认模型与场景绑定</h2>
+            <h2 className="text-sm font-semibold">4. 场景绑定</h2>
             <p className="text-xs text-muted-foreground">
               默认文本模型由“通用对话”场景决定；业务页面只能使用场景绑定，不能提交
               Provider 或 API Key。
@@ -1293,6 +1109,29 @@ export function AiModelManagementPage({
           </li>
         </ol>
       </section>
+      <ConfirmDialog
+        open={modelDeleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !busy) setModelDeleteTarget(null);
+        }}
+        title={`删除模型「${modelDeleteTarget?.displayName ?? ""}」？`}
+        description="已被业务场景或历史产物引用的模型不能删除。删除操作不可撤销。"
+        confirmLabel="删除模型"
+        destructive
+        busy={busy}
+        onConfirm={() => {
+          if (!modelDeleteTarget) return;
+          void mutate(
+            {
+              action: "delete_generation_model",
+              modelId: modelDeleteTarget.id,
+            },
+            "模型已删除。",
+          ).then((result) => {
+            if (result !== null) setModelDeleteTarget(null);
+          });
+        }}
+      />
     </main>
   );
 }

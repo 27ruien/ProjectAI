@@ -22,7 +22,7 @@ import {
   TextInput,
   Title,
   Tooltip,
-} from "@mantine/core";
+} from "@/components/ui/project-primitives";
 import {
   ArrowLeft,
   ChevronLeft,
@@ -276,7 +276,7 @@ function OfficeUnavailable({ extension }: { extension: string }) {
   return (
     <Paper withBorder radius="lg" p="xl" mih={440} style={{ display: "grid", placeItems: "center" }}>
       <Stack align="center" maw={480}>
-        <FileSpreadsheet size={42} color="var(--mantine-color-projectBlue-6)" />
+        <FileSpreadsheet size={42} color="var(--primary)" />
         <Title order={3}>{extension.toUpperCase()} 在线版式预览尚未配置</Title>
         <Text c="dimmed" ta="center">文件已完成内容解析，可供 AI 检索。当前 Staging 资源不足以安全运行 ONLYOFFICE，请下载原文件查看完整排版。</Text>
         <Badge variant="light">DOCUMENT_SERVER_NOT_CONFIGURED</Badge>
@@ -309,7 +309,7 @@ export function DocumentViewer({ project, document, version }: Props) {
           <Group align="flex-start">
             <Tooltip label="返回项目资料"><ActionIcon component={Link} href={filesHref} variant="subtle" size="lg" aria-label="返回项目资料"><ArrowLeft size={18} /></ActionIcon></Tooltip>
             <Stack gap={2}>
-              <Group gap="xs"><FileText size={20} color="var(--mantine-color-projectBlue-6)" /><Title order={2}>{document.displayName}</Title></Group>
+              <Group gap="xs"><FileText size={20} color="var(--primary)" /><Title order={2}>{document.displayName}</Title></Group>
               <Text size="sm" c="dimmed">v{version.versionNumber} · {version.originalFilename} · {version.uploadedBy.displayName}</Text>
             </Stack>
           </Group>

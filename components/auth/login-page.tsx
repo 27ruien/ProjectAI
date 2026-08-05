@@ -102,26 +102,26 @@ export function LoginPage({
     <main className="grid min-h-screen bg-background lg:grid-cols-[minmax(0,1.06fr)_minmax(460px,0.94fr)]">
       <section className="relative hidden overflow-hidden bg-sidebar px-12 py-12 text-sidebar-foreground lg:flex lg:flex-col">
         <div className="absolute -left-32 top-1/3 size-96 rounded-full bg-primary/20 blur-3xl" />
-        <div className="absolute -right-24 bottom-0 size-80 rounded-full bg-[#3a7b77]/15 blur-3xl" />
+        <div className="absolute -right-24 bottom-0 size-80 rounded-full bg-primary/10 blur-3xl" />
         <div className="relative flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-xl bg-primary text-white">
+          <span className="grid size-10 place-items-center rounded-xl bg-primary text-primary-foreground">
             <Bot className="size-5" aria-hidden="true" />
           </span>
           <span className="text-lg font-semibold tracking-[-0.02em]">Project AI OS</span>
         </div>
         <div className="relative my-auto max-w-xl py-16">
-          <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.045] px-3 py-1.5 text-xs text-[#b9b9c8]">
-            <ShieldCheck className="size-3.5 text-[#a9a2ff]" aria-hidden="true" />
+          <p className="mb-5 inline-flex items-center gap-2 rounded-full border border-sidebar-border bg-sidebar-accent px-3 py-1.5 text-xs text-sidebar-foreground/70">
+            <ShieldCheck className="size-3.5 text-sidebar-primary" aria-hidden="true" />
             Kivisense Knowledge Workspace
           </p>
-          <h1 className="max-w-lg text-4xl font-semibold leading-[1.18] tracking-[-0.035em] text-white">
+          <h1 className="max-w-lg text-4xl font-semibold leading-[1.18] tracking-[-0.035em] text-sidebar-foreground">
             用企业身份进入可信的知识与 AI 工作流。
           </h1>
-          <p className="mt-5 max-w-lg text-base leading-7 text-[#aaaaba]">
+          <p className="mt-5 max-w-lg text-base leading-7 text-sidebar-foreground/65">
             企业微信只负责身份认证；角色、部门、知识空间和项目权限始终由 ProjectAI 服务端校验。
           </p>
         </div>
-        <p className="relative text-xs text-[#868797]">
+        <p className="relative text-xs text-sidebar-foreground/45">
           {APP_RUNTIME.environment.toUpperCase()} · {APP_RUNTIME.version} · {APP_RUNTIME.shortCommitSha}
         </p>
       </section>

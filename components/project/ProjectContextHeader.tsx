@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import Link from "next/link";
-import { Badge, Box, Breadcrumbs, Group, Tabs, Text, Title } from "@mantine/core";
+import { Badge, Box, Breadcrumbs, Group, Tabs, Text, Title } from "@/components/ui/project-primitives";
 import { Eye } from "lucide-react";
 import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
 import { statusLabel } from "./mock-view";
@@ -36,7 +36,7 @@ export function ProjectContextHeader({
 
   const selected = activeTab === "artifacts" ? "files" : activeTab;
   return (
-    <Box bg="white" bd="0 0 1px 0 solid var(--mantine-color-gray-3)">
+    <Box bg="white" bd="0 0 1px 0 solid var(--border)">
       <Box px={{ base: "md", sm: "lg", lg: "xl" }} pt="lg">
         <Breadcrumbs fz="xs" mb="sm">
           <Text component={Link} href="/data-spaces/projects" c="dimmed">项目资料</Text>
@@ -59,12 +59,8 @@ export function ProjectContextHeader({
               <Tabs.Tab
                 key={tab.id}
                 value={tab.id}
-                renderRoot={(props) => (
-                  <Link
-                    {...props}
-                    href={tab.id === "overview" ? `/data-spaces/projects/${project.id}` : `/data-spaces/projects/${project.id}/${tab.path}`}
-                  />
-                )}
+                component={Link}
+                href={tab.id === "overview" ? `/data-spaces/projects/${project.id}` : `/data-spaces/projects/${project.id}/${tab.path}`}
                 data-testid={tab.id === "files" ? "project-documents-tab" : undefined}
               >{tab.label}</Tabs.Tab>
             ))}

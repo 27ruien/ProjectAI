@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Button, Group, Modal, Select, Stack, Text, TextInput, Textarea, Title } from "@mantine/core";
+import { Alert, Button, Group, Modal, Select, Stack, Text, TextInput, Textarea, Title } from "@/components/ui/project-primitives";
 import { LoaderCircle, Plus } from "lucide-react";
 import { withBasePath } from "@/lib/base-path";
 
