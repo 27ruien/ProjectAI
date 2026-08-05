@@ -21,6 +21,7 @@ test("shadcn is the only business UI system and uses the b1YmqwF5U preset", asyn
   assert.doesNotMatch(layout, /MantineProvider/u);
   assert.doesNotMatch(packageJson, /@mantine\//u);
   assert.match(layout, /AppearanceProvider/u);
+  assert.match(layout, /<TooltipProvider>/u);
   assert.match(layout, /components\/ui\/sonner/u);
   for (const token of [
     "--primary: oklch(0.488 0.243 264.376)",

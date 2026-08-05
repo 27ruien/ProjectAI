@@ -6,6 +6,7 @@ import { withBasePath } from "@/lib/base-path";
 import "./globals.css";
 import { AppearanceProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -67,8 +68,10 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <AppearanceProvider>
-          {children}
-          <Toaster position="top-right" visibleToasts={4} />
+          <TooltipProvider>
+            {children}
+            <Toaster position="top-right" visibleToasts={4} />
+          </TooltipProvider>
         </AppearanceProvider>
       </body>
     </html>
