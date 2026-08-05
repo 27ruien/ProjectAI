@@ -718,7 +718,7 @@ export function AiModelManagementPage({
             </Button>
           </div>
           {selectedProvider && !selectedProviderReady ? (
-            <p className="mt-2 text-xs text-amber-700">
+            <p className="mt-2 text-xs text-warning">
               当前 Provider 尚未同时满足“连接测试通过”和“已启用”，暂时不能添加模型。请先完成上方启用步骤。
             </p>
           ) : null}

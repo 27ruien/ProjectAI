@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-export function PageShell({ children, width = "wide", className }: { children: ReactNode; width?: "wide" | "data" | "form" | "full"; className?: string }) {
-  return <main className={cn("mx-auto w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8", width === "wide" && "max-w-7xl", width === "data" && "max-w-[1600px]", width === "form" && "max-w-3xl", className)}>{children}</main>;
+export function PageShell({ children, width = "wide", className, ...props }: { children: ReactNode; width?: "wide" | "data" | "form" | "full"; className?: string } & ComponentPropsWithoutRef<"main">) {
+  return <main className={cn("mx-auto w-full space-y-6 px-4 py-6 sm:px-6 lg:px-8", width === "wide" && "max-w-7xl", width === "data" && "max-w-[1600px]", width === "form" && "max-w-3xl", className)} {...props}>{children}</main>;
 }
 
 export function SectionHeader({ title, description, action, className }: { title: string; description?: string; action?: ReactNode; className?: string }) {

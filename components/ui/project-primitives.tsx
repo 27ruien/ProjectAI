@@ -445,6 +445,8 @@ function RadioItem({ value, label }: { value: string; label?: ReactNode }) { con
 export const Radio = Object.assign(RadioItem, { Group: RadioGroup });
 
 export function Image({ src, alt = "", className, mah, radius, fit, ...props }: ComponentProps<"img"> & { mah?: string | number; radius?: string; fit?: CSSProperties["objectFit"] }) {
+  // Compatibility wrapper preserves dynamic signed preview sizes; callers do not know image dimensions up front.
+  // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt={alt} className={cn(radius && "rounded-lg", className)} style={{ maxHeight: mah, objectFit: fit, ...props.style }} {...props} />;
 }
 

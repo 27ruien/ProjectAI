@@ -78,3 +78,22 @@ test("viewer, assistant and requirement overview retain security and versioning 
   assert.match(requirement, /重新生成/u);
   assert.match(requirement, /另存为新版本/u);
 });
+
+test("shared shadcn shells preserve responsive and accessible navigation contracts", async () => {
+  const [projects, shell, sidebar, topbar, models, organization] = await Promise.all([
+    source("components/project/ProjectsPage.tsx"),
+    source("components/common/page-shell.tsx"),
+    source("components/layout/sidebar.tsx"),
+    source("components/layout/topbar.tsx"),
+    source("components/system/AiModelManagementPage.tsx"),
+    source("components/organization/OrganizationPage.tsx"),
+  ]);
+  assert.match(projects, /<PageShell/u);
+  assert.match(projects, /<PageHeader/u);
+  assert.match(projects, /<FilterBar/u);
+  assert.match(shell, /sm:px-6 lg:px-8/u);
+  assert.match(sidebar, /Tooltip/u);
+  assert.match(topbar, /System|跟随系统/u);
+  assert.doesNotMatch(`${models}\n${organization}`, /window\.confirm/u);
+  assert.match(organization, /aria-label/u);
+});
