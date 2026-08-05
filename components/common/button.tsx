@@ -1,5 +1,6 @@
 import * as React from "react";
-import { Button as MantineButton, Loader } from "@mantine/core";
+import { LoaderCircle } from "lucide-react";
+import { Button as ShadcnButton } from "@/components/ui/button";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "danger" | "outline";
 type ButtonSize = "sm" | "md" | "lg" | "icon";
@@ -10,31 +11,14 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   loading?: boolean;
 }
 
-const variants = {
-  primary: "filled",
-  secondary: "light",
-  ghost: "subtle",
-  danger: "light",
-  outline: "outline",
-} as const;
-
-const sizes = { sm: "sm", md: "md", lg: "lg", icon: "compact-md" } as const;
+const variants = { primary: "default", secondary: "secondary", ghost: "ghost", danger: "destructive", outline: "outline" } as const;
+const sizes = { sm: "sm", md: "default", lg: "lg", icon: "icon" } as const;
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant = "primary", size = "md", loading, disabled, children, ...props }, ref) => (
-    <MantineButton
-      ref={ref}
-      variant={variants[variant]}
-      color={variant === "danger" ? "red" : "projectBlue"}
-      size={sizes[size]}
-      disabled={disabled || loading}
-      className={className}
-      loaderProps={{ children: <Loader size={14} color="currentColor" /> }}
-      loading={loading}
-      {...props}
-    >
-      {children}
-    </MantineButton>
+    <ShadcnButton ref={ref} variant={variants[variant]} size={sizes[size]} disabled={disabled || loading} className={className} {...props}>
+      {loading ? <LoaderCircle aria-hidden className="animate-spin" /> : null}{children}
+    </ShadcnButton>
   ),
 );
 Button.displayName = "Button";

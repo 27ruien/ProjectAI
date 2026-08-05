@@ -3,13 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { headers } from "next/headers";
 import { APP_RUNTIME } from "@/config/app-runtime";
 import { withBasePath } from "@/lib/base-path";
-import "@mantine/core/styles.css";
-import "@mantine/notifications/styles.css";
-import "@mantine/dropzone/styles.css";
 import "./globals.css";
-import { MantineProvider } from "@mantine/core";
-import { Notifications } from "@mantine/notifications";
-import { projectTheme } from "@/theme/project-theme";
+import { AppearanceProvider } from "@/components/theme-provider";
+import { Toaster } from "@/components/ui/sonner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -66,14 +62,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
+    <html lang="zh-CN" suppressHydrationWarning>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <MantineProvider theme={projectTheme} defaultColorScheme="light">
+        <AppearanceProvider>
           {children}
-          <Notifications position="top-right" limit={4} />
-        </MantineProvider>
+          <Toaster position="top-right" visibleToasts={4} />
+        </AppearanceProvider>
       </body>
     </html>
   );

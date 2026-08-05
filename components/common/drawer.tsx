@@ -1,32 +1,19 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Box, Drawer as MantineDrawer, Group, Stack, Text } from "@mantine/core";
+import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 
-export function Drawer({
-  open,
-  onClose,
-  title,
-  description,
-  children,
-  footer,
-  width = "max-w-xl",
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  description?: string;
-  children: ReactNode;
-  footer?: ReactNode;
-  width?: string;
+export function Drawer({ open, onClose, title, description, children, footer, width = "sm:max-w-xl" }: {
+  open: boolean; onClose: () => void; title: string; description?: string; children: ReactNode; footer?: ReactNode; width?: string;
 }) {
   return (
-    <MantineDrawer opened={open} onClose={onClose} title={title} position="right" size="md" className={width}>
-      <Stack gap="md" h="100%">
-        {description ? <Text size="sm" c="dimmed">{description}</Text> : null}
-        <Box style={{ flex: 1, overflowY: "auto" }}>{children}</Box>
-        {footer ? <Group justify="flex-end" pt="sm" style={{ borderTop: "1px solid var(--mantine-color-gray-3)" }}>{footer}</Group> : null}
-      </Stack>
-    </MantineDrawer>
+    <Sheet open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <SheetContent side="right" className={cn("w-full", width)}>
+        <SheetHeader><SheetTitle>{title}</SheetTitle>{description ? <SheetDescription>{description}</SheetDescription> : null}</SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4">{children}</div>
+        {footer ? <SheetFooter className="border-t">{footer}</SheetFooter> : null}
+      </SheetContent>
+    </Sheet>
   );
 }
