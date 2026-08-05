@@ -76,7 +76,7 @@ projects/{projectId}/documents/{documentId}/versions/{versionId}/{randomUuid}
 
 四个动态段只允许受控 ID 字符；Key 不使用原文件名、邮箱、客户/项目名称、路径、Session 或客户端随机片段。原文件名经 NFKC、basename、控制/bidi/非字符和 UTF-8 长度清理，仅作为 PostgreSQL 元数据及安全 `Content-Disposition` 使用。
 
-上传默认上限 50 MiB，允许 PDF、DOCX、XLSX、PPTX、TXT 和 Markdown。上传路径先做签名与容器验证；独立 Parser Worker 再做受限正文解析，拒绝 DTD/Entity、外部关系、宏和危险部件，不执行公式或网络访问。
+上传默认上限 50 MiB，任意文件可作为安全附件保存。PDF、DOCX、XLSX、PPTX、TXT 和 Markdown 是当前 AI 可读格式：上传路径先做签名与容器验证，独立 Parser Worker 再做受限正文解析，拒绝 DTD/Entity、外部关系、宏和危险部件，不执行公式或网络访问。其余附件不会进入 Parser、Embedding 或检索。
 
 下载在读取对象后、发送响应前核对数据库大小、ETag 和 SHA-256 object metadata；响应固定 `attachment`、`X-Content-Type-Options: nosniff` 与 `Cache-Control: private, no-store`。完整性异常统一为脱敏的 `STORAGE_UNAVAILABLE`，不返回内部 S3 错误。
 

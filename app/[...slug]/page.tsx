@@ -1,122 +1,151 @@
-import { Workspace } from "@/components/workspace";
-import { AuthorizationError, requireAuthenticatedUser } from "@/lib/auth/session";
-import { requireProjectAccess } from "@/lib/auth/authorization";
-import { buildViewerContext } from "@/lib/auth/viewer-context";
-import {
-  getAuthorizedMockProjectPayload,
-  getAuthorizedWorkspaceMockPayload,
-} from "@/lib/project-data/mock-project-service";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
-import { getTimesheetFeatureConfig } from "@/lib/timesheets/config";
-import { isAiProviderConfigured } from "@/lib/ai/project-assistant/config";
-import { isLegacyCredentialAuthEnabled } from "@/lib/auth/providers";
+import { Workspace } from "@/components/workspace";
+import { requireProjectAccess } from "@/lib/auth/authorization";
+import {
+  AuthorizationError,
+  requireAuthenticatedUser,
+} from "@/lib/auth/session";
+import { buildViewerContext } from "@/lib/auth/viewer-context";
+import { requireAiConfigurationAdmin } from "@/lib/ai/model-management";
 
-type CatchAllPageProps = {
-  params: Promise<{ slug: string[] }>;
-};
+type Props = { params: Promise<{ slug: string[] }> };
 
-export default async function CatchAllPage({ params }: CatchAllPageProps) {
+export default async function CatchAllPage({ params }: Props) {
   const { slug } = await params;
-  const route = slug.length > 0 ? slug : ["dashboard"];
-  const [section, entityId, child] = route;
+  const route = slug.length ? slug : ["assistant"];
+  const [section, area, entityId, child] = route;
+  if (
+    [
+      "dashboard",
+      "daily-report",
+      "ai-workflows",
+      "weekly-reports",
+      "requirements",
+    ].includes(section)
+  )
+    redirect("/assistant");
+  if (section === "projects")
+    redirect(
+      `/data-spaces/projects/${route.slice(1).map(encodeURIComponent).join("/")}`.replace(
+        /\/$/u,
+        "",
+      ),
+    );
+  if (section === "chat") redirect("/assistant");
+  if (section === "company-knowledge") redirect("/data-spaces/company");
+  if (section === "knowledge")
+    redirect(
+      `/data-spaces/${route.slice(1).map(encodeURIComponent).join("/")}`.replace(
+        /\/$/u,
+        "",
+      ),
+    );
+  if (section === "settings" && area === "ai-models") redirect("/admin/models");
+  if (section === "data-spaces" && !area) redirect("/data-spaces/projects");
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId &&
+    child === "documents"
+  )
+    redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/files`);
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId &&
+    child === "requirements"
+  )
+    redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/files`);
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId &&
+    child === "artifacts"
+  )
+    redirect(`/data-spaces/projects/${encodeURIComponent(entityId)}/files`);
+  const allowedRoot = [
+    "assistant",
+    "data-spaces",
+    "organization",
+    "settings",
+    "admin",
+    "help",
+  ];
+  if (!allowedRoot.includes(section)) notFound();
+  if (section === "assistant" && area) notFound();
+  if (section === "data-spaces" && !["projects", "company"].includes(area))
+    notFound();
+  if (section === "data-spaces" && area === "company" && entityId) notFound();
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId &&
+    entityId !== "new" &&
+    child &&
+    !["overview", "files", "members"].includes(child)
+  )
+    notFound();
+  if (
+    section === "organization" &&
+    area &&
+    !["structure", "members"].includes(area)
+  )
+    notFound();
+  if (section === "settings" && area && area !== "ai-models") notFound();
+  if (section === "admin" && (area !== "models" || entityId)) notFound();
+  if (section === "help" && area !== "models-and-api") notFound();
   const returnTo = `/${route.join("/")}`;
-  const legacyRegression = isLegacyCredentialAuthEnabled();
-  if (!legacyRegression) {
-    if (section === "dashboard") redirect("/daily-report");
-    if (section === "projects") {
-      redirect(entityId && entityId !== "new" ? `/knowledge?projectId=${encodeURIComponent(entityId)}` : "/knowledge");
-    }
-    if (section === "reviews" || section === "skills") redirect("/workflows");
-    if (section === "analytics") redirect("/knowledge");
-  }
   const principal = await requireAuthenticatedUser(returnTo);
   const viewer = await buildViewerContext(principal);
-  const workspaceData = getAuthorizedWorkspaceMockPayload(
-    viewer.projects.map((project) => ({
-      id: project.id,
-      canReview: project.permissions.canEditProject,
-    })),
-  );
-  const requestHeaders = await headers();
-  const featureFlags = getTimesheetFeatureConfig();
-  let timesheetAiProviderConfigured = false;
-
-  if (section === "daily-report" && !featureFlags.dailyReportEnabled) {
-    notFound();
-  }
-  if (section === "daily-report") {
-    timesheetAiProviderConfigured = await isAiProviderConfigured();
-  }
-
-  if (!legacyRegression && section === "organization" && principal.user.productRole !== "super_admin") {
-    notFound();
-  }
   if (
-    section === "settings" &&
-    (legacyRegression
-      ? principal.user.systemRole !== "system_admin"
-      : principal.user.productRole !== "super_admin")
-  ) {
+    section === "organization" &&
+    principal.user.productRole !== "super_admin"
+  )
     notFound();
-  }
-  if (
-    legacyRegression &&
-    section === "analytics" &&
-    principal.user.systemRole !== "system_admin"
-  ) {
+  if (section === "settings" && principal.user.productRole === "member")
     notFound();
-  }
-
-  if (section === "projects" && entityId === "new" && !viewer.canCreateProject) {
-    notFound();
-  }
-
-  let currentProject;
-  let projectData;
-  if (section === "projects" && entityId && entityId !== "new") {
+  if (section === "admin") {
+    const organizationId = viewer.aiConfigurationOrganizationId;
+    if (!organizationId) notFound();
     try {
-      const authorizedProject = await requireProjectAccess(
-        principal,
-        entityId,
-        requestHeaders,
-      );
-      currentProject = viewer.projects.find(
-        (project) => project.id === authorizedProject.id,
-      );
-      if (!currentProject) notFound();
-      // Project files are real in v0.5. Do not serialize the old Mock document
-      // payload into the browser on the documents route. The knowledge page
-      // receives only same-project Mock module counts alongside real search.
-      if (child !== "documents") {
-        const payload = getAuthorizedMockProjectPayload(authorizedProject.id);
-        projectData =
-          child === "knowledge"
-            ? { ...payload, documents: [], citations: [] }
-            : payload;
-      }
+      await requireAiConfigurationAdmin(principal, organizationId);
     } catch (error) {
-      if (error instanceof AuthorizationError && error.status === 404) notFound();
+      if (error instanceof AuthorizationError) notFound();
       throw error;
     }
   }
-
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId === "new" &&
+    !viewer.canCreateProject
+  )
+    notFound();
+  let currentProject;
+  if (
+    section === "data-spaces" &&
+    area === "projects" &&
+    entityId &&
+    entityId !== "new"
+  ) {
+    try {
+      const authorized = await requireProjectAccess(
+        principal,
+        entityId,
+        await headers(),
+      );
+      currentProject = viewer.projects.find(
+        (item) => item.id === authorized.id,
+      );
+      if (!currentProject) notFound();
+    } catch (error) {
+      if (error instanceof AuthorizationError && error.status === 404)
+        notFound();
+      throw error;
+    }
+  }
   return (
-    <Workspace
-      route={route}
-      viewer={viewer}
-      currentProject={currentProject}
-      projectData={projectData}
-      workspaceData={workspaceData}
-      featureFlags={{
-        pmDailyReport: featureFlags.dailyReportEnabled,
-        wecomTimesheetSync: featureFlags.wecomSyncEnabled,
-        timesheetAiMode: featureFlags.aiMode,
-        timesheetAiProvider: featureFlags.aiProvider,
-        timesheetAiProviderConfigured,
-        timesheetAiModelProfileId: featureFlags.aiModelProfileId,
-        timesheetSyncProvider: featureFlags.syncProvider,
-      }}
-    />
+    <Workspace route={route} viewer={viewer} currentProject={currentProject} />
   );
 }

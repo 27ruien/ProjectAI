@@ -153,7 +153,7 @@ npm run assistant:smoke
 - 只向现有 HTTPS server block 增加/维护 Staging exact/assets/general location，不代理 MinIO。
 - `/tool/projectai-staging` 使用固定绝对 canonical URL，不能继承未验证 Host。
 - 应用只信任受控 Nginx 覆写的 Host/协议；不匹配 Host/X-Forwarded-Host/协议统一 404。
-- `client_max_body_size 52m`，为 50 MiB 文件加 multipart framing 余量；应用仍以 `MAX_UPLOAD_BYTES` 执行业务上限。
+- `client_max_body_size 64m`，为 50 MiB 文件加 multipart framing 余量；应用仍以 `MAX_UPLOAD_BYTES` 执行业务上限。
 - 通用 proxy 保留 basePath；静态 location 仅剥离已知 assets 前缀。
 - 修改前备份实际站点文件；只有 `nginx -t` 通过后才能 reload。部署脚本本身只测试，不 reload。
 - 不修改 Production location、DNS、证书或其他服务。

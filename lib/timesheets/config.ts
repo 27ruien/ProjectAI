@@ -81,7 +81,7 @@ export function getTimesheetFeatureConfig(): TimesheetFeatureConfig {
     aiProvider,
     aiModelProfileId:
       process.env.AI_PROJECT_ASSISTANT_PROFILE_ID?.trim() ||
-      "qwen-project-assistant-cn-v1",
+      "qwen-project-assistant-cn-v2",
     syncProvider: syncProviderValue,
   };
 }

@@ -24,7 +24,7 @@ const projectInputSchema = z
     clientName: z.string().trim().min(2).max(200),
     description: z.string().trim().max(4_000).default(""),
     status: z
-      .enum(["planning", "active", "paused", "completed", "cancelled", "at_risk"])
+      .enum(["planning", "active", "completed"])
       .default("planning"),
     stage: z
       .enum([

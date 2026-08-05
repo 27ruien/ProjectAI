@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  customType,
   doublePrecision,
   foreignKey,
   index,
@@ -14,6 +15,7 @@ import {
   uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
+import { aiGenerationModel } from "./ai-model-management";
 import {
   aiExecutionStatusEnum,
   aiMessageRoleEnum,
@@ -25,6 +27,21 @@ import { aiRetrievalProfile } from "./ai-retrieval-profile";
 import { documentChunk } from "./document-ingestion";
 import { project } from "./projects";
 import { user } from "./users";
+
+const conversationMemoryVector = customType<{
+  data: number[];
+  driverData: string;
+}>({
+  dataType: () => "vector(1024)",
+  toDriver(value) {
+    if (value.length !== 1024 || value.some((item) => !Number.isFinite(item))) throw new Error("Conversation memory embedding must contain 1024 finite values.");
+    return `[${value.join(",")}]`;
+  },
+});
+
+const conversationMemorySearchVector = customType<{ data: string }>({
+  dataType: () => "tsvector",
+});
 
 export const aiModelProfile = pgTable(
   "ai_model_profiles",
@@ -83,6 +100,15 @@ export const aiThread = pgTable(
       withTimezone: true,
       mode: "date",
     }),
+    deletedAt: timestamp("deleted_at", {
+      withTimezone: true,
+      mode: "date",
+    }),
+    /** Optional per-conversation text-model override for super administrators. */
+    generationModelId: text("generation_model_id").references(
+      () => aiGenerationModel.id,
+      { onDelete: "restrict" },
+    ),
   },
   (table) => [
     unique("ai_threads_project_owner_scope_unique").on(
@@ -122,6 +148,13 @@ export const aiMessage = pgTable(
     status: aiMessageStatusEnum("status").notNull(),
     content: text("content").notNull(),
     executionId: text("execution_id"),
+    /** Stable display order; timestamps alone cannot order one request's pair. */
+    sequence: integer("sequence").notNull(),
+    /** Server-validated #project and $document context references for user messages. */
+    contextReferences: jsonb("context_references")
+      .$type<Array<Record<string, unknown>>>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
       .notNull()
       .defaultNow(),
@@ -136,6 +169,11 @@ export const aiMessage = pgTable(
       table.projectId,
       table.threadId,
       table.createdAt,
+    ),
+    uniqueIndex("ai_messages_thread_sequence_uidx").on(
+      table.projectId,
+      table.threadId,
+      table.sequence,
     ),
     foreignKey({
       name: "ai_messages_thread_owner_scope_fk",
@@ -299,7 +337,10 @@ export const aiExecution = pgTable(
         ${table.completedAt} is not null
         and ${table.failureCode} is null
         and ${table.actualModel} is not null
-        and ${table.evidenceCount} > 0
+        and (
+          (${table.retrievalRunId} is null and ${table.evidenceCount} = 0)
+          or (${table.retrievalRunId} is not null and ${table.evidenceCount} > 0)
+        )
       )
     `),
     check("ai_executions_failed_check", sql`
@@ -339,6 +380,7 @@ export const aiMessageCitation = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => project.id, { onDelete: "restrict" }),
+    sourceProjectId: text("source_project_id").notNull(),
     threadId: text("thread_id").notNull(),
     assistantMessageId: text("assistant_message_id").notNull(),
     citationIndex: integer("citation_index").notNull(),
@@ -379,7 +421,7 @@ export const aiMessageCitation = pgTable(
       name: "ai_message_citations_chunk_scope_fk",
       columns: [
         table.chunkId,
-        table.projectId,
+        table.sourceProjectId,
         table.documentId,
         table.versionId,
       ],
@@ -420,6 +462,52 @@ export const aiMessageCitation = pgTable(
     ),
   ],
 );
+
+/** Private, derived summaries used only to recover a user's own relevant conversation context. */
+export const aiConversationMemory = pgTable("ai_conversation_memories", {
+  threadId: text("thread_id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "restrict" }),
+  ownerUserId: text("owner_user_id").notNull().references(() => user.id, { onDelete: "restrict" }),
+  summary: text("summary").notNull(),
+  keyTopics: jsonb("key_topics").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  sourceDocumentIds: jsonb("source_document_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  summaryEmbedding: conversationMemoryVector("summary_embedding"),
+  embeddingModelProfileId: varchar("embedding_model_profile_id", { length: 120 }).notNull(),
+  embeddingDimensions: integer("embedding_dimensions").notNull(),
+  searchVector: conversationMemorySearchVector("search_vector").generatedAlwaysAs(sql`to_tsvector('simple', coalesce(${sql.raw('summary')}, '') || ' ' || coalesce(${sql.raw('key_topics')}::text, ''))`),
+  sourceMessageCount: integer("source_message_count").notNull().default(0),
+  lastMessageAt: timestamp("last_message_at", { withTimezone: true, mode: "date" }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  index("ai_conversation_memories_owner_project_idx").on(table.ownerUserId, table.projectId, table.lastMessageAt),
+  index("ai_conversation_memories_search_idx").using("gin", table.searchVector),
+  foreignKey({
+    name: "ai_conversation_memories_thread_owner_scope_fk",
+    columns: [table.threadId, table.projectId, table.ownerUserId],
+    foreignColumns: [aiThread.id, aiThread.projectId, aiThread.createdBy],
+  }).onDelete("cascade"),
+  check("ai_conversation_memories_summary_check", sql`length(btrim(${table.summary})) between 1 and 6000 and ${table.sourceMessageCount} >= 0`),
+  check("ai_conversation_memories_embedding_dimensions_check", sql`${table.embeddingDimensions} = 1024`),
+]);
+
+/** Links an answer to the private historical summaries injected into that answer's context. */
+export const aiMessageHistoryCitation = pgTable("ai_message_history_citations", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id").notNull().references(() => project.id, { onDelete: "restrict" }),
+  threadId: text("thread_id").notNull(),
+  assistantMessageId: text("assistant_message_id").notNull(),
+  sourceThreadId: text("source_thread_id").notNull().references(() => aiThread.id, { onDelete: "restrict" }),
+  sourceMemoryUpdatedAt: timestamp("source_memory_updated_at", { withTimezone: true, mode: "date" }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("ai_message_history_citation_message_thread_uidx").on(table.assistantMessageId, table.sourceThreadId),
+  index("ai_message_history_citation_project_message_idx").on(table.projectId, table.threadId, table.assistantMessageId),
+  foreignKey({
+    name: "ai_message_history_citation_message_scope_fk",
+    columns: [table.assistantMessageId, table.projectId, table.threadId],
+    foreignColumns: [aiMessage.id, aiMessage.projectId, aiMessage.threadId],
+  }).onDelete("restrict"),
+]);
 
 export type AiModelProfileRecord = typeof aiModelProfile.$inferSelect;
 export type AiThreadRecord = typeof aiThread.$inferSelect;

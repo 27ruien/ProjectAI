@@ -32,6 +32,7 @@ function httpFailure(status: number): AiProviderError {
   if (status >= 500) return new AiProviderError("SERVER_ERROR", true);
   if (status === 401) return new AiProviderError("UNAUTHORIZED", false);
   if (status === 403) return new AiProviderError("FORBIDDEN", false);
+  if (status === 404) return new AiProviderError("NOT_FOUND", false);
   return new AiProviderError("BAD_REQUEST", false);
 }
 
@@ -43,12 +44,13 @@ export class QwenProjectAssistantProvider
   constructor(
     private readonly baseUrl: string,
     private readonly fetchImplementation: typeof fetch = fetch,
+    private readonly readApiKey: () => Promise<string> = readQwenApiKey,
   ) {}
 
   async generate(
     request: ProjectAssistantProviderRequest,
   ): Promise<ProjectAssistantProviderResult> {
-    const apiKey = await readQwenApiKey();
+    const apiKey = await this.readApiKey();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), request.timeoutMs);
     const started = performance.now();
@@ -72,7 +74,15 @@ export class QwenProjectAssistantProvider
             max_tokens: request.maxOutputTokens,
             stream: false,
             ...(request.responseFormat === "json_object"
-              ? { response_format: { type: "json_object" } }
+              ? {
+                  response_format: { type: "json_object" },
+                  // DashScope rejects JSON mode while some Qwen models have
+                  // thinking enabled. This is an explicit model-profile option:
+                  // generic OpenAI-compatible Providers may reject it.
+                  ...(request.disableThinkingForJson !== false
+                    ? { enable_thinking: false }
+                    : {}),
+                }
               : {}),
           }),
           signal: controller.signal,

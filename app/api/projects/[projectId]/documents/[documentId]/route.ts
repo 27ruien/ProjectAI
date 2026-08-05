@@ -9,6 +9,7 @@ import { listProjectDocumentVersions } from "@/lib/db/repositories/document-repo
 import { requireProjectDocumentResource } from "@/lib/files/authorization";
 import {
   documentRoles,
+  deleteProjectDocument,
   updateDocumentMetadata,
 } from "@/lib/files/document-service";
 import { FileOperationError } from "@/lib/files/errors";
@@ -26,6 +27,7 @@ const patchSchema = z
     visibility: z
       .enum(["private", "organization_shared", "department_shared", "restricted"])
       .optional(),
+    folderId: z.string().min(1).max(200).nullable().optional(),
   })
   .strict()
   .refine((value) => Object.keys(value).length > 0);
@@ -141,6 +143,32 @@ export async function PATCH(
         new FileOperationError(400, "INVALID_REQUEST", "请求格式无效"),
       );
     }
+    return fileRouteErrorResponse(error);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: DocumentRouteContext,
+): Promise<Response> {
+  try {
+    requireTrustedMutationRequest(request);
+    const { projectId, documentId } = await context.params;
+    const principal = await requireApiPrincipal(request.headers);
+    await requireProjectRole(
+      principal,
+      projectId,
+      documentRoles.manage,
+      request.headers,
+    );
+    await deleteProjectDocument({
+      principal,
+      projectId,
+      documentId,
+      requestHeaders: request.headers,
+    });
+    return new Response(null, { status: 204 });
+  } catch (error) {
     return fileRouteErrorResponse(error);
   }
 }

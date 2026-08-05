@@ -77,7 +77,7 @@ const baseEnvironment = {
   AI_PROVIDER: "fake",
   AI_ASSISTANT_ENABLED: "true",
   AI_REGION: "cn-beijing",
-  AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v1",
+  AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v2",
 };
 await runCase("daily-off", 3310, false, true, baseEnvironment);
 await runCase("wecom-off", 3320, true, false, baseEnvironment);

@@ -135,7 +135,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
     process.env.AI_PROVIDER = "fake";
     process.env.AI_ASSISTANT_ENABLED = "true";
     process.env.AI_REGION = "cn-beijing";
-    process.env.AI_PROJECT_ASSISTANT_PROFILE_ID = "qwen-project-assistant-cn-v1";
+    process.env.AI_PROJECT_ASSISTANT_PROFILE_ID = "qwen-project-assistant-cn-v2";
     process.env.NEXT_PUBLIC_APP_ENV = "test";
     const users = await Promise.all([
       findUserByEmail(required("SEED_MANAGER_A_EMAIL")),
@@ -257,7 +257,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
         userId: manager.id,
         reportDate,
         skillId: "pm-daily-timesheet-generation",
-        modelProfileId: "qwen-project-assistant-cn-v1",
+        modelProfileId: "qwen-project-assistant-cn-v2",
         promptVersion: "pm-daily-report-v1",
         sourceSelectionDigest: "0".repeat(64),
         sourceCount: 1,
@@ -355,7 +355,7 @@ describe("daily timesheet ownership, review, and sync integration", () => {
         draftId: generated.id,
         reportDate: "2026-07-22",
         skillId: "pm-daily-timesheet-generation",
-        modelProfileId: "qwen-project-assistant-cn-v1",
+        modelProfileId: "qwen-project-assistant-cn-v2",
         promptVersion: "pm-daily-report-v1",
         sourceSelectionDigest: "0".repeat(64),
         sourceCount: 1,

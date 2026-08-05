@@ -7,6 +7,8 @@ export * from "./drawer";
 export * from "./filter-bar";
 export * from "./metric-card";
 export * from "./page-header";
+export * from "./page-shell";
+export * from "./confirm-dialog";
 export * from "./project-health";
 export * from "./source-citation";
 export * from "./state-showcase";

@@ -22,7 +22,7 @@ x-document-processing-environment: &document-processing-environment
 
 x-embedding-environment: &embedding-environment
   AI_EMBEDDING_ENABLED: ${AI_EMBEDDING_ENABLED:-false}
-  AI_EMBEDDING_PROFILE_ID: ${AI_EMBEDDING_PROFILE_ID:-qwen-text-embedding-cn-v1}
+  AI_EMBEDDING_PROFILE_ID: ${AI_EMBEDDING_PROFILE_ID:-qwen3.7-text-embedding-cn-v2}
   AI_EMBEDDING_DIMENSIONS: ${AI_EMBEDDING_DIMENSIONS:-1024}
   AI_EMBEDDING_WORKER_POLL_MS: ${AI_EMBEDDING_WORKER_POLL_MS:-2000}
   AI_EMBEDDING_WORKER_LEASE_SECONDS: ${AI_EMBEDDING_WORKER_LEASE_SECONDS:-120}
@@ -527,8 +527,10 @@ services:
       NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-0.8.0-staging}
       NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:-local}
       NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:-local}
+      AI_PROVIDER_CREDENTIALS_KEY_FILE: /run/secrets/provider_credentials_key
     secrets:
       - qwen_api_key
+      - provider_credentials_key
     depends_on:
       projectai-postgres:
         condition: service_healthy
@@ -537,8 +539,6 @@ services:
       projectai-minio-init:
         condition: service_completed_successfully
       projectai-document-worker:
-        condition: service_healthy
-      projectai-embedding-worker:
         condition: service_healthy
     networks:
       - projectai-staging-internal
@@ -615,6 +615,8 @@ services:
       start_period: 30s
 
   projectai-embedding-worker:
+    profiles:
+      - embedding
     image: ${STAGING_EMBEDDING_WORKER_IMAGE:-project-ai-os-staging:${NEXT_PUBLIC_COMMIT_SHA:-local}}
     container_name: project-ai-os-staging-embedding-worker
     restart: unless-stopped
@@ -676,3 +678,5 @@ networks:
 secrets:
   qwen_api_key:
     file: /srv/projectai-staging/secrets/qwen_api_key
+  provider_credentials_key:
+    file: /srv/projectai-staging/secrets/provider_credentials_key

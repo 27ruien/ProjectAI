@@ -76,7 +76,7 @@ function ingestionStatus(version: ProjectDocumentVersionDto) {
     pending: { label: "等待解析", classes: "bg-info-soft text-info" },
     running: { label: "正在解析", classes: "bg-info-soft text-info" },
     succeeded: {
-      label: "知识索引已建立",
+      label: "可用于 AI",
       classes: "bg-success-soft text-success",
     },
     failed: {
@@ -303,12 +303,15 @@ export function DocumentVersionDrawer({
                         <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${processing.classes}`}>{processing.label}</span>
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground">{version.originalFilename}</p>
+                      {version.versionNote ? (
+                        <p className="mt-1 text-xs text-foreground">{version.versionNote}</p>
+                      ) : null}
                       <p className="mt-2 text-[11px] text-muted-foreground">
                         {version.extension.toUpperCase()} · {formatBytes(version.sizeBytes)} · {version.uploadedBy.displayName} · {formatDate(version.storedAt ?? version.createdAt)}
                       </p>
                       <p className="mt-1 text-[10px] text-muted-foreground">
                         {version.ingestion.status === "succeeded"
-                          ? `${version.ingestion.sectionCount} Section · ${version.ingestion.chunkCount} Chunk · 索引于 ${formatDate(version.ingestion.lastIndexedAt)}`
+                          ? `解析与索引已完成 · ${formatDate(version.ingestion.lastIndexedAt)}`
                           : version.ingestion.status === "needs_ocr"
                             ? "该 PDF 可下载，但本阶段不执行 OCR"
                             : version.ingestion.failureCode ?? "解析任务状态会自动刷新"}
@@ -344,6 +347,7 @@ export function DocumentVersionDrawer({
                     ) : null}
                     {document?.permissions.canReindex &&
                     document.status === "active" &&
+                    version.aiReadable &&
                     version.storageStatus === "stored" ? (
                       <Button
                         type="button"

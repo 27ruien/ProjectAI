@@ -3,10 +3,12 @@ set -Eeuo pipefail
 
 readonly DEFAULT_EXPECTED_BRANCH="agent/phase1-project-knowledge-management"
 readonly EXPECTED_BRANCH="${PROJECTAI_STAGING_DEPLOY_BRANCH:-$DEFAULT_EXPECTED_BRANCH}"
+readonly DEPLOY_MODE="${PROJECTAI_STAGING_DEPLOY_MODE:-app}"
 REMOTE_HOST="${REMOTE_HOST:-gridworks.cn}"
 REMOTE_DIR="${REMOTE_DIR:-/srv/projectai-staging}"
 readonly COMPOSE_PROJECT="projectai-staging"
 COMPOSE_FILE="docker-compose.staging.yml"
+APP_ONLY_COMPOSE_FILE="docker-compose.staging-app-only.yml"
 CONTAINER_NAME="project-ai-os-staging"
 WORKER_CONTAINER_NAME="project-ai-os-staging-worker"
 EMBEDDING_WORKER_CONTAINER_NAME="project-ai-os-staging-embedding-worker"
@@ -21,8 +23,12 @@ REMOTE_ENV_FILE="${REMOTE_DIR}/.env.auth-staging"
 REMOTE_AI_ENV_FILE="${REMOTE_DIR}/.env.ai"
 REMOTE_EMBEDDING_ENV_FILE="${REMOTE_DIR}/.env.embedding"
 REMOTE_QWEN_SECRET_FILE="${REMOTE_DIR}/secrets/qwen_api_key"
+REMOTE_PROVIDER_CREDENTIALS_KEY_FILE="${REMOTE_DIR}/secrets/provider_credentials_key"
 DEPLOY_MARKER="${REMOTE_DIR}/.staging-deploy-in-progress"
 DEPLOY_LOCK_DIR="${REMOTE_DIR}/.staging-deploy-lock"
+APPLICATION_IMAGE_HEAD_INPUT="${PROJECTAI_STAGING_APPLICATION_IMAGE_HEAD:-}"
+PREBUILT_APP_IMAGE_REF="${PROJECTAI_STAGING_APPLICATION_IMAGE_REF:-}"
+PREBUILT_APP_IMAGE_ID="${PROJECTAI_STAGING_APPLICATION_IMAGE_DIGEST:-}"
 readonly BACKUP_RETENTION=10
 BASE_PATH="/tool/projectai-staging"
 APP_VERSION="${NEXT_PUBLIC_APP_VERSION:-}"
@@ -78,6 +84,7 @@ require_command gzip
 
 ROOT_DIR="$(git rev-parse --show-toplevel 2>/dev/null)" || fail "Run this script from a Git checkout"
 cd "$ROOT_DIR"
+source "$ROOT_DIR/scripts/release/staging-release-guard-state.sh"
 
 if [[ -z "$APP_VERSION" ]]; then
   APP_VERSION="$(node -p 'require("./package.json").version')"
@@ -92,7 +99,10 @@ fi
 [[ "$APP_VERSION" =~ ^[0-9A-Za-z._-]+$ ]] || fail "NEXT_PUBLIC_APP_VERSION contains unsupported characters"
 [[ "$PUBLIC_VALIDATION" == "0" || "$PUBLIC_VALIDATION" == "1" ]] \
   || fail "PUBLIC_VALIDATION must be exactly 0 or 1"
+[[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "app-migrate" || "$DEPLOY_MODE" == "full" ]] \
+  || fail "PROJECTAI_STAGING_DEPLOY_MODE must be app, app-migrate, or full"
 [[ -f "$COMPOSE_FILE" ]] || fail "Missing ${COMPOSE_FILE}"
+[[ -f "$APP_ONLY_COMPOSE_FILE" ]] || fail "Missing ${APP_ONLY_COMPOSE_FILE}"
 
 CURRENT_BRANCH="$(git branch --show-current)"
 [[ "$CURRENT_BRANCH" != "main" ]] || fail "Refusing to deploy main"
@@ -103,11 +113,27 @@ git diff --check --cached
 
 COMMIT_SHA="$(git rev-parse HEAD)"
 [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "Unable to determine a full Commit SHA"
+APPLICATION_IMAGE_HEAD="${APPLICATION_IMAGE_HEAD_INPUT:-$COMMIT_SHA}"
+[[ "$APPLICATION_IMAGE_HEAD" =~ ^[0-9a-f]{40}$ ]] \
+  || fail "PROJECTAI_STAGING_APPLICATION_IMAGE_HEAD must be a full Git SHA"
+
+USE_PREBUILT_APP_IMAGE=0
+if [[ -n "$PREBUILT_APP_IMAGE_REF" || -n "$PREBUILT_APP_IMAGE_ID" || -n "$APPLICATION_IMAGE_HEAD_INPUT" ]]; then
+  [[ "$DEPLOY_MODE" == "app" ]] \
+    || fail "A prebuilt application image is only permitted for app-only Staging deployment"
+  [[ -n "$APPLICATION_IMAGE_HEAD_INPUT" && -n "$PREBUILT_APP_IMAGE_REF" && -n "$PREBUILT_APP_IMAGE_ID" ]] \
+    || fail "Prebuilt Staging deployment requires application image Head, reference, and digest"
+  [[ "$PREBUILT_APP_IMAGE_REF" == "project-ai-os-staging:${APPLICATION_IMAGE_HEAD}" ]] \
+    || fail "Prebuilt application image reference must be bound to its application Head"
+  [[ "$PREBUILT_APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] \
+    || fail "Prebuilt application image digest is invalid"
+  USE_PREBUILT_APP_IMAGE=1
+fi
 SHORT_SHA="${COMMIT_SHA:0:8}"
 DEPLOY_ID="${COMMIT_SHA}-$(date -u +'%Y%m%dT%H%M%SZ')-$$-${RANDOM}"
 BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 export NEXT_PUBLIC_APP_VERSION="$APP_VERSION"
-export NEXT_PUBLIC_COMMIT_SHA="$COMMIT_SHA"
+export NEXT_PUBLIC_COMMIT_SHA="$APPLICATION_IMAGE_HEAD"
 export NEXT_PUBLIC_BUILD_TIME="$BUILD_TIME"
 
 SSH=(
@@ -118,6 +144,68 @@ SSH=(
   -o ConnectTimeout=10
   "$REMOTE_HOST"
 )
+
+RELEASE_LOG_DIR="${REMOTE_DIR}/deploy-logs"
+RELEASE_LOG_FILE="${RELEASE_LOG_DIR}/provider-self-service-$(date -u +'%Y%m%dT%H%M%SZ')-${SHORT_SHA}-${RANDOM}.log"
+APPLICATION_IMAGE_ID="${PREBUILT_APP_IMAGE_ID:-pending}"
+
+initialize_release_log() {
+  "${SSH[@]}" bash -s -- \
+    "$RELEASE_LOG_DIR" "$RELEASE_LOG_FILE" "$COMMIT_SHA" "$APPLICATION_IMAGE_HEAD" "$APPLICATION_IMAGE_ID" <<'REMOTE_RELEASE_LOG'
+set -Eeuo pipefail
+log_dir="$1"
+log_file="$2"
+script_head="$3"
+application_head="$4"
+application_digest="$5"
+[[ "$log_dir" == "/srv/projectai-staging/deploy-logs" ]]
+[[ "$log_file" == "$log_dir"/provider-self-service-*.log ]]
+[[ "$script_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_digest" == "pending" || "$application_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+sudo install -d -m 0700 -o root -g root "$log_dir"
+sudo install -m 0600 -o root -g root /dev/null "$log_file"
+printf '%s event=METADATA script_head=%s application_head=%s application_digest=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$script_head" "$application_head" "$application_digest" | sudo tee -a "$log_file" >/dev/null
+REMOTE_RELEASE_LOG
+}
+
+log_release_event() {
+  local event="$1"
+  local check_name="$2"
+  local exit_code="$3"
+  local error_code="$4"
+  [[ "$event" =~ ^(PHASE|PASS|FAIL|EXIT|ROLLBACK_START|ROLLBACK_COMPLETE|COMMIT|WARNING)$ ]]
+  [[ "$check_name" =~ ^[A-Z][A-Z0-9_]{2,80}$ ]]
+  [[ "$exit_code" =~ ^[0-9]+$ ]]
+  [[ "$error_code" =~ ^(NONE|STAGING_[A-Z0-9_]{3,120})$ ]]
+  "${SSH[@]}" bash -s -- \
+    "$RELEASE_LOG_FILE" "$COMMIT_SHA" "$APPLICATION_IMAGE_HEAD" "$APPLICATION_IMAGE_ID" \
+    "$release_phase" "$event" "$check_name" "$exit_code" "$error_code" <<'REMOTE_RELEASE_EVENT'
+set -Eeuo pipefail
+log_file="$1"
+script_head="$2"
+application_head="$3"
+application_digest="$4"
+phase="$5"
+event="$6"
+check_name="$7"
+exit_code="$8"
+error_code="$9"
+[[ "$log_file" == /srv/projectai-staging/deploy-logs/provider-self-service-*.log ]]
+[[ "$script_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$application_digest" == "pending" || "$application_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "$phase" =~ ^[A-Z][A-Z0-9_]{2,80}$ ]]
+[[ "$event" =~ ^(PHASE|PASS|FAIL|EXIT|ROLLBACK_START|ROLLBACK_COMPLETE|COMMIT|WARNING)$ ]]
+[[ "$check_name" =~ ^[A-Z][A-Z0-9_]{2,80}$ ]]
+[[ "$exit_code" =~ ^[0-9]+$ ]]
+[[ "$error_code" =~ ^(NONE|STAGING_[A-Z0-9_]{3,120})$ ]]
+printf '%s phase=%s event=%s check=%s exit_code=%s error_code=%s script_head=%s application_head=%s application_digest=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$phase" "$event" "$check_name" "$exit_code" "$error_code" "$script_head" "$application_head" "$application_digest" | sudo tee -a "$log_file" >/dev/null
+REMOTE_RELEASE_EVENT
+}
+
+initialize_release_log
+release_guard_init
 
 release_deploy_lock() {
   [[ "$LOCK_ACQUIRED" == "1" ]] || return 0
@@ -149,18 +237,28 @@ early_cleanup() {
   local exit_code=$?
   trap - EXIT
   set +e
+  if [[ "$exit_code" -ne 0 ]]; then
+    release_guard_record_unhandled_failure "$exit_code" || true
+  fi
+  log_release_event "EXIT" "EARLY_CLEANUP" "$exit_code" "$release_error_code" || true
   release_deploy_lock
   [[ $? -eq 0 ]] || exit_code=1
   cleanup_release_root
   exit "$exit_code"
 }
+
+trap release_guard_on_error ERR
 trap early_cleanup EXIT
 
+release_guard_set_phase "VERIFY_SSH_IDENTITY"
 log "Verifying required SSH identity and passwordless sudo"
-"${SSH[@]}" 'echo connected && whoami && hostname && sudo -n true && echo sudo-ok'
+release_guard_run_check "SSH_IDENTITY" "STAGING_RELEASE_SSH_IDENTITY_FAILED" \
+  "${SSH[@]}" 'echo connected && whoami && hostname && sudo -n true && echo sudo-ok'
 
+release_guard_set_phase "ACQUIRE_DEPLOY_LOCK"
 log "Acquiring the isolated Staging deployment lock"
-"${SSH[@]}" bash -s -- "$REMOTE_DIR" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_LOCK'
+release_guard_run_check "ACQUIRE_DEPLOY_LOCK" "STAGING_RELEASE_LOCK_ACQUIRE_FAILED" \
+  "${SSH[@]}" bash -s -- "$REMOTE_DIR" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_LOCK'
 set -Eeuo pipefail
 remote_dir="$1"
 lock_dir="$2"
@@ -179,13 +277,16 @@ sudo chmod 600 "$lock_dir/deploy-id"
 REMOTE_LOCK
 LOCK_ACQUIRED=1
 
+release_guard_set_phase "VERIFY_REMOTE_PREREQUISITES"
 log "Checking isolated remote prerequisites and protected environment file"
-"${SSH[@]}" bash -s -- \
+release_guard_run_check "REMOTE_PREREQUISITES" "STAGING_RELEASE_REMOTE_PREFLIGHT_FAILED" \
+  "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
   "$REMOTE_QWEN_SECRET_FILE" "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" \
   "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$MINIO_VOLUME_NAME" "$MINIO_BUCKET_NAME" \
   "$COMPOSE_PROJECT" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" \
-  "$REMOTE_EMBEDDING_ENV_FILE" "$EMBEDDING_WORKER_CONTAINER_NAME" <<'REMOTE_PREFLIGHT'
+  "$REMOTE_EMBEDDING_ENV_FILE" "$EMBEDDING_WORKER_CONTAINER_NAME" "$DEPLOY_MODE" \
+  "$REMOTE_PROVIDER_CREDENTIALS_KEY_FILE" <<'REMOTE_PREFLIGHT'
 set -Eeuo pipefail
 remote_dir="$1"
 env_file="$2"
@@ -203,10 +304,13 @@ deploy_lock="${13}"
 deploy_id="${14}"
 embedding_env_file="${15}"
 embedding_worker_container_name="${16}"
+deploy_mode="${17}"
+provider_credentials_key_file="${18}"
 command -v docker >/dev/null 2>&1
 command -v curl >/dev/null 2>&1
 command -v rsync >/dev/null 2>&1
 command -v timeout >/dev/null 2>&1
+command -v openssl >/dev/null 2>&1
 sudo -n true
 sudo docker compose version >/dev/null
 
@@ -221,7 +325,9 @@ fi
 [[ "$ai_env_file" == "$remote_dir/.env.ai" ]]
 [[ "$embedding_env_file" == "$remote_dir/.env.embedding" ]]
 [[ "$qwen_secret_file" == "$remote_dir/secrets/qwen_api_key" ]]
+[[ "$provider_credentials_key_file" == "$remote_dir/secrets/provider_credentials_key" ]]
 [[ "$embedding_worker_container_name" == "project-ai-os-staging-embedding-worker" ]]
+[[ "$deploy_mode" == "app" || "$deploy_mode" == "app-migrate" || "$deploy_mode" == "full" ]]
 [[ "$compose_project" == "projectai-staging" ]]
 [[ "$deploy_marker" == "$remote_dir/.staging-deploy-in-progress" ]]
 [[ "$deploy_lock" == "$remote_dir/.staging-deploy-lock" ]]
@@ -243,81 +349,17 @@ sudo test ! -L "$ai_env_file"
 sudo chmod 600 "$ai_env_file"
 [[ "$(sudo stat -c '%a' "$ai_env_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$ai_env_file")" == "deploy:deploy" ]]
-ai_env_temp="$(sudo mktemp "$remote_dir/.env.ai.preflight.XXXXXX")"
-if ! sudo awk -F= '
-  BEGIN { assistant = 0; mode = 0; profile = 0; query_timeout = 0; vector_timeout = 0; daily_limit = 0 }
-  $1 == "AI_ASSISTANT_ENABLED" {
-    print "AI_ASSISTANT_ENABLED=false"
-    assistant += 1
-    next
-  }
-  $1 == "AI_ASSISTANT_RETRIEVAL_MODE" {
-    print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
-    mode += 1
-    next
-  }
-  $1 == "AI_HYBRID_RETRIEVAL_PROFILE_ID" {
-    print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1"
-    profile += 1
-    next
-  }
-  $1 == "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS" {
-    print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
-    query_timeout += 1
-    next
-  }
-  $1 == "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS" {
-    print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
-    vector_timeout += 1
-    next
-  }
-  $1 == "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT" {
-    print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
-    daily_limit += 1
-    next
-  }
-  { print }
-  END {
-    if (assistant != 1 || mode > 1 || profile > 1 || query_timeout > 1 || vector_timeout > 1 || daily_limit > 1) exit 1
-    if (mode == 0) print "AI_ASSISTANT_RETRIEVAL_MODE=lexical"
-    if (profile == 0) print "AI_HYBRID_RETRIEVAL_PROFILE_ID=hybrid-rrf-v1"
-    if (query_timeout == 0) print "AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS=5000"
-    if (vector_timeout == 0) print "AI_HYBRID_VECTOR_SQL_TIMEOUT_MS=1500"
-    if (daily_limit == 0) print "AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT=5000000"
-  }
-' "$ai_env_file" | sudo tee "$ai_env_temp" >/dev/null; then
-  sudo rm -f "$ai_env_temp"
-  printf 'Protected Staging AI configuration must contain exactly one Assistant Feature Flag.\n' >&2
-  exit 1
-fi
-sudo install -m 0600 -o deploy -g deploy "$ai_env_temp" "$ai_env_file"
-sudo rm -f "$ai_env_temp"
-embedding_env_temp="$(sudo mktemp "$remote_dir/.env.embedding.preflight.XXXXXX")"
-sudo tee "$embedding_env_temp" >/dev/null <<'EMBEDDING_ENV'
-AI_EMBEDDING_ENABLED=false
-AI_EMBEDDING_PROFILE_ID=qwen-text-embedding-cn-v1
-AI_EMBEDDING_DIMENSIONS=1024
-AI_EMBEDDING_WORKER_POLL_MS=2000
-AI_EMBEDDING_WORKER_LEASE_SECONDS=120
-AI_EMBEDDING_WORKER_MAX_ATTEMPTS=3
-AI_EMBEDDING_BATCH_SIZE=10
-AI_EMBEDDING_BATCH_MAX_CHARACTERS=30000
-AI_EMBEDDING_DAILY_JOB_LIMIT=500
-AI_EMBEDDING_DAILY_TOKEN_LIMIT=5000000
-AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS=25000
-EMBEDDING_ENV
-sudo install -m 0600 -o root -g root "$embedding_env_temp" "$embedding_env_file"
-sudo rm -f "$embedding_env_temp"
 sudo test -f "$embedding_env_file"
 sudo test ! -L "$embedding_env_file"
 [[ "$(sudo stat -c '%a' "$embedding_env_file")" == "600" ]]
 [[ "$(sudo stat -c '%U:%G' "$embedding_env_file")" == "root:root" ]]
-sudo awk -F= '
+sudo awk -F= -v deploy_mode="$deploy_mode" '
   /^[[:space:]]*($|#)/ { next }
   { count[$1] += 1; values[$1] = substr($0, index($0, "=") + 1) }
   END {
-    if (count["AI_EMBEDDING_ENABLED"] != 1 || values["AI_EMBEDDING_ENABLED"] != "false") exit 1
-    if (count["AI_EMBEDDING_PROFILE_ID"] != 1 || values["AI_EMBEDDING_PROFILE_ID"] != "qwen-text-embedding-cn-v1") exit 1
+    if (count["AI_EMBEDDING_ENABLED"] != 1 || values["AI_EMBEDDING_ENABLED"] !~ /^(true|false)$/) exit 1
+    if (deploy_mode == "full" && values["AI_EMBEDDING_ENABLED"] != "false") exit 1
+    if (count["AI_EMBEDDING_PROFILE_ID"] != 1 || values["AI_EMBEDDING_PROFILE_ID"] != "qwen3.7-text-embedding-cn-v2") exit 1
     if (count["AI_EMBEDDING_DIMENSIONS"] != 1 || values["AI_EMBEDDING_DIMENSIONS"] != "1024") exit 1
     if (count["AI_EMBEDDING_BATCH_SIZE"] != 1 || values["AI_EMBEDDING_BATCH_SIZE"] != "10") exit 1
     if (count["AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS"] != 1 || values["AI_EMBEDDING_WORKER_SHUTDOWN_DRAIN_MS"] != "25000") exit 1
@@ -331,7 +373,25 @@ sudo chmod 600 "$qwen_secret_file"
 [[ "$(sudo stat -c '%U:%G' "$qwen_secret_file")" == "deploy:deploy" ]]
 [[ "$(sudo stat -c '%u:%g' "$qwen_secret_file")" == "1000:1000" ]]
 [[ "$(id -u deploy):$(id -g deploy)" == "1000:1000" ]]
-sudo awk -F= '
+sudo install -d -m 0700 -o deploy -g deploy "$remote_dir/secrets"
+sudo test ! -L "$remote_dir/secrets"
+if ! sudo test -e "$provider_credentials_key_file"; then
+  sudo -u deploy sh -ceu '
+    umask 077
+    temporary="$1.tmp.$$"
+    trap '\''rm -f -- "$temporary"'\'' EXIT
+    openssl rand -base64 32 > "$temporary"
+    mv -f -- "$temporary" "$1"
+  ' sh "$provider_credentials_key_file"
+fi
+sudo test -f "$provider_credentials_key_file"
+sudo test ! -L "$provider_credentials_key_file"
+sudo chmod 600 "$provider_credentials_key_file"
+sudo chown deploy:deploy "$provider_credentials_key_file"
+[[ "$(sudo stat -c '%a' "$provider_credentials_key_file")" == "600" ]]
+[[ "$(sudo stat -c '%U:%G' "$provider_credentials_key_file")" == "deploy:deploy" ]]
+[[ "$(sudo -u deploy sh -ceu 'base64 -d "$1" | wc -c' sh "$provider_credentials_key_file")" == "32" ]]
+sudo awk -F= -v deploy_mode="$deploy_mode" '
   /^[[:space:]]*($|#)/ { next }
   {
     key = $1
@@ -340,12 +400,14 @@ sudo awk -F= '
     values[key] = value
   }
   END {
-    if (count["AI_ASSISTANT_ENABLED"] != 1 || values["AI_ASSISTANT_ENABLED"] != "false") exit 1
+    if (count["AI_ASSISTANT_ENABLED"] != 1 || values["AI_ASSISTANT_ENABLED"] !~ /^(true|false)$/) exit 1
+    if (deploy_mode == "full" && values["AI_ASSISTANT_ENABLED"] != "false") exit 1
     if (count["AI_PROVIDER"] != 1 || values["AI_PROVIDER"] != "qwen") exit 1
     if (count["AI_REGION"] != 1 || values["AI_REGION"] != "cn-beijing") exit 1
-    if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v1") exit 1
-    if (count["AI_ASSISTANT_RETRIEVAL_MODE"] != 1 || values["AI_ASSISTANT_RETRIEVAL_MODE"] != "lexical") exit 1
-    if (count["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != 1 || values["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != "hybrid-rrf-v1") exit 1
+    if (count["AI_PROJECT_ASSISTANT_PROFILE_ID"] != 1 || values["AI_PROJECT_ASSISTANT_PROFILE_ID"] != "qwen-project-assistant-cn-v2") exit 1
+    if (count["AI_ASSISTANT_RETRIEVAL_MODE"] != 1 || values["AI_ASSISTANT_RETRIEVAL_MODE"] !~ /^(lexical|shadow|hybrid)$/) exit 1
+    if (deploy_mode == "full" && values["AI_ASSISTANT_RETRIEVAL_MODE"] != "lexical") exit 1
+    if (count["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != 1 || values["AI_HYBRID_RETRIEVAL_PROFILE_ID"] != "hybrid-rrf-qwen37-v2") exit 1
     if (count["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_TIMEOUT_MS"] != "5000") exit 1
     if (count["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != 1 || values["AI_HYBRID_VECTOR_SQL_TIMEOUT_MS"] != "1500") exit 1
     if (count["AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT"] != 1 || values["AI_HYBRID_QUERY_EMBEDDING_DAILY_TOKEN_LIMIT"] != "5000000") exit 1
@@ -388,17 +450,21 @@ required_keys=(
   DOCUMENT_CHUNK_TARGET_CHARS DOCUMENT_CHUNK_OVERLAP_CHARS
   DOCUMENT_CHUNK_MIN_CHARS
   DOCUMENT_PARSER_VERSION DOCUMENT_CHUNKER_VERSION
-  PROJECTAI_SEED_ENVIRONMENT
-  SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
-  SEED_ORG_ADMIN_EMAIL SEED_ORG_ADMIN_PASSWORD
-  SEED_DEPT_ADMIN_EMAIL SEED_DEPT_ADMIN_PASSWORD
-  SEED_MANAGER_A_EMAIL SEED_MANAGER_A_PASSWORD
-  SEED_MANAGER_B_EMAIL SEED_MANAGER_B_PASSWORD
-  SEED_MEMBER_A_EMAIL SEED_MEMBER_A_PASSWORD
-  SEED_VIEWER_A_EMAIL SEED_VIEWER_A_PASSWORD
-  SEED_OTHER_DEPT_EMAIL SEED_OTHER_DEPT_PASSWORD
-  SEED_OUTSIDER_EMAIL SEED_OUTSIDER_PASSWORD
 )
+if [[ "$deploy_mode" == "full" ]]; then
+  required_keys+=(
+    PROJECTAI_SEED_ENVIRONMENT
+    SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
+    SEED_ORG_ADMIN_EMAIL SEED_ORG_ADMIN_PASSWORD
+    SEED_DEPT_ADMIN_EMAIL SEED_DEPT_ADMIN_PASSWORD
+    SEED_MANAGER_A_EMAIL SEED_MANAGER_A_PASSWORD
+    SEED_MANAGER_B_EMAIL SEED_MANAGER_B_PASSWORD
+    SEED_MEMBER_A_EMAIL SEED_MEMBER_A_PASSWORD
+    SEED_VIEWER_A_EMAIL SEED_VIEWER_A_PASSWORD
+    SEED_OTHER_DEPT_EMAIL SEED_OTHER_DEPT_PASSWORD
+    SEED_OUTSIDER_EMAIL SEED_OUTSIDER_PASSWORD
+  )
+fi
 for key in "${required_keys[@]}"; do
   key_count="$(sudo awk -F= -v key="$key" '$1 == key { count += 1 } END { print count + 0 }' "$env_file")"
   [[ "$key_count" == "1" ]] || {
@@ -429,18 +495,20 @@ if sudo awk -F= '
   exit 1
 fi
 
-for key in \
-  SEED_ADMIN_PASSWORD SEED_ORG_ADMIN_PASSWORD SEED_DEPT_ADMIN_PASSWORD \
-  SEED_MANAGER_A_PASSWORD SEED_MANAGER_B_PASSWORD SEED_MEMBER_A_PASSWORD \
-  SEED_VIEWER_A_PASSWORD SEED_OTHER_DEPT_PASSWORD SEED_OUTSIDER_PASSWORD; do
-  sudo awk -F= -v key="$key" '
-    $1 == key { value = substr($0, index($0, "=") + 1); exit(length(value) >= 12 ? 0 : 1) }
-    END { if (!value) exit 1 }
-  ' "$env_file" || {
-    printf '%s must contain at least 12 characters.\n' "$key" >&2
-    exit 1
-  }
-done
+if [[ "$deploy_mode" == "full" ]]; then
+  for key in \
+    SEED_ADMIN_PASSWORD SEED_ORG_ADMIN_PASSWORD SEED_DEPT_ADMIN_PASSWORD \
+    SEED_MANAGER_A_PASSWORD SEED_MANAGER_B_PASSWORD SEED_MEMBER_A_PASSWORD \
+    SEED_VIEWER_A_PASSWORD SEED_OTHER_DEPT_PASSWORD SEED_OUTSIDER_PASSWORD; do
+    sudo awk -F= -v key="$key" '
+      $1 == key { value = substr($0, index($0, "=") + 1); exit(length(value) >= 12 ? 0 : 1) }
+      END { if (!value) exit 1 }
+    ' "$env_file" || {
+      printf '%s must contain at least 12 characters.\n' "$key" >&2
+      exit 1
+    }
+  done
+fi
 
 sudo awk -F= '
   $1 == "POSTGRES_PASSWORD" { value = substr($0, index($0, "=") + 1); exit(length(value) >= 16 ? 0 : 1) }
@@ -614,6 +682,7 @@ fi
 
 REMOTE_PREFLIGHT
 
+release_guard_set_phase "VERIFY_CANDIDATE_PLATFORM"
 REMOTE_DOCKER_INFO="$(
   "${SSH[@]}" "sudo docker info --format '{{.OSType}}|{{.Architecture}}'"
 )" || fail "Unable to determine the remote Docker platform"
@@ -633,6 +702,7 @@ get_production_state() {
     "sudo docker inspect --format '{{.Id}} {{.State.Running}} {{.RestartCount}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' project-ai-os"
 }
 
+release_guard_set_phase "VERIFY_PRODUCTION_BASELINE"
 PRODUCTION_STATE_BEFORE="$(get_production_state)" \
   || fail "Production container project-ai-os must be running before staging deployment"
 read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
@@ -640,6 +710,8 @@ read -r _ production_running _ production_health <<<"$PRODUCTION_STATE_BEFORE"
 [[ "$production_health" == "healthy" || "$production_health" == "none" ]] \
   || fail "Production container is not healthy before staging deployment"
 
+log_release_event "PASS" "PRODUCTION_BASELINE" "0" "NONE"
+release_guard_set_phase "CAPTURE_STAGING_BASELINE"
 PREVIOUS_STAGING_STATE="$("${SSH[@]}" bash -s -- \
   "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$EMBEDDING_WORKER_CONTAINER_NAME" \
   "$BASE_PATH" <<'REMOTE_IMAGE'
@@ -745,6 +817,8 @@ if [[ "$PREVIOUS_STAGING_EMBEDDING_WORKER_RUNNING" == "1" ]]; then
     || fail "Unable to capture the immutable previous Staging Embedding Worker image ID"
 fi
 
+log_release_event "PASS" "STAGING_BASELINE" "0" "NONE"
+release_guard_set_phase "READY_TO_REPLACE"
 rollback_staging_if_marked() {
   "${SSH[@]}" bash -s -- \
     "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_AI_ENV_FILE" \
@@ -958,13 +1032,27 @@ finish_deployment() {
   set +e
 
   if [[ "$exit_code" -ne 0 ]]; then
+    release_guard_record_unhandled_failure "$exit_code" || true
+  fi
+  log_release_event "EXIT" "RELEASE_TRANSACTION" "$exit_code" "$release_error_code" || true
+
+  if release_guard_should_rollback "$exit_code"; then
+    log_release_event "ROLLBACK_START" "RELEASE_TRANSACTION" "$exit_code" "$release_error_code" || true
     rollback_staging_if_marked
     rollback_code=$?
+    if [[ "$rollback_code" -eq 0 ]]; then
+      log_release_event "ROLLBACK_COMPLETE" "RELEASE_TRANSACTION" "0" "NONE" || true
+    else
+      log_release_event "ROLLBACK_COMPLETE" "RELEASE_TRANSACTION" "$rollback_code" "STAGING_RELEASE_ROLLBACK_FAILED" || true
+    fi
+  elif [[ "$exit_code" -ne 0 ]]; then
+    log_release_event "WARNING" "POST_COMMIT_FAILURE" "$exit_code" "STAGING_POST_COMMIT_CLEANUP_WARNING" || true
   fi
 
   production_state_after="$(get_production_state)"
   if [[ -z "$production_state_after" || "$production_state_after" != "$PRODUCTION_STATE_BEFORE" ]]; then
     printf '[projectai-staging] ERROR: Production container identity, health, or restart state changed during Staging deployment\n' >&2
+    log_release_event "FAIL" "PRODUCTION_INVARIANCE" "1" "STAGING_RELEASE_PRODUCTION_INVARIANCE_FAILED" || true
     exit_code=1
   fi
   if [[ "$rollback_code" -ne 0 ]]; then
@@ -975,6 +1063,7 @@ finish_deployment() {
   release_deploy_lock
   if [[ $? -ne 0 ]]; then
     printf '[projectai-staging] ERROR: Staging deployment lock could not be released safely\n' >&2
+    log_release_event "WARNING" "DEPLOY_LOCK_RELEASE" "1" "STAGING_POST_COMMIT_CLEANUP_WARNING" || true
     exit_code=1
   fi
   cleanup_release_root
@@ -983,10 +1072,20 @@ finish_deployment() {
 }
 trap finish_deployment EXIT
 
+release_guard_set_phase "PREPARE_RELEASE_SOURCE"
 log "Creating a tracked-file-only release for Commit ${SHORT_SHA}"
 RELEASE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/projectai-release.XXXXXX")"
 git archive --format=tar "$COMMIT_SHA" | tar -xf - -C "$RELEASE_ROOT"
 [[ -f "$RELEASE_ROOT/$COMPOSE_FILE" ]] || fail "Tracked release is missing ${COMPOSE_FILE}"
+[[ -f "$RELEASE_ROOT/$APP_ONLY_COMPOSE_FILE" ]] || fail "Tracked release is missing ${APP_ONLY_COMPOSE_FILE}"
+[[ -f "$RELEASE_ROOT/scripts/release/staging-app-only-deploy.sh" ]] \
+  || fail "Tracked release is missing the app-only deployment helper"
+[[ -f "$RELEASE_ROOT/scripts/release/staging-release-guard-state.sh" ]] \
+  || fail "Tracked release is missing the Staging release guard state helper"
+if [[ "$DEPLOY_MODE" == "app-migrate" ]]; then
+  [[ -f "$RELEASE_ROOT/scripts/release/staging-app-migrate-deploy.sh" ]] \
+    || fail "Tracked release is missing the app-migrate deployment helper"
+fi
 [[ ! -e "$RELEASE_ROOT/.env.auth-staging" ]] || fail "Tracked release unexpectedly contains a protected environment file"
 sensitive_release_paths="$(
   git ls-tree -r --name-only "$COMMIT_SHA" \
@@ -998,38 +1097,53 @@ sensitive_release_paths="$(
 )"
 [[ -z "$sensitive_release_paths" ]] || fail "Tracked release contains a prohibited secret-like path"
 
-APP_IMAGE_REF="project-ai-os-staging:${COMMIT_SHA}"
+APP_IMAGE_REF="project-ai-os-staging:${APPLICATION_IMAGE_HEAD}"
 DB_TOOLS_IMAGE_REF="project-ai-os-staging-db-tools:${COMMIT_SHA}"
 
-log "Building reviewed Staging images locally for ${REMOTE_DOCKER_PLATFORM}"
-docker version >/dev/null
-docker build \
-  --pull \
-  --platform "$REMOTE_DOCKER_PLATFORM" \
-  --target runner \
-  --build-arg "NEXT_PUBLIC_BASE_PATH=$BASE_PATH" \
-  --build-arg "NEXT_PUBLIC_APP_ENV=staging" \
-  --build-arg "NEXT_PUBLIC_APP_VERSION=$APP_VERSION" \
-  --build-arg "NEXT_PUBLIC_COMMIT_SHA=$COMMIT_SHA" \
-  --build-arg "NEXT_PUBLIC_BUILD_TIME=$BUILD_TIME" \
-  --tag "$APP_IMAGE_REF" \
-  "$RELEASE_ROOT"
-docker build \
-  --pull \
-  --platform "$REMOTE_DOCKER_PLATFORM" \
-  --target db-tools \
-  --tag "$DB_TOOLS_IMAGE_REF" \
-  "$RELEASE_ROOT"
+if [[ "$USE_PREBUILT_APP_IMAGE" == "1" ]]; then
+  APP_IMAGE_REF="$PREBUILT_APP_IMAGE_REF"
+  APP_IMAGE_ID="$PREBUILT_APP_IMAGE_ID"
+  release_guard_set_phase "VERIFY_PREBUILT_CANDIDATE"
+  log "Using the reviewed prebuilt Staging application image without rebuilding it"
+else
+  release_guard_set_phase "BUILD_CANDIDATE_IMAGE"
+  release_error_code="STAGING_RELEASE_IMAGE_BUILD_FAILED"
+  log "Building reviewed Staging images locally for ${REMOTE_DOCKER_PLATFORM}"
+  docker version >/dev/null
+  docker build \
+    --pull \
+    --platform "$REMOTE_DOCKER_PLATFORM" \
+    --target runner \
+    --build-arg "NEXT_PUBLIC_BASE_PATH=$BASE_PATH" \
+    --build-arg "NEXT_PUBLIC_APP_ENV=staging" \
+    --build-arg "NEXT_PUBLIC_APP_VERSION=$APP_VERSION" \
+    --build-arg "NEXT_PUBLIC_COMMIT_SHA=$APPLICATION_IMAGE_HEAD" \
+    --build-arg "NEXT_PUBLIC_BUILD_TIME=$BUILD_TIME" \
+    --tag "$APP_IMAGE_REF" \
+    "$RELEASE_ROOT"
+  APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
+  [[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+  log_release_event "PASS" "BUILD_CANDIDATE_IMAGE" "0" "NONE"
+fi
+DB_TOOLS_IMAGE_ID=""
+if [[ "$DEPLOY_MODE" != "app" ]]; then
+  docker build \
+    --pull \
+    --platform "$REMOTE_DOCKER_PLATFORM" \
+    --target db-tools \
+    --tag "$DB_TOOLS_IMAGE_REF" \
+    "$RELEASE_ROOT"
+  DB_TOOLS_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$DB_TOOLS_IMAGE_REF")"
+  [[ "$DB_TOOLS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+  [[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$DB_TOOLS_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
+fi
+DB_TOOLS_IMAGE_ID_ARG="${DB_TOOLS_IMAGE_ID:-__projectai_empty__}"
 
-APP_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$APP_IMAGE_REF")"
-DB_TOOLS_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$DB_TOOLS_IMAGE_REF")"
-[[ "$APP_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
-[[ "$DB_TOOLS_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
-[[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$APP_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
-[[ "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$DB_TOOLS_IMAGE_REF")" == "$REMOTE_DOCKER_PLATFORM" ]]
-
+release_guard_set_phase "CREATE_RELEASE_MARKER"
 log "Preparing fixed Staging release directory without moving its protected environment"
-"${SSH[@]}" bash -s -- \
+release_guard_run_check "CREATE_RELEASE_MARKER" "STAGING_RELEASE_MARKER_CREATE_FAILED" \
+  "${SSH[@]}" bash -s -- \
   "$REMOTE_DIR" "$DEPLOY_MARKER" "$DEPLOY_LOCK_DIR" "$DEPLOY_ID" <<'REMOTE_RELEASE'
 set -Eeuo pipefail
 remote_dir="$1"
@@ -1047,10 +1161,13 @@ sudo test ! -L "$remote_dir/backups"
 [[ "$(sudo readlink -f -- "$remote_dir/backups")" == "$remote_dir/backups" ]]
 REMOTE_RELEASE
 
+release_guard_set_phase "SYNC_RELEASE_SOURCE"
+release_error_code="STAGING_RELEASE_SOURCE_SYNC_FAILED"
 log "Syncing tracked release ${SHORT_SHA} to ${REMOTE_HOST}:${REMOTE_DIR}"
 
 rsync --archive --compress --delete \
   --filter='protect /backups/***' \
+  --filter='protect /deploy-logs/***' \
   --filter='protect /.local/***' \
   --filter='protect /.env.auth-staging' \
   --filter='protect /.env.ai' \
@@ -1069,6 +1186,7 @@ rsync --archive --compress --delete \
   --exclude '/test-results/' \
   --exclude '/coverage/' \
   --exclude '/backups/' \
+  --exclude '/deploy-logs/' \
   --exclude '/.local/' \
   --exclude '/.env' \
   --exclude '/.env.*' \
@@ -1079,26 +1197,98 @@ rsync --archive --compress --delete \
   --exclude '*.log' \
   --rsh='ssh -o BatchMode=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=12 -o ConnectTimeout=10' \
   "$RELEASE_ROOT/" "${REMOTE_HOST}:${REMOTE_DIR}/"
+log_release_event "PASS" "SYNC_RELEASE_SOURCE" "0" "NONE"
 
-log "Transferring locally built Staging images without building on the shared host"
-docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" \
-  | gzip -1 \
-  | "${SSH[@]}" 'sudo docker load >/dev/null'
+if [[ "$USE_PREBUILT_APP_IMAGE" == "1" ]]; then
+  release_guard_set_phase "VERIFY_PREBUILT_CANDIDATE"
+  log_release_event "PASS" "PREBUILT_IMAGE_REUSE" "0" "NONE"
+else
+  release_guard_set_phase "LOAD_CANDIDATE_IMAGE"
+  release_error_code="STAGING_RELEASE_IMAGE_TRANSFER_FAILED"
+  log "Transferring locally built Staging images without building on the shared host"
+  if [[ "$DEPLOY_MODE" == "app" ]]; then
+    docker save "$APP_IMAGE_REF" | gzip -1 | "${SSH[@]}" 'sudo docker load >/dev/null'
+  else
+    docker save "$APP_IMAGE_REF" "$DB_TOOLS_IMAGE_REF" \
+      | gzip -1 \
+      | "${SSH[@]}" 'sudo docker load >/dev/null'
+  fi
+  log_release_event "PASS" "LOAD_CANDIDATE_IMAGE" "0" "NONE"
+fi
 
-"${SSH[@]}" bash -s -- \
-  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID" \
-  "$REMOTE_DOCKER_PLATFORM" <<'REMOTE_IMAGE_VERIFY'
+release_guard_set_phase "VERIFY_CANDIDATE_IMAGE"
+release_guard_run_check "CANDIDATE_IMAGE" "STAGING_RELEASE_IMAGE_PROVENANCE_FAILED" \
+  "${SSH[@]}" bash -s -- \
+  "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$APPLICATION_IMAGE_HEAD" "$DB_TOOLS_IMAGE_REF" "$DB_TOOLS_IMAGE_ID_ARG" \
+  "$REMOTE_DOCKER_PLATFORM" "$DEPLOY_MODE" <<'REMOTE_IMAGE_VERIFY'
 set -Eeuo pipefail
 app_image_ref="$1"
 app_image_id="$2"
-db_tools_image_ref="$3"
-db_tools_image_id="$4"
-expected_platform="$5"
+application_image_head="$3"
+db_tools_image_ref="$4"
+db_tools_image_id="$5"
+expected_platform="$6"
+deploy_mode="$7"
+[[ "$deploy_mode" == "app" || "$deploy_mode" == "app-migrate" || "$deploy_mode" == "full" ]]
 [[ "$(sudo docker image inspect --format '{{.Id}}' "$app_image_ref")" == "$app_image_id" ]]
-[[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
 [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$app_image_ref")" == "$expected_platform" ]]
-[[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$db_tools_image_ref")" == "$expected_platform" ]]
+[[ "$application_image_head" =~ ^[0-9a-f]{40}$ ]]
+[[ "$(sudo docker image inspect --format '{{index .Config.Labels `org.opencontainers.image.revision`}}' "$app_image_ref")" == "$application_image_head" ]]
+if [[ "$deploy_mode" != "app" ]]; then
+  [[ "$(sudo docker image inspect --format '{{.Id}}' "$db_tools_image_ref")" == "$db_tools_image_id" ]]
+  [[ "$(sudo docker image inspect --format '{{.Os}}/{{.Architecture}}' "$db_tools_image_ref")" == "$expected_platform" ]]
+fi
 REMOTE_IMAGE_VERIFY
+
+if [[ "$DEPLOY_MODE" == "app" || "$DEPLOY_MODE" == "app-migrate" ]]; then
+  deploy_helper="staging-app-only-deploy.sh"
+  if [[ "$DEPLOY_MODE" == "app" ]]; then
+    log "Replacing only the Staging App and required Workers without Migration, Seed, or credential E2E"
+  else
+    log "Backing up Staging PostgreSQL, applying committed migrations only, then replacing App and Workers without Seed, password reset, or credential E2E"
+    deploy_helper="staging-app-migrate-deploy.sh"
+  fi
+  release_guard_set_phase "REPLACE_STAGING_RUNTIME"
+  release_guard_run_check "REPLACE_STAGING_RUNTIME" "STAGING_RELEASE_RUNTIME_REPLACEMENT_FAILED" \
+    "${SSH[@]}" sudo bash \
+    "$REMOTE_DIR/scripts/release/${deploy_helper}" \
+    "$REMOTE_DIR" "$REMOTE_ENV_FILE" "$REMOTE_EMBEDDING_ENV_FILE" \
+    "$COMPOSE_PROJECT" "$COMPOSE_FILE" "$APP_ONLY_COMPOSE_FILE" \
+    "$APP_IMAGE_REF" "$APP_IMAGE_ID" "$APPLICATION_IMAGE_HEAD" "$APP_VERSION" "$BUILD_TIME" \
+    "$CONTAINER_NAME" "$WORKER_CONTAINER_NAME" "$EMBEDDING_WORKER_CONTAINER_NAME" \
+    "$DB_CONTAINER_NAME" "$MINIO_CONTAINER_NAME" "$BASE_PATH" "$DEPLOY_MARKER" "$RELEASE_LOG_FILE"
+  release_guard_set_phase "VERIFY_PRODUCTION_INVARIANCE"
+  if [[ "$(get_production_state)" != "$PRODUCTION_STATE_BEFORE" ]]; then
+    release_error_code="STAGING_RELEASE_PRODUCTION_INVARIANCE_FAILED"
+    fail "Production changed before the app-only Staging transaction could commit"
+  fi
+  log_release_event "PASS" "PRODUCTION_INVARIANCE" "0" "NONE"
+  release_guard_set_phase "VERIFY_PUBLIC_HEALTH"
+  public_health_code="$(http_code "${PUBLIC_STAGING_URL}/api/health")"
+  if [[ "$public_health_code" != "200" ]]; then
+    release_error_code="STAGING_RELEASE_PUBLIC_HEALTH_FAILED"
+    fail "Public Staging health returned ${public_health_code}"
+  fi
+  log_release_event "PASS" "PUBLIC_HEALTH" "0" "NONE"
+  release_guard_set_phase "VERIFY_LOGIN_PAGE"
+  public_login_code="$(http_code "${PUBLIC_STAGING_URL}/login")"
+  if [[ "$public_login_code" != "200" ]]; then
+    release_error_code="STAGING_RELEASE_LOGIN_FAILED"
+    fail "Public Staging login returned ${public_login_code}"
+  fi
+  log_release_event "PASS" "LOGIN_PAGE" "0" "NONE"
+  release_guard_set_phase "COMMIT_RELEASE"
+  release_guard_mark_committed
+  if ! "${SSH[@]}" "sudo rm -f '$DEPLOY_MARKER'"; then
+    log_release_event "WARNING" "POST_COMMIT_MARKER_CLEANUP" "1" "STAGING_POST_COMMIT_CLEANUP_WARNING" || true
+    printf '[projectai-staging] WARNING: STAGING_POST_COMMIT_CLEANUP_WARNING\n' >&2
+  else
+    log_release_event "PASS" "POST_COMMIT_MARKER_CLEANUP" "0" "NONE"
+  fi
+  log "App-only Staging deployment verified"
+  log "Environment=staging Version=${APP_VERSION} ApplicationHead=${APPLICATION_IMAGE_HEAD} ScriptHead=${COMMIT_SHA} BuildTime=${BUILD_TIME}"
+  exit 0
+fi
 
 log "Starting the isolated Staging services from preloaded images"
 "${SSH[@]}" bash -s -- \
@@ -1752,7 +1942,7 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
             from ai_embedding_profiles
             where id = $4 and provider = $5 and model = $6 and region = $7
               and dimensions = 1024 and distance_metric = $8
-              and profile_version = 1 and enabled = true
+              and profile_version = 2 and enabled = true
           ) as profile_count
           ,(
             select array_agg(e.enumlabel::text order by e.enumsortorder)
@@ -1792,9 +1982,9 @@ printf 'Verifying the required PostgreSQL pgvector extension, dimensions, and re
         "vector",
         "document_chunk_embeddings",
         "embedding",
-        "qwen-text-embedding-cn-v1",
+        "qwen3.7-text-embedding-cn-v2",
         "qwen",
-        "text-embedding-v4",
+        "qwen3.7-text-embedding",
         "cn-beijing",
         "cosine",
         "document_embedding_batch_status",
@@ -1976,9 +2166,9 @@ curl --fail --silent --max-time 10 "${origin}${base_path}/login" >/dev/null
 printf 'Running the fixed Qwen Provider Probe while the assistant Feature Flag remains disabled.\n'
 sudo docker exec "$container_name" npm run ai:probe:qwen
 
-printf 'Running the fixed text-embedding-v4 Probe while the Embedding Feature Flag remains disabled.\n'
+printf 'Running the fixed qwen3.7-text-embedding Probe while the Embedding Feature Flag remains disabled.\n'
 embedding_probe="$(sudo docker exec "$embedding_worker_container_name" npm run embeddings:probe)"
-grep -q '"model":"text-embedding-v4"' <<<"$embedding_probe"
+grep -q '"model":"qwen3.7-text-embedding"' <<<"$embedding_probe"
 grep -q '"dimensions":1024' <<<"$embedding_probe"
 grep -q '"vectorCount":1' <<<"$embedding_probe"
 grep -q '"finite":true' <<<"$embedding_probe"
@@ -2310,7 +2500,7 @@ printf 'Running the grounded fictional Assistant regression with hybrid Evidence
   projectai-ai-smoke npm run assistant:smoke
 retrieval_status="$(sudo docker exec "$container_name" npm run retrieval:status)"
 grep -q '"mode":"hybrid"' <<<"$retrieval_status"
-grep -q '"id":"hybrid-rrf-v1"' <<<"$retrieval_status"
+grep -q '"id":"hybrid-rrf-qwen37-v2"' <<<"$retrieval_status"
 
 "${compose_run[@]}" projectai-migrate node --input-type=module -e '
     import pg from "pg";
@@ -2511,7 +2701,7 @@ staging_location="$(sudo nginx -T 2>/dev/null | awk -v path="$base_path" '
 ')"
 [[ -n "$staging_location" ]]
 grep -Fq 'proxy_pass http://127.0.0.1:3101;' <<<"$staging_location"
-grep -Fq 'client_max_body_size 52m;' <<<"$staging_location"
+grep -Fq 'client_max_body_size 64m;' <<<"$staging_location"
 grep -Fqi 'X-Robots-Tag "noindex, nofollow"' <<<"$staging_location"
 REMOTE_NGINX_CONTRACT
 

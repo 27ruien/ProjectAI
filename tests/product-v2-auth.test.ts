@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { safeReturnTo } from "../components/auth/auth-client";
+import { safeReturnTo as safeServerReturnTo } from "../lib/auth/session";
 import { POST as authPost } from "../app/api/auth/[...all]/route";
 import {
   getAuthProviderConfig,
@@ -168,8 +169,12 @@ describe("Product V2 auth provider guard", () => {
       "javascript:alert(1)",
       "/tool/not-projectai/knowledge",
     ]) {
-      assert.equal(safeReturnTo(value), "/daily-report");
+      assert.equal(safeReturnTo(value), "/assistant");
     }
-    assert.equal(safeReturnTo("/knowledge?projectId=fictional"), "/knowledge?projectId=fictional");
+    assert.equal(safeReturnTo("/daily-report"), "/assistant");
+    assert.equal(safeReturnTo("/assistant"), "/assistant");
+    assert.equal(safeReturnTo("/data-spaces/projects/fictional/files"), "/data-spaces/projects/fictional/files");
+    assert.equal(safeServerReturnTo("/daily-report"), "/assistant");
+    assert.equal(safeServerReturnTo("/assistant"), "/assistant");
   });
 });

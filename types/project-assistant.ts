@@ -1,9 +1,10 @@
 import type { SourceLocator } from "@/lib/documents/processing/source-locator";
 
 export const PROJECT_ASSISTANT_MODEL_PROFILE_ID =
-  "qwen-project-assistant-cn-v1" as const;
+  "qwen-project-assistant-cn-v2" as const;
 
 export type ProjectAssistantCitationDto = {
+  id: string;
   index: number;
   displayName: string;
   versionNumber: number;
@@ -17,13 +18,32 @@ export type ProjectAssistantCitationDto = {
   sourceScope: "organization" | "department" | "project" | "restricted";
 };
 
+export type AssistantContextReference =
+  | { type: "project"; projectId: string; label: string }
+  | {
+      type: "document";
+      documentId: string;
+      documentVersionId?: string;
+      sourceType: "project" | "company";
+      label: string;
+    };
+
 export type ProjectAssistantMessageDto = {
   id: string;
   role: "user" | "assistant";
   status: "pending" | "completed" | "failed" | "insufficient_evidence";
   content: string;
   createdAt: string;
+  sequence: number;
+  contextReferences: AssistantContextReference[];
   citations: ProjectAssistantCitationDto[];
+  historyReferences: Array<{
+    threadId: string;
+    projectId: string;
+    openInCurrentConversation: boolean;
+    title: string;
+    updatedAt: string;
+  }>;
   fallbackUsed: boolean;
 };
 
@@ -35,6 +55,7 @@ export type ProjectAssistantThreadSummaryDto = {
   updatedAt: string;
   archivedAt: string | null;
   messageCount: number;
+  generationModelId: string | null;
 };
 
 export type ProjectAssistantThreadDto = ProjectAssistantThreadSummaryDto & {
@@ -72,4 +93,5 @@ export type ProjectAssistantQuestionRequest = {
   question: string;
   modelProfileId: typeof PROJECT_ASSISTANT_MODEL_PROFILE_ID;
   sourceDocumentIds?: string[];
+  contextReferences?: AssistantContextReference[];
 };

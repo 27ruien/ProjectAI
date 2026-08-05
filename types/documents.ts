@@ -33,7 +33,10 @@ export interface ProjectDocumentVersionDto {
   versionNumber: number;
   isCurrent: boolean;
   originalFilename: string;
+  versionNote: string | null;
   extension: string;
+  /** Whether this version has a bounded parser and can enter AI retrieval. */
+  aiReadable: boolean;
   detectedMimeType: string;
   sizeBytes: number;
   storageStatus: DocumentStorageStatus;
@@ -43,6 +46,22 @@ export interface ProjectDocumentVersionDto {
   storedAt: string | null;
   supersededAt: string | null;
   ingestion: DocumentIngestionDto;
+  embedding: DocumentEmbeddingDto;
+}
+
+export interface DocumentEmbeddingDto {
+  status:
+    | "not_started"
+    | "pending"
+    | "running"
+    | "succeeded"
+    | "failed"
+    | "unknown";
+  profileId: string | null;
+  model: string | null;
+  dimensions: number | null;
+  generatedAt: string | null;
+  failureCode: string | null;
 }
 
 export type PublicDocumentIngestionStatus =
@@ -68,6 +87,7 @@ export interface DocumentIngestionDto {
 export interface ProjectDocumentPermissionsDto {
   canDownload: boolean;
   canUploadVersion: boolean;
+  canDelete: boolean;
   canArchive: boolean;
   canRestore: boolean;
   canSetCurrent: boolean;
@@ -80,6 +100,7 @@ export interface ProjectDocumentDto {
   id: string;
   projectId: string;
   knowledgeSpaceId: string;
+  folderId: string | null;
   visibility: "private" | "organization_shared" | "department_shared" | "restricted";
   displayName: string;
   workflowTemporary: boolean;
@@ -100,8 +121,9 @@ export interface DocumentListCountsDto {
 
 export interface DocumentUploadPolicyDto {
   maxBytes: number;
-  /** Lower-case extensions without a leading dot. */
-  allowedExtensions: string[];
+  acceptsAllFiles: boolean;
+  /** Lower-case extensions without a leading dot that can be indexed for AI. */
+  aiReadableExtensions: string[];
 }
 
 export interface KnowledgeSpaceUploadDestinationDto {

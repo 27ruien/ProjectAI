@@ -1,7 +1,26 @@
 const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-const SUPPORTED_EXTENSIONS = ["pdf", "docx", "xlsx", "pptx", "txt", "md"] as const;
 
-export type SupportedFileExtension = (typeof SUPPORTED_EXTENSIONS)[number];
+/**
+ * Formats that have a bounded, server-side parser and can therefore become
+ * AI evidence. Other files are still valid project attachments: they are
+ * stored and downloadable, but never queued for parsing or retrieval.
+ */
+export const AI_READABLE_EXTENSIONS = [
+  "pdf",
+  "docx",
+  "xlsx",
+  "pptx",
+  "txt",
+  "md",
+] as const;
+
+export type SupportedFileExtension = (typeof AI_READABLE_EXTENSIONS)[number];
+
+export function isAiReadableExtension(
+  extension: string,
+): extension is SupportedFileExtension {
+  return AI_READABLE_EXTENSIONS.includes(extension as SupportedFileExtension);
+}
 
 function positiveInteger(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -16,19 +35,8 @@ export function maxUploadBytes(): number {
   return positiveInteger(process.env.MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES);
 }
 
-export function allowedUploadExtensions(): ReadonlySet<SupportedFileExtension> {
-  const configured = (process.env.UPLOAD_ALLOWED_EXTENSIONS || SUPPORTED_EXTENSIONS.join(","))
-    .split(",")
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean);
-  const allowed = configured.filter(
-    (value): value is SupportedFileExtension =>
-      SUPPORTED_EXTENSIONS.includes(value as SupportedFileExtension),
-  );
-  if (allowed.length !== configured.length || allowed.length === 0) {
-    throw new Error("UPLOAD_ALLOWED_EXTENSIONS contains unsupported values.");
-  }
-  return new Set(allowed);
+export function aiReadableUploadExtensions(): ReadonlySet<SupportedFileExtension> {
+  return new Set(AI_READABLE_EXTENSIONS);
 }
 
 export type ObjectStorageConfig = {

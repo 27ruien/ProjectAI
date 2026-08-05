@@ -240,6 +240,7 @@ export const aiRetrievalCandidate = pgTable(
     id: text("id").primaryKey(),
     retrievalRunId: text("retrieval_run_id").notNull(),
     projectId: text("project_id").notNull(),
+    sourceProjectId: text("source_project_id").notNull(),
     chunkId: text("chunk_id").notNull(),
     documentId: text("document_id").notNull(),
     versionId: text("version_id").notNull(),
@@ -271,7 +272,12 @@ export const aiRetrievalCandidate = pgTable(
     }).onDelete("restrict"),
     foreignKey({
       name: "ai_retrieval_candidates_chunk_scope_fk",
-      columns: [table.chunkId, table.projectId, table.documentId, table.versionId],
+      columns: [
+        table.chunkId,
+        table.sourceProjectId,
+        table.documentId,
+        table.versionId,
+      ],
       foreignColumns: [
         documentChunk.id,
         documentChunk.projectId,

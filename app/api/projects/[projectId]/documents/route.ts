@@ -15,7 +15,7 @@ import {
   listAuthorizedDocuments,
   listProjectDocumentVersions,
 } from "@/lib/db/repositories/document-repository";
-import { maxUploadBytes, allowedUploadExtensions } from "@/lib/files/config";
+import { aiReadableUploadExtensions, maxUploadBytes } from "@/lib/files/config";
 import { documentRoles, uploadDocument } from "@/lib/files/document-service";
 import { FileOperationError } from "@/lib/files/errors";
 import {
@@ -79,7 +79,13 @@ export async function GET(
           permission: "manage_permissions",
         }),
       ]);
-    const viewIds = viewScope.map((item) => item.documentId);
+    // The project files tab is intentionally project-local. Organization
+    // standards are exposed only by the company knowledge module and by the
+    // explicitly labelled AI source selector.
+    const projectViewScope = viewScope.filter(
+      (item) => item.sourceScope === "project" && item.sourceProjectId === projectId,
+    );
+    const viewIds = projectViewScope.map((item) => item.documentId);
     const [documents, counts] = await Promise.all([
       listAuthorizedDocuments(viewIds, status),
       countAuthorizedDocumentsByStatus(viewIds),
@@ -96,11 +102,11 @@ export async function GET(
       authorizedProject.projectRole === "project_manager" ||
       authorizedProject.projectRole === "project_member";
     const uploadDestinations = canUpload
-      ? await listUploadableKnowledgeSpaces({
+      ? (await listUploadableKnowledgeSpaces({
           principal,
           projectId,
           requestHeaders: request.headers,
-        })
+        })).filter((item) => item.type === "project" && item.projectId === projectId)
       : [];
     return jsonResponse({
       documents: await serializeDocumentList(
@@ -122,7 +128,8 @@ export async function GET(
       counts: { active: counts.active, archived: counts.archived },
       uploadPolicy: {
         maxBytes: maxUploadBytes(),
-        allowedExtensions: [...allowedUploadExtensions()],
+        acceptsAllFiles: true,
+        aiReadableExtensions: [...aiReadableUploadExtensions()],
       },
       permissions: { canUpload, uploadDestinations },
     });
@@ -152,7 +159,7 @@ export async function POST(
       documentRoles.upload,
       request.headers,
     );
-    const { file, displayName, knowledgeSpaceId, temporaryWorkflowId } = await readUploadForm(request);
+    const { file, displayName, versionNote, knowledgeSpaceId, folderId, temporaryWorkflowId } = await readUploadForm(request);
     const result = await uploadDocument({
       principal,
       projectId,
@@ -160,7 +167,9 @@ export async function POST(
       idempotencyKey: idempotencyKeyFrom(request),
       file,
       displayName,
+      versionNote,
       knowledgeSpaceId,
+      folderId,
       temporaryWorkflowId: temporaryWorkflowId ?? undefined,
     });
     const versions = await listProjectDocumentVersions(projectId, result.document.id);

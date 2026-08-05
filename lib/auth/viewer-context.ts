@@ -11,6 +11,9 @@ import {
   listAuthorizedProjects,
   listProjectRosterSummaries,
 } from "@/lib/db/repositories/project-repository";
+import { and, eq } from "drizzle-orm";
+import { getDb } from "@/lib/db/client";
+import { organizationMember } from "@/lib/db/schema";
 
 function toUiPermissions(
   principal: AuthenticatedPrincipal,
@@ -43,28 +46,41 @@ export async function buildViewerContext(
   const rosterByProjectId = new Map(
     rosters.map((roster) => [roster.projectId, roster]),
   );
-  const projectSummaries: AuthorizedProjectSummary[] = projects.map((project) => {
-    const roster = rosterByProjectId.get(project.id);
-    return {
-      id: project.id,
-      organizationId: project.organizationId,
-      departmentId: project.departmentId,
-      name: project.name,
-      clientName: project.clientName,
-      description: project.description,
-      status: project.status,
-      stage: project.stage,
-      health: project.health,
-      targetLaunchDate: project.targetLaunchDate,
-      createdAt: project.createdAt.toISOString(),
-      updatedAt: project.updatedAt.toISOString(),
-      projectRole: project.projectRole,
-      managerDisplayName: roster?.managerDisplayName ?? null,
-      memberCount: roster?.memberCount ?? 0,
-      permissions: toUiPermissions(principal, project),
-    };
-  });
+  const projectSummaries: AuthorizedProjectSummary[] = projects.map(
+    (project) => {
+      const roster = rosterByProjectId.get(project.id);
+      return {
+        id: project.id,
+        organizationId: project.organizationId,
+        departmentId: project.departmentId,
+        name: project.name,
+        clientName: project.clientName,
+        description: project.description,
+        status: project.status,
+        stage: project.stage,
+        health: project.health,
+        targetLaunchDate: project.targetLaunchDate,
+        createdAt: project.createdAt.toISOString(),
+        updatedAt: project.updatedAt.toISOString(),
+        projectRole: project.projectRole,
+        managerDisplayName: roster?.managerDisplayName ?? null,
+        memberCount: roster?.memberCount ?? 0,
+        permissions: toUiPermissions(principal, project),
+      };
+    },
+  );
   const superAdmin = principal.user.productRole === "super_admin";
+  const [organizationAdminMembership] = await getDb()
+    .select({ organizationId: organizationMember.organizationId })
+    .from(organizationMember)
+    .where(
+      and(
+        eq(organizationMember.userId, principal.user.id),
+        eq(organizationMember.role, "organization_admin"),
+        eq(organizationMember.isActive, true),
+      ),
+    )
+    .limit(1);
   return {
     user: {
       id: principal.user.id,
@@ -74,6 +90,11 @@ export async function buildViewerContext(
       productRole: principal.user.productRole,
     },
     projects: projectSummaries,
+    aiConfigurationOrganizationId:
+      organizationAdminMembership?.organizationId ??
+      (principal.user.systemRole === "system_admin"
+        ? (projectSummaries[0]?.organizationId ?? null)
+        : null),
     canCreateProject: true,
     canViewAudit: superAdmin,
   };

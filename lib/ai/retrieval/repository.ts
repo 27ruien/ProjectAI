@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { EmbeddingPipelineError } from "@/lib/ai/embeddings/errors";
 import { getDb } from "@/lib/db/client";
+import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import {
   aiExecution,
   aiRetrievalCandidate,
@@ -238,35 +239,47 @@ export async function finalizeRetrievalRun(input: {
   fusedCandidateCount: number;
   candidates: AuditedRetrievalCandidate<ProjectKnowledgeEvidence>[];
   selectedChunkIds: Set<string>;
-}): Promise<void> {
-  await getDb().transaction(async (tx) => {
-    const [run] = await tx
-      .select({ projectId: aiRetrievalRun.projectId })
-      .from(aiRetrievalRun)
-      .where(eq(aiRetrievalRun.id, input.retrievalRunId))
-      .limit(1)
-      .for("update", { of: aiRetrievalRun });
-    if (!run) throw new EmbeddingPipelineError("SERVER_ERROR", false);
+}): Promise<{ auditDegraded: boolean }> {
+  const [run] = await getDb()
+    .select({
+      projectId: aiRetrievalRun.projectId,
+      actorUserId: aiRetrievalRun.actorUserId,
+    })
+    .from(aiRetrievalRun)
+    .where(eq(aiRetrievalRun.id, input.retrievalRunId))
+    .limit(1);
+  if (!run) throw new EmbeddingPipelineError("SERVER_ERROR", false);
+
+  let auditDegraded = false;
+  try {
     if (input.candidates.length > 0) {
-      await tx.insert(aiRetrievalCandidate).values(
-        input.candidates.map((candidate) => ({
-          id: crypto.randomUUID(),
-          retrievalRunId: input.retrievalRunId,
-          projectId: run.projectId,
-          chunkId: candidate.chunkId,
-          documentId: candidate.value.documentId,
-          versionId: candidate.value.versionId,
-          candidateSource: candidate.candidateSource,
-          lexicalRank: candidate.lexicalRank,
-          lexicalScore: candidate.lexicalScore,
-          vectorRank: candidate.vectorRank,
-          vectorDistance: candidate.vectorDistance,
-          rrfScore: candidate.rrfScore,
-          finalRank: candidate.finalRank,
-          selectedAsEvidence: input.selectedChunkIds.has(candidate.chunkId),
-        })),
-      );
+      await getDb().transaction(async (tx) => {
+        await tx.insert(aiRetrievalCandidate).values(
+          input.candidates.map((candidate) => ({
+            id: crypto.randomUUID(),
+            retrievalRunId: input.retrievalRunId,
+            projectId: run.projectId,
+            sourceProjectId: candidate.value.sourceProjectId,
+            chunkId: candidate.chunkId,
+            documentId: candidate.value.documentId,
+            versionId: candidate.value.versionId,
+            candidateSource: candidate.candidateSource,
+            lexicalRank: candidate.lexicalRank,
+            lexicalScore: candidate.lexicalScore,
+            vectorRank: candidate.vectorRank,
+            vectorDistance: candidate.vectorDistance,
+            rrfScore: candidate.rrfScore,
+            finalRank: candidate.finalRank,
+            selectedAsEvidence: input.selectedChunkIds.has(candidate.chunkId),
+          })),
+        );
+      });
     }
+  } catch {
+    auditDegraded = true;
+  }
+
+  await getDb().transaction(async (tx) => {
     const completedAt = new Date();
     const status = input.insufficientEvidence
       ? "insufficient_evidence"
@@ -309,6 +322,23 @@ export async function finalizeRetrievalRun(input: {
       })
       .where(eq(aiExecution.id, input.executionId));
   });
+
+  if (auditDegraded) {
+    await writeAuditEvent({
+      actorUserId: run.actorUserId,
+      projectId: run.projectId,
+      eventType: "ai_retrieval_audit_degraded",
+      entityType: "ai_retrieval_run",
+      entityId: input.retrievalRunId,
+      result: "failed",
+      metadata: {
+        stage: "candidate_persistence",
+        candidateCount: input.candidates.length,
+        answerBlocked: false,
+      },
+    }).catch(() => undefined);
+  }
+  return { auditDegraded };
 }
 
 export async function finalizeFailedRetrievalRunForExecution(

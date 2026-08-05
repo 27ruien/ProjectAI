@@ -3,7 +3,7 @@ import { Bell, Bot, ChevronRight, FileClock, LockKeyhole, Settings2 } from "luci
 import { Badge, PageHeader } from "@/components/common";
 
 const sections = [
-  { title: "AI 模型管理", description: "供应商、模型注册、Model Profiles、Skill 关联与调用日志", href: "/settings/ai-models", icon: Bot, tag: "已配置" },
+  { title: "AI 模型管理", description: "供应商、模型注册、场景绑定与安全调用配置", href: "/admin/models", icon: Bot, tag: "已配置" },
   { title: "权限管理", description: "项目级权限、资料访问范围与审核角色（后续阶段）", href: "/settings/permissions", icon: LockKeyhole, tag: "预留" },
   { title: "通知设置", description: "审核、风险、Action 到期与 Workflow 执行通知（后续阶段）", href: "/settings/notifications", icon: Bell, tag: "预留" },
   { title: "系统日志", description: "关键业务修改、人工审核与数据写入审计记录（后续阶段）", href: "/settings/logs", icon: FileClock, tag: "预留" },

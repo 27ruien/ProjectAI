@@ -156,12 +156,12 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
       threadId: thread.id,
       requestHeaders: headers,
       idempotencyKey: randomUUID(),
-      body: { question: "虚构客户要求什么？", modelProfileId: "qwen-project-assistant-cn-v1", sourceDocumentIds: [documentId] },
+      body: { question: "虚构客户要求什么？", modelProfileId: "qwen-project-assistant-cn-v2", sourceDocumentIds: [documentId] },
     });
     assert.equal(response.assistantMessage.status, "completed");
     assert.ok(response.assistantMessage.citations.length > 0);
     await assert.rejects(
-      askProjectAssistant({ principal: principal(), projectId, threadId: thread.id, requestHeaders: headers, idempotencyKey: randomUUID(), body: { question: "不存在来源", modelProfileId: "qwen-project-assistant-cn-v1", sourceDocumentIds: [`${prefix}unknown`] } }),
+      askProjectAssistant({ principal: principal(), projectId, threadId: thread.id, requestHeaders: headers, idempotencyKey: randomUUID(), body: { question: "不存在来源", modelProfileId: "qwen-project-assistant-cn-v2", sourceDocumentIds: [`${prefix}unknown`] } }),
       (error: unknown) => error instanceof ProjectAssistantError && error.code === "AI_SOURCE_NOT_FOUND",
     );
     await getDb().insert(documentGrant).values({ id: `${prefix}manager-view-deny`, organizationId: "org-legacy-default", projectId, documentId, subjectType: "user", subjectId: manager.id, permission: "view", effect: "deny", createdBy: manager.id });

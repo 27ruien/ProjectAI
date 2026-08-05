@@ -9,6 +9,10 @@ import type {
   ProjectDocumentVersionMutationResponse,
   ProjectDocumentVersionsResponse,
 } from "@/types/documents";
+import type {
+  ProjectDocumentFolderDto,
+  ProjectFolderListResponse,
+} from "@/types/file-workspace";
 
 export class DocumentApiError extends Error {
   constructor(
@@ -37,6 +41,42 @@ function documentPath(
   );
 }
 
+function folderPath(projectId: string, folderId?: string): string {
+  const base = withBasePath(
+    `/api/projects/${encodeURIComponent(projectId)}/folders`,
+  );
+  return folderId ? `${base}/${encodeURIComponent(folderId)}` : base;
+}
+
+export function listProjectFolders(
+  projectId: string,
+  signal?: AbortSignal,
+): Promise<ProjectFolderListResponse> {
+  return jsonRequest<ProjectFolderListResponse>(folderPath(projectId), { signal });
+}
+
+export function createProjectFolder(
+  projectId: string,
+  input: { name: string; knowledgeSpaceId: string; parentFolderId: string | null },
+): Promise<{ folder: ProjectDocumentFolderDto }> {
+  return jsonMutation(folderPath(projectId), "POST", input);
+}
+
+export function updateProjectFolder(
+  projectId: string,
+  folderId: string,
+  input: { name?: string; parentFolderId?: string | null },
+): Promise<{ folder: ProjectDocumentFolderDto }> {
+  return jsonMutation(folderPath(projectId, folderId), "PATCH", input);
+}
+
+export function deleteProjectFolder(
+  projectId: string,
+  folderId: string,
+): Promise<void> {
+  return jsonRequest(folderPath(projectId, folderId), { method: "DELETE" });
+}
+
 async function errorFromResponse(response: Response): Promise<DocumentApiError> {
   let body: ProjectDocumentApiErrorBody | null = null;
   try {
@@ -62,6 +102,7 @@ async function jsonRequest<T>(
     ...init,
   });
   if (!response.ok) throw await errorFromResponse(response);
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -105,6 +146,39 @@ export function renameProjectDocument(
     documentPath(projectId, documentId),
     "PATCH",
     { displayName },
+  );
+}
+
+export function deleteProjectDocument(
+  projectId: string,
+  documentId: string,
+): Promise<void> {
+  return jsonRequest<void>(documentPath(projectId, documentId), {
+    method: "DELETE",
+  });
+}
+
+export function duplicateProjectDocument(
+  projectId: string,
+  documentId: string,
+  targetFolderId?: string | null,
+): Promise<ProjectDocumentVersionMutationResponse> {
+  return jsonMutation<ProjectDocumentVersionMutationResponse>(
+    documentPath(projectId, documentId, "/duplicate"),
+    "POST",
+    { targetFolderId },
+  );
+}
+
+export function moveProjectDocument(
+  projectId: string,
+  documentId: string,
+  folderId: string | null,
+): Promise<ProjectDocumentResponse> {
+  return jsonMutation<ProjectDocumentResponse>(
+    documentPath(projectId, documentId),
+    "PATCH",
+    { folderId },
   );
 }
 
@@ -263,6 +337,22 @@ export function reindexProjectDocumentVersion(
   );
 }
 
+export function retryProjectDocumentEmbedding(
+  projectId: string,
+  documentId: string,
+  versionId: string,
+): Promise<{ embedding: { status: string } }> {
+  return jsonMutation(
+    documentPath(
+      projectId,
+      documentId,
+      `/versions/${encodeURIComponent(versionId)}/embedding/retry`,
+    ),
+    "POST",
+    {},
+  );
+}
+
 export type DocumentUploadProgress = {
   loaded: number;
   total: number;
@@ -274,7 +364,9 @@ export type UploadProjectDocumentInput = {
   documentId?: string;
   file: File;
   displayName?: string;
+  versionNote?: string;
   knowledgeSpaceId?: string;
+  folderId?: string;
   temporaryWorkflowId?: string;
   idempotencyKey: string;
   signal?: AbortSignal;
@@ -349,8 +441,12 @@ export function uploadProjectDocument(
     const form = new FormData();
     form.set("file", input.file, input.file.name);
     if (input.displayName?.trim()) form.set("displayName", input.displayName.trim());
+    if (input.versionNote?.trim()) form.set("versionNote", input.versionNote.trim());
     if (!input.documentId && input.knowledgeSpaceId) {
       form.set("knowledgeSpaceId", input.knowledgeSpaceId);
+    }
+    if (!input.documentId && input.folderId) {
+      form.set("folderId", input.folderId);
     }
     if (!input.documentId && input.temporaryWorkflowId) {
       form.set("temporaryWorkflowId", input.temporaryWorkflowId);
@@ -431,6 +527,40 @@ export async function readProjectDocumentVersionFile(
   });
 }
 
+export function projectDocumentPreviewUrl(
+  projectId: string,
+  documentId: string,
+  versionId: string,
+): string {
+  return documentPath(
+    projectId,
+    documentId,
+    `/versions/${encodeURIComponent(versionId)}/preview`,
+  );
+}
+
+export function readProjectDocumentTextPreview(
+  projectId: string,
+  documentId: string,
+  versionId: string,
+  signal?: AbortSignal,
+): Promise<{
+  content: string;
+  detectedEncoding: "utf-8" | "utf-8-bom" | "gb18030";
+  lineCount: number;
+  parserVersion: string;
+  previewGeneratedAt: string;
+}> {
+  return jsonRequest(
+    documentPath(
+      projectId,
+      documentId,
+      `/versions/${encodeURIComponent(versionId)}/preview/text`,
+    ),
+    { signal },
+  );
+}
+
 export function documentErrorMessage(error: unknown): string {
   if (!(error instanceof DocumentApiError)) {
     return "项目资料操作失败，请稍后重试。";
@@ -446,7 +576,13 @@ export function documentErrorMessage(error: unknown): string {
     DOCUMENT_NOT_FOUND: "资料不存在或你无权访问。",
     VERSION_NOT_FOUND: "文件版本不存在或你无权访问。",
     VERSION_NOT_AVAILABLE: "该文件版本当前不可下载。",
+    EMBEDDING_RESULT_UNKNOWN: "向量化结果需要管理员复核，当前不能自动重试。",
     DOCUMENT_ARCHIVED: "资料已归档，无法执行此操作。",
+    DOCUMENT_HAS_FORMAL_REFERENCES:
+      "这份资料已进入人工审核记录，请先归档或解除正式引用后再删除。",
+    FOLDER_NOT_EMPTY: "文件夹中仍有内容，请先移动或删除其中的文件。",
+    FOLDER_CYCLE: "不能把文件夹移动到自身或自己的子文件夹。",
+    FOLDER_NAME_CONFLICT: "同级已有同名文件夹。",
     STORAGE_UNAVAILABLE: "文件存储服务暂时不可用，请稍后重试。",
     FORBIDDEN: "你没有执行此操作的权限。",
     UNAUTHENTICATED: "登录已失效，请重新登录。",

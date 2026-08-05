@@ -1,46 +1,66 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Badge, Button, Drawer, Menu, Modal, Text, TextInput, Tooltip } from "@/components/ui/project-primitives";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlertCircle,
   Archive,
   Bot,
   ChevronRight,
-  Download,
+  ExternalLink,
+  FileText,
+  FolderKanban,
+  ListChecks,
   LoaderCircle,
   MessageSquarePlus,
+  MoreHorizontal,
+  PanelLeft,
+  Paperclip,
   RefreshCw,
+  Search,
   Send,
   ShieldCheck,
   Sparkles,
+  Trash2,
 } from "lucide-react";
-import { Button } from "@/components/common/button";
-import type { AuthorizedProjectSummary } from "@/lib/auth/ui-types";
+import { withBasePath } from "@/lib/base-path";
+import type { AuthorizedProjectSummary, ViewerContext } from "@/lib/auth/ui-types";
 import {
   archiveProjectAssistantThread,
   askProjectAssistant,
   createProjectAssistantThread,
+  deleteProjectAssistantThread,
   getProjectAssistantThread,
   listProjectAssistantThreads,
   ProjectAssistantApiError,
+  listGeneralAssistantModels,
+  setGeneralAssistantThreadModel,
 } from "@/lib/ai/project-assistant/client";
-import {
-  documentErrorMessage,
-  downloadProjectDocumentVersion,
-  listProjectDocuments,
-} from "@/lib/documents/client";
+import { documentErrorMessage } from "@/lib/documents/client";
 import type { ProjectDocumentDto } from "@/types/documents";
 import type {
   ProjectAssistantCitationDto,
   ProjectAssistantThreadDto,
   ProjectAssistantThreadSummaryDto,
+  AssistantContextReference,
 } from "@/types/project-assistant";
+import { RequirementOverviewWorkspace } from "@/components/requirement-overview/RequirementOverviewWorkspace";
+import { classifyAssistantIntent, intentNeedsProjectEvidence } from "@/lib/ai/project-assistant/intent-router";
+import { AssistantMarkdown } from "./AssistantMarkdown";
+import { AssistantCitationPreview } from "./AssistantCitationPreview";
+import { publicDocumentViewerPath, type DocumentLocator } from "@/lib/documents/viewer-route";
+import { AssistantHistoryCitationPreview } from "./AssistantHistoryCitationPreview";
 
 type PanelPhase =
   | "loading"
   | "ready"
   | "disabled"
   | "error";
+
+type QuickAction = "requirement_overview" | "project_summary" | "pending_items";
 
 function sourceLabel(citation: ProjectAssistantCitationDto): string {
   const source = citation.source;
@@ -63,12 +83,16 @@ function sourceLabel(citation: ProjectAssistantCitationDto): string {
 function assistantErrorMessage(error: unknown): string {
   if (error instanceof ProjectAssistantApiError) {
     const messages: Record<string, string> = {
+      AI_INVALID_REQUEST: "请输入问题。",
+      AI_SOURCE_NOT_FOUND: "当前项目还没有可供 AI 使用的资料，可以先上传项目文件。",
+      AI_RETRIEVAL_FAILED: "资料暂时没有检索成功，你的问题和会话已经保留，可以稍后重试。",
       AI_RATE_LIMITED: "提问过于频繁，请稍后重试。",
       AI_USER_DAILY_LIMIT_REACHED: "今日个人 AI 用量已达上限。",
       AI_PROJECT_DAILY_LIMIT_REACHED: "今日项目 AI 用量已达上限。",
       AI_CONCURRENCY_LIMIT_REACHED: "AI 服务繁忙，请稍后重试。",
       AI_PROVIDER_TIMEOUT: "AI 服务响应超时，请重试。",
-      AI_PROVIDER_UNAVAILABLE: "AI 服务暂时不可用，请稍后重试。",
+      AI_PROVIDER_UNAVAILABLE: "AI 服务暂时没有完成回答，你的输入和资料没有丢失，请稍后重试。",
+      AI_EXECUTION_FAILED: "AI 服务暂时没有完成回答，你的输入和资料没有丢失，请稍后重试。",
       AI_CITATION_VALIDATION_FAILED: "回答未通过来源校验，请重试。",
       AI_THREAD_NOT_FOUND: "对话不存在或无权访问。",
     };
@@ -78,17 +102,24 @@ function assistantErrorMessage(error: unknown): string {
 }
 
 const scopeLabels: Record<string, string> = {
-  organization: "公司空间",
-  department: "部门空间",
-  project: "项目空间",
-  restricted: "受限授权",
+  organization: "[公司资料]",
+  department: "[项目资料]",
+  project: "[项目资料]",
+  restricted: "[项目资料]",
 };
 
 export function ProjectAssistantPanel({
   project,
+  focused = false,
+  viewer,
+  initialThreadId,
 }: {
-  project: AuthorizedProjectSummary;
+  project: Pick<AuthorizedProjectSummary, "id"> | null;
+  focused?: boolean;
+  viewer?: ViewerContext;
+  initialThreadId?: string | null;
 }) {
+  const projectId = project?.id ?? null;
   const loadController = useRef<AbortController | null>(null);
   const [phase, setPhase] = useState<PanelPhase>("loading");
   const [threads, setThreads] = useState<ProjectAssistantThreadSummaryDto[]>([]);
@@ -98,26 +129,65 @@ export function ProjectAssistantPanel({
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastQuestion, setLastQuestion] = useState<string | null>(null);
+  const [optimisticQuestion, setOptimisticQuestion] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<string | null>(null);
-  const [availableSources, setAvailableSources] = useState<ProjectDocumentDto[]>([]);
-  const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [sourceState, setSourceState] = useState<{
+    projectId: string;
+    documents: Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }>;
+  } | null>(null);
+  const [threadSearch, setThreadSearch] = useState("");
+  const [requirementOverviewThreadId, setRequirementOverviewThreadId] = useState<string | null>(null);
+  const [requirementOverviewProjectId, setRequirementOverviewProjectId] = useState<string | null>(null);
+  const [contextOptions, setContextOptions] = useState<{ projects: Array<{ id: string; label: string }>; documents: Array<{ id: string; label: string; sourceType?: "project" | "company" }> }>({ projects: [], documents: [] });
+  const [contextReferences, setContextReferences] = useState<AssistantContextReference[]>([]);
+  const [picker, setPicker] = useState<"project" | "document" | null>(null);
+  const [historyOpened, setHistoryOpened] = useState(false);
+  const [pendingQuickAction, setPendingQuickAction] = useState<QuickAction | null>(null);
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [models, setModels] = useState<Array<{ id: string; displayName: string; modelId: string }>>([]);
+  const [changingModel, setChangingModel] = useState(false);
+  const messageViewport = useRef<HTMLDivElement | null>(null);
+  const availableSources = useMemo(
+    () => sourceState?.projectId === projectId ? sourceState.documents : [],
+    [projectId, sourceState],
+  );
+  const selectedSourceIds = useMemo(() => availableSources.map((item) => item.id), [availableSources]);
+  const projectSourceCount = useMemo(() => availableSources.filter((item) => item.sourceScope === "project").length, [availableSources]);
+  const templateSourceCount = availableSources.length - projectSourceCount;
+  const referencedProjectId = contextReferences.find((item): item is Extract<AssistantContextReference, { type: "project" }> => item.type === "project")?.projectId ?? null;
+  const artifactProjectId = projectId ?? referencedProjectId;
+  const visibleThreads = useMemo(() => { const query = threadSearch.trim().toLocaleLowerCase("zh-CN"); return query ? threads.filter((item) => item.title.toLocaleLowerCase("zh-CN").includes(query)) : threads; }, [threadSearch, threads]);
+  const visibleContextOptions = useMemo(() => {
+    const query = pickerSearch.trim().toLocaleLowerCase("zh-CN");
+    const values = picker === "project" ? contextOptions.projects : contextOptions.documents;
+    return query ? values.filter((item) => item.label.toLocaleLowerCase("zh-CN").includes(query)) : values;
+  }, [contextOptions, picker, pickerSearch]);
+  const referencedProjectCount = useMemo(
+    () => contextReferences.filter((item) => item.type === "project").length,
+    [contextReferences],
+  );
+  const referencedDocumentCount = useMemo(
+    () => contextReferences.filter((item) => item.type === "document").length,
+    [contextReferences],
+  );
 
   const loadThread = useCallback(
     async (threadId: string, signal?: AbortSignal) => {
       const response = await getProjectAssistantThread(
-        project.id,
+        projectId,
         threadId,
         signal,
       );
+      setRequirementOverviewThreadId((current) => current === threadId ? current : null);
       setThread(response.thread);
       return response.thread;
     },
-    [project.id],
+    [projectId],
   );
 
   const refreshThreads = useCallback(
     async (preferredThreadId?: string, signal?: AbortSignal) => {
-      const response = await listProjectAssistantThreads(project.id, signal);
+      const response = await listProjectAssistantThreads(projectId, signal);
       setThreads(response.threads);
       const selected =
         preferredThreadId ||
@@ -126,7 +196,7 @@ export function ProjectAssistantPanel({
       if (selected) await loadThread(selected, signal);
       else setThread(null);
     },
-    [loadThread, project.id],
+    [loadThread, projectId],
   );
 
   useEffect(() => {
@@ -134,7 +204,7 @@ export function ProjectAssistantPanel({
     const controller = new AbortController();
     loadController.current = controller;
     const timer = window.setTimeout(() => {
-      void refreshThreads(undefined, controller.signal)
+      void refreshThreads(initialThreadId ?? undefined, controller.signal)
         .then(() => setPhase("ready"))
         .catch((caught: unknown) => {
           if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -153,25 +223,56 @@ export function ProjectAssistantPanel({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [project.id, refreshThreads]);
+  }, [initialThreadId, projectId, refreshThreads]);
 
   useEffect(() => {
+    if (projectId) return;
     const controller = new AbortController();
-    void listProjectDocuments(project.id, "active", controller.signal)
-      .then((response) => setAvailableSources(response.documents))
+    void fetch(withBasePath("/api/ai/context"), { credentials: "include", cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("context list failed");
+        return response.json() as Promise<typeof contextOptions>;
+      })
+      .then(setContextOptions)
+      .catch((caught: unknown) => {
+        if (!(caught instanceof DOMException && caught.name === "AbortError")) setError("可用资料范围暂时无法加载，请刷新重试。");
+      });
+    return () => controller.abort();
+  }, [projectId]);
+
+  useEffect(() => {
+    if (projectId || viewer?.user.productRole !== "super_admin") return;
+    void listGeneralAssistantModels().then((response) => setModels(response.models)).catch(() => undefined);
+  }, [projectId, viewer?.user.productRole]);
+
+  useEffect(() => {
+    messageViewport.current?.scrollTo({ top: messageViewport.current.scrollHeight, behavior: "smooth" });
+  }, [thread?.id, thread?.messages.length, sending]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    const controller = new AbortController();
+    void fetch(withBasePath(`/api/projects/${projectId}/ai/sources`), { credentials: "include", cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("source list failed");
+        return response.json() as Promise<{ documents: Array<ProjectDocumentDto & { sourceScope: "project" | "organization" }> }>;
+      })
+      .then((response) => {
+        setSourceState({ projectId, documents: response.documents });
+      })
       .catch((caught: unknown) => {
         if (!(caught instanceof DOMException && caught.name === "AbortError")) {
           setError("知识来源列表暂时不可用，请刷新重试。");
         }
       });
     return () => controller.abort();
-  }, [project.id]);
+  }, [projectId]);
 
   const createThread = async () => {
     setCreating(true);
     setError(null);
     try {
-      const response = await createProjectAssistantThread(project.id);
+      const response = await createProjectAssistantThread(projectId);
       setThread(response.thread);
       await refreshThreads(response.thread.id);
       setPhase("ready");
@@ -184,32 +285,44 @@ export function ProjectAssistantPanel({
     }
   };
 
-  const sendQuestion = async (nextQuestion: string) => {
+  const sendQuestion = async (
+    nextQuestion: string,
+    references: AssistantContextReference[] = contextReferences,
+  ) => {
+    if (sending) return;
     const normalized = nextQuestion.trim();
     if (normalized.length < 2) {
-      setError("请输入至少 2 个字符的问题。");
+      setError("请输入问题。");
+      return;
+    }
+    const intent = classifyAssistantIntent({ question: normalized, hasAssociatedProject: Boolean(projectId) });
+    if (projectId && intentNeedsProjectEvidence(intent) && selectedSourceIds.length === 0) {
+      setError("当前项目还没有可供 AI 使用的资料。");
       return;
     }
     setSending(true);
     setError(null);
     setLastQuestion(normalized);
+    setQuestion("");
+    setOptimisticQuestion(normalized);
+    let target = thread?.status === "active" ? thread : null;
     try {
-      const target =
-        thread?.status === "active" ? thread : await createThread();
+      target = target ?? await createThread();
       if (!target) return;
       const result = await askProjectAssistant(
-        project.id,
+        projectId,
         target.id,
         normalized,
         crypto.randomUUID(),
-        selectedSourceIds,
+        projectId && intentNeedsProjectEvidence(intent) ? selectedSourceIds : [],
+        references,
       );
-      setQuestion("");
       await refreshThreads(result.thread.id);
     } catch (caught) {
       setError(assistantErrorMessage(caught));
-      if (thread) await loadThread(thread.id).catch(() => undefined);
+      if (target) await loadThread(target.id).catch(() => undefined);
     } finally {
+      setOptimisticQuestion(null);
       setSending(false);
     }
   };
@@ -219,33 +332,152 @@ export function ProjectAssistantPanel({
     void sendQuestion(question);
   };
 
+  const chooseContext = (item: { id: string; label: string; sourceType?: "project" | "company" }) => {
+    const reference: AssistantContextReference = picker === "project"
+      ? { type: "project", projectId: item.id, label: item.label }
+      : { type: "document", documentId: item.id, sourceType: item.sourceType ?? "project", label: item.label };
+    const referenceKey = reference.type === "project" ? `p:${reference.projectId}` : `d:${reference.documentId}`;
+    const nextReferences = (() => {
+      const duplicate = contextReferences.some((value) => (value.type === "project" ? `p:${value.projectId}` : `d:${value.documentId}`) === referenceKey);
+      return duplicate ? contextReferences : [...contextReferences, reference];
+    })();
+    setContextReferences(nextReferences);
+    const action = picker === "project" ? pendingQuickAction : null;
+    setPendingQuickAction(null);
+    setPicker(null);
+    setPickerSearch("");
+    if (!action || reference.type !== "project") return;
+    if (action === "requirement_overview") {
+      void openRequirementOverview(reference.projectId);
+      return;
+    }
+    const prompt = action === "project_summary"
+      ? "请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。"
+      : "请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。";
+    void sendQuestion(prompt, nextReferences);
+  };
+
+  const removeContext = (reference: AssistantContextReference) => {
+    setContextReferences((current) => current.filter((item) => item !== reference));
+  };
+
+  const startQuickAction = (action: QuickAction) => {
+    if (!artifactProjectId) {
+      setPendingQuickAction(action);
+      setPicker("project");
+      setPickerSearch("");
+      return;
+    }
+    if (action === "requirement_overview") {
+      void openRequirementOverview(artifactProjectId);
+      return;
+    }
+    void sendQuestion(
+      action === "project_summary"
+        ? "请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。"
+        : "请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。",
+    );
+  };
+
+  const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault();
+      void sendQuestion(question);
+    }
+  };
+
+  const changeModel = async (generationModelId: string) => {
+    if (!thread || changingModel) return;
+    setChangingModel(true);
+    try {
+      await setGeneralAssistantThreadModel(thread.id, generationModelId === "default" ? null : generationModelId);
+      await loadThread(thread.id);
+    } catch (caught) { setError(assistantErrorMessage(caught)); }
+    finally { setChangingModel(false); }
+  };
+
+  const openRequirementOverview = async (targetProjectId = artifactProjectId) => {
+    if (!targetProjectId) {
+      setError("生成需求概览需要先用 # 关联一个项目。");
+      return;
+    }
+    const target = thread?.status === "active" ? thread : await createThread();
+    if (target) {
+      setRequirementOverviewProjectId(targetProjectId);
+      setRequirementOverviewThreadId(target.id);
+    }
+  };
+
   const archive = async () => {
     if (!thread || thread.status !== "active") return;
     setError(null);
     try {
-      await archiveProjectAssistantThread(project.id, thread.id);
+      await archiveProjectAssistantThread(projectId, thread.id);
       await refreshThreads();
     } catch (caught) {
       setError(assistantErrorMessage(caught));
     }
   };
 
-  const download = async (citation: ProjectAssistantCitationDto) => {
+  const removeThread = async () => {
+    if (!thread || !window.confirm("确认删除这条私人对话？")) return;
+    setError(null);
+    try {
+      await deleteProjectAssistantThread(projectId, thread.id);
+      await refreshThreads();
+    } catch (caught) {
+      setError(assistantErrorMessage(caught));
+    }
+  };
+
+  const openSource = async (citation: ProjectAssistantCitationDto) => {
     setDownloading(citation.versionId);
     setError(null);
     try {
-      await downloadProjectDocumentVersion(
-        project.id,
-        citation.documentId,
-        citation.versionId,
-        citation.displayName,
-      );
+      if (citation.sourceScope === "organization") {
+        const response = await fetch(withBasePath(`/api/company-knowledge/${citation.documentId}/versions/${citation.versionId}/download`), { credentials: "include" });
+        if (!response.ok) throw new Error("download failed");
+        const url = URL.createObjectURL(await response.blob());
+        const anchor = document.createElement("a");
+        anchor.href = url;
+        anchor.download = citation.displayName;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      } else {
+        if (!projectId) throw new Error("project source unavailable");
+        const source = citation.source;
+        let locator: DocumentLocator = {};
+        if (source.type === "pdf_page") locator = { pageNumber: source.pageNumber };
+        else if (source.type === "pptx_slide") locator = { slideNumber: source.slideNumber };
+        else if (source.type === "xlsx_range") locator = {
+          sheetName: source.sheetName,
+          cellRange: `R${source.rowStart}C${source.columnStart}:R${source.rowEnd}C${source.columnEnd}`,
+        };
+        else if (source.type === "text_lines") locator = { lineStart: source.lineStart, lineEnd: source.lineEnd };
+        else if (source.type === "markdown_section") locator = { lineStart: source.lineStart, lineEnd: source.lineEnd, heading: source.headingPath.at(-1) };
+        else if (source.type === "docx_section") locator = { heading: source.headingPath.at(-1) };
+        window.open(
+          publicDocumentViewerPath({
+            projectId,
+            documentId: citation.documentId,
+            versionId: citation.versionId,
+            locator,
+          }),
+          "_blank",
+          "noopener,noreferrer",
+        );
+      }
     } catch (caught) {
       setError(documentErrorMessage(caught));
     } finally {
       setDownloading(null);
     }
   };
+
+  const historyPanel = <div className="flex h-full min-h-0 flex-col">
+    <div className="border-b p-3"><Button type="button" fullWidth onClick={() => void createThread()} loading={creating} leftSection={<MessageSquarePlus size={14} />}>新建对话</Button><TextInput mt="sm" value={threadSearch} onChange={(event) => setThreadSearch(event.currentTarget.value)} placeholder="搜索会话" leftSection={<Search size={14} />} /></div>
+    <div className="min-h-0 flex-1 overflow-y-auto p-2">{visibleThreads.length === 0 ? <p className="px-3 py-8 text-center text-xs text-muted-foreground">{threads.length ? "没有匹配的会话" : "还没有对话"}</p> : visibleThreads.map((item) => <button key={item.id} type="button" onClick={() => void loadThread(item.id)} className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${thread?.id === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}><Bot className="size-3.5 shrink-0" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{item.title}</span><span className="mt-0.5 block text-[10px]">{item.messageCount} 条消息{item.status === "archived" ? " · 已归档" : ""}</span></span><ChevronRight className="size-3 shrink-0" /></button>)}</div>
+  </div>;
 
   if (phase === "disabled") {
     return (
@@ -269,32 +501,25 @@ export function ProjectAssistantPanel({
 
   if (phase === "loading") {
     return (
-      <section className="mt-5 grid min-h-72 place-items-center rounded-xl border border-border bg-card" role="status">
-        <div className="text-center">
-          <LoaderCircle className="mx-auto size-6 animate-spin text-primary" />
-          <p className="mt-3 text-sm text-muted-foreground">正在加载私人对话</p>
-        </div>
+      <section className="mt-5 grid min-h-[560px] gap-0 overflow-hidden rounded-xl border bg-card lg:grid-cols-[280px_1fr]" role="status" aria-label="正在加载私人对话">
+        <div className="hidden space-y-3 border-r p-4 lg:block"><Skeleton className="h-8 w-full" />{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-12 w-full" />)}</div>
+        <div className="space-y-5 p-6"><Skeleton className="h-8 w-52" /><Skeleton className="h-24 w-2/3" /><Skeleton className="ml-auto h-20 w-1/2" /><Skeleton className="h-28 w-3/4" /></div>
       </section>
     );
   }
 
   return (
-    <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant">
+    <section className="mt-5 overflow-hidden rounded-xl border border-border bg-card" data-testid="project-ai-assistant" data-focused={focused ? "true" : "false"}>
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-semibold text-foreground">项目 AI 助手</h3>
-            <span className="rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">
-              Qwen · Grounded
-            </span>
-          </div>
+          <h3 className="text-sm font-semibold text-foreground">{projectId ? "项目 AI 助手" : "AI 助手"}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            基于当前项目知识索引生成回答；每次提问都会重新检索有效资料。
+            {projectId
+              ? "助手会先理解你的问题，再按权限决定是否读取项目资料或公司资料，并在返回前校验引用。"
+              : "可以直接聊天、写作、润色和分析；只有需要公司制度或项目事实时才会使用资料。"}
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={() => void createThread()} loading={creating}>
-          <MessageSquarePlus className="size-3.5" />新建对话
-        </Button>
+        <Button type="button" variant="default" size="sm" className="lg:hidden" leftSection={<PanelLeft size={14} />} onClick={() => setHistoryOpened(true)}>会话历史</Button>
       </header>
 
       {error ? (
@@ -309,70 +534,10 @@ export function ProjectAssistantPanel({
         </div>
       ) : null}
 
-      <div className="border-b border-border bg-muted/10 px-5 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-semibold text-foreground">本次回答的知识来源</p>
-            <p className="mt-0.5 text-[10px] text-muted-foreground">不选择时使用全部有权来源；选择只会缩小服务端 ACL 范围。</p>
-          </div>
-          {selectedSourceIds.length ? (
-            <button type="button" className="text-[11px] font-medium text-primary hover:underline" onClick={() => setSelectedSourceIds([])}>清除选择</button>
-          ) : null}
-        </div>
-        <div className="mt-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto">
-          {availableSources.map((document) => {
-            const checked = selectedSourceIds.includes(document.id);
-            return (
-              <label key={document.id} className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-[11px] ${checked ? "border-primary bg-primary/5 text-primary" : "border-border bg-background text-muted-foreground"}`}>
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => setSelectedSourceIds((current) => checked ? current.filter((id) => id !== document.id) : [...current, document.id])}
-                  className="size-3 accent-primary"
-                />
-                <span className="max-w-48 truncate">{document.displayName}</span>
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[9px]">{document.visibility === "restricted" ? "受限授权" : document.visibility === "department_shared" ? "部门共享" : document.visibility === "organization_shared" ? "公司共享" : "项目资料"}</span>
-              </label>
-            );
-          })}
-        </div>
-      </div>
+      <div className="border-b border-border bg-muted/20 px-5 py-3"><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-medium">自动资料范围</span>{projectId ? <><Badge variant="light">项目资料 {projectSourceCount} 份</Badge><Badge variant="light">公司资料 {templateSourceCount} 份</Badge></> : <><Badge variant="light">按当前权限自动检索</Badge><span className="text-[10px] text-muted-foreground">输入 # 可限定项目，输入 $ 可限定资料；这些引用不会扩大你的访问权限。</span></>}</div></div>
 
-      <div className="grid min-h-[560px] lg:grid-cols-[260px_1fr]">
-        <aside className="border-b border-border bg-muted/20 lg:border-b-0 lg:border-r">
-          <div className="border-b border-border px-4 py-3 text-[11px] font-medium text-muted-foreground">
-            我的对话 · 默认仅自己可见
-          </div>
-          <div className="max-h-[500px] overflow-y-auto p-2">
-            {threads.length === 0 ? (
-              <p className="px-3 py-8 text-center text-xs text-muted-foreground">
-                还没有对话
-              </p>
-            ) : (
-              threads.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => void loadThread(item.id)}
-                  className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left transition-colors ${
-                    thread?.id === item.id
-                      ? "bg-card text-foreground shadow-sm"
-                      : "text-muted-foreground hover:bg-card/70 hover:text-foreground"
-                  }`}
-                >
-                  <Bot className="size-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">{item.title}</span>
-                    <span className="mt-0.5 block text-[10px]">
-                      {item.messageCount} 条消息{item.status === "archived" ? " · 已归档" : ""}
-                    </span>
-                  </span>
-                  <ChevronRight className="size-3 shrink-0" />
-                </button>
-              ))
-            )}
-          </div>
-        </aside>
+      <div className="grid min-h-[560px] lg:grid-cols-[280px_1fr]">
+        <aside className="hidden border-r bg-muted/20 lg:block">{historyPanel}</aside>
 
         <div className="flex min-w-0 flex-col">
           {thread ? (
@@ -382,16 +547,13 @@ export function ProjectAssistantPanel({
                 <p className="mt-0.5 text-[10px] text-muted-foreground">
                   {thread.status === "active" ? "进行中" : "已归档"} · {thread.messageCount} 条消息
                 </p>
+                {viewer?.user.productRole === "super_admin" && !projectId ? <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"><span>本会话模型</span><Select value={thread.generationModelId ?? "default"} onValueChange={(value) => void changeModel(value)} disabled={changingModel}><SelectTrigger className="h-7 w-44 text-[10px]" aria-label="本会话模型"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="default">默认场景模型</SelectItem>{models.map((model) => <SelectItem key={model.id} value={model.id}>{model.displayName}</SelectItem>)}</SelectContent></Select></div> : null}
               </div>
-              {thread.status === "active" ? (
-                <button type="button" onClick={() => void archive()} className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
-                  <Archive className="size-3.5" />归档
-                </button>
-              ) : null}
+              <Menu position="bottom-end"><Menu.Target><Button type="button" variant="subtle" size="compact-sm" aria-label="会话操作"><MoreHorizontal size={18} /></Button></Menu.Target><Menu.Dropdown>{thread.status === "active" ? <Menu.Item leftSection={<Archive size={14} />} onClick={() => void archive()}>归档会话</Menu.Item> : null}{thread.status === "active" ? <Menu.Divider /> : null}<Menu.Item color="red" leftSection={<Trash2 size={14} />} onClick={() => void removeThread()}>删除会话</Menu.Item></Menu.Dropdown></Menu>
             </div>
           ) : null}
 
-          <div className="flex-1 space-y-4 overflow-y-auto p-4" aria-live="polite">
+          <div ref={messageViewport} className="flex-1 space-y-4 overflow-y-auto p-4" aria-live="polite">
             {!thread || thread.messages.length === 0 ? (
               <div className="grid min-h-72 place-items-center text-center" data-testid="ai-assistant-empty">
                 <div>
@@ -399,10 +561,10 @@ export function ProjectAssistantPanel({
                     <Sparkles className="size-5" />
                   </span>
                   <h4 className="mt-4 text-sm font-semibold text-foreground">
-                    从项目资料开始提问
+                    {projectId ? "从项目资料开始提问" : "开始通用对话"}
                   </h4>
                   <p className="mt-1 max-w-sm text-sm leading-6 text-muted-foreground">
-                    例如：客户要求什么时候上线？回答只会使用当前项目有效索引中的证据。
+                    {projectId ? "例如：总结当前项目现状，或根据资料生成需求文档。" : "例如：你能做什么？如何使用知识库？"}
                   </p>
                 </div>
               </div>
@@ -411,26 +573,21 @@ export function ProjectAssistantPanel({
                 <article key={message.id} className={message.role === "user" ? "ml-auto max-w-2xl" : "max-w-3xl"} data-message-role={message.role}>
                   <div className={`rounded-xl px-4 py-3 text-sm leading-6 ${
                     message.role === "user"
-                      ? "bg-primary text-primary-foreground"
+                      ? "border border-primary/10 bg-accent text-foreground"
                       : message.status === "failed"
                         ? "border border-destructive/20 bg-destructive-soft text-destructive"
                         : message.status === "insufficient_evidence"
                           ? "border border-warning/20 bg-warning-soft text-foreground"
-                          : "border border-border bg-background text-foreground"
+                        : "bg-card text-foreground"
                   }`}>
                     {message.status === "pending" ? (
                       <span className="inline-flex items-center gap-2 text-muted-foreground">
                         <LoaderCircle className="size-4 animate-spin" />正在检索证据并生成回答
                       </span>
                     ) : (
-                      <p className="whitespace-pre-wrap">{message.content}</p>
+                      <AssistantMarkdown>{message.content}</AssistantMarkdown>
                     )}
                   </div>
-                  {message.role === "assistant" && message.fallbackUsed ? (
-                    <p className="mt-1.5 text-[10px] text-warning">
-                      主模型暂时不可用，本次回答由备用模型完成。
-                    </p>
-                  ) : null}
                   {message.citations.length ? (
                     <div className="mt-2 space-y-2" data-testid="assistant-citations">
                       {message.citations.map((citation) => (
@@ -448,20 +605,23 @@ export function ProjectAssistantPanel({
                                   v{citation.versionNumber} · {sourceLabel(citation)}
                                 </p>
                                 <p className="mt-0.5 text-[9px] font-medium text-primary">
-                                  {scopeLabels[citation.sourceScope]} · {citation.knowledgeSpaceId}
+                                  {scopeLabels[citation.sourceScope]}
                                 </p>
                               </div>
                             </div>
+                            <div className="flex items-center gap-1">
+                            <AssistantCitationPreview citation={citation} projectId={projectId} onOpenSource={() => void openSource(citation)} />
                             <Button
                               type="button"
-                              variant="ghost"
+                              variant="subtle"
                               size="sm"
                               loading={downloading === citation.versionId}
                               disabled={Boolean(downloading)}
-                              onClick={() => void download(citation)}
+                              onClick={() => void openSource(citation)}
                             >
-                              <Download className="size-3.5" />原文件
+                              <ExternalLink className="size-3.5" />打开来源
                             </Button>
+                            </div>
                           </div>
                           {citation.headingPath.length ? (
                             <p className="mt-2 text-[10px] font-medium text-primary">
@@ -475,48 +635,89 @@ export function ProjectAssistantPanel({
                       ))}
                     </div>
                   ) : null}
+                  {message.historyReferences.length ? <div className="mt-2 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground" data-testid="assistant-history-references"><span className="font-medium text-foreground">已引用历史对话：</span>{message.historyReferences.map((reference) => { const openHistory = () => { if (reference.openInCurrentConversation) { void loadThread(reference.threadId); return; } window.location.assign(withBasePath(`/assistant?project=${encodeURIComponent(reference.projectId)}&thread=${encodeURIComponent(reference.threadId)}`)); }; return <span key={reference.threadId} className="ml-1 inline-flex items-center gap-1"><button type="button" className="text-primary underline-offset-2 hover:underline" onClick={openHistory}>[历史会话] {reference.title} · {new Date(reference.updatedAt).toLocaleDateString("zh-CN")}</button><AssistantHistoryCitationPreview projectId={projectId} threadId={reference.threadId} onOpen={openHistory} /></span>; })}<span className="ml-1">（仅作上下文，不是项目事实）</span></div> : null}
                 </article>
               ))
             )}
+            {optimisticQuestion ? (
+              <article className="ml-auto max-w-2xl" data-message-role="user" data-testid="optimistic-user-message">
+                <div className="rounded-xl border border-primary/10 bg-accent px-4 py-3 text-sm leading-6 text-foreground">
+                  <p className="whitespace-pre-wrap">{optimisticQuestion}</p>
+                </div>
+              </article>
+            ) : null}
             {sending ? (
               <div className="max-w-3xl rounded-xl border border-border bg-background px-4 py-3 text-sm text-muted-foreground" role="status">
                 <span className="inline-flex items-center gap-2">
                   <LoaderCircle className="size-4 animate-spin text-primary" />
-                  正在检索、生成并验证引用
+                  {projectId ? "正在检索、生成并验证引用" : "正在思考"}
                 </span>
               </div>
             ) : null}
           </div>
 
+          {requirementOverviewProjectId && requirementOverviewThreadId === thread?.id ? <section className="border-t" data-testid="assistant-skill-artifact"><div className="border-b bg-muted/20 px-4 py-3 text-xs text-muted-foreground">需求概览只属于这条当前会话。切换或新建会话后不会悬挂在新消息流中。</div><RequirementOverviewWorkspace projectId={requirementOverviewProjectId} /></section> : null}
+
           <form onSubmit={submit} className="border-t border-border p-4">
+            <section className="mb-4" aria-label="快捷操作">
+              <p className="mb-2 text-xs font-medium text-foreground">快捷操作</p>
+              <div className="flex flex-wrap gap-2">
+                <Tooltip label="执行固定模板的需求概览 Skill，不代表资料范围。"><Button type="button" size="sm" variant="default" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)} leftSection={<FileText size={14} />}>生成需求概览</Button></Tooltip>
+                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="default" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending} leftSection={<Sparkles size={14} />}>总结项目现状</Button></Tooltip>
+                <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="default" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending} leftSection={<ListChecks size={14} />}>列出待确认事项</Button></Tooltip>
+              </div>
+            </section>
+            <section className="mb-4 rounded-lg border border-dashed bg-muted/20 px-3 py-2.5" aria-label="本次引用" data-testid="assistant-context-references">
+              <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-medium text-foreground">本次引用</p><span className="text-[10px] text-muted-foreground">已引用 {referencedProjectCount} 个项目、{referencedDocumentCount} 份资料</span></div>
+              {contextReferences.length ? <div className="mt-2 flex flex-wrap gap-1.5">{contextReferences.map((reference) => <Badge key={reference.type === "project" ? `project-${reference.projectId}` : `document-${reference.documentId}`} variant="light" className="h-7 gap-1.5 bg-background pr-1.5 text-xs"><span data-testid={reference.type === "project" ? "project-reference-token" : "document-reference-token"} className="inline-flex items-center gap-1">{reference.type === "project" ? <FolderKanban className="size-3" /> : <Paperclip className="size-3" />}{reference.type === "project" ? "#" : "$"}{reference.label}</span><button type="button" aria-label={`移除 ${reference.label}`} onClick={() => removeContext(reference)} className="rounded-sm px-1 text-muted-foreground hover:bg-muted hover:text-foreground">×</button></Badge>)}</div> : <p className="mt-1 text-xs leading-5 text-muted-foreground">未指定引用，AI 会根据你的权限自动查找相关资料。</p>}
+            </section>
             <label className="block">
-              <span className="sr-only">向项目 AI 助手提问</span>
-              <textarea
+              <span className="sr-only">向 AI 助手提问</span>
+              <Textarea
+                aria-label="向 AI 助手提问"
+                data-testid="assistant-composer-input"
                 value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                placeholder="向当前项目资料提问…"
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (!projectId && (value.endsWith("#") || value.endsWith("$"))) {
+                    setQuestion(value.slice(0, -1));
+                    setPicker(value.endsWith("#") ? "project" : "document");
+                    setPickerSearch("");
+                  } else setQuestion(value);
+                }}
+                onKeyDown={onComposerKeyDown}
+                placeholder={projectId ? "向 AI 助手提问；需要项目事实时会自动读取相关资料…" : "直接提问；输入 # 限定项目，输入 $ 限定资料…"}
                 maxLength={2_000}
                 rows={3}
                 disabled={sending || thread?.status === "archived"}
-                className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:opacity-60"
+                className="min-h-24 w-full resize-none text-sm"
               />
             </label>
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
-                <ShieldCheck className="size-3 text-success" />回答返回前会由服务端校验引用
+              <span className="inline-flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground" data-testid="assistant-composer-help">
+                <ShieldCheck className="size-3 text-success" />
+                <span>输入 # 引用项目，输入 $ 引用具体资料。Enter 发送，Shift+Enter 换行。</span>
+                <span className="ml-1">使用资料时会由服务端校验引用权限。</span>
               </span>
-              <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"}>
-                <Send className="size-3.5" />发送
-              </Button>
+              <Button type="submit" size="sm" loading={sending} disabled={thread?.status === "archived"} data-testid="assistant-send-button" leftSection={<Send size={14} />}>发送</Button>
             </div>
           </form>
         </div>
       </div>
 
       <footer className="grid gap-2 border-t border-border bg-muted/20 px-5 py-3 text-[10px] text-muted-foreground sm:grid-cols-2">
-        <p>AI 回答仅基于当前项目资料生成，请结合引用来源核对关键信息。</p>
-        <p className="sm:text-right">当前回答仅基于本项目有效资料；检索异常时会自动使用词法证据，请结合引用核对。</p>
+        <p>AI 可直接完成通用聊天、写作、润色和方案讨论；涉及资料事实时才会检索。</p>
+        <p className="sm:text-right">项目资料与公司资料会明确标注；资料不足时不会猜测。</p>
       </footer>
+      <Drawer opened={historyOpened} onClose={() => setHistoryOpened(false)} title="会话历史" size="md">{historyPanel}</Drawer>
+      <Modal opened={picker !== null} onClose={() => { setPicker(null); setPendingQuickAction(null); }} title={picker === "project" ? "限定项目资料" : "限定一份资料"} centered>
+          <Text size="sm" c="dimmed" mb="md">只显示你已经有权访问的内容；选择后会缩小本次提问的资料范围。</Text>
+          <TextInput value={pickerSearch} onChange={(event) => setPickerSearch(event.currentTarget.value)} placeholder="搜索名称" autoFocus />
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {visibleContextOptions.map((item) => <Button key={item.id} type="button" variant="subtle" fullWidth justify="flex-start" onClick={() => chooseContext(item)}>{item.label}</Button>)}
+            {!visibleContextOptions.length ? <p className="py-6 text-center text-sm text-muted-foreground">没有匹配的可用资料</p> : null}
+          </div>
+      </Modal>
     </section>
   );
 }

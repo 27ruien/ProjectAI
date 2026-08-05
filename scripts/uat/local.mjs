@@ -87,7 +87,7 @@ async function main() {
     AI_PROVIDER: uatAiProvider === "real" ? "qwen" : "fake",
     AI_ASSISTANT_ENABLED: "true",
     AI_REGION: "cn-beijing",
-    AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v1",
+    AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v2",
     PM_DAILY_REPORT_ENABLED: "true",
     WECOM_TIMESHEET_SYNC_ENABLED: "true",
     WECOM_TIMESHEET_SYNC_PROVIDER:

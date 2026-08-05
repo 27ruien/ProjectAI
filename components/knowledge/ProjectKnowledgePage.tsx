@@ -180,7 +180,7 @@ export function ProjectKnowledgePage({
 
   return (
     <div className="min-h-full bg-background">
-      <ProjectContextHeader project={project} activeTab="knowledge" />
+      <ProjectContextHeader project={project} activeTab="files" />
       <main className="px-5 py-5 lg:px-8 lg:py-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>

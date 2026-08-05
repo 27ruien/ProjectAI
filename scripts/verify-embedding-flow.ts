@@ -97,7 +97,7 @@ async function waitForEmbedding(documentId: string, versionId: string) {
               provider_call_count, input_token_count
        from document_embedding_jobs
        where document_id = $1 and version_id = $2
-         and embedding_profile_id = 'qwen-text-embedding-cn-v1'
+         and embedding_profile_id = 'qwen3.7-text-embedding-cn-v2'
        order by generation desc
        limit 1`,
       [documentId, versionId],
@@ -272,7 +272,7 @@ try {
          j.project_id,
          count(e.id)::int as vector_count,
          bool_and(vector_dims(e.embedding) = 1024) as valid_dimensions,
-         bool_and(b.model = 'text-embedding-v4' and b.dimensions = 1024) as model_valid,
+         bool_and(b.model = 'qwen3.7-text-embedding' and b.dimensions = 1024) as model_valid,
          bool_and(b.chunk_count between 1 and 10) as batch_size_valid,
          bool_and(b.cost_micro_cny is null) as cost_unestimated,
          bool_and(c.reserved_input_tokens >= coalesce(c.input_token_count, 0)) as reservation_covers_usage,

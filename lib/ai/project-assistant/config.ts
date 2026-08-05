@@ -5,9 +5,9 @@ export const AI_GATEWAY_VERSION = "1";
 export const PROJECT_ASSISTANT_PROMPT_VERSION = "1";
 export const PROJECT_ASSISTANT_RETRIEVAL_VERSION = "hybrid-rrf-1";
 export const PROJECT_ASSISTANT_PROFILE_ID =
-  "qwen-project-assistant-cn-v1";
-export const PROJECT_ASSISTANT_PRIMARY_MODEL = "qwen3.7-plus";
-export const PROJECT_ASSISTANT_FALLBACK_MODEL = "qwen3.6-flash";
+  "qwen-project-assistant-cn-v2";
+export const PROJECT_ASSISTANT_PRIMARY_MODEL = "qwen3.7-flash";
+export const PROJECT_ASSISTANT_FALLBACK_MODEL = "qwen3.7-flash";
 export const PROJECT_ASSISTANT_REGION = "cn-beijing";
 const BEIJING_WORKSPACE_HOST =
   /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cn-beijing\.maas\.aliyuncs\.com$/;

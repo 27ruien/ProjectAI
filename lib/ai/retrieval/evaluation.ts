@@ -157,7 +157,7 @@ async function embedTexts(texts: string[]): Promise<number[][]> {
   for (let index = 0; index < texts.length; index += 10) {
     const batch = texts.slice(index, index + 10);
     const result = await provider.embed({
-      model: "text-embedding-v4",
+      model: "qwen3.7-text-embedding",
       dimensions: 1024,
       inputs: batch,
       timeoutMs: 5_000,

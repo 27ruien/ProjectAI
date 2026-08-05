@@ -1,75 +1,148 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   Bot,
-  ChevronLeft,
-  ChevronRight,
   Building2,
-  Library,
-  Workflow,
-  Clock3,
-  X,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  FileText,
+  FolderOpen,
+  LogOut,
+  Settings,
+  ShieldCheck,
+  Users,
 } from "lucide-react";
+import { initials } from "@/components/project/mock-view";
+import { navigateToLogin, signOut } from "@/components/auth/auth-client";
+import { productRoleLabel, type ViewerContext } from "@/lib/auth/ui-types";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import type { ViewerContext } from "@/lib/auth/ui-types";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const navigation: Array<{
-  label: string;
-  href: string;
-  icon: typeof Clock3;
-  feature?: "pmDailyReport";
-  role?: "super_admin";
-}> = [
-  { label: "工作日报", href: "/daily-report", icon: Clock3, feature: "pmDailyReport" },
-  { label: "AI 工作流", href: "/workflows", icon: Workflow },
-  { label: "知识库", href: "/knowledge", icon: Library },
-  { label: "组织架构", href: "/organization", icon: Building2, role: "super_admin" },
-];
+const navigation = [
+  { label: "AI 助手", href: "/assistant", icon: Bot },
+  { label: "资料空间", href: "/data-spaces", icon: FolderOpen },
+] as const;
 
 interface SidebarProps {
   viewer: ViewerContext;
   currentPath: string;
   collapsed: boolean;
-  onCollapsedChange: (value: boolean) => void;
-  mobileOpen: boolean;
+  onToggleCollapse?: () => void;
   onMobileClose: () => void;
-  featureFlags: { pmDailyReport: boolean; wecomTimesheetSync: boolean };
 }
 
-export function Sidebar({ viewer, currentPath, collapsed, onCollapsedChange, mobileOpen, onMobileClose, featureFlags }: SidebarProps) {
+function NavigationLink({ href, label, icon: Icon, active, nested, collapsed, onClick }: {
+  href: string;
+  label: string;
+  icon: typeof Bot;
+  active: boolean;
+  nested?: boolean;
+  collapsed?: boolean;
+  onClick: () => void;
+}) {
+  const link = (
+    <Link
+      href={href}
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "flex h-9 items-center gap-2 rounded-lg px-3 text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+        nested && !collapsed && "ml-5 h-8 text-xs",
+        collapsed && "justify-center px-0",
+        active
+          ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/70 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+      )}
+    >
+      <Icon aria-hidden className="size-4 shrink-0" />
+      <span className={cn("min-w-0 flex-1 truncate", collapsed && "sr-only")}>{label}</span>
+      {href === "/data-spaces" && !collapsed ? <ChevronRight aria-hidden className="size-3.5" /> : null}
+    </Link>
+  );
+  return collapsed ? <Tooltip><TooltipTrigger asChild>{link}</TooltipTrigger><TooltipContent side="right">{label}</TooltipContent></Tooltip> : link;
+}
+
+export function Sidebar({ viewer, currentPath, collapsed, onToggleCollapse, onMobileClose }: SidebarProps) {
+  const [loggingOut, setLoggingOut] = useState(false);
   const active = (href: string) => currentPath === href || currentPath.startsWith(`${href}/`);
-  const visibleNavigation = navigation.filter((item) => {
-    if (item.feature === "pmDailyReport" && !featureFlags.pmDailyReport) return false;
-    if (item.role && viewer.user.productRole !== item.role) return false;
-    return true;
-  });
-  return <>
-    {mobileOpen ? <button className="fixed inset-0 z-40 bg-[var(--overlay)] lg:hidden" aria-label="关闭导航" onClick={onMobileClose} /> : null}
-    <aside className={cn("fixed inset-y-0 left-0 z-50 flex flex-col bg-sidebar text-sidebar-foreground transition-[width,transform] duration-200 lg:translate-x-0", collapsed ? "w-[72px]" : "w-[232px]", mobileOpen ? "translate-x-0" : "-translate-x-full")}>
-      <div className={cn("flex h-16 items-center border-b border-white/8", collapsed ? "justify-center px-3" : "px-4")}>
-        <Link href="/daily-report" className="flex min-w-0 items-center gap-2.5" onClick={onMobileClose}>
-          <span className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-primary text-white shadow-[inset_0_0_0_1px_rgb(255_255_255/16%)]"><Bot className="size-[18px]" /></span>
-          {!collapsed ? <span className="truncate text-[15px] font-semibold tracking-[-0.02em]">Project AI OS</span> : null}
-        </Link>
-        <button className="ml-auto rounded-md p-1.5 text-sidebar-muted hover:bg-white/8 hover:text-white lg:hidden" aria-label="关闭导航" onClick={onMobileClose}><X className="size-4" /></button>
+  const admin = viewer.user.systemRole === "system_admin" || viewer.user.productRole === "admin";
+  const canManageAiModels = viewer.user.systemRole === "system_admin" || Boolean(viewer.aiConfigurationOrganizationId);
+  const logout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await signOut();
+      navigateToLogin();
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
+  return (
+    <TooltipProvider delayDuration={150}><div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+      <div className={cn("flex h-14 shrink-0 items-center gap-2 border-b px-4", collapsed && "justify-center px-2")}>
+        <span className="grid size-8 place-items-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
+          <Building2 aria-hidden className="size-4" />
+        </span>
+        <Link href="/assistant" onClick={onMobileClose} className={cn("font-semibold tracking-tight", collapsed && "sr-only")}>ProjectAI</Link>
+        {onToggleCollapse ? <Button variant="ghost" size="icon-sm" className={cn("ml-auto", collapsed && "ml-0")} onClick={onToggleCollapse} aria-label={collapsed ? "展开侧栏" : "折叠侧栏"}>{collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}</Button> : null}
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2.5 py-4" aria-label="主导航">
-        <p className={cn("mb-2 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-sidebar-muted", collapsed && "sr-only")}>Workspace</p>
-        <div className="space-y-1">{visibleNavigation.map((item) => {
-          const Icon = item.icon;
-          const selected = active(item.href);
-          return <Link key={item.href} href={item.href} title={collapsed ? item.label : undefined} onClick={onMobileClose} className={cn("group flex h-10 items-center gap-3 rounded-lg text-[13px] font-medium transition-colors", collapsed ? "justify-center px-0" : "px-2.5", selected ? "bg-sidebar-accent text-white" : "text-sidebar-muted hover:bg-white/6 hover:text-white")}>
-            <Icon className={cn("size-[17px] shrink-0", selected && "text-[#a9a2ff]")} />
-            {!collapsed ? <span className="flex-1">{item.label}</span> : null}
-          </Link>;
-        })}</div>
-      </nav>
+      <ScrollArea className="min-h-0 flex-1 p-3">
+        <p className={cn("px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/45", collapsed && "sr-only")}>工作区</p>
+        <nav className="grid gap-1" aria-label="主导航">
+          {navigation.map((item) => (
+            <NavigationLink key={item.href} {...item} active={active(item.href)} collapsed={collapsed} onClick={onMobileClose} />
+          ))}
+          {active("/data-spaces") ? (
+            <div className={cn("grid gap-1", !collapsed && "border-l pl-1")}>
+              <NavigationLink href="/data-spaces/projects" label="项目资料" icon={FolderOpen} active={active("/data-spaces/projects")} nested collapsed={collapsed} onClick={onMobileClose} />
+              <NavigationLink href="/data-spaces/company" label="公司资料" icon={FileText} active={active("/data-spaces/company")} nested collapsed={collapsed} onClick={onMobileClose} />
+            </div>
+          ) : null}
+        </nav>
+      </ScrollArea>
 
-      <div className="p-2.5">
-        <button onClick={() => onCollapsedChange(!collapsed)} className="hidden h-9 w-full items-center justify-center rounded-lg text-sidebar-muted hover:bg-white/6 hover:text-white lg:flex" aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}>{collapsed ? <ChevronRight className="size-4" /> : <><ChevronLeft className="size-4" /><span className="ml-2 text-xs">收起导航</span></>}</button>
+      <div className="border-t p-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" className={cn("h-auto w-full justify-start gap-2 px-2 py-2", collapsed && "justify-center px-0")} aria-label="账户菜单">
+              <Avatar className="size-8"><AvatarFallback>{initials(viewer.user.displayName)}</AvatarFallback></Avatar>
+              <span className={cn("min-w-0 flex-1 text-left", collapsed && "sr-only")}>
+                <span className="block truncate text-sm font-medium">{viewer.user.displayName}</span>
+                <span className="block truncate text-xs font-normal text-muted-foreground">{productRoleLabel(viewer.user.productRole)}</span>
+              </span>
+              {!collapsed ? <ChevronRight aria-hidden className="size-3.5" /> : null}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="top" align="start" className="w-60">
+            <DropdownMenuLabel className="flex items-center gap-2"><ShieldCheck className="size-4" />{productRoleLabel(viewer.user.productRole)}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            {admin ? <>
+              <DropdownMenuItem asChild><Link href="/organization" onClick={onMobileClose}><Users />组织与账号</Link></DropdownMenuItem>
+              <DropdownMenuItem asChild><Link href="/settings" onClick={onMobileClose}><Settings />管理设置</Link></DropdownMenuItem>
+            </> : null}
+            {canManageAiModels ? <DropdownMenuItem asChild><Link href="/admin/models" onClick={onMobileClose}><Bot />Provider 与模型</Link></DropdownMenuItem> : null}
+            <DropdownMenuItem asChild><Link href="/help/models-and-api" onClick={onMobileClose}><FileText />模型与 API 帮助</Link></DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" disabled={loggingOut} onSelect={() => void logout()}><LogOut />{loggingOut ? "正在退出" : "退出登录"}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-    </aside>
-  </>;
+    </div></TooltipProvider>
+  );
 }

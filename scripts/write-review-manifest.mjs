@@ -256,8 +256,8 @@ const evidenceIndex = {
   aiGatewayVersion: process.env.AI_GATEWAY_VERSION?.trim() || "1",
   assistantProfileId:
     process.env.AI_PROJECT_ASSISTANT_PROFILE_ID?.trim() ||
-    "qwen-project-assistant-cn-v1",
-  retrievalProfileId: "hybrid-rrf-v1",
+    "qwen-project-assistant-cn-v2",
+  retrievalProfileId: "hybrid-rrf-qwen37-v2",
   retrievalEvaluationDatasetVersion: "hybrid-retrieval-fictional-v1",
   requiredRetrievalReports,
   retrievalReportFiles,

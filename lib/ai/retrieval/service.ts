@@ -14,6 +14,7 @@ import {
   type ProjectKnowledgeEvidence,
   type RankedProjectKnowledgeEvidence,
   retrieveLexicalProjectCandidates,
+  retrieveAuthorizedProjectContextCandidates,
   selectBoundedProjectEvidence,
 } from "@/lib/documents/processing/search-service";
 import { validateSourceLocator } from "@/lib/documents/processing/source-locator";
@@ -38,6 +39,7 @@ import {
   type FusedRetrievalCandidate,
   type RankedRetrievalCandidate,
 } from "./rrf";
+import { publishedCompanySourceFilter } from "@/lib/focused-mvp/company-source-filter";
 
 export type RetrievalFallbackReason =
   | "RETRIEVAL_PROFILE_DISABLED"
@@ -49,6 +51,7 @@ export type RetrievalFallbackReason =
   | "VECTOR_RETRIEVAL_TIMEOUT"
   | "VECTOR_RETRIEVAL_FAILED"
   | "VECTOR_CANDIDATES_EMPTY"
+  | "AUTHORIZED_PROJECT_CONTEXT"
   | "HYBRID_CONFIDENCE_INSUFFICIENT"
   | "SHADOW_MODE";
 
@@ -58,6 +61,7 @@ export type RetrievalEvidenceResult = {
   fallbackReason: RetrievalFallbackReason | null;
   evidence: ProjectKnowledgeEvidence[];
   retrievalRunId: string;
+  auditDegraded: boolean;
   metrics: {
     lexicalCandidateCount: number;
     vectorCandidateCount: number;
@@ -74,6 +78,7 @@ export type RetrievalEvidenceResult = {
 
 type VectorRow = {
   chunk_id: string;
+  source_project_id: string;
   document_id: string;
   version_id: string;
   display_name: string;
@@ -152,6 +157,23 @@ function selectHybridEvidence(
   });
 }
 
+export function shouldUseAuthorizedProjectContext(query: string): boolean {
+  const normalized = query.toLocaleLowerCase().replace(/\s+/g, "");
+  return [
+    /基于当前项目/,
+    /当前项目.*(资料|现状|情况)/,
+    /总结.*项目/,
+    /项目.*(待确认|缺失|风险|信息缺口)/,
+    /列出.*(确认|缺失|风险|问题)/,
+    /为什么.*(没有|查不到)/,
+    /这份?(文档|文件|资料)/,
+    /(文档|文件|资料).*(需求|内容|讲了什么|写了什么|包括|列了什么)/,
+    /哪些?需求/,
+    /summari[sz]e/,
+    /project.*(context|status|openquestion|missing|risk)/,
+  ].some((pattern) => pattern.test(normalized));
+}
+
 async function embeddingCoverage(input: {
   actorUserId: string;
   projectId: string;
@@ -204,6 +226,12 @@ async function embeddingCoverage(input: {
       and v.storage_status = 'stored'
       and v.is_current = true
       and j.status = 'succeeded'
+      and ${publishedCompanySourceFilter({
+        actorUserId: input.actorUserId,
+        targetProjectId: input.projectId,
+        sourceScope: sql`authorized.source_scope`,
+        documentId: sql`d.id`,
+      })}
       ${documentFilter}
   `);
   const row = result.rows[0];
@@ -295,6 +323,7 @@ async function exactVectorCandidates(input: {
     return tx.execute<VectorRow>(sql`
       select
         c.id as chunk_id,
+        authorized.source_project_id,
         c.document_id,
         c.version_id,
         d.display_name,
@@ -341,6 +370,12 @@ async function exactVectorCandidates(input: {
         and v.storage_status = 'stored'
         and v.is_current = true
         and j.status = 'succeeded'
+        and ${publishedCompanySourceFilter({
+          actorUserId: input.actorUserId,
+          targetProjectId: input.projectId,
+          sourceScope: sql`authorized.source_scope`,
+          documentId: sql`d.id`,
+        })}
         ${documentFilter}
         and (e.embedding <=> ${vectorLiteral}::vector) <= ${HYBRID_RETRIEVAL_PROFILE.vectorMaxDistance}
       order by (e.embedding <=> ${vectorLiteral}::vector) asc, c.id asc
@@ -354,6 +389,7 @@ async function exactVectorCandidates(input: {
     value: {
       label: "",
       chunkId: row.chunk_id,
+      sourceProjectId: row.source_project_id,
       documentId: row.document_id,
       versionId: row.version_id,
       displayName: row.display_name,
@@ -368,7 +404,8 @@ async function exactVectorCandidates(input: {
         : [],
       source: validateSourceLocator(row.source_locator),
       score: Math.max(0, 1 - Number(row.vector_distance)),
-      knowledgeSpaceId: row.knowledge_space_id,
+      knowledgeBaseId: row.knowledge_space_id,
+      knowledgeBaseType: row.source_scope === "organization" ? "template" : "project",
       sourceScope: row.source_scope,
     },
   }));
@@ -503,9 +540,36 @@ export async function retrieveProjectEvidence(input: {
     }
   }
 
+  const hasExactlyOneAuthorizedSource = input.sourceDocumentIds.length === 1;
+  if (
+    evidence.length === 0 &&
+    (hasExactlyOneAuthorizedSource || shouldUseAuthorizedProjectContext(query))
+  ) {
+    const contextCandidates = await retrieveAuthorizedProjectContextCandidates({
+      actorUserId: input.principal.user.id,
+      projectId: input.projectId,
+      documentIds: input.sourceDocumentIds,
+      limit: HYBRID_RETRIEVAL_PROFILE.fusedCandidateLimit,
+    });
+    const contextEvidence = selectBoundedProjectEvidence({
+      candidates: contextCandidates,
+      evidenceLimit: HYBRID_RETRIEVAL_PROFILE.evidenceLimit,
+      maxChars: HYBRID_RETRIEVAL_PROFILE.maxEvidenceCharacters,
+    });
+    if (contextEvidence.length > 0) {
+      evidence = contextEvidence;
+      fallbackReason = "AUTHORIZED_PROJECT_CONTEXT";
+      // Keep the existing audit schema (lexical/vector/both) without adding a
+      // migration. The explicit fallback reason distinguishes these bounded
+      // context candidates from a genuine lexical match.
+      auditCandidates = auditedLexicalCandidates(contextCandidates);
+      fused = fusedLexicalCandidates(contextCandidates);
+    }
+  }
+
   const selectedChunkIds = new Set(evidence.map((item) => item.chunkId));
   const totalLatencyMs = elapsed(totalStarted);
-  await finalizeRetrievalRun({
+  const retrievalAudit = await finalizeRetrievalRun({
     retrievalRunId,
     executionId: input.execution.id,
     effectiveMode,
@@ -529,6 +593,7 @@ export async function retrieveProjectEvidence(input: {
     fallbackReason,
     evidence,
     retrievalRunId,
+    auditDegraded: retrievalAudit.auditDegraded,
     metrics: {
       lexicalCandidateCount: lexical.length,
       vectorCandidateCount: vector.length,
@@ -539,6 +604,114 @@ export async function retrieveProjectEvidence(input: {
       queryEmbeddingLatencyMs,
       vectorLatencyMs,
       fusionLatencyMs,
+      totalLatencyMs,
+    },
+  };
+}
+
+/**
+ * General assistant retrieval keeps one auditable run per execution while
+ * searching only the projects that the current principal can already read.
+ * A client supplied #/$ reference narrows this list; it can never add scope.
+ * We deliberately use the existing lexical path here rather than mixing
+ * vectors from different source/model generations into a shared result.
+ */
+export async function retrieveAuthorizedAssistantEvidence(input: {
+  principal: AuthenticatedPrincipal;
+  projectIds: string[];
+  sourceDocumentIds: string[];
+  query: string;
+  mode: RetrievalMode;
+  retrievalProfileId: string;
+  execution: AiExecutionRecord;
+}): Promise<RetrievalEvidenceResult> {
+  const runtime = getHybridRetrievalRuntimeConfig();
+  if (input.mode !== runtime.mode || input.retrievalProfileId !== runtime.profileId) {
+    throw new Error("Server retrieval configuration mismatch.");
+  }
+  const query = input.query.trim().slice(0, 2_000);
+  const totalStarted = performance.now();
+  const retrievalRunId = await createRetrievalRun({
+    execution: input.execution,
+    querySha256: createHash("sha256").update(query).digest("hex"),
+    requestedMode: input.mode,
+  });
+  const lexicalStarted = performance.now();
+  const groups = await Promise.all(input.projectIds.map((projectId) =>
+    retrieveLexicalProjectCandidates({
+      actorUserId: input.principal.user.id,
+      projectId,
+      query,
+      limit: HYBRID_RETRIEVAL_PROFILE.lexicalCandidateLimit,
+      documentIds: input.sourceDocumentIds,
+    }),
+  ));
+  const lexical = groups.flat()
+    .sort((left, right) => right.evidence.score - left.evidence.score)
+    .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+  const lexicalLatencyMs = elapsed(lexicalStarted);
+  let evidence = selectLexicalEvidence(lexical);
+  let fallbackReason: RetrievalFallbackReason | null = null;
+  if (evidence.length === 0 && (input.sourceDocumentIds.length > 0 || shouldUseAuthorizedProjectContext(query))) {
+    const contextualGroups = await Promise.all(input.projectIds.map((projectId) =>
+      retrieveAuthorizedProjectContextCandidates({
+        actorUserId: input.principal.user.id,
+        projectId,
+        documentIds: input.sourceDocumentIds,
+        limit: HYBRID_RETRIEVAL_PROFILE.fusedCandidateLimit,
+      }),
+    ));
+    const contextual = contextualGroups.flat()
+      .sort((left, right) => right.evidence.score - left.evidence.score)
+      .map((candidate, index) => ({ ...candidate, rank: index + 1 }));
+    const bounded = selectBoundedProjectEvidence({
+      candidates: contextual,
+      evidenceLimit: HYBRID_RETRIEVAL_PROFILE.evidenceLimit,
+      maxChars: HYBRID_RETRIEVAL_PROFILE.maxEvidenceCharacters,
+    });
+    if (bounded.length > 0) {
+      evidence = bounded;
+      fallbackReason = "AUTHORIZED_PROJECT_CONTEXT";
+    }
+  }
+  const auditCandidates = auditedLexicalCandidates(lexical);
+  const selectedChunkIds = new Set(evidence.map((item) => item.chunkId));
+  const totalLatencyMs = elapsed(totalStarted);
+  const retrievalAudit = await finalizeRetrievalRun({
+    retrievalRunId,
+    executionId: input.execution.id,
+    effectiveMode: "lexical",
+    fallbackReason,
+    insufficientEvidence: evidence.length === 0,
+    embeddingCoverageBps: 0,
+    lexicalLatencyMs,
+    queryEmbeddingLatencyMs: 0,
+    vectorLatencyMs: 0,
+    fusionLatencyMs: 0,
+    totalLatencyMs,
+    lexicalCandidateCount: lexical.length,
+    vectorCandidateCount: 0,
+    fusedCandidateCount: lexical.length,
+    candidates: auditCandidates,
+    selectedChunkIds,
+  });
+  return {
+    requestedMode: input.mode,
+    effectiveMode: "lexical",
+    fallbackReason,
+    evidence,
+    retrievalRunId,
+    auditDegraded: retrievalAudit.auditDegraded,
+    metrics: {
+      lexicalCandidateCount: lexical.length,
+      vectorCandidateCount: 0,
+      fusedCandidateCount: lexical.length,
+      selectedEvidenceCount: evidence.length,
+      embeddingCoverageBps: 0,
+      lexicalLatencyMs,
+      queryEmbeddingLatencyMs: 0,
+      vectorLatencyMs: 0,
+      fusionLatencyMs: 0,
       totalLatencyMs,
     },
   };

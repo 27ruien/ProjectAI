@@ -8,6 +8,10 @@ import {
   ingestionSummariesForVersions,
   type IngestionSummary,
 } from "@/lib/db/repositories/ingestion-repository";
+import {
+  embeddingSummariesForVersions,
+  type EmbeddingSummary,
+} from "@/lib/db/repositories/embedding-repository";
 import type {
   ProjectDocumentRecord,
   ProjectDocumentVersionRecord,
@@ -18,6 +22,7 @@ import type {
   ProjectDocumentPermissionsDto,
   ProjectDocumentVersionDto,
 } from "@/types/documents";
+import { isAiReadableExtension } from "./config";
 
 type VersionWithOptionalUploader = ProjectDocumentVersionRecord & {
   uploaderDisplayName?: string;
@@ -32,10 +37,21 @@ const PUBLIC_FAILURE_CODES = new Set([
   "STORAGE_UNAVAILABLE",
 ]);
 
+/**
+ * Keep the browser route boundary expressed as an eligibility policy rather
+ * than letting route handlers inspect vectorization metadata directly.
+ */
+export function isCurrentDocumentAiReady(
+  document: ProjectDocumentDto,
+): boolean {
+  return document.currentVersion?.embedding.status === "succeeded";
+}
+
 export function serializeDocumentVersion(
   version: VersionWithOptionalUploader,
   fallbackUploaderDisplayName = "项目成员",
   ingestion?: IngestionSummary,
+  embedding?: EmbeddingSummary,
 ): ProjectDocumentVersionDto {
   const failureCode =
     version.failureCode && PUBLIC_FAILURE_CODES.has(version.failureCode)
@@ -49,7 +65,9 @@ export function serializeDocumentVersion(
     versionNumber: version.versionNumber,
     isCurrent: version.isCurrent,
     originalFilename: version.originalFilename,
+    versionNote: version.versionNote,
     extension: version.normalizedExtension,
+    aiReadable: isAiReadableExtension(version.normalizedExtension),
     detectedMimeType: version.detectedMimeType,
     sizeBytes: version.sizeBytes,
     storageStatus: version.storageStatus,
@@ -72,6 +90,14 @@ export function serializeDocumentVersion(
       lastIndexedAt: ingestion?.lastIndexedAt?.toISOString() ?? null,
       failureCode: ingestion?.failureCode ?? null,
     },
+    embedding: {
+      status: embedding?.status ?? "not_started",
+      profileId: embedding?.profileId ?? null,
+      model: embedding?.model ?? null,
+      dimensions: embedding?.dimensions ?? null,
+      generatedAt: embedding?.generatedAt?.toISOString() ?? null,
+      failureCode: embedding?.failureCode ?? null,
+    },
   };
 }
 
@@ -82,11 +108,15 @@ export async function serializeDocumentVersions(
   const summaries = await ingestionSummariesForVersions(
     versions.map((version) => version.id),
   );
+  const embeddingSummaries = await embeddingSummariesForVersions(
+    versions.map((version) => version.id),
+  );
   return versions.map((version) =>
     serializeDocumentVersion(
       version,
       fallbackUploaderDisplayName,
       summaries.get(version.id),
+      embeddingSummaries.get(version.id),
     ),
   );
 }
@@ -109,6 +139,7 @@ export function documentPermissions(
     canDownload: authorized?.download ?? true,
     canUploadVersion:
       (authorized?.manageVersions ?? writer) && status === "active",
+    canDelete: manager,
     canArchive: (authorized?.archive ?? manager) && status === "active",
     canRestore: (authorized?.archive ?? manager) && status === "archived",
     canSetCurrent:
@@ -136,10 +167,16 @@ export async function serializeProjectDocument(
         currentVersion.id,
       )
     : undefined;
+  const embedding = currentVersion
+    ? (await embeddingSummariesForVersions([currentVersion.id])).get(
+        currentVersion.id,
+      )
+    : undefined;
   return {
     id: document.id,
     projectId: document.projectId,
     knowledgeSpaceId: document.knowledgeSpaceId,
+    folderId: document.folderId,
     visibility: document.visibility,
     displayName: document.displayName,
     workflowTemporary: document.workflowTemporary,
@@ -150,7 +187,12 @@ export async function serializeProjectDocument(
     updatedAt: document.updatedAt.toISOString(),
     archivedAt: document.archivedAt?.toISOString() ?? null,
     currentVersion: currentVersion
-      ? serializeDocumentVersion(currentVersion, "项目成员", ingestion)
+      ? serializeDocumentVersion(
+          currentVersion,
+          "项目成员",
+          ingestion,
+          embedding,
+        )
       : null,
     permissions: documentPermissions(
       principal,
@@ -180,6 +222,11 @@ export async function serializeDocumentList(
       .map((document) => document.currentVersion?.id)
       .filter((id): id is string => Boolean(id)),
   );
+  const embeddingSummaries = await embeddingSummariesForVersions(
+    documents
+      .map((document) => document.currentVersion?.id)
+      .filter((id): id is string => Boolean(id)),
+  );
   return Promise.all(
     documents.map(async (document) => {
       const creator = await findUserById(document.createdBy);
@@ -189,6 +236,7 @@ export async function serializeDocumentList(
         id: document.id,
         projectId: document.projectId,
         knowledgeSpaceId: document.knowledgeSpaceId,
+        folderId: document.folderId,
         visibility: document.visibility,
         displayName: document.displayName,
         workflowTemporary: document.workflowTemporary,
@@ -203,6 +251,7 @@ export async function serializeDocumentList(
               currentVersion,
               "项目成员",
               summaries.get(currentVersion.id),
+              embeddingSummaries.get(currentVersion.id),
             )
           : null,
         permissions: documentPermissions(

@@ -11,6 +11,7 @@ import {
   unique,
   uniqueIndex,
   varchar,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { documentStatusEnum, documentStorageStatusEnum } from "./enums";
@@ -18,6 +19,63 @@ import { project } from "./projects";
 import { user } from "./users";
 import { knowledgeSpace } from "./knowledge-spaces";
 import { knowledgeVisibilityEnum } from "./enums";
+
+/** A project-local folder. Documents remain immutable; moving only changes metadata. */
+export const projectDocumentFolder = pgTable(
+  "project_document_folders",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => project.id, { onDelete: "restrict" }),
+    knowledgeSpaceId: text("knowledge_space_id")
+      .notNull()
+      .references(() => knowledgeSpace.id, { onDelete: "restrict" }),
+    parentFolderId: text("parent_folder_id").references(
+      (): AnyPgColumn => projectDocumentFolder.id,
+      { onDelete: "restrict" },
+    ),
+    name: varchar("name", { length: 240 }).notNull(),
+    createdBy: text("created_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    unique("project_document_folders_id_project_unique").on(
+      table.id,
+      table.projectId,
+    ),
+    index("project_document_folders_parent_idx").on(
+      table.projectId,
+      table.parentFolderId,
+      table.updatedAt,
+    ),
+    index("project_document_folders_space_idx").on(
+      table.knowledgeSpaceId,
+      table.projectId,
+    ),
+    uniqueIndex("project_document_folders_sibling_name_uidx").on(
+      table.projectId,
+      table.knowledgeSpaceId,
+      sql`coalesce(${table.parentFolderId}, '')`,
+      sql`lower(${table.name})`,
+    ),
+    check(
+      "project_document_folders_name_nonempty",
+      sql`length(btrim(${table.name})) > 0`,
+    ),
+    check(
+      "project_document_folders_not_self_parent",
+      sql`${table.parentFolderId} is null or ${table.parentFolderId} <> ${table.id}`,
+    ),
+  ],
+);
 
 /**
  * A logical document. Objects are deliberately not deleted when a document is
@@ -37,6 +95,7 @@ export const projectDocument = pgTable(
     visibility: knowledgeVisibilityEnum("visibility")
       .notNull()
       .default("private"),
+    folderId: text("folder_id"),
     displayName: varchar("display_name", { length: 240 }).notNull(),
     workflowTemporary: boolean("workflow_temporary").notNull().default(false),
     temporaryWorkflowId: text("temporary_workflow_id"),
@@ -64,12 +123,22 @@ export const projectDocument = pgTable(
       table.updatedAt,
     ),
     index("project_documents_created_by_idx").on(table.createdBy),
+    index("project_documents_folder_idx").on(
+      table.projectId,
+      table.folderId,
+      table.updatedAt,
+    ),
     index("project_documents_space_visibility_idx").on(
       table.knowledgeSpaceId,
       table.visibility,
       table.status,
     ),
     unique("project_documents_id_project_unique").on(table.id, table.projectId),
+    foreignKey({
+      name: "project_documents_folder_project_fk",
+      columns: [table.folderId, table.projectId],
+      foreignColumns: [projectDocumentFolder.id, projectDocumentFolder.projectId],
+    }).onDelete("restrict"),
     check(
       "project_documents_display_name_nonempty",
       sql`length(btrim(${table.displayName})) > 0`,
@@ -119,6 +188,7 @@ export const projectDocumentVersion = pgTable(
     uploadId: varchar("upload_id", { length: 128 }).notNull(),
     objectKey: varchar("object_key", { length: 700 }).notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+    versionNote: varchar("version_note", { length: 500 }),
     normalizedExtension: varchar("normalized_extension", { length: 12 }).notNull(),
     declaredMimeType: varchar("declared_mime_type", { length: 200 }).notNull(),
     detectedMimeType: varchar("detected_mime_type", { length: 200 }).notNull(),
@@ -224,6 +294,10 @@ export const projectDocumentVersion = pgTable(
 
 export type ProjectDocumentRecord = typeof projectDocument.$inferSelect;
 export type NewProjectDocumentRecord = typeof projectDocument.$inferInsert;
+export type ProjectDocumentFolderRecord =
+  typeof projectDocumentFolder.$inferSelect;
+export type NewProjectDocumentFolderRecord =
+  typeof projectDocumentFolder.$inferInsert;
 export type ProjectDocumentVersionRecord =
   typeof projectDocumentVersion.$inferSelect;
 export type NewProjectDocumentVersionRecord =

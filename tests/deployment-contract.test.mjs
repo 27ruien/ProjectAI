@@ -26,6 +26,7 @@ const stagingNginx = new URL(
   "../deploy/nginx-projectai-staging.conf",
   import.meta.url,
 );
+const nextConfig = new URL("../next.config.ts", import.meta.url);
 const authBoundaryVerifier = new URL(
   "../scripts/verify-auth-boundaries.mjs",
   import.meta.url,
@@ -327,7 +328,7 @@ test("operations use scoped Compose services and storage verification stays read
     /projectai-file-smoke npm run storage:smoke[\s\S]+?projectai-document-smoke npm run documents:smoke[\s\S]+?projectai-storage-ops npm run storage:verify/,
   );
   assert.match(script, /sudo nginx -T 2>\/dev\/null/);
-  assert.match(script, /client_max_body_size 52m/);
+  assert.match(script, /client_max_body_size 64m/);
 });
 
 test("Staging deployment bounds remote operations and keeps SSH sessions alive", async () => {
@@ -730,7 +731,7 @@ test("Staging proxy accepts multipart framing without exposing object storage", 
   const assetsLocation = nginx.indexOf("location ^~ /tool/projectai-staging/assets/ {");
   const appLocation = nginx.indexOf("location ^~ /tool/projectai-staging/ {");
   assert.ok(assetsLocation >= 0 && appLocation > assetsLocation);
-  assert.match(nginx, /client_max_body_size 52m;/);
+  assert.match(nginx, /client_max_body_size 64m;/);
   assert.doesNotMatch(nginx, /9000|9001|minio/i);
 
   const script = await readFile(deployScript, "utf8");
@@ -738,6 +739,11 @@ test("Staging proxy accepts multipart framing without exposing object storage", 
     script,
     /trimmed == "location \^~ " path "\/ \{"/,
   );
+});
+
+test("App multipart transport limit leaves room above the 50 MiB upload policy", async () => {
+  const config = await readFile(nextConfig, "utf8");
+  assert.match(config, /serverActions\s*:\s*\{[\s\S]*bodySizeLimit\s*:\s*["']64mb["']/);
 });
 
 test("Staging verification preserves the environment name inside secure cookie prefixes", () => {

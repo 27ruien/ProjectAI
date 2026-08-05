@@ -79,14 +79,15 @@ export async function GET(
       throw error;
     }
 
+    const preview = new URL(request.url).searchParams.get("preview") === "true";
     return new Response(object.body, {
       status: 200,
       headers: {
         "content-type": version.detectedMimeType,
         "content-length": String(version.sizeBytes),
-        "content-disposition": safeAttachmentDisposition(
-          version.originalFilename,
-        ),
+        "content-disposition": preview
+          ? "inline"
+          : safeAttachmentDisposition(version.originalFilename),
         "x-content-type-options": "nosniff",
         "cache-control": "private, no-store",
       },

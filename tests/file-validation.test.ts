@@ -123,7 +123,9 @@ function uploadVersion(
     versionNumber: 1,
     isCurrent: storageStatus === "stored",
     originalFilename: "project-plan.pdf",
+    versionNote: null,
     extension: "pdf",
+    aiReadable: true,
     detectedMimeType: "application/pdf",
     sizeBytes: 128,
     storageStatus,
@@ -144,6 +146,14 @@ function uploadVersion(
       lastIndexedAt: null,
       failureCode: null,
     },
+    embedding: overrides.embedding ?? {
+      status: "not_started",
+      profileId: null,
+      model: null,
+      dimensions: null,
+      generatedAt: null,
+      failureCode: null,
+    },
   };
 }
 
@@ -155,6 +165,7 @@ function uploadDocument(
     id: "document-a",
     projectId: "project-a",
     knowledgeSpaceId: "knowledge-space-a",
+    folderId: null,
     visibility: "private",
     displayName: "项目计划",
     workflowTemporary: false,
@@ -168,6 +179,7 @@ function uploadDocument(
     permissions: {
       canDownload: true,
       canUploadVersion: true,
+      canDelete: true,
       canArchive: true,
       canRestore: false,
       canSetCurrent: true,
@@ -304,6 +316,19 @@ describe("bounded Office Open XML validation", () => {
         },
       ]),
     );
+  });
+});
+
+describe("attachment uploads", () => {
+  it("stores an unsupported binary format without queuing it as AI-readable text", async () => {
+    const validated = await validateUploadFile(
+      new File([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], "项目素材.zip", {
+        type: "application/zip",
+      }),
+    );
+    assert.equal(validated.extension, "zip");
+    assert.equal(validated.aiReadable, false);
+    assert.equal(validated.detectedMimeType, "application/zip");
   });
 });
 

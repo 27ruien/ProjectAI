@@ -61,9 +61,9 @@ try {
     WECOM_TIMESHEET_SYNC_ENABLED: "true",
     AI_ASSISTANT_ENABLED: "false",
     AI_REGION: "cn-beijing",
-    AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v1",
+    AI_PROJECT_ASSISTANT_PROFILE_ID: "qwen-project-assistant-cn-v2",
     AI_EMBEDDING_ENABLED: "false",
-    AI_EMBEDDING_PROFILE_ID: "qwen-text-embedding-cn-v1",
+    AI_EMBEDDING_PROFILE_ID: "qwen3.7-text-embedding-cn-v2",
     AI_EMBEDDING_DIMENSIONS: "1024",
     AI_ASSISTANT_RETRIEVAL_MODE: "lexical",
   };

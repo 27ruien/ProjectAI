@@ -50,6 +50,7 @@ function evidence(): ProjectKnowledgeEvidence[] {
     {
       label: "E1",
       chunkId: "private-chunk-id",
+      sourceProjectId: "project-001",
       documentId: "document-1",
       versionId: "version-1",
       displayName: "虚构项目范围.pdf",
@@ -61,7 +62,8 @@ function evidence(): ProjectKnowledgeEvidence[] {
       headingPath: ["上线计划"],
       source: { type: "pdf_page", pageNumber: 8 },
       score: 0.9,
-      knowledgeSpaceId: "knowledge-space-test",
+      knowledgeBaseId: "knowledge-space-test",
+      knowledgeBaseType: "project",
       sourceScope: "project",
     },
   ];
@@ -178,7 +180,7 @@ describe("Qwen adapter and Gateway", () => {
       available_projects: [{ id: "project-1" }],
     };
     const result = await provider.generate({
-      model: "qwen3.7-plus",
+      model: "qwen3.7-flash",
       systemPrompt: "system",
       userPrompt: `<timesheet_input_json>${JSON.stringify(input)}</timesheet_input_json>`,
       purpose: "timesheet_generation",
@@ -216,7 +218,7 @@ describe("Qwen adapter and Gateway", () => {
         return new Response(
           JSON.stringify({
             id: "request-1",
-            model: "qwen3.7-plus",
+            model: "qwen3.7-flash",
             choices: [{ message: { content: "固定回答 [E1]" } }],
             usage: {
               prompt_tokens: 10,
@@ -232,7 +234,7 @@ describe("Qwen adapter and Gateway", () => {
       },
     );
     const result = await provider.generate({
-      model: "qwen3.7-plus",
+      model: "qwen3.7-flash",
       systemPrompt: "system",
       userPrompt: "user",
       purpose: "answer",
@@ -267,7 +269,7 @@ describe("Qwen adapter and Gateway", () => {
         >;
         return new Response(
           JSON.stringify({
-            model: "qwen3.7-plus",
+            model: "qwen3.7-flash",
             choices: [{ message: { content: '{"requirements":[]}' } }],
           }),
           { status: 200, headers: { "content-type": "application/json" } },
@@ -286,6 +288,7 @@ describe("Qwen adapter and Gateway", () => {
       userPrompt: "evidence",
     });
 
+    assert.equal(requestedBody.enable_thinking, false);
     assert.deepEqual(requestedBody.response_format, { type: "json_object" });
   });
 
@@ -303,7 +306,7 @@ describe("Qwen adapter and Gateway", () => {
     );
     await assert.rejects(
       provider.generate({
-        model: "qwen3.7-plus",
+        model: "qwen3.7-flash",
         systemPrompt: "system",
         userPrompt: "user",
         purpose: "answer",
@@ -319,24 +322,29 @@ describe("Qwen adapter and Gateway", () => {
     assert.equal(fetchCalls, 0);
   });
 
-  it("retries a retryable primary failure and then uses the fallback once", async () => {
+  it("retries the same qwen3.7-flash model without falling back", async () => {
     const provider = new FakeProjectAssistantProvider();
     const gateway = new ProjectAssistantGateway(
       fakeConfig(),
       provider,
       async () => undefined,
     );
-    const result = await gateway.generate({
-      purpose: "answer",
-      systemPrompt: "system",
-      userPrompt: "FAKE_PRIMARY_FAILURE",
-    });
-    assert.equal(result.actualModel, "qwen3.6-flash");
-    assert.equal(result.fallbackUsed, true);
-    assert.equal(provider.calls.length, 4);
+    await assert.rejects(
+      gateway.generate({
+        purpose: "answer",
+        systemPrompt: "system",
+        userPrompt: "FAKE_PRIMARY_FAILURE",
+      }),
+      ProjectAssistantError,
+    );
+    assert.equal(provider.calls.length, 3);
+    assert.deepEqual(
+      provider.calls.map((call) => call.model),
+      ["qwen3.7-flash", "qwen3.7-flash", "qwen3.7-flash"],
+    );
   });
 
-  it("does not retry 401 or 403 and returns only a controlled error", async () => {
+  it("does not retry 401 or 403 and classifies model authorization safely", async () => {
     for (const marker of ["FAKE_401", "FAKE_403"]) {
       const provider = new FakeProjectAssistantProvider();
       const gateway = new ProjectAssistantGateway(
@@ -352,12 +360,58 @@ describe("Qwen adapter and Gateway", () => {
         }),
         (error: unknown) => {
           assert.ok(error instanceof ProjectAssistantError);
-          assert.equal(error.code, "AI_PROVIDER_UNAVAILABLE");
+          assert.equal(error.status, 403);
+          assert.equal(error.code, "MODEL_UNAUTHORIZED");
           assert.equal(error.message.includes("raw body"), false);
           return true;
         },
       );
       assert.equal(provider.calls.length, 1);
+    }
+  });
+
+  it("keeps Qwen model status failures distinguishable without exposing upstream bodies", async () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "development";
+    process.env.QWEN_API_KEY = "unit-test-qwen-secret";
+    const cases = [
+      { upstreamStatus: 400, status: 400, code: "MODEL_REQUEST_INVALID" },
+      { upstreamStatus: 404, status: 404, code: "MODEL_NOT_FOUND" },
+      { upstreamStatus: 429, status: 429, code: "MODEL_RATE_LIMITED" },
+      { upstreamStatus: 500, status: 503, code: "AI_PROVIDER_UNAVAILABLE" },
+    ] as const;
+
+    for (const expected of cases) {
+      let calls = 0;
+      const provider = new QwenProjectAssistantProvider(
+        "https://example.invalid/compatible-mode/v1",
+        async () => {
+          calls += 1;
+          return new Response('{"error":"upstream body must never surface"}', {
+            status: expected.upstreamStatus,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      );
+      const gateway = new ProjectAssistantGateway(
+        fakeConfig(),
+        provider,
+        async () => undefined,
+      );
+      await assert.rejects(
+        gateway.generate({
+          purpose: "answer",
+          systemPrompt: "system",
+          userPrompt: "user",
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof ProjectAssistantError);
+          assert.equal(error.status, expected.status);
+          assert.equal(error.code, expected.code);
+          assert.equal(error.message.includes("upstream body"), false);
+          return true;
+        },
+      );
+      assert.equal(calls, expected.upstreamStatus === 400 || expected.upstreamStatus === 404 ? 1 : 3);
     }
   });
 
@@ -377,7 +431,7 @@ describe("Qwen adapter and Gateway", () => {
         }),
         ProjectAssistantError,
       );
-      assert.equal(provider.calls.length, 4);
+      assert.equal(provider.calls.length, 3);
     }
   });
 });

@@ -1,6 +1,7 @@
 import { APP_BASE_PATH, withBasePath } from "@/lib/base-path";
+import { DEFAULT_APP_RETURN_TO, safeAppReturnTo } from "@/lib/auth/return-to";
 
-const DEFAULT_RETURN_TO = "/daily-report";
+const DEFAULT_RETURN_TO = DEFAULT_APP_RETURN_TO;
 
 function withoutBasePath(path: string): string {
   if (!APP_BASE_PATH) return path;
@@ -11,29 +12,8 @@ function withoutBasePath(path: string): string {
 }
 
 export function safeReturnTo(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
-    return DEFAULT_RETURN_TO;
-  }
-
-  try {
-    const parsed = new URL(value, "https://project-ai-os.local");
-    if (parsed.origin !== "https://project-ai-os.local") return DEFAULT_RETURN_TO;
-    if (
-      parsed.pathname.startsWith("/tool/") &&
-      (!APP_BASE_PATH ||
-        (parsed.pathname !== APP_BASE_PATH &&
-          !parsed.pathname.startsWith(`${APP_BASE_PATH}/`)))
-    ) {
-      return DEFAULT_RETURN_TO;
-    }
-    const normalized = withoutBasePath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
-    if (!normalized.startsWith("/") || normalized.startsWith("//") || normalized.startsWith("/login")) {
-      return DEFAULT_RETURN_TO;
-    }
-    return normalized;
-  } catch {
-    return DEFAULT_RETURN_TO;
-  }
+  if (!value) return DEFAULT_RETURN_TO;
+  return safeAppReturnTo(withoutBasePath(value));
 }
 
 export async function signInWithMockWeCom(input: {

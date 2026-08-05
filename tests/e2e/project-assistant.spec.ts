@@ -16,7 +16,7 @@ import { fictitiousText } from "./support/file-fixtures";
 
 const projectA = "project-001";
 const projectB = "project-002";
-const profileId = "qwen-project-assistant-cn-v1";
+const profileId = "qwen-project-assistant-cn-v2";
 const displayName = "虚构 B3-A 项目上线依据";
 let managerThreadId = "";
 
@@ -220,7 +220,7 @@ test.describe.serial("Grounded Qwen 项目助手", () => {
           question: "客户要求什么时候上线？",
           modelProfileId: profileId,
           retrievalMode: "hybrid",
-          retrievalProfileId: "hybrid-rrf-v1",
+          retrievalProfileId: "hybrid-rrf-qwen37-v2",
           evidence: ["client-controlled"],
         },
       },

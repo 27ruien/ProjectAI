@@ -2,6 +2,7 @@
 
 import { withBasePath } from "@/lib/base-path";
 import type {
+  AssistantContextReference,
   ProjectAssistantMessageResponse,
   ProjectAssistantThreadResponse,
   ProjectAssistantThreadsResponse,
@@ -44,19 +45,21 @@ async function api<T>(
   return (await response.json()) as T;
 }
 
-function projectPath(projectId: string, suffix: string): string {
-  return `/api/projects/${encodeURIComponent(projectId)}/ai/threads${suffix}`;
+function projectPath(projectId: string | null, suffix: string): string {
+  return projectId
+    ? `/api/projects/${encodeURIComponent(projectId)}/ai/threads${suffix}`
+    : `/api/ai/threads${suffix}`;
 }
 
 export function listProjectAssistantThreads(
-  projectId: string,
+  projectId: string | null,
   signal?: AbortSignal,
 ): Promise<ProjectAssistantThreadsResponse> {
   return api(projectPath(projectId, ""), { signal });
 }
 
 export function createProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
 ): Promise<ProjectAssistantThreadResponse> {
   return api(projectPath(projectId, ""), {
     method: "POST",
@@ -66,7 +69,7 @@ export function createProjectAssistantThread(
 }
 
 export function getProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
   signal?: AbortSignal,
 ): Promise<ProjectAssistantThreadResponse> {
@@ -77,7 +80,7 @@ export function getProjectAssistantThread(
 }
 
 export function archiveProjectAssistantThread(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
 ): Promise<{ archived: true }> {
   return api(
@@ -90,12 +93,28 @@ export function archiveProjectAssistantThread(
   );
 }
 
+export async function deleteProjectAssistantThread(
+  projectId: string | null,
+  threadId: string,
+): Promise<void> {
+  const response = await fetch(withBasePath(projectPath(projectId, `/${encodeURIComponent(threadId)}`)), {
+    method: "DELETE",
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string } };
+    throw new ProjectAssistantApiError(response.status, body.error?.code ?? `HTTP_${response.status}`, body.error?.message ?? "删除对话失败");
+  }
+}
+
 export function askProjectAssistant(
-  projectId: string,
+  projectId: string | null,
   threadId: string,
   question: string,
   requestId: string,
   sourceDocumentIds: string[] = [],
+  contextReferences: AssistantContextReference[] = [],
 ): Promise<ProjectAssistantMessageResponse> {
   return api(
     projectPath(projectId, `/${encodeURIComponent(threadId)}/messages`),
@@ -109,7 +128,16 @@ export function askProjectAssistant(
         question,
         modelProfileId: PROJECT_ASSISTANT_MODEL_PROFILE_ID,
         sourceDocumentIds,
+        contextReferences,
       }),
     },
   );
+}
+
+export function listGeneralAssistantModels(): Promise<{ models: Array<{ id: string; displayName: string; modelId: string }> }> {
+  return api("/api/ai/session-models");
+}
+
+export function setGeneralAssistantThreadModel(threadId: string, generationModelId: string | null): Promise<{ ok: true }> {
+  return api(`/api/ai/threads/${encodeURIComponent(threadId)}/model`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ generationModelId }) });
 }

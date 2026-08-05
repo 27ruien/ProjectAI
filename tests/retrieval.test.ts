@@ -3,6 +3,7 @@ import { afterEach, describe, it } from "node:test";
 import {
   getHybridRetrievalRuntimeConfig,
   HYBRID_RETRIEVAL_PROFILE,
+  shouldUseAuthorizedProjectContext,
   reciprocalRankFusion,
   reciprocalRankFusionAudit,
 } from "../lib/ai/retrieval";
@@ -121,6 +122,30 @@ describe("deterministic reciprocal rank fusion", () => {
   });
 });
 
+describe("authorized project context fallback", () => {
+  it("recognizes broad project-context questions", () => {
+    assert.equal(
+      shouldUseAuthorizedProjectContext(
+        "请基于当前项目最新有效资料，列出仍需确认的事项",
+      ),
+      true,
+    );
+    assert.equal(
+      shouldUseAuthorizedProjectContext("总结项目现状并列出风险"),
+      true,
+    );
+    assert.equal(
+      shouldUseAuthorizedProjectContext("请告诉我这份文档里列了哪些需求？"),
+      true,
+    );
+  });
+
+  it("does not broaden unrelated questions", () => {
+    assert.equal(shouldUseAuthorizedProjectContext("今天上海天气怎么样"), false);
+    assert.equal(shouldUseAuthorizedProjectContext("客户要求什么时候上线"), false);
+  });
+});
+
 describe("immutable hybrid retrieval runtime configuration", () => {
   const variables = [
     "AI_ASSISTANT_RETRIEVAL_MODE",
@@ -138,11 +163,11 @@ describe("immutable hybrid retrieval runtime configuration", () => {
     }
   });
 
-  it("defaults to lexical and freezes evaluated v1 parameters", () => {
+  it("defaults to lexical and freezes evaluated qwen3.7 parameters", () => {
     for (const name of variables) delete process.env[name];
     const config = getHybridRetrievalRuntimeConfig();
     assert.equal(config.mode, "lexical");
-    assert.equal(config.profileId, "hybrid-rrf-v1");
+    assert.equal(config.profileId, "hybrid-rrf-qwen37-v2");
     assert.equal(HYBRID_RETRIEVAL_PROFILE.vectorMaxDistance, 0.55);
     assert.equal(HYBRID_RETRIEVAL_PROFILE.minEmbeddingCoverageBps, 9_800);
     assert.equal(HYBRID_RETRIEVAL_PROFILE.rrfK, 60);

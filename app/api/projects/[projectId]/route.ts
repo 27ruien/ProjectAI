@@ -13,8 +13,12 @@ import { getDb } from "@/lib/db/client";
 import { getPostgresErrorCode } from "@/lib/db/errors";
 import { updateProject } from "@/lib/db/repositories/project-repository";
 import { serializeAuthorizedProject } from "@/lib/projects/serialization";
-import { department } from "@/lib/db/schema";
-import { and, eq } from "drizzle-orm";
+import { department, project } from "@/lib/db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
+import { deleteScopedRows } from "@/lib/db/repositories/scoped-deletion";
+import { getRequestAuditContext } from "@/lib/auth/request-context";
+import { getObjectStorage } from "@/lib/files/object-storage";
 
 type ProjectRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -24,7 +28,7 @@ const projectPatchSchema = z
     clientName: z.string().trim().min(2).max(200).optional(),
     description: z.string().trim().max(4_000).optional(),
     status: z
-      .enum(["planning", "active", "paused", "completed", "cancelled", "at_risk"])
+      .enum(["planning", "active", "completed"])
       .optional(),
     stage: z
       .enum([
@@ -168,5 +172,78 @@ export async function PATCH(
       );
     }
     return authorizationErrorResponse(error);
+  }
+}
+
+export async function DELETE(
+  request: Request,
+  context: ProjectRouteContext,
+): Promise<Response> {
+  try {
+    requireTrustedMutationRequest(request);
+    const { projectId } = await context.params;
+    const principal = await requireApiPrincipal(request.headers);
+    const result = await getDb().transaction(async (tx) => {
+      await requireProjectRole(principal, projectId, ["project_manager"], request.headers, { db: tx, lockForUpdate: true });
+      const objectResult = (await tx.execute(sql`
+        select object_key
+        from public.project_document_versions
+        where project_id = ${projectId}
+      `)) as unknown as { rows: Array<{ object_key: string }> };
+      await deleteScopedRows(tx, { projectId });
+      await writeAuditEvent({
+        actorUserId: principal.user.id,
+        projectId,
+        eventType: "project_deleted",
+        entityType: "project",
+        entityId: projectId,
+        result: "succeeded",
+        ...getRequestAuditContext(request.headers),
+      }, tx);
+      const [record] = await tx.delete(project).where(eq(project.id, projectId)).returning({ id: project.id });
+      return record
+        ? {
+            kind: "deleted" as const,
+            objectKeys: objectResult.rows.map((row) => row.object_key),
+          }
+        : { kind: "not_found" as const };
+    });
+    if (result.kind !== "deleted") {
+      return jsonResponse(
+        { error: { code: "NOT_FOUND", message: "项目不存在" } },
+        { status: 404 },
+      );
+    }
+    const failedObjectDeletes: string[] = [];
+    if (result.objectKeys.length > 0) {
+      const storage = getObjectStorage();
+      for (const objectKey of result.objectKeys) {
+        try {
+          await storage.deleteObject(objectKey);
+        } catch {
+          failedObjectDeletes.push(objectKey);
+        }
+      }
+    }
+    if (failedObjectDeletes.length > 0) {
+      console.error("project_delete_object_cleanup_failed", {
+        projectId,
+        failedCount: failedObjectDeletes.length,
+      });
+    }
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    if (getPostgresErrorCode(error) === "23503") {
+      return jsonResponse({ error: { code: "PROJECT_DELETE_BLOCKED", message: "项目删除未完成，请稍后重试；已有资料会随项目一并删除" } }, { status: 409 });
+    }
+    try {
+      return authorizationErrorResponse(error);
+    } catch {
+      console.error("project_delete_failed", { error: error instanceof Error ? error.name : "unknown" });
+      return jsonResponse(
+        { error: { code: "PROJECT_DELETE_FAILED", message: "项目删除失败，请稍后重试" } },
+        { status: 500 },
+      );
+    }
   }
 }

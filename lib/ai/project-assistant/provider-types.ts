@@ -4,6 +4,9 @@ export type ProjectAssistantProviderPurpose =
   | "probe"
   | "requirement_extraction"
   | "requirement_repair"
+  | "requirement_document"
+  | "requirement_document_repair"
+  | "requirement_overview"
   | "action_generation"
   | "risk_generation"
   | "weekly_report"
@@ -16,6 +19,8 @@ export type ProjectAssistantProviderRequest = {
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
   responseFormat: "text" | "json_object";
+  /** Stored server-side per model; never accepted from the browser. */
+  disableThinkingForJson?: boolean;
   timeoutMs: number;
   temperature: number;
   maxOutputTokens: number;

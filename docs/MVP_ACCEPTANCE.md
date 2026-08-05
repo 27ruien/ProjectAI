@@ -1,5 +1,20 @@
 # MVP Acceptance
 
+## Focused Internal MVP 验收口径
+
+当前交付以 [FOCUSED_MVP.md](./FOCUSED_MVP.md) 为唯一新增产品范围。以下状态只描述稳定实现和本地隔离验证；精确 Head CI、Staging 部署和人工验收结果记录在 Draft PR。
+
+| ID | 验收项 | 稳定实现 | 自动化 |
+| --- | --- | --- | --- |
+| FMVP-001 | 普通用户主导航只有知识库 | 项目、常规模板和会话均位于同一模块；旧入口受控重定向 | `test:focused` + Happy Path |
+| FMVP-002 | 项目进入详情且只有四个 Tab | 基本信息、项目资料、AI 生成文档、成员与权限 | `test:focused` + Happy Path |
+| FMVP-003 | 项目资料可上传、解析、向量化和创建不可变版本 | 私有对象存储、当前有效版本、qwen3.7 1024 维向量、Viewer 只读 | Migration + Happy Path |
+| FMVP-004 | 需求文档在会话内生成并保存到项目 | 17 节、四类内容、来源快照、编辑、Markdown、DOCX、失败记录 | `test:focused` + Happy Path |
+| FMVP-005 | 会话自动查询项目资料和相关常规模板 | 无资料开关；服务端 ACL、qwen3.7 混合检索、当前权限复核、来源标签 | `test:focused` + Happy Path |
+| FMVP-006 | 常规模板具备最小维护闭环 | 分类、受众、草稿、发布、失效、归档、新版本、向量状态和精确重试 | `test:focused` + Happy Path |
+| FMVP-007 | 未邀请用户不读取项目 | 服务端集中授权和统一 404 | `test:focused` + Happy Path |
+| FMVP-008 | 单次 CI 和单次 Staging 交付 | 动态状态不得预写为通过 | Draft PR 动态证据 |
+
 状态：`通过`、`部分`、`未完成`。`通过` 必须有与该能力同层级的实现和验证；旧版本 CI/Staging 不能替代 v0.8 B3-B2 证据。最终 PR Head、CI Run、Artifact ID/Digest、tested merge SHA 和 Staging image 等动态事实只记录在 Draft PR、Provenance Manifest 与受控部署证据。
 
 | ID | 优先级 | 描述 | 当前状态 | 验证方式 | 自动化覆盖 | 负责人 | 备注 |

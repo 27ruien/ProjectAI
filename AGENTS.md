@@ -17,10 +17,18 @@
 - 页面不得直接调用具体模型或 Provider。
 - Skill 不得保存具体供应商模型名称，只能使用 `modelProfileId`。
 - 所有模型调用统一经过 AI Gateway。
-- API Key 只能存入服务端环境变量或 Secret Manager。
+- API Key 只能存入服务端 Secret File / Secret Manager，或由服务端凭据库以 AEAD 密文保存；凭据库的主密钥必须只存在于部署环境，不得进入数据库、镜像、浏览器或日志。任何读取、替换或使用凭据的操作都必须经过服务端集中授权与审计，且 API 不得回显原文。
 - AI 调用必须记录：`executionId`、`skillId`、`modelProfileId`、`latency`、token usage、cost、status。
 - AI Workflow 必须具备 Loading、Success、Failure、Retry、Review、Audit 状态。
 - `ProjectKnowledgeService` 与 `AIGateway` 是稳定边界；真实实现替换 Mock 时不得让业务页面感知 Provider。
+
+## Focused MVP 当前运行规则
+
+- 普通用户一级入口为“AI 助手”和“资料空间”。AI 助手默认进入；资料空间只负责维护项目资料和公司资料。需求概览是 AI 助手发起、保存到项目的专业产物。
+- 真实文本生成只能使用组织内已启用、已通过结构化输出测试的服务端 Model Profile；Provider、Base URL、Region、API Key、模型与场景绑定由 `system_admin` 或 `organization_admin` 在后台管理。不得在业务代码中写死具体 Provider、模型、Base URL 或凭据引用，不得自动降级。结构化 JSON 是否关闭 Thinking 必须是已测试的 Model Profile 能力，而非浏览器参数。
+- 所有文档与查询向量固定使用只读 Profile `qwen3.7-text-embedding-cn-v2`、模型 `qwen3.7-text-embedding` 和显式 1024 维。
+- 新检索只能读取当前 Profile 的 Current 向量；旧 Profile 或不同维度向量不得混入。向量失败只允许精确重试，结果不确定时禁止自动重放。
+- 会话自动使用当前用户有权访问的项目资料与相关常规模板；客户端不得提交 Provider、模型、Region、Base URL、API Key、Skill、Chunk、Evidence 或扩大授权范围。仅 `system_admin` 可在服务端验证的可用 Model Profile 中为其当前会话选择模型；普通用户始终使用场景默认模型。
 
 ## 安全规则
 

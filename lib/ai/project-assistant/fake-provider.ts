@@ -75,11 +75,7 @@ export class FakeProjectAssistantProvider
     if (request.userPrompt.includes("FAKE_500")) {
       throw new AiProviderError("SERVER_ERROR", true);
     }
-    if (
-      (request.userPrompt.includes("FAKE_PRIMARY_FAILURE") ||
-        currentQuestion.includes("备用模型验证")) &&
-      request.model === "qwen3.7-plus"
-    ) {
+    if (request.userPrompt.includes("FAKE_PRIMARY_FAILURE")) {
       throw new AiProviderError("SERVER_ERROR", true);
     }
     if (currentQuestion.includes("供应商超时后重试验证")) {
@@ -96,7 +92,68 @@ export class FakeProjectAssistantProvider
     }
 
     let text: string;
-    if (
+    if (request.purpose === "requirement_overview") {
+      const keys = taggedJsonValue(request.userPrompt, "requirement_overview_field_keys_json");
+      const currentItems = taggedJsonValue(request.userPrompt, "current_items_json") as Array<{ id?: unknown; label?: unknown; status?: unknown; value?: unknown; citationLabels?: unknown }> | null;
+      const label = request.userPrompt.match(/<evidence id="(E(?:[1-9]|[12][0-9]|30))"/)?.[1] ?? "E1";
+      if (Array.isArray(keys)) {
+        text = JSON.stringify({
+          items: keys.filter((key): key is string => typeof key === "string").map((id) => {
+            const current = currentItems?.find((item) => item.id === id);
+            const locked = current?.status === "user_confirmed" || current?.status === "not_applicable";
+            return locked
+              ? { id, label: typeof current?.label === "string" ? current.label : id, status: current.status, value: typeof current?.value === "string" ? current.value : "", citationLabels: Array.isArray(current?.citationLabels) ? current.citationLabels.filter((value): value is string => typeof value === "string") : [] }
+              : { id, label: typeof current?.label === "string" ? current.label : id, status: "inferred", value: "根据当前有效项目资料整理，仍需项目经理确认。", citationLabels: [label] };
+          }),
+        });
+      } else {
+        text = JSON.stringify({ summary: "- 已根据当前有效项目资料和项目经理确认项生成结构化摘要。\n- 未被资料支持的结论保持为待确认，不作为事实。" });
+      }
+    } else if (
+      request.purpose === "requirement_document" ||
+      request.purpose === "requirement_document_repair"
+    ) {
+      const labels = taggedJsonValue(request.userPrompt, "evidence_labels_json");
+      const label = Array.isArray(labels) && typeof labels[0] === "string" ? labels[0] : "E1";
+      const companyLabel = request.userPrompt.match(
+        /<evidence id="(E(?:[1-9]|[12][0-9]|30))" scope="organization"/,
+      )?.[1];
+      const definitions = [
+        ["document_info", "文档信息与版本"],
+        ["project_background", "项目背景"],
+        ["project_goals", "项目目标"],
+        ["users_and_scenarios", "用户与使用场景"],
+        ["product_scope", "产品范围"],
+        ["out_of_scope", "Out of Scope"],
+        ["user_flow", "用户流程"],
+        ["functional_requirements", "功能需求"],
+        ["ui_requirements", "页面与交互要求"],
+        ["platform_compatibility", "平台与兼容性"],
+        ["permissions", "权限要求"],
+        ["exceptions_and_fallbacks", "异常与降级"],
+        ["privacy_and_data", "隐私和数据要求"],
+        ["acceptance_criteria", "验收标准"],
+        ["risks_and_dependencies", "风险与依赖"],
+        ["open_items", "待确认事项"],
+        ["sources", "来源"],
+      ];
+      text = JSON.stringify({
+        sections: definitions.map(([key, title]) => ({
+          key,
+          title,
+          content: key === "open_items"
+            ? "- [TBD] 请由项目经理确认当前资料未覆盖的事项。"
+            : key === "sources" && companyLabel
+              ? "- [Company Standard] 本需求文档同时参考已发布的公司项目管理规范。"
+              : `- [Fact] 根据当前有效项目资料整理的${title}。`,
+          citationLabels: key === "open_items"
+            ? []
+            : key === "sources" && companyLabel
+              ? [companyLabel]
+              : [label],
+        })),
+      });
+    } else if (
       request.purpose === "requirement_extraction" ||
       request.purpose === "requirement_repair"
     ) {
@@ -220,6 +277,13 @@ export class FakeProjectAssistantProvider
         warnings: ["MOCK_AI：结果仅用于流程测试；未从输入推断出的字段保持待确认"],
         unresolved_record_ids: [],
       });
+    } else if (
+      request.purpose === "answer" &&
+      request.systemPrompt.includes("本次回答不使用项目资料或公司资料")
+    ) {
+      text = currentQuestion.includes("你能做什么")
+        ? "# 我可以帮你处理这些工作\n\n- **写作与润色**：邮件、方案、报告和对外文案。\n- **项目分析**：整理进展、风险、依赖和待确认事项。\n- **资料查询**：在你的权限范围内查询项目和公司资料。\n- **专业 Skills**：按照公司模板生成需求概览等项目产物。\n- **内容整理**：总结长文档、历史讨论和多份资料差异。\n\n你可以直接描述任务，也可以使用 `#` 引用项目、使用 `$` 引用具体资料。\n\n本回答未使用项目或公司资料。"
+        : "我可以帮助你梳理问题、总结内容、起草文本和规划下一步。\n\n## 建议下一步\n\n1. 直接描述你要完成的任务。\n2. 涉及内部事实时，用 `#` 引用项目或用 `$` 引用资料。\n\n本回答未使用项目或公司资料。";
     } else if (request.purpose === "probe") {
       text = "PROJECT_AI_QWEN_PROBE_OK";
     } else if (

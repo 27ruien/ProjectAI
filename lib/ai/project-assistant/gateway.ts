@@ -1,8 +1,4 @@
-import {
-  PROJECT_ASSISTANT_FALLBACK_MODEL,
-  PROJECT_ASSISTANT_PRIMARY_MODEL,
-  type AiRuntimeConfig,
-} from "./config";
+import { PROJECT_ASSISTANT_PRIMARY_MODEL, type AiRuntimeConfig } from "./config";
 import { AiProviderError, ProjectAssistantError } from "./errors";
 import { FakeProjectAssistantProvider } from "./fake-provider";
 import type {
@@ -29,6 +25,12 @@ export type ProjectAssistantGatewayInput = {
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
+  /** Resolved server-side scenario binding; never accepted directly from UI. */
+  model?: string;
+  /** Server-controlled model capability check; never accepted from the browser. */
+  forceJsonObject?: boolean;
+  /** Stored server-side per model; never accepted from the browser. */
+  disableThinkingForJson?: boolean;
 };
 
 function responseFormatForPurpose(
@@ -37,6 +39,9 @@ function responseFormatForPurpose(
   return [
     "requirement_extraction",
     "requirement_repair",
+    "requirement_document",
+    "requirement_document_repair",
+    "requirement_overview",
     "action_generation",
     "risk_generation",
     "weekly_report",
@@ -49,12 +54,42 @@ function responseFormatForPurpose(
 
 function controlledProviderFailure(error: unknown): ProjectAssistantError {
   if (error instanceof ProjectAssistantError) return error;
-  if (error instanceof AiProviderError && error.code === "TIMEOUT") {
-    return new ProjectAssistantError(
-      503,
-      "AI_PROVIDER_TIMEOUT",
-      "AI 服务响应超时，请稍后重试",
-    );
+  if (error instanceof AiProviderError) {
+    if (error.code === "TIMEOUT") {
+      return new ProjectAssistantError(
+        503,
+        "AI_PROVIDER_TIMEOUT",
+        "AI 服务响应超时，请稍后重试",
+      );
+    }
+    if (error.code === "UNAUTHORIZED" || error.code === "FORBIDDEN") {
+      return new ProjectAssistantError(
+        403,
+        "MODEL_UNAUTHORIZED",
+        "当前密钥无权调用此模型，请检查模型授权后重试",
+      );
+    }
+    if (error.code === "NOT_FOUND") {
+      return new ProjectAssistantError(
+        404,
+        "MODEL_NOT_FOUND",
+        "当前模型不存在或当前工作区不可用",
+      );
+    }
+    if (error.code === "RATE_LIMITED") {
+      return new ProjectAssistantError(
+        429,
+        "MODEL_RATE_LIMITED",
+        "当前模型请求过于频繁，请稍后重试",
+      );
+    }
+    if (error.code === "BAD_REQUEST" || error.code === "INVALID_RESPONSE") {
+      return new ProjectAssistantError(
+        400,
+        "MODEL_REQUEST_INVALID",
+        "当前模型请求参数或返回格式无效",
+      );
+    }
   }
   return new ProjectAssistantError(
     503,
@@ -78,55 +113,53 @@ export class ProjectAssistantGateway {
   async generate(
     input: ProjectAssistantGatewayInput,
   ): Promise<AiGatewayResult> {
-    let primaryFailure: unknown;
+    let lastRetryableError: AiProviderError | null = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        return this.result(
-          await this.invoke(PROJECT_ASSISTANT_PRIMARY_MODEL, input),
-          false,
-        );
+        const model = input.model ?? PROJECT_ASSISTANT_PRIMARY_MODEL;
+        return this.result(await this.invoke(model, input), model, false);
       } catch (error) {
-        primaryFailure = error;
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
         }
+        lastRetryableError = error;
         if (attempt < 2) await this.sleep((attempt + 1) * 1_000);
       }
     }
-
-    try {
-      return this.result(
-        await this.invoke(PROJECT_ASSISTANT_FALLBACK_MODEL, input),
-        true,
-      );
-    } catch (error) {
-      throw controlledProviderFailure(error ?? primaryFailure);
-    }
+    throw controlledProviderFailure(
+      lastRetryableError ?? new AiProviderError("SERVER_ERROR", true),
+    );
   }
 
-  private invoke(
+  private async invoke(
     model: string,
     input: ProjectAssistantGatewayInput,
   ): Promise<ProjectAssistantProviderResult> {
-    return this.provider.generate({
+    const result = await this.provider.generate({
       model,
       systemPrompt: input.systemPrompt,
       userPrompt: input.userPrompt,
       purpose: input.purpose,
-      responseFormat: responseFormatForPurpose(input.purpose),
+      responseFormat: input.forceJsonObject ? "json_object" : responseFormatForPurpose(input.purpose),
+      disableThinkingForJson: input.disableThinkingForJson ?? true,
       timeoutMs: this.config.timeoutMs,
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxOutputTokens,
     });
+    if (result.actualModel !== model) {
+      throw new AiProviderError("INVALID_RESPONSE", false);
+    }
+    return result;
   }
 
   private result(
     providerResult: ProjectAssistantProviderResult,
+    requestedModel: string,
     fallbackUsed: boolean,
   ): AiGatewayResult {
     return {
       provider: this.provider.provider,
-      requestedModel: PROJECT_ASSISTANT_PRIMARY_MODEL,
+      requestedModel,
       actualModel: providerResult.actualModel,
       fallbackUsed,
       text: providerResult.text,
@@ -141,11 +174,16 @@ export class ProjectAssistantGateway {
 
 export function createProjectAssistantGateway(
   config: AiRuntimeConfig,
+  options: { apiKey?: string } = {},
 ): ProjectAssistantGateway {
   const provider =
     config.provider === "fake"
       ? new FakeProjectAssistantProvider()
-      : new QwenProjectAssistantProvider(config.qwenBaseUrl!);
+      : new QwenProjectAssistantProvider(
+          config.qwenBaseUrl!,
+          fetch,
+          options.apiKey ? async () => options.apiKey! : undefined,
+        );
   return new ProjectAssistantGateway(
     config,
     provider,

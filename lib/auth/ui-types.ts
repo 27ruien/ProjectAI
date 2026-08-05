@@ -2,9 +2,7 @@ export type SystemRole = "system_admin" | "standard_user";
 export type ProductRole = "super_admin" | "admin" | "member";
 
 export type ProjectMembershipRole =
-  | "project_manager"
-  | "project_member"
-  | "viewer";
+  "project_manager" | "project_member" | "viewer";
 
 export interface ProjectUiPermissions {
   canViewProject: boolean;
@@ -46,6 +44,8 @@ export interface ViewerContext {
     productRole: ProductRole;
   };
   projects: AuthorizedProjectSummary[];
+  /** Server-authorized organization_admin membership for AI configuration. */
+  aiConfigurationOrganizationId: string | null;
   canCreateProject: boolean;
   canViewAudit: boolean;
 }

@@ -12,6 +12,7 @@ import type {
   KnowledgeSearchResultDto,
 } from "@/types/knowledge-search";
 import { validateSourceLocator } from "./source-locator";
+import { publishedCompanySourceFilter } from "@/lib/focused-mvp/company-source-filter";
 
 const searchRequestSchema = z.object({
   query: z.string().trim().min(2).max(200),
@@ -45,6 +46,7 @@ function excerpt(content: string, query: string): string {
 
 export type SearchRow = {
   chunk_id: string;
+  source_project_id: string;
   document_id: string;
   version_id: string;
   display_name: string;
@@ -59,9 +61,10 @@ export type SearchRow = {
   source_scope: "organization" | "department" | "project" | "restricted";
 };
 
-export type ProjectKnowledgeEvidence = {
+export type RetrievedChunk = {
   label: string;
   chunkId: string;
+  sourceProjectId: string;
   documentId: string;
   versionId: string;
   displayName: string;
@@ -72,9 +75,18 @@ export type ProjectKnowledgeEvidence = {
   headingPath: string[];
   source: ReturnType<typeof validateSourceLocator>;
   score: number;
-  knowledgeSpaceId: string;
+  knowledgeBaseId: string;
+  knowledgeBaseType: "project" | "template";
   sourceScope: "organization" | "department" | "project" | "restricted";
 };
+
+export type ProjectKnowledgeEvidence = RetrievedChunk;
+
+function knowledgeBaseType(
+  sourceScope: RetrievedChunk["sourceScope"],
+): RetrievedChunk["knowledgeBaseType"] {
+  return sourceScope === "organization" ? "template" : "project";
+}
 
 export async function queryProjectKnowledgeRows(input: {
   actorUserId: string;
@@ -97,6 +109,7 @@ export async function queryProjectKnowledgeRows(input: {
       with ranked as (
         select
           c.id as chunk_id,
+          c.project_id as source_project_id,
           c.document_id,
           c.version_id,
           d.display_name,
@@ -139,6 +152,12 @@ export async function queryProjectKnowledgeRows(input: {
           and v.storage_status = 'stored'
           and v.is_current = true
           and j.status = 'succeeded'
+          and ${publishedCompanySourceFilter({
+            actorUserId: input.actorUserId,
+            targetProjectId: input.projectId,
+            sourceScope: sql`authorized.source_scope`,
+            documentId: sql`d.id`,
+          })}
           ${documentFilter}
           and (
             c.search_vector @@ websearch_to_tsquery('english', ${input.query})
@@ -190,6 +209,7 @@ export async function retrieveLexicalProjectCandidates(input: {
       evidence: {
         label: "",
         chunkId: row.chunk_id,
+        sourceProjectId: row.source_project_id,
         documentId: row.document_id,
         versionId: row.version_id,
         displayName: row.display_name,
@@ -204,10 +224,111 @@ export async function retrieveLexicalProjectCandidates(input: {
           : [],
         source: validateSourceLocator(row.source_locator),
         score: normalizedScore(row.raw_score),
-        knowledgeSpaceId: row.knowledge_space_id,
+        knowledgeBaseId: row.knowledge_space_id,
+        knowledgeBaseType: knowledgeBaseType(row.source_scope),
         sourceScope: row.source_scope,
       },
     }));
+}
+
+/**
+ * Returns a small, deterministic slice of the caller's already-authorized
+ * current knowledge when a project-level overview question has no lexical
+ * match. This is intentionally separate from lexical search: broad requests
+ * such as "summarize the current project" often contain none of the terms
+ * used in the uploaded source files.
+ */
+export async function retrieveAuthorizedProjectContextCandidates(input: {
+  actorUserId: string;
+  projectId: string;
+  documentIds: string[];
+  limit: number;
+}): Promise<RankedProjectKnowledgeEvidence[]> {
+  const documentFilter = input.documentIds.length
+    ? sql`and c.document_id in (${sql.join(
+        input.documentIds.map((id) => sql`${id}`),
+        sql`, `,
+      )})`
+    : sql``;
+  const result = await getDb().transaction(async (tx) => {
+    await tx.execute(sql`set local statement_timeout = '3000ms'`);
+    return tx.execute<SearchRow>(sql`
+      select
+        c.id as chunk_id,
+        c.project_id as source_project_id,
+        c.document_id,
+        c.version_id,
+        d.display_name,
+        v.version_number,
+        v.detected_mime_type as mime_type,
+        c.content,
+        c.content_sha256,
+        c.heading_path,
+        c.source_locator,
+        authorized.knowledge_space_id,
+        authorized.source_scope,
+        0.2::double precision as raw_score
+      from document_chunks c
+      inner join document_ingestion_jobs j on j.id = c.ingestion_job_id
+      inner join project_document_versions v
+        on v.id = c.version_id
+        and v.document_id = c.document_id
+        and v.project_id = c.project_id
+      inner join project_documents d
+        on d.id = c.document_id
+        and d.project_id = c.project_id
+      inner join projectai_authorized_documents(
+        ${input.actorUserId},
+        ${input.projectId},
+        'view'::knowledge_permission
+      ) authorized
+        on authorized.document_id = c.document_id
+        and authorized.source_project_id = c.project_id
+      where c.is_effective = true
+        and d.document_status = 'active'
+        and v.storage_status = 'stored'
+        and v.is_current = true
+        and j.status = 'succeeded'
+        and ${publishedCompanySourceFilter({
+          actorUserId: input.actorUserId,
+          targetProjectId: input.projectId,
+          sourceScope: sql`authorized.source_scope`,
+          documentId: sql`d.id`,
+        })}
+        ${documentFilter}
+        and length(trim(c.content)) > 0
+      order by
+        case when authorized.source_scope = 'project' then 0 else 1 end,
+        d.id asc,
+        c.id asc
+      limit ${Math.min(Math.max(input.limit, 1), 30)}
+    `);
+  });
+  return result.rows.map((row, index) => ({
+    rank: index + 1,
+    evidence: {
+      label: "",
+      chunkId: row.chunk_id,
+      sourceProjectId: row.source_project_id,
+      documentId: row.document_id,
+      versionId: row.version_id,
+      displayName: row.display_name,
+      versionNumber: row.version_number,
+      mimeType: row.mime_type,
+      content: row.content.trim(),
+      contentSha256: row.content_sha256,
+      headingPath: Array.isArray(row.heading_path)
+        ? row.heading_path.filter(
+            (item): item is string => typeof item === "string",
+          )
+        : [],
+      source: validateSourceLocator(row.source_locator),
+      score: normalizedScore(row.raw_score),
+      knowledgeBaseId: row.knowledge_space_id,
+      knowledgeBaseType: knowledgeBaseType(row.source_scope),
+      sourceScope: row.source_scope,
+    },
+  }));
 }
 
 export function selectBoundedProjectEvidence(input: {

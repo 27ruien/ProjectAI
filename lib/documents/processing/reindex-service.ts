@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/repositories/document-repository";
 import type { DocumentIngestionJobRecord } from "@/lib/db/schema";
 import { FileOperationError } from "@/lib/files/errors";
+import { isAiReadableExtension } from "@/lib/files/config";
 import { ensureIngestionJob } from "./jobs";
 
 export async function reindexDocumentVersion(input: {
@@ -51,6 +52,13 @@ export async function reindexDocumentVersion(input: {
         409,
         "VERSION_NOT_AVAILABLE",
         "该文件版本当前不可重新解析",
+      );
+    }
+    if (!isAiReadableExtension(version.normalizedExtension)) {
+      throw new FileOperationError(
+        409,
+        "VERSION_NOT_AVAILABLE",
+        "当前文件格式暂不支持 AI 解析",
       );
     }
     return ensureIngestionJob({

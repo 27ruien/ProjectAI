@@ -7,16 +7,27 @@ export type FileErrorCode =
   | "UPLOAD_ALREADY_EXISTS"
   | "UPLOAD_FAILED"
   | "DOCUMENT_NOT_FOUND"
+  | "DOCUMENT_HAS_FORMAL_REFERENCES"
+  | "FOLDER_NOT_FOUND"
+  | "FOLDER_NOT_EMPTY"
+  | "FOLDER_NAME_CONFLICT"
+  | "FOLDER_CYCLE"
+  | "FOLDER_DEPTH_LIMIT"
   | "KNOWLEDGE_SPACE_NOT_FOUND"
   | "VERSION_NOT_FOUND"
   | "VERSION_NOT_AVAILABLE"
+  | "FILE_PREVIEW_NOT_READY"
+  | "FILE_PREVIEW_UNSUPPORTED"
+  | "FILE_PREVIEW_TOO_LARGE"
+  | "FILE_ENCODING_UNSUPPORTED"
+  | "EMBEDDING_RESULT_UNKNOWN"
   | "DOCUMENT_ARCHIVED"
   | "TEMPORARY_DOCUMENT_EXPIRED"
   | "STORAGE_UNAVAILABLE";
 
 export class FileOperationError extends Error {
   constructor(
-    public readonly status: 400 | 404 | 409 | 413 | 415 | 503,
+    public readonly status: 400 | 404 | 409 | 413 | 415 | 422 | 503,
     public readonly code: FileErrorCode,
     message: string,
   ) {

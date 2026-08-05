@@ -205,11 +205,11 @@ async function seed(credentials: CredentialFile): Promise<void> {
     for (const key of Object.keys(USER_SPECS) as AccountKey[]) await seedUser(tx, key, credentials);
 
     await tx.insert(aiModelProfile).values({
-      id: "qwen-project-assistant-cn-v1",
+      id: "qwen-project-assistant-cn-v2",
       provider: "qwen",
       purpose: "project_assistant",
-      primaryModel: "qwen3.7-plus",
-      fallbackModel: "qwen3.6-flash",
+      primaryModel: "qwen3.7-flash",
+      fallbackModel: "qwen3.7-flash",
       region: "cn-beijing",
       enabled: true,
       gatewayVersion: "1",
