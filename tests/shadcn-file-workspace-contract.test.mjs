@@ -42,8 +42,10 @@ test("native file inputs stay visually hidden behind upload dropzones", async ()
     }
   }
   const company = await source("components/knowledge/CompanyKnowledgePage.tsx");
+  const primitives = await source("components/ui/project-primitives.tsx");
   assert.match(company, /<Dropzone/u);
   assert.doesNotMatch(company, /TextInput[^>]+type="file"/u);
+  assert.match(primitives, /type="file" aria-label="文件"/u);
 });
 
 test("project files preserve folders, viewer links and the four-item action contract", async () => {
@@ -81,8 +83,10 @@ test("viewer, assistant and requirement overview retain security and versioning 
 });
 
 test("shared shadcn shells preserve responsive and accessible navigation contracts", async () => {
-  const [projects, shell, sidebar, topbar, models, organization] = await Promise.all([
+  const [projects, company, projectContext, shell, sidebar, topbar, models, organization] = await Promise.all([
     source("components/project/ProjectsPage.tsx"),
+    source("components/knowledge/CompanyKnowledgePage.tsx"),
+    source("components/project/ProjectContextHeader.tsx"),
     source("components/common/page-shell.tsx"),
     source("components/layout/sidebar.tsx"),
     source("components/layout/topbar.tsx"),
@@ -92,6 +96,10 @@ test("shared shadcn shells preserve responsive and accessible navigation contrac
   assert.match(projects, /<PageShell/u);
   assert.match(projects, /<PageHeader/u);
   assert.match(projects, /<FilterBar/u);
+  assert.match(projects, /title="项目资料"/u);
+  assert.match(company, /<Title order=\{2\}>公司资料<\/Title>/u);
+  assert.match(projectContext, /<Title order=\{1\} size="h2" lineClamp=\{1\}>\{project\.name\}<\/Title>/u);
+  assert.doesNotMatch(projectContext, /<Title[^>]*>\{project\.id\}<\/Title>/u);
   assert.match(shell, /sm:px-6 lg:px-8/u);
   assert.match(sidebar, /Tooltip/u);
   assert.match(topbar, /System|跟随系统/u);

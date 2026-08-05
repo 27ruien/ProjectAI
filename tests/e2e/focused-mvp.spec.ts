@@ -104,12 +104,14 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
   const companyDisplayName = companyFileName.replace(/\.txt$/, "");
 
   await page.goto(appPath("/data-spaces/projects"));
-  await expect(page.getByRole("heading", { name: "项目", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "项目资料", exact: true })).toBeVisible();
   await expectNoPageOverflow(page);
   await evidence(page, "01-project-list.png");
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await page.getByLabel("项目名称").fill(projectName);
   await page.getByLabel("项目描述").fill("仅用于聚焦 MVP 自动化验收的虚构项目，不含客户信息。");
+  await page.getByRole("combobox", { name: "所属部门", exact: true }).click();
+  await page.getByRole("option", { name: "交付与项目管理部", exact: true }).click();
   await page.getByRole("combobox", { name: "项目状态", exact: true }).click();
   await page.getByRole("option", { name: "进行中", exact: true }).click();
   await page
@@ -125,7 +127,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
     ? new URL(page.url()).pathname.split("/").filter(Boolean).at(-2)!
     : new URL(page.url()).pathname.split("/").filter(Boolean).at(-1)!;
 
-  await page.getByTestId("project-documents-tab").click();
+  await page.getByRole("tab", { name: "项目资料", exact: true }).click();
   const documentsPanel = page.getByTestId("project-documents-panel");
   await expect(documentsPanel).toBeVisible();
   await documentsPanel.getByRole("button", { name: "新建文件夹", exact: true }).click();
@@ -197,7 +199,7 @@ test("知识库项目到会话问答与需求文档产物的唯一 Happy Path", 
     .getByTestId("company-knowledge-page")
     .getByRole("button", { name: "上传公司资料", exact: true })
     .click();
-  await settleAnimations(page.getByRole("dialog", { name: "上传模板", exact: true }));
+  await settleAnimations(page.getByRole("dialog", { name: "上传公司资料", exact: true }));
   await evidence(page, "11-company-upload-dialog.png");
   const companyUploadResponse = page.waitForResponse((response) =>
     response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/api/company-knowledge"),
