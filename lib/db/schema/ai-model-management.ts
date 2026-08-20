@@ -120,7 +120,7 @@ export const aiScenarioBinding = pgTable("ai_scenario_bindings", {
   updatedAt: timestamp("updated_at", { withTimezone: true, mode: "date" }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("ai_scenario_binding_org_scenario_uidx").on(table.organizationId, table.scenario),
-  check("ai_scenario_binding_name_check", sql`${table.scenario} in ('general_chat','project_grounded_chat','requirement_overview_prefill','requirement_overview_guidance','requirement_markdown_generation')`),
+  check("ai_scenario_binding_name_check", sql`${table.scenario} in ('general_chat','project_grounded_chat','requirement_overview_prefill','requirement_overview_guidance','requirement_markdown_generation','product_map_generation')`),
 ]);
 
 export type RequirementOverviewItem = {

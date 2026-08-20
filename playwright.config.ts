@@ -65,6 +65,13 @@ export default defineConfig({
           // through the real credential endpoint. Production keeps the strict
           // limit; only this guarded test runtime raises the allowance.
           AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100",
+          // The serial focused browser case intentionally exercises several
+          // paid/failed/repair Product Map calls. These overrides are consumed
+          // only by the NODE_ENV=test + NEXT_PUBLIC_APP_ENV=test runtime and
+          // are ignored by staging/production code paths.
+          PRODUCT_MAP_TEST_PER_USER_MINUTE_LIMIT: "200",
+          PRODUCT_MAP_TEST_USER_DAILY_TOKEN_LIMIT: "5000000",
+          PRODUCT_MAP_TEST_PROJECT_DAILY_TOKEN_LIMIT: "20000000",
         },
         reuseExistingServer: false,
         timeout: 120_000,

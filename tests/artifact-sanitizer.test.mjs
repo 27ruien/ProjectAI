@@ -49,14 +49,15 @@ const requiredScreenshots = [
   "screenshots/daily-report-confirmed.png",
 ];
 const headSha = "a".repeat(40);
-const testedMergeSha = "b".repeat(40);
+const testedSha = headSha;
 
 function reviewEvidenceIndex(overrides = {}) {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     eventName: "pull_request",
     headSha,
-    testedMergeSha,
+    testedSha,
+    testedRefType: "pull_request_head",
     stagingSha: null,
     branch: "test-branch",
     workflowRunId: "123456",

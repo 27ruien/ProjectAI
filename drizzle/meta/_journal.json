@@ -232,6 +232,13 @@
       "when": 1786003200000,
       "tag": "0032_mantine_file_workspace",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1786089600000,
+      "tag": "0033_product_map_skill",
+      "breakpoints": true
     }
   ]
 }

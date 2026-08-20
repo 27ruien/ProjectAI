@@ -40,11 +40,16 @@ test("server-renders the public Project AI OS login", async () => {
 test("root and active product routes use the Product V2 entry and authentication boundary", async () => {
   const root = await render("/");
   assert.match(String(root.status), /^30[2378]$/);
-  assert.match(root.headers.get("location") ?? "", /\/daily-report$/);
+  assert.match(root.headers.get("location") ?? "", /\/assistant$/);
 
   const routes = [
-    "/workflows", "/workflows/requirement-extraction", "/daily-report",
-    "/knowledge", "/organization", "/settings", "/settings/ai-models",
+    "/assistant",
+    "/data-spaces/projects",
+    "/data-spaces/company",
+    "/organization",
+    "/settings",
+    "/admin/models",
+    "/help/models-and-api",
   ];
   for (const route of routes) {
     const response = await render(route);
@@ -55,12 +60,17 @@ test("root and active product routes use the Product V2 entry and authentication
 
 test("legacy product routes redirect to the retained Product V2 destinations", async () => {
   const redirects = new Map([
-    ["/dashboard", "/daily-report"],
-    ["/projects", "/knowledge"],
-    ["/projects/project-001/overview", "/knowledge?projectId=project-001"],
-    ["/reviews", "/workflows"],
-    ["/skills", "/workflows"],
-    ["/analytics", "/knowledge"],
+    ["/dashboard", "/assistant"],
+    ["/daily-report", "/assistant"],
+    ["/ai-workflows", "/assistant"],
+    ["/weekly-reports", "/assistant"],
+    ["/requirements", "/assistant"],
+    ["/projects", "/data-spaces/projects"],
+    ["/projects/project-001/overview", "/data-spaces/projects/project-001/overview"],
+    ["/knowledge", "/data-spaces"],
+    ["/chat", "/assistant"],
+    ["/company-knowledge", "/data-spaces/company"],
+    ["/settings/ai-models", "/admin/models"],
   ]);
   for (const [route, target] of redirects) {
     const response = await render(route);

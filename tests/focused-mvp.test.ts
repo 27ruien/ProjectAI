@@ -78,6 +78,14 @@ describe("focused MVP product surface", () => {
     assert.match(projectHeader, /成员与权限/);
   });
 
+  it("keeps E2E pages and APIs mounted while remapping client assets", async () => {
+    const proxy = await source("scripts/start-e2e-server.mjs");
+    assert.match(proxy, /const assetPrefix = `\$\{basePath\}\/assets\/`/);
+    assert.match(proxy, /incomingUrl\.pathname\.startsWith\(assetPrefix\)/);
+    assert.match(proxy, /incomingUrl\.pathname\.slice\(basePath\.length\)/);
+    assert.doesNotMatch(proxy, /pathWithoutBase/);
+  });
+
   it("supports a citation-free general conversation without exposing the internal storage project", async () => {
     const [page, service, repository, migration] = await Promise.all([
       source("components/knowledge/FocusedChatPage.tsx"),
@@ -105,7 +113,9 @@ describe("focused MVP product surface", () => {
     ]);
     assert.match(router, /"daily-report"/);
     assert.match(router, /redirect\("\/assistant"\)/);
-    assert.match(modelManagement, /generationModelId: generationId/);
+    assert.match(modelManagement, /let scenarioGenerationId = generationId/);
+    assert.match(modelManagement, /scenario === "product_map_generation"/);
+    assert.match(modelManagement, /generationModelId: scenarioGenerationId/);
     assert.doesNotMatch(modelManagement, /scenario === "requirement_overview_prefill" \? null : generationId/);
   });
 

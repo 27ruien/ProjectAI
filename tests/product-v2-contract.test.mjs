@@ -6,9 +6,14 @@ const read = (path) => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
 test("Product V2 primary navigation contains only approved modules", async () => {
   const sidebar = await read("components/layout/sidebar.tsx");
-  for (const label of ["工作日报", "AI 工作流", "知识库", "组织架构"]) assert.match(sidebar, new RegExp(label));
-  for (const label of ["工作台", "审核中心", "Skills", "数据看板", "标准用户"]) assert.doesNotMatch(sidebar, new RegExp(label));
-  assert.match(sidebar, /productRole !== item\.role/);
+  for (const label of ["AI 助手", "资料空间", "项目资料", "公司资料"]) {
+    assert.match(sidebar, new RegExp(label));
+  }
+  for (const label of ["工作日报", "AI 工作流", "知识库", "组织架构", "审核中心", "Skills", "数据看板", "标准用户"]) {
+    assert.doesNotMatch(sidebar, new RegExp(label));
+  }
+  assert.match(sidebar, /canManageAiModels/);
+  assert.match(sidebar, /viewer\.user\.systemRole/);
 });
 
 test("Staging test login is an explicit fixed-identity POST flow with Production guards", async () => {
@@ -96,7 +101,8 @@ test("knowledge UI provides scoped file search, AI, project creation, and member
   assert.match(page, /permissions\?\.canUploadDocuments/);
   assert.match(page, /编辑项目信息/);
   assert.match(page, /requestedProjectId/);
-  assert.match(topbar, /\/api\/knowledge-spaces/);
+  assert.match(page, /\/api\/knowledge-spaces/);
+  assert.match(topbar, /data-spaces/);
   assert.doesNotMatch(page, /授权规则|权限变更审计/);
 });
 
@@ -168,16 +174,17 @@ test("Product V2 deployer is Staging-only, exact-head, backup-first, and rollbac
 
 test("CI separates legacy regression, Mock WeCom, and production-build auth modes", async () => {
   const workflow = await read(".github/workflows/ci.yml");
-  assert.match(workflow, /NODE_ENV: test\n\s+AUTH_PROVIDER: legacy-credential-test\n\s+ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"/);
-  assert.match(workflow, /name: Apply passwordless Product V2 CI seed[\s\S]*AUTH_PROVIDER: mock-wecom[\s\S]*ALLOW_MOCK_WECOM_AUTH: "true"/);
-  assert.match(workflow, /name: SSR tests and production build[\s\S]*NODE_ENV: production[\s\S]*AUTH_PROVIDER: wecom[\s\S]*ALLOW_MOCK_WECOM_AUTH: "false"[\s\S]*ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "false"/);
-  assert.match(workflow, /name: Build isolated legacy credential E2E runtime[\s\S]*NEXT_PUBLIC_APP_ENV: test[\s\S]*AUTH_PROVIDER: legacy-credential-test[\s\S]*ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"/);
-  assert.match(workflow, /npm run product-v2:migration-upgrade/);
-  assert.match(workflow, /npm run test:product-v2-integration/);
-  assert.ok(
-    workflow.indexOf("npm run test:e2e") < workflow.indexOf("name: Apply passwordless Product V2 CI seed"),
-    "Product V2 fixtures must not change the legacy regression dataset before it finishes",
-  );
+  assert.match(workflow, /name: Focused MVP CI/);
+  assert.match(workflow, /NODE_ENV: test/);
+  assert.match(workflow, /AUTH_PROVIDER: legacy-credential-test/);
+  assert.match(workflow, /ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"/);
+  assert.match(workflow, /AI_PROVIDER: fake/);
+  assert.match(workflow, /AI_EMBEDDING_PROVIDER: fake/);
+  assert.match(workflow, /npm run test:product-map-integration/);
+  assert.match(workflow, /START_DOCUMENT_WORKER=false npm run test:focused:e2e/);
+  assert.match(workflow, /Record the exact revision under test/);
+  assert.match(workflow, /npm run review:sanitize/);
+  assert.doesNotMatch(workflow, /ALLOW_MOCK_WECOM_AUTH: "true"/);
 });
 
 test("legacy password seeds cannot recreate retired credentials on Staging", async () => {

@@ -16,6 +16,10 @@ const root = path.resolve("review-artifacts");
 const screenshotsRoot = path.join(root, "screenshots");
 const evidenceIndexPath = path.join(root, "evidence-index.json");
 const legacyManifestPath = path.join(root, "manifest.json");
+const evidenceProfile = process.env.REVIEW_EVIDENCE_PROFILE?.trim() || "full";
+if (!new Set(["full", "focused-mvp"]).has(evidenceProfile)) {
+  throw new Error("Unsupported product review evidence profile.");
+}
 await mkdir(screenshotsRoot, { recursive: true });
 
 // Never let a failed regeneration leave publishable provenance from an older run.
@@ -28,7 +32,7 @@ const screenshotFiles = (await readdir(screenshotsRoot, { withFileTypes: true })
   .filter((entry) => entry.isFile() && /\.png$/i.test(entry.name))
   .map((entry) => `screenshots/${entry.name}`)
   .sort();
-const requiredRetrievalReports = [
+const fullRequiredRetrievalReports = [
   "retrieval-calibration.json",
   "retrieval-calibration.md",
   "retrieval-evaluation.json",
@@ -36,7 +40,7 @@ const requiredRetrievalReports = [
   "retrieval-verification-summary.json",
   "retrieval-verification-summary.md",
 ];
-const requiredReleaseReports = [
+const fullRequiredReleaseReports = [
   "release-database-rehearsal.json",
   "release-database-rehearsal.md",
   "release-disabled-image-rehearsal.json",
@@ -58,6 +62,10 @@ const requiredReleaseReports = [
   "production-secret-boundary.json",
   "production-secret-boundary.md",
 ];
+const requiredRetrievalReports =
+  evidenceProfile === "full" ? fullRequiredRetrievalReports : [];
+const requiredReleaseReports =
+  evidenceProfile === "full" ? fullRequiredReleaseReports : [];
 const retrievalReportFiles = [];
 for (const file of requiredRetrievalReports) {
   try {
@@ -125,7 +133,7 @@ for (const filename of releaseReportFiles) {
   });
 }
 
-const requiredScreenshots = [
+const fullRequiredScreenshots = [
   "screenshots/login.png",
   "screenshots/dashboard-admin.png",
   "screenshots/projects-manager-a.png",
@@ -158,8 +166,24 @@ const requiredScreenshots = [
   "screenshots/ai-assistant-thread-history.png",
   "screenshots/daily-report-confirmed.png",
 ];
+const focusedRequiredScreenshots = [
+  "screenshots/01-project-list.png",
+  "screenshots/02-project-overview.png",
+  "screenshots/03-project-files.png",
+  "screenshots/04-session-empty.png",
+  "screenshots/05-product-map-review.png",
+  "screenshots/06-requirement-success-local-fake.png",
+  "screenshots/08-ai-conversation.png",
+  "screenshots/10-company-knowledge.png",
+  "screenshots/11-company-upload-dialog.png",
+  "screenshots/12-mobile-navigation-375.png",
+];
+const requiredScreenshots =
+  evidenceProfile === "focused-mvp"
+    ? focusedRequiredScreenshots
+    : fullRequiredScreenshots;
 
-const routes = {
+const fullRoutes = {
   login: "/login",
   dashboardAdmin: "/dashboard",
   projectsManagerA: "/projects",
@@ -170,6 +194,27 @@ const routes = {
   projectAssistant: "/projects/project-001/knowledge",
   dailyReport: "/daily-report",
 };
+const focusedRoutes = {
+  assistantUi: "/assistant",
+  projectDataSpaceUi: "/data-spaces/projects",
+  companyDataSpaceUi: "/data-spaces/company",
+  authApi: "/api/auth",
+  assistantApi: "/api/ai",
+  projectApi: "/api/projects",
+  companyKnowledgeApi: "/api/company-knowledge",
+};
+const fullTestedUsers = [
+  "system_admin",
+  "project_manager_a",
+  "project_member_a",
+  "viewer_a",
+];
+const focusedTestedUsers = ["admin", "managerA", "viewerA", "outsider"];
+const routes = evidenceProfile === "focused-mvp" ? focusedRoutes : fullRoutes;
+const testedUsers =
+  evidenceProfile === "focused-mvp"
+    ? focusedTestedUsers
+    : fullTestedUsers;
 
 const missingScreenshots = requiredScreenshots.filter(
   (file) => !screenshotFiles.includes(file),
@@ -186,6 +231,7 @@ const missingReleaseReports = requiredReleaseReports.filter(
 );
 if (
   reviewStatus.toLowerCase() === "success" &&
+  evidenceProfile === "full" &&
   (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
   missingRetrievalReports.length
 ) {
@@ -195,6 +241,7 @@ if (
 }
 if (
   reviewStatus.toLowerCase() === "success" &&
+  evidenceProfile === "full" &&
   (process.env.NEXT_PUBLIC_APP_VERSION?.trim() || "").startsWith("0.8.") &&
   missingReleaseReports.length
 ) {
@@ -229,15 +276,19 @@ async function pngDimensions(relativePath) {
 
 if (process.env.REVIEW_COMMIT?.trim()) {
   throw new Error(
-    "REVIEW_COMMIT is obsolete; provide REVIEW_HEAD_SHA and REVIEW_TESTED_MERGE_SHA.",
+    "REVIEW_COMMIT is obsolete; provide REVIEW_HEAD_SHA, REVIEW_TESTED_SHA, and REVIEW_TESTED_REF_TYPE.",
   );
 }
 
 const evidenceIndex = {
-  schemaVersion: 3,
+  schemaVersion: 4,
+  evidenceProfile,
   eventName: process.env.REVIEW_EVENT_NAME?.trim() || (ci ? "" : "local"),
   headSha: ci ? optional(process.env.REVIEW_HEAD_SHA) : null,
-  testedMergeSha: ci ? optional(process.env.REVIEW_TESTED_MERGE_SHA) : null,
+  testedSha: ci ? optional(process.env.REVIEW_TESTED_SHA) : null,
+  testedRefType:
+    process.env.REVIEW_TESTED_REF_TYPE?.trim() ||
+    (ci ? "" : "local_worktree"),
   stagingSha: optional(process.env.REVIEW_STAGING_SHA),
   branch:
     process.env.REVIEW_BRANCH?.trim() ||
@@ -266,12 +317,7 @@ const evidenceIndex = {
   releaseReportFiles,
   missingReleaseReports,
   releaseReportDigests,
-  testedUsers: [
-    "system_admin",
-    "project_manager_a",
-    "project_member_a",
-    "viewer_a",
-  ],
+  testedUsers,
   routes,
   screenshotFiles,
   screenshots: await Promise.all(screenshotFiles.map(pngDimensions)),

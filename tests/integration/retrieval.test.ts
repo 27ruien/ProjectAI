@@ -42,6 +42,10 @@ const headers = new Headers({
 let managerA: UserRecord;
 let managerB: UserRecord;
 
+function projectQuestion(text: string): string {
+  return `当前项目：${text}`;
+}
+
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required for retrieval integration tests.`);
@@ -70,7 +74,7 @@ async function vectorFor(text: string): Promise<number[]> {
   const result = await new FakeEmbeddingProvider().embed({
     model: "qwen3.7-text-embedding",
     dimensions: 1024,
-    inputs: [text],
+    inputs: [projectQuestion(text)],
     timeoutMs: 5_000,
   });
   return result.vectors[0]!;
@@ -265,7 +269,10 @@ async function ask(question: string, key = randomUUID()) {
     requestHeaders: headers,
     idempotencyKey: key,
     body: {
-      question,
+      // The current assistant intentionally routes only project-scoped intent
+      // through protected retrieval. Keep this retrieval suite explicit about
+      // that contract while preserving the original semantic query payload.
+      question: projectQuestion(question),
       modelProfileId: "qwen-project-assistant-cn-v2",
     },
   });
@@ -545,7 +552,7 @@ describe("evaluated hybrid retrieval persistence and modes", () => {
         requestHeaders: headers,
         idempotencyKey: key,
         body: {
-          question: query,
+          question: projectQuestion(query),
           modelProfileId: "qwen-project-assistant-cn-v2",
         },
       });

@@ -105,6 +105,7 @@ const names: Record<string, string> = {
   requirement_overview_prefill: "需求概览预填",
   requirement_overview_guidance: "需求概览引导",
   requirement_markdown_generation: "需求概览 Markdown",
+  product_map_generation: "Product Map｜产品结构",
 };
 
 const initialProvider: ProviderDraft = {
@@ -268,12 +269,19 @@ export function AiModelManagementPage({
     }
   };
 
-  const usableModels = useMemo(
+  const testedEnabledGenerationModels = useMemo(
     () =>
       data?.generationModels.filter(
         (item) => item.enabled && item.lastTestStatus === "passed",
       ) ?? [],
     [data],
+  );
+  const usableModelsForScenario = useCallback(
+    (scenario: string) =>
+      testedEnabledGenerationModels.filter(
+        (model) => scenario !== "product_map_generation" || model.supportsJson,
+      ),
+    [testedEnabledGenerationModels],
   );
   const defaultChatScenario = data?.scenarios.find((item) => item.scenario === "general_chat") ?? null;
   const defaultTextModel = data?.generationModels.find((item) => item.id === defaultChatScenario?.generationModelId) ?? null;
@@ -1007,7 +1015,7 @@ export function AiModelManagementPage({
             <h2 className="text-sm font-semibold">4. 场景绑定</h2>
             <p className="text-xs text-muted-foreground">
               默认文本模型由“通用对话”场景决定；业务页面只能使用场景绑定，不能提交
-              Provider 或 API Key。
+              Provider 或 API Key。只有需要结构化 JSON 的场景会额外筛选支持该能力的文本模型。
             </p>
           </div>
         </div>
@@ -1023,6 +1031,11 @@ export function AiModelManagementPage({
                 </p>
                 {item.scenario === "general_chat" ? (
                   <p className="mt-1 text-[10px] text-primary">默认文本模型</p>
+                ) : null}
+                {item.scenario === "product_map_generation" ? (
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    仅显示支持结构化 JSON 的已测试文本模型
+                  </p>
                 ) : null}
               </div>
               <Select
@@ -1046,7 +1059,7 @@ export function AiModelManagementPage({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">不使用文本模型</SelectItem>
-                  {usableModels.map((candidate) => (
+                  {usableModelsForScenario(item.scenario).map((candidate) => (
                     <SelectItem key={candidate.id} value={candidate.id}>
                       {candidate.displayName}
                     </SelectItem>

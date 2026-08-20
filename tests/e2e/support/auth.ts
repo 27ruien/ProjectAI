@@ -43,7 +43,10 @@ export async function loginByApi(page: Page, actor: TestActor) {
     // Keep credentials outside the traced browser context. Failure traces and
     // HTML reports must never contain test passwords or login request bodies.
     const response = await request.post(appPath("/api/auth/sign-in/email"), {
-      data: actorCredentials(actor),
+      data: {
+        ...actorCredentials(actor),
+        callbackURL: "/dashboard",
+      },
       headers: { origin },
     });
     expect(response.ok(), `${actor} 应能通过服务端认证 API 登录`).toBeTruthy();

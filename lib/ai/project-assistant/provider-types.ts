@@ -11,7 +11,11 @@ export type ProjectAssistantProviderPurpose =
   | "risk_generation"
   | "weekly_report"
   | "timesheet_generation"
-  | "timesheet_repair";
+  | "timesheet_repair"
+  | "product_map_step"
+  | "product_map_step_repair"
+  | "product_map_final"
+  | "product_map_final_repair";
 
 export type ProjectAssistantProviderRequest = {
   model: string;

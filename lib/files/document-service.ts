@@ -53,8 +53,9 @@ async function authorizedDocumentTransaction<T>(input: {
   allowedRoles: readonly ProjectRole[];
   requestHeaders: Headers;
   operation: (tx: DatabaseTransaction) => Promise<T>;
+  transaction?: DatabaseTransaction;
 }): Promise<T> {
-  const result = await getDb().transaction(async (tx) => {
+  const execute = async (tx: DatabaseTransaction) => {
     try {
       await requireProjectRole(
         input.principal,
@@ -70,7 +71,10 @@ async function authorizedDocumentTransaction<T>(input: {
       throw error;
     }
     return { kind: "success", value: await input.operation(tx) } as const;
-  });
+  };
+  const result = input.transaction
+    ? await execute(input.transaction)
+    : await getDb().transaction(execute);
   if (result.kind === "authorization_error") throw result.error;
   return result.value;
 }
@@ -936,12 +940,15 @@ export async function finalizeTemporaryWorkflowDocument(input: {
   action: "promote" | "discard";
   targetKnowledgeSpaceId?: string;
   requestHeaders: Headers;
+  /** Reuse the caller's transaction when promotion is one step of a workflow mutation. */
+  transaction?: DatabaseTransaction;
 }): Promise<ProjectDocumentRecord> {
   return authorizedDocumentTransaction({
     principal: input.principal,
     projectId: input.projectId,
     allowedRoles: documentRoles.upload,
     requestHeaders: input.requestHeaders,
+    transaction: input.transaction,
     operation: async (tx) => {
       const document = await findProjectDocument(input.projectId, input.documentId, tx, {
         lockForUpdate: true,

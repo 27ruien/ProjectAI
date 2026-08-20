@@ -24,7 +24,15 @@ type RuntimeMonitor = {
     status: number;
     pathname: string;
   }) => void;
-  allowAbortedRequestOnce: (pathname: string) => void;
+  allowAbortedRequestOnce: (target: string | Request) => {
+    release: () => { consumed: boolean };
+  };
+};
+
+type AbortedRequestAllowance = {
+  pathname: string;
+  request?: Request;
+  consumed: boolean;
 };
 
 async function attachJson(testInfo: TestInfo, name: string, value: unknown) {
@@ -88,7 +96,7 @@ export const test = base.extend<ProjectAIFixtures>({
         status: number;
         pathname: string;
       }> = [];
-      const abortedRequestAllowances: string[] = [];
+      const abortedRequestAllowances: AbortedRequestAllowance[] = [];
 
       const runtimeMonitor: RuntimeMonitor = {
         allowConsoleErrorOnce: (allowance) => {
@@ -97,8 +105,23 @@ export const test = base.extend<ProjectAIFixtures>({
         allowHttpStatusOnce: (allowance) => {
           httpStatusAllowances.push(allowance);
         },
-        allowAbortedRequestOnce: (pathname) => {
-          abortedRequestAllowances.push(pathname);
+        allowAbortedRequestOnce: (target) => {
+          const allowance: AbortedRequestAllowance = {
+            pathname:
+              typeof target === "string"
+                ? target
+                : new URL(target.url()).pathname,
+            request: typeof target === "string" ? undefined : target,
+            consumed: false,
+          };
+          abortedRequestAllowances.push(allowance);
+          return {
+            release: () => {
+              const index = abortedRequestAllowances.indexOf(allowance);
+              if (index >= 0) abortedRequestAllowances.splice(index, 1);
+              return { consumed: allowance.consumed };
+            },
+          };
         },
       };
 
@@ -125,9 +148,18 @@ export const test = base.extend<ProjectAIFixtures>({
         if (isSupersededVinextRscRequest(request)) return;
         if (request.failure()?.errorText === "net::ERR_ABORTED") {
           const pathname = new URL(request.url()).pathname;
-          const allowanceIndex = abortedRequestAllowances.indexOf(pathname);
+          const allowanceIndex = abortedRequestAllowances.findIndex(
+            (allowance) =>
+              allowance.request
+                ? allowance.request === request
+                : allowance.pathname === pathname,
+          );
           if (allowanceIndex >= 0) {
-            abortedRequestAllowances.splice(allowanceIndex, 1);
+            const [allowance] = abortedRequestAllowances.splice(
+              allowanceIndex,
+              1,
+            );
+            if (allowance) allowance.consumed = true;
             return;
           }
         }

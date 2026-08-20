@@ -156,11 +156,12 @@ ai-assistant-thread-history.png
 
 Payload A 继续使用强 allowlist，只允许 `review-artifacts/evidence-index.json`、约定截图和固定名称 UTF-8 日志；禁止 trace、video、HTML report、原始文件、正文/Section/Chunk 导出、数据库 Dump、MinIO Mirror、环境变量和内部存储标识。
 
-Provenance B 在 Payload A 上传成功并获得真实 Artifact ID/Digest 后生成。Manifest schema v3 记录：
+Provenance B 在 Payload A 上传成功并获得真实 Artifact ID/Digest 后生成。Manifest schema v4 明确记录实际受测引用；当前 PR Workflow checkout 并测试精确 PR Head，不把它误写成临时 merge Commit：
 
 ```text
 headSha
-testedMergeSha
+testedSha
+testedRefType
 stagingSha
 branch
 workflowRunId

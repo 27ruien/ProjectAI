@@ -1,0 +1,157 @@
+ALTER TABLE "ai_scenario_bindings" DROP CONSTRAINT IF EXISTS "ai_scenario_binding_name_check";--> statement-breakpoint
+ALTER TABLE "ai_scenario_bindings" ADD CONSTRAINT "ai_scenario_binding_name_check" CHECK ("scenario" in ('general_chat','project_grounded_chat','requirement_overview_prefill','requirement_overview_guidance','requirement_markdown_generation','product_map_generation'));--> statement-breakpoint
+
+CREATE TABLE "product_map_runs" (
+  "id" text PRIMARY KEY NOT NULL,
+  "organization_id" text NOT NULL REFERENCES "organizations"("id") ON DELETE RESTRICT,
+  "project_id" text NOT NULL REFERENCES "projects"("id") ON DELETE RESTRICT,
+  "creator_id" text NOT NULL REFERENCES "users"("id") ON DELETE RESTRICT,
+  "thread_id" text REFERENCES "ai_threads"("id") ON DELETE SET NULL,
+  "skill_id" varchar(80) NOT NULL,
+  "skill_version" varchar(24) NOT NULL,
+  "skill_file_sha256" varchar(64) NOT NULL,
+  "workflow_type" varchar(40) DEFAULT 'skill_execution' NOT NULL,
+  "scenario" varchar(80) DEFAULT 'product_map_generation' NOT NULL,
+  "generation_model_id" text NOT NULL REFERENCES "ai_generation_models"("id") ON DELETE RESTRICT,
+  "context_references" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "include_conversation_context" boolean DEFAULT false NOT NULL,
+  "status" varchar(32) DEFAULT 'queued' NOT NULL,
+  "idempotency_key_hash" varchar(64) NOT NULL,
+  "request_digest" varchar(64) NOT NULL,
+  "selected_source_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "uploaded_source_ids" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "user_input" text,
+  "user_input_digest" varchar(64),
+  "retrieval_instruction" varchar(4000),
+  "limited_evidence" boolean DEFAULT false NOT NULL,
+  "source_coverage" jsonb DEFAULT '{}'::jsonb NOT NULL,
+  "source_conflicts" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "evidence_snapshot" jsonb,
+  "evidence_snapshot_digest" varchar(64),
+  "step_outputs" jsonb DEFAULT '{}'::jsonb NOT NULL,
+  "current_step" integer DEFAULT 0 NOT NULL,
+  "attempt" integer DEFAULT 0 NOT NULL,
+  "max_attempts" integer DEFAULT 3 NOT NULL,
+  "lease_owner" varchar(160),
+  "lease_token" varchar(160),
+  "lease_expires_at" timestamp with time zone,
+  "heartbeat_at" timestamp with time zone,
+  "next_attempt_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "cancellation_requested_at" timestamp with time zone,
+  "failure_code" varchar(96),
+  "failure_message" varchar(500),
+  "failure_reference" varchar(36),
+  "version" integer DEFAULT 1 NOT NULL,
+  "completed_at" timestamp with time zone,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "product_map_runs_id_project_unique" UNIQUE ("id","project_id"),
+  CONSTRAINT "product_map_runs_skill_check" CHECK ("skill_id" = 'product-map' and "skill_version" = '1.0.0' and "skill_file_sha256" ~ '^[a-f0-9]{64}$'),
+  CONSTRAINT "product_map_runs_type_check" CHECK ("workflow_type" = 'skill_execution' and "scenario" = 'product_map_generation'),
+  CONSTRAINT "product_map_runs_status_check" CHECK ("status" in ('queued','checking_sources','needs_input','uploading','indexing','retrieving','running','reviewing','unknown','failed','cancelled','completed','published')),
+  CONSTRAINT "product_map_runs_attempt_check" CHECK ("attempt" >= 0 and "attempt" <= "max_attempts" and "max_attempts" between 1 and 5),
+  CONSTRAINT "product_map_runs_input_shape_check" CHECK (jsonb_typeof("selected_source_ids") = 'array' and jsonb_typeof("uploaded_source_ids") = 'array' and jsonb_typeof("context_references") = 'array' and jsonb_typeof("source_coverage") = 'object' and jsonb_typeof("source_conflicts") = 'array' and jsonb_typeof("step_outputs") = 'object'),
+  CONSTRAINT "product_map_runs_snapshot_digest_check" CHECK ("evidence_snapshot_digest" is null or "evidence_snapshot_digest" ~ '^[a-f0-9]{64}$')
+);--> statement-breakpoint
+CREATE UNIQUE INDEX "product_map_runs_idempotency_uidx" ON "product_map_runs" USING btree ("project_id","creator_id","idempotency_key_hash");--> statement-breakpoint
+CREATE INDEX "product_map_runs_queue_idx" ON "product_map_runs" USING btree ("status","next_attempt_at","lease_expires_at");--> statement-breakpoint
+CREATE INDEX "product_map_runs_project_idx" ON "product_map_runs" USING btree ("project_id","creator_id","updated_at");--> statement-breakpoint
+
+CREATE TABLE "product_map_sources" (
+  "id" text PRIMARY KEY NOT NULL,
+  "run_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "source_project_id" text NOT NULL,
+  "source_type" varchar(32) NOT NULL,
+  "document_id" text NOT NULL,
+  "version_id" text NOT NULL,
+  "display_name" varchar(240) NOT NULL,
+  "mime_type" varchar(200) NOT NULL,
+  "sha256" varchar(64) NOT NULL,
+  "status" varchar(24) DEFAULT 'pending' NOT NULL,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "product_map_sources_run_project_fk" FOREIGN KEY ("run_id","project_id") REFERENCES "product_map_runs"("id","project_id") ON DELETE CASCADE,
+  CONSTRAINT "product_map_sources_document_project_fk" FOREIGN KEY ("document_id","source_project_id") REFERENCES "project_documents"("id","project_id") ON DELETE RESTRICT,
+  CONSTRAINT "product_map_sources_version_scope_fk" FOREIGN KEY ("version_id","document_id","source_project_id") REFERENCES "project_document_versions"("id","document_id","project_id") ON DELETE RESTRICT,
+  CONSTRAINT "product_map_sources_type_check" CHECK ("source_type" in ('project','organization','department','upload','user_input')),
+  CONSTRAINT "product_map_sources_status_check" CHECK ("status" in ('pending','uploaded','ready','failed','revoked'))
+);--> statement-breakpoint
+CREATE UNIQUE INDEX "product_map_sources_run_version_uidx" ON "product_map_sources" USING btree ("run_id","project_id","version_id");--> statement-breakpoint
+CREATE INDEX "product_map_sources_scope_idx" ON "product_map_sources" USING btree ("project_id","source_project_id","document_id");--> statement-breakpoint
+
+CREATE TABLE "product_map_executions" (
+  "id" text PRIMARY KEY NOT NULL,
+  "run_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "step_id" varchar(64) NOT NULL,
+  "attempt" integer DEFAULT 1 NOT NULL,
+  "generation_model_id" text NOT NULL REFERENCES "ai_generation_models"("id") ON DELETE RESTRICT,
+  "skill_file_sha256" varchar(64) NOT NULL,
+  "status" varchar(24) DEFAULT 'reserved' NOT NULL,
+  "input_digest" varchar(64) NOT NULL,
+  "output_digest" varchar(64),
+  "provider_request_id" varchar(200),
+  "input_tokens" integer,
+  "output_tokens" integer,
+  "total_tokens" integer,
+  "reserved_tokens" integer NOT NULL,
+  "latency_ms" integer,
+  "cost_usd_micros" integer,
+  "cost_accounting_status" varchar(32) DEFAULT 'provider_not_reported' NOT NULL,
+  "failure_code" varchar(96),
+  "started_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "completed_at" timestamp with time zone,
+  CONSTRAINT "product_map_executions_run_project_fk" FOREIGN KEY ("run_id","project_id") REFERENCES "product_map_runs"("id","project_id") ON DELETE CASCADE,
+  CONSTRAINT "product_map_executions_step_attempt_uidx" UNIQUE ("run_id","project_id","step_id","attempt"),
+  CONSTRAINT "product_map_executions_status_check" CHECK ("status" in ('reserved','running','succeeded','failed','unknown','cancelled')),
+  CONSTRAINT "product_map_executions_skill_check" CHECK ("skill_file_sha256" ~ '^[a-f0-9]{64}$'),
+  CONSTRAINT "product_map_executions_usage_check" CHECK (("input_tokens" is null or "input_tokens" >= 0) and ("output_tokens" is null or "output_tokens" >= 0) and ("total_tokens" is null or "total_tokens" >= 0) and ("input_tokens" is null or "output_tokens" is null or "total_tokens" is null or "total_tokens" = "input_tokens" + "output_tokens") and "reserved_tokens" > 0 and ("latency_ms" is null or "latency_ms" >= 0) and ("cost_usd_micros" is null or "cost_usd_micros" >= 0)),
+  CONSTRAINT "product_map_executions_cost_check" CHECK (("cost_accounting_status" = 'recorded' and "cost_usd_micros" is not null) or ("cost_accounting_status" = 'provider_not_reported' and "cost_usd_micros" is null))
+);--> statement-breakpoint
+CREATE INDEX "product_map_executions_run_idx" ON "product_map_executions" USING btree ("run_id","project_id","started_at");--> statement-breakpoint
+
+CREATE TABLE "product_map_artifacts" (
+  "id" text PRIMARY KEY NOT NULL,
+  "run_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "title" varchar(240) DEFAULT '产品结构' NOT NULL,
+  "status" varchar(24) DEFAULT 'draft' NOT NULL,
+  "current_version" integer DEFAULT 1 NOT NULL,
+  "content_digest" varchar(64) NOT NULL,
+  "reviewed_by" text REFERENCES "users"("id") ON DELETE RESTRICT,
+  "reviewed_at" timestamp with time zone,
+  "published_by" text REFERENCES "users"("id") ON DELETE RESTRICT,
+  "published_at" timestamp with time zone,
+  "published_document_id" text,
+  "published_document_version_id" text,
+  "created_by" text NOT NULL REFERENCES "users"("id") ON DELETE RESTRICT,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "product_map_artifacts_run_project_fk" FOREIGN KEY ("run_id","project_id") REFERENCES "product_map_runs"("id","project_id") ON DELETE CASCADE,
+  CONSTRAINT "product_map_artifacts_published_document_fk" FOREIGN KEY ("published_document_id","project_id") REFERENCES "project_documents"("id","project_id") ON DELETE RESTRICT,
+  CONSTRAINT "product_map_artifacts_published_version_fk" FOREIGN KEY ("published_document_version_id","published_document_id","project_id") REFERENCES "project_document_versions"("id","document_id","project_id") ON DELETE RESTRICT,
+  CONSTRAINT "product_map_artifacts_id_project_unique" UNIQUE ("id","project_id"),
+  CONSTRAINT "product_map_artifacts_run_project_unique" UNIQUE ("run_id","project_id"),
+  CONSTRAINT "product_map_artifacts_status_check" CHECK ("status" in ('draft','reviewed','published')),
+  CONSTRAINT "product_map_artifacts_version_check" CHECK ("current_version" > 0)
+);--> statement-breakpoint
+CREATE INDEX "product_map_artifacts_project_idx" ON "product_map_artifacts" USING btree ("project_id","status","updated_at");--> statement-breakpoint
+
+CREATE TABLE "product_map_artifact_versions" (
+  "id" text PRIMARY KEY NOT NULL,
+  "artifact_id" text NOT NULL,
+  "project_id" text NOT NULL,
+  "version" integer NOT NULL,
+  "content" jsonb NOT NULL,
+  "markdown" text NOT NULL,
+  "mermaid" text DEFAULT '' NOT NULL,
+  "source_references" jsonb DEFAULT '[]'::jsonb NOT NULL,
+  "content_digest" varchar(64) NOT NULL,
+  "created_by" text NOT NULL REFERENCES "users"("id") ON DELETE RESTRICT,
+  "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+  CONSTRAINT "product_map_artifact_versions_artifact_project_fk" FOREIGN KEY ("artifact_id","project_id") REFERENCES "product_map_artifacts"("id","project_id") ON DELETE CASCADE,
+  CONSTRAINT "product_map_artifact_versions_number_uidx" UNIQUE ("artifact_id","project_id","version"),
+  CONSTRAINT "product_map_artifact_versions_version_check" CHECK ("version" > 0)
+);--> statement-breakpoint
+CREATE INDEX "product_map_artifact_versions_project_idx" ON "product_map_artifact_versions" USING btree ("project_id","artifact_id","version");

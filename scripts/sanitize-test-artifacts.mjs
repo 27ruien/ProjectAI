@@ -137,7 +137,7 @@ const canonicalObjectKeyVerificationPattern = new RegExp(
   canonicalObjectKeySource,
   "i",
 );
-const requiredReviewScreenshots = [
+const fullRequiredReviewScreenshots = [
   "screenshots/login.png",
   "screenshots/dashboard-admin.png",
   "screenshots/projects-manager-a.png",
@@ -170,6 +170,48 @@ const requiredReviewScreenshots = [
   "screenshots/ai-assistant-thread-history.png",
   "screenshots/daily-report-confirmed.png",
 ];
+const focusedRequiredReviewScreenshots = [
+  "screenshots/01-project-list.png",
+  "screenshots/02-project-overview.png",
+  "screenshots/03-project-files.png",
+  "screenshots/04-session-empty.png",
+  "screenshots/05-product-map-review.png",
+  "screenshots/06-requirement-success-local-fake.png",
+  "screenshots/08-ai-conversation.png",
+  "screenshots/10-company-knowledge.png",
+  "screenshots/11-company-upload-dialog.png",
+  "screenshots/12-mobile-navigation-375.png",
+];
+const focusedTestedUsers = ["admin", "managerA", "viewerA", "outsider"];
+const focusedRoutes = {
+  assistantUi: "/assistant",
+  projectDataSpaceUi: "/data-spaces/projects",
+  companyDataSpaceUi: "/data-spaces/company",
+  authApi: "/api/auth",
+  assistantApi: "/api/ai",
+  projectApi: "/api/projects",
+  companyKnowledgeApi: "/api/company-knowledge",
+};
+
+function hasExactStringArray(value, expected) {
+  return (
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index])
+  );
+}
+
+function hasExactStringRecord(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const expectedKeys = Object.keys(expected);
+  const actualKeys = Object.keys(value);
+  return (
+    actualKeys.length === expectedKeys.length &&
+    expectedKeys.every(
+      (key) => Object.hasOwn(value, key) && value[key] === expected[key],
+    )
+  );
+}
 const metrics = {
   copiedRoots: [],
   textFilesSanitized: 0,
@@ -1041,9 +1083,26 @@ async function verifyReviewEvidenceCompleteness() {
       "A valid product review evidence index is required before evidence upload.",
     );
   }
+  const evidenceProfile = evidenceIndex.evidenceProfile ?? "full";
+  if (
+    evidenceProfile === "focused-mvp" &&
+    !hasExactStringArray(evidenceIndex.testedUsers, focusedTestedUsers)
+  ) {
+    throw new Error("Focused product review evidence has an invalid tested user set.");
+  }
+  if (
+    evidenceProfile === "focused-mvp" &&
+    !hasExactStringRecord(evidenceIndex.routes, focusedRoutes)
+  ) {
+    throw new Error("Focused product review evidence has an invalid route set.");
+  }
   assertEvidenceIndex(evidenceIndex, {
     ci: /^true$/i.test(process.env.CI || ""),
   });
+  const requiredReviewScreenshots =
+    evidenceProfile === "focused-mvp"
+      ? focusedRequiredReviewScreenshots
+      : fullRequiredReviewScreenshots;
   for (const entry of evidenceIndex.releaseReportDigests ?? []) {
     const contents = await readFile(path.join(reviewRoot, entry.filename));
     const actual = `sha256:${createHash("sha256").update(contents).digest("hex")}`;
@@ -1089,7 +1148,11 @@ async function verifyReviewEvidenceCompleteness() {
   if ((status === "success" || status === "local") && missingScreenshots.length > 0) {
     throw new Error("Successful product review evidence requires every screenshot.");
   }
-  if (status === "success" && evidenceIndex.version.startsWith("0.8.")) {
+  if (
+    status === "success" &&
+    evidenceProfile === "full" &&
+    evidenceIndex.version.startsWith("0.8.")
+  ) {
     for (const report of requiredRetrievalReports) {
       if (!(await exists(path.join(reviewRoot, report)))) {
         throw new Error(`Successful B3-B2 evidence is missing Retrieval report: ${report}`);

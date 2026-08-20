@@ -190,7 +190,7 @@ CI 使用 `pgvector/pgvector:0.8.1-pg17` 和运行时创建的 MinIO；Embedding
 
 `playwright-report/`、`test-results/`、trace/video、任意归档/PDF、上传测试原件、数据库/对象备份和未列名文件均不进入 Payload A。sanitizer 对数据库/认证/MinIO/object-storage/Qwen Secret、Qwen Base URL、Bucket/Endpoint/Object Key、Cookie/Session、System Prompt、Provider Request/Response 和编码变体做删除/脱敏并失败关闭。
 
-GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v3 记录 Worker/Parser/Chunker/AI Gateway Version、Assistant Profile 和 PNG 实际尺寸。`MVP_STATUS.md` 只记录稳定交付结论；最终 Head、CI、Artifact 与 Staging 动态精确事实只进入 Draft PR、Provenance Manifest 和受控部署证据。
+GitHub Actions 仍先上传不可变 Payload A，再用返回的真实 artifact ID/digest 生成 Provenance B。Manifest schema v4 记录实际受测 SHA/Ref、Worker/Parser/Chunker/AI Gateway Version、Assistant Profile 和 PNG 实际尺寸；当前 PR Workflow 明确绑定精确 PR Head，不声称测试未实际 checkout 的 merge 结果。`MVP_STATUS.md` 只记录稳定交付结论；最终 Head、CI、Artifact 与 Staging 动态精确事实只进入 Draft PR、Provenance Manifest 和受控部署证据。
 
 ## v0.8 Assistant Evidence Retrieval
 

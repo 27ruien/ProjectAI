@@ -43,6 +43,7 @@ import {
 } from "../../app/api/auth/[...all]/route";
 import { GET as getHealth } from "../../app/api/health/route";
 import { sanitizeAuditMetadata } from "../../lib/db/repositories/audit-repository";
+import { HYBRID_RETRIEVAL_PROFILE_ID } from "../../lib/ai/retrieval/config";
 
 type SeedUser = NonNullable<Awaited<ReturnType<typeof findUserByEmail>>>;
 const execFileAsync = promisify(execFile);
@@ -314,7 +315,7 @@ describe("database constraints", () => {
         embeddingGatewayVersion: "2",
         pgvectorReady: false,
         assistantRetrievalMode: "lexical",
-        hybridRetrievalProfile: "hybrid-rrf-v1",
+        hybridRetrievalProfile: HYBRID_RETRIEVAL_PROFILE_ID,
         hybridRetrievalReady: false,
         queryEmbeddingConfigured: false,
       });

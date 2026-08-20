@@ -53,6 +53,7 @@ import { AssistantMarkdown } from "./AssistantMarkdown";
 import { AssistantCitationPreview } from "./AssistantCitationPreview";
 import { publicDocumentViewerPath, type DocumentLocator } from "@/lib/documents/viewer-route";
 import { AssistantHistoryCitationPreview } from "./AssistantHistoryCitationPreview";
+import { ProductMapWorkflowPanel } from "./ProductMapWorkflowPanel";
 
 type PanelPhase =
   | "loading"
@@ -146,6 +147,7 @@ export function ProjectAssistantPanel({
   const [pickerSearch, setPickerSearch] = useState("");
   const [models, setModels] = useState<Array<{ id: string; displayName: string; modelId: string }>>([]);
   const [changingModel, setChangingModel] = useState(false);
+  const [productMapOpen, setProductMapOpen] = useState(false);
   const messageViewport = useRef<HTMLDivElement | null>(null);
   const availableSources = useMemo(
     () => sourceState?.projectId === projectId ? sourceState.documents : [],
@@ -377,6 +379,17 @@ export function ProjectAssistantPanel({
         ? "请基于当前项目最新有效资料，总结项目现状，并区分已确认事实、风险和信息缺口。"
         : "请基于当前项目最新有效资料，列出仍需确认的事项，并为每项附上相关来源。",
     );
+  };
+
+  const openProductMap = () => {
+    if (!artifactProjectId) {
+      setError("Product Map 需要先用 # 关联一个项目。");
+      setPendingQuickAction(null);
+      setPicker("project");
+      setPickerSearch("");
+      return;
+    }
+    setProductMapOpen(true);
   };
 
   const onComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -663,6 +676,7 @@ export function ProjectAssistantPanel({
               <p className="mb-2 text-xs font-medium text-foreground">快捷操作</p>
               <div className="flex flex-wrap gap-2">
                 <Tooltip label="执行固定模板的需求概览 Skill，不代表资料范围。"><Button type="button" size="sm" variant="default" data-testid="quick-action-requirement-overview" onClick={() => startQuickAction("requirement_overview")} disabled={creating || sending || (projectId ? selectedSourceIds.length === 0 : false)} leftSection={<FileText size={14} />}>生成需求概览</Button></Tooltip>
+                <Tooltip label="基于授权项目和公司资料生成可审核的产品结构草稿。"><Button type="button" size="sm" variant="outline" data-testid="quick-action-product-map" aria-label="Product Map｜产品结构" onClick={openProductMap} disabled={creating || sending} leftSection={<FolderKanban size={14} />}><span data-testid="product-map-skill-selector">Product Map｜产品结构</span></Button></Tooltip>
                 <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="default" data-testid="quick-action-project-summary" onClick={() => startQuickAction("project_summary")} disabled={sending} leftSection={<Sparkles size={14} />}>总结项目现状</Button></Tooltip>
                 <Tooltip label="使用已授权项目资料执行预设任务。"><Button type="button" size="sm" variant="default" data-testid="quick-action-pending-items" onClick={() => startQuickAction("pending_items")} disabled={sending} leftSection={<ListChecks size={14} />}>列出待确认事项</Button></Tooltip>
               </div>
@@ -710,6 +724,7 @@ export function ProjectAssistantPanel({
         <p className="sm:text-right">项目资料与公司资料会明确标注；资料不足时不会猜测。</p>
       </footer>
       <Drawer opened={historyOpened} onClose={() => setHistoryOpened(false)} title="会话历史" size="md">{historyPanel}</Drawer>
+      {productMapOpen && artifactProjectId ? <ProductMapWorkflowPanel project={{ id: artifactProjectId }} conversationId={thread?.id} contextReferences={contextReferences.filter((reference) => reference.type !== "project" || reference.projectId === artifactProjectId)} open={productMapOpen} onClose={() => setProductMapOpen(false)} /> : null}
       <Modal opened={picker !== null} onClose={() => { setPicker(null); setPendingQuickAction(null); }} title={picker === "project" ? "限定项目资料" : "限定一份资料"} centered>
           <Text size="sm" c="dimmed" mb="md">只显示你已经有权访问的内容；选择后会缩小本次提问的资料范围。</Text>
           <TextInput value={pickerSearch} onChange={(event) => setPickerSearch(event.currentTarget.value)} placeholder="搜索名称" autoFocus />

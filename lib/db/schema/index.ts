@@ -19,6 +19,7 @@ export * from "./ai-retrieval-profile";
 export * from "./ai-retrieval";
 export * from "./focused-mvp";
 export * from "./ai-model-management";
+export * from "./product-map";
 
 import { account, rateLimit, verification } from "./auth-support";
 import { session } from "./sessions";

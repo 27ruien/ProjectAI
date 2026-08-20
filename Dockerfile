@@ -65,6 +65,7 @@ COPY --from=builder --chown=node:node /app/dist/standalone/ ./
 COPY --from=deps --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node package.json tsconfig.json ./
 COPY --chown=node:node lib ./lib
+COPY --chown=node:node skills ./skills
 COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node tests/fixtures/hybrid-retrieval-evaluation.json ./tests/fixtures/hybrid-retrieval-evaluation.json
 COPY --chown=node:node types ./types

@@ -120,7 +120,7 @@
 
 - 状态：Accepted。
 - 决策：CI 原始 Playwright report、test results、trace/video 和运行时上传 fixture 永不直接进入 Evidence。Payload A 采用强 allowlist，只接受 `evidence-index.json`、脱敏报告、30 张约定 PNG 及固定名称/大小的 UTF-8 文本日志；PDF、归档、未知二进制、未列名路径和上传原件必须拒绝/移除。
-- 两阶段发布：成功运行必须具备 30 张截图。Manifest schema v3 从 PNG 读取实际尺寸，并记录 Worker/Parser/Chunker/AI Gateway Version 与 Assistant Profile；GitHub 返回 Payload A 的真实 Artifact ID 与 SHA-256 digest 后才生成独立 Provenance B。
+- 两阶段发布：成功运行必须具备 30 张截图。Manifest schema v4 从 PNG 读取实际尺寸，明确记录 `testedSha`/`testedRefType`，并记录 Worker/Parser/Chunker/AI Gateway Version 与 Assistant Profile；GitHub 返回 Payload A 的真实 Artifact ID 与 SHA-256 digest 后才生成独立 Provenance B。
 - 原因：trace、network、HAR、上传原件和失败日志可能携带 HttpOnly Session、文件正文、Object Key 或临时凭据；“测试数据是虚构/临时值”不能替代最小发布边界。GitHub Artifact ID 在上传前不存在且上传后不可变，占位或自指 ID 无法形成自洽 provenance。
 - 失败策略：数据库 Session 无法核验、任一 allowlist 违规、Secret/对象元数据残留、成功截图不完整、index 自相矛盾或上传后 ID/name/digest/Run 绑定失败都会使 CI 失败并阻止后续发布。Staging 不可观测时只能记录 `stagingSha: null`。
 

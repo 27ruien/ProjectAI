@@ -19,7 +19,20 @@ export type AiGatewayResult = {
   totalTokens: number | null;
   providerRequestId: string | null;
   latencyMs: number;
+  /** Provider responses do not currently include a trustworthy price. */
+  costUsdMicros?: number | null;
 };
+
+export class AiGatewayObservedError extends ProjectAssistantError {
+  constructor(public readonly observation: AiGatewayResult) {
+    super(
+      400,
+      "MODEL_REQUEST_INVALID",
+      "当前模型返回了与请求不一致的模型标识",
+    );
+    this.name = "AiGatewayObservedError";
+  }
+}
 
 export type ProjectAssistantGatewayInput = {
   systemPrompt: string;
@@ -31,6 +44,8 @@ export type ProjectAssistantGatewayInput = {
   forceJsonObject?: boolean;
   /** Stored server-side per model; never accepted from the browser. */
   disableThinkingForJson?: boolean;
+  /** Server-controlled retry policy. Unknown-side-effect workflows use one attempt. */
+  maxAttempts?: 1 | 2 | 3;
 };
 
 function responseFormatForPurpose(
@@ -47,6 +62,10 @@ function responseFormatForPurpose(
     "weekly_report",
     "timesheet_generation",
     "timesheet_repair",
+    "product_map_step",
+    "product_map_step_repair",
+    "product_map_final",
+    "product_map_final_repair",
   ].includes(purpose)
     ? "json_object"
     : "text";
@@ -114,16 +133,20 @@ export class ProjectAssistantGateway {
     input: ProjectAssistantGatewayInput,
   ): Promise<AiGatewayResult> {
     let lastRetryableError: AiProviderError | null = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    const maxAttempts = input.maxAttempts ?? 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
         const model = input.model ?? PROJECT_ASSISTANT_PRIMARY_MODEL;
-        return this.result(await this.invoke(model, input), model, false);
+        const result = this.result(await this.invoke(model, input), model, false);
+        if (result.actualModel !== model) throw new AiGatewayObservedError(result);
+        return result;
       } catch (error) {
         if (!(error instanceof AiProviderError) || !error.retryable) {
           throw controlledProviderFailure(error);
         }
         lastRetryableError = error;
-        if (attempt < 2) await this.sleep((attempt + 1) * 1_000);
+        if (attempt < maxAttempts - 1)
+          await this.sleep((attempt + 1) * 1_000);
       }
     }
     throw controlledProviderFailure(
@@ -146,9 +169,6 @@ export class ProjectAssistantGateway {
       temperature: this.config.temperature,
       maxOutputTokens: this.config.maxOutputTokens,
     });
-    if (result.actualModel !== model) {
-      throw new AiProviderError("INVALID_RESPONSE", false);
-    }
     return result;
   }
 
@@ -168,6 +188,9 @@ export class ProjectAssistantGateway {
       totalTokens: providerResult.totalTokens,
       providerRequestId: providerResult.providerRequestId,
       latencyMs: providerResult.latencyMs,
+      // Fake calls are known to have zero external cost. DashScope does not
+      // return price data, so real calls remain explicitly unknown.
+      costUsdMicros: this.provider.provider === "fake" ? 0 : null,
     };
   }
 }

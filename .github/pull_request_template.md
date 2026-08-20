@@ -63,7 +63,8 @@
 ### Provenance 核对
 
 - [ ] `headSha` 等于 PR 分支实际 Head，不是 GitHub 临时 merge Commit
-- [ ] `testedMergeSha` 等于该 Run 实际 checkout 并测试的 PR 临时 merge Commit
+- [ ] `testedSha` 等于该 Run 实际 checkout 并测试的完整 SHA；当前 Workflow 必须等于 `headSha`
+- [ ] `testedRefType` 与事件一致：PR 为 `pull_request_head`，main push 为 `push_head`；不得暗示已经测试未实际 checkout 的 merge 结果
 - [ ] `stagingSha` 等于健康响应头实际观测的运行 Commit，或明确为 `null`；未用 Head/Merge 回填
 - [ ] `branch` 等于 PR head ref
 - [ ] `workflowRunId` 等于上述 GitHub Actions Run

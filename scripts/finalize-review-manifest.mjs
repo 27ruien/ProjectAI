@@ -48,9 +48,11 @@ const artifactDigest = normalizeArtifactDigest(
 );
 
 const manifest = {
-  schemaVersion: 3,
+  schemaVersion: 4,
+  evidenceProfile: evidenceIndex.evidenceProfile ?? "full",
   headSha: evidenceIndex.headSha,
-  testedMergeSha: evidenceIndex.testedMergeSha,
+  testedSha: evidenceIndex.testedSha,
+  testedRefType: evidenceIndex.testedRefType,
   stagingSha: evidenceIndex.stagingSha,
   branch: evidenceIndex.branch,
   workflowRunId: evidenceIndex.workflowRunId,

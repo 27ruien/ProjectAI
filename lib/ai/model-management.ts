@@ -34,6 +34,7 @@ export const AI_SCENARIOS = [
   "requirement_overview_prefill",
   "requirement_overview_guidance",
   "requirement_markdown_generation",
+  "product_map_generation",
 ] as const;
 export type AiScenario = (typeof AI_SCENARIOS)[number];
 
@@ -220,13 +221,31 @@ export async function ensureOrganizationAiDefaults(input: {
     })
     .onConflictDoNothing();
   for (const scenario of AI_SCENARIOS) {
+    // Product Map follows the organization's current general-chat binding by
+    // default.  It is an ordinary scenario binding (and can be explicitly
+    // changed by an administrator); no provider/model identity is embedded in
+    // the Skill, worker, or migration.
+    let scenarioGenerationId = generationId;
+    if (scenario === "product_map_generation") {
+      const [generalBinding] = await db
+        .select({ generationModelId: aiScenarioBinding.generationModelId })
+        .from(aiScenarioBinding)
+        .where(
+          and(
+            eq(aiScenarioBinding.organizationId, orgId),
+            eq(aiScenarioBinding.scenario, "general_chat"),
+          ),
+        )
+        .limit(1);
+      scenarioGenerationId = generalBinding?.generationModelId ?? generationId;
+    }
     await db
       .insert(aiScenarioBinding)
       .values({
         id: defaultIds.scenario(orgId, scenario),
         organizationId: orgId,
         scenario,
-        generationModelId: generationId,
+        generationModelId: scenarioGenerationId,
         embeddingModelId: [
           "project_grounded_chat",
           "requirement_overview_prefill",
@@ -792,6 +811,7 @@ export async function resolveGenerationScenario(input: {
           and(
             eq(aiScenarioBinding.organizationId, organizationId),
             eq(aiScenarioBinding.scenario, input.scenario),
+            eq(aiScenarioBinding.generationModelId, input.generationModelId),
             eq(aiGenerationModel.organizationId, organizationId),
           ),
         )
@@ -822,7 +842,9 @@ export async function resolveGenerationScenario(input: {
     !row ||
     !row.binding.enabled ||
     !row.model.enabled ||
-    row.model.lastTestStatus !== "passed"
+    row.model.lastTestStatus !== "passed" ||
+    (input.scenario === "product_map_generation" && !row.model.supportsJson) ||
+    !row.provider.enabled
   )
     throw new ProjectAssistantError(
       503,
@@ -849,6 +871,62 @@ export async function resolveGenerationScenario(input: {
     providerName: row.provider.name,
     apiKey,
     runtime,
+    disableThinkingForJson: row.model.disableThinkingForJson,
+  };
+}
+
+/**
+ * Resolve only the server-owned model binding metadata.  This helper is used
+ * when creating an asynchronous run so creating a row never resolves or
+ * touches a provider credential.  Actual credentials are resolved only at
+ * provider-call time by resolveGenerationScenario.
+ */
+export async function resolveGenerationScenarioMetadata(input: {
+  projectId: string;
+  actorId: string;
+  scenario: AiScenario;
+  generationModelId?: string | null;
+  db?: DatabaseExecutor;
+}) {
+  const db = input.db ?? getDb();
+  const organizationId = await organizationForProject(input.projectId, db);
+  await ensureOrganizationAiDefaults({ organizationId, actorId: input.actorId, db });
+  const [row] = input.generationModelId
+    ? await db
+        .select({ binding: aiScenarioBinding, model: aiGenerationModel, provider: aiProviderProfile })
+        .from(aiScenarioBinding)
+        .innerJoin(aiGenerationModel, eq(aiGenerationModel.id, input.generationModelId))
+        .innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
+        .where(and(
+          eq(aiScenarioBinding.organizationId, organizationId),
+          eq(aiScenarioBinding.scenario, input.scenario),
+          eq(aiScenarioBinding.generationModelId, input.generationModelId),
+          eq(aiGenerationModel.organizationId, organizationId),
+        ))
+        .limit(1)
+    : await db
+        .select({ binding: aiScenarioBinding, model: aiGenerationModel, provider: aiProviderProfile })
+        .from(aiScenarioBinding)
+        .innerJoin(aiGenerationModel, eq(aiScenarioBinding.generationModelId, aiGenerationModel.id))
+        .innerJoin(aiProviderProfile, eq(aiGenerationModel.providerProfileId, aiProviderProfile.id))
+        .where(and(
+          eq(aiScenarioBinding.organizationId, organizationId),
+          eq(aiScenarioBinding.scenario, input.scenario),
+        ))
+        .limit(1);
+  if (!row || !row.binding.enabled || !row.model.enabled || row.model.lastTestStatus !== "passed" ||
+      (input.scenario === "product_map_generation" && !row.model.supportsJson) || !row.provider.enabled) {
+    throw new ProjectAssistantError(503, "AI_MODEL_PROFILE_DISABLED", "Product Map 尚未配置可用模型，请联系管理员");
+  }
+  return {
+    organizationId,
+    generationModelId: row.model.id,
+    modelId: row.model.modelId,
+    displayName: row.model.displayName,
+    providerId: row.provider.id,
+    providerName: row.provider.name,
+    providerType: row.provider.providerType as ProviderType,
+    supportsJson: row.model.supportsJson,
     disableThinkingForJson: row.model.disableThinkingForJson,
   };
 }
@@ -1261,6 +1339,7 @@ export async function testEmbeddingModel(input: {
 
 async function assertScenarioModel(input: {
   organizationId: string;
+  scenario: AiScenario;
   generationModelId: string | null;
   embeddingModelId: string | null;
   db: DatabaseExecutor;
@@ -1274,6 +1353,7 @@ async function assertScenarioModel(input: {
         providerEnabled: aiProviderProfile.enabled,
         providerTest: aiProviderProfile.lastTestStatus,
         providerCredentialMode: aiProviderProfile.credentialMode,
+        supportsJson: aiGenerationModel.supportsJson,
       })
       .from(aiGenerationModel)
       .innerJoin(
@@ -1292,6 +1372,7 @@ async function assertScenarioModel(input: {
       !model.enabled ||
       model.lastTestStatus !== "passed" ||
       !model.providerEnabled ||
+      (input.scenario === "product_map_generation" && !model.supportsJson) ||
       (model.providerCredentialMode === "managed" &&
         model.providerTest !== "passed")
     )

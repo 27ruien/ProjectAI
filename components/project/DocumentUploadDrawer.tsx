@@ -245,11 +245,11 @@ export function DocumentUploadDrawer({
   const [file, setFile] = useState<File | null>(null);
   const [displayName, setDisplayName] = useState(target?.displayName ?? "");
   const [versionNote, setVersionNote] = useState("");
-  const knowledgeSpaceId =
-    destinations.find((destination) => destination.projectId === projectId)
-      ?.id ??
-      destinations[0]?.id ??
-      "";
+  const uploadDestination =
+    destinations.find((destination) => destination.projectId === projectId) ??
+    destinations[0] ??
+    null;
+  const knowledgeSpaceId = uploadDestination?.id ?? "";
   const [idempotencyKey, setIdempotencyKey] = useState("");
   const [phase, setPhase] = useState<UploadPhase>("idle");
   const [progress, setProgress] = useState(0);
@@ -425,6 +425,7 @@ export function DocumentUploadDrawer({
         {!isVersionUpload ? (
           <div className="space-y-4">
             <div className="rounded-lg border bg-muted/30 px-3 py-2.5 text-xs text-muted-foreground">
+              仅显示服务端确认可上传的空间：{uploadDestination?.name ?? "暂无可用空间"}。
               文件会自动归入当前项目，并使用文件名作为资料名称；无需配置知识空间、解析策略或
               AI 参数。
             </div>

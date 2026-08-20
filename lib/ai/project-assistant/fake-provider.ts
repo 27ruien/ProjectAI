@@ -4,6 +4,7 @@ import type {
   ProjectAssistantProviderRequest,
   ProjectAssistantProviderResult,
 } from "./provider-types";
+import { fakeProductMapResponse } from "@/lib/product-map/fake-output";
 
 const retryableTimeoutAttempts = new Map<string, number>();
 
@@ -92,7 +93,14 @@ export class FakeProjectAssistantProvider
     }
 
     let text: string;
-    if (request.purpose === "requirement_overview") {
+    if (
+      request.purpose === "product_map_step" ||
+      request.purpose === "product_map_step_repair" ||
+      request.purpose === "product_map_final" ||
+      request.purpose === "product_map_final_repair"
+    ) {
+      text = fakeProductMapResponse(request.userPrompt);
+    } else if (request.purpose === "requirement_overview") {
       const keys = taggedJsonValue(request.userPrompt, "requirement_overview_field_keys_json");
       const currentItems = taggedJsonValue(request.userPrompt, "current_items_json") as Array<{ id?: unknown; label?: unknown; status?: unknown; value?: unknown; citationLabels?: unknown }> | null;
       const label = request.userPrompt.match(/<evidence id="(E(?:[1-9]|[12][0-9]|30))"/)?.[1] ?? "E1";

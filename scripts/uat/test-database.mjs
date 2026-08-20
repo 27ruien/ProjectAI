@@ -101,6 +101,16 @@ try {
     ALLOW_MOCK_WECOM_AUTH: "true",
     ALLOW_STAGING_TEST_LOGIN: "true",
   });
+  // Product Map exercises the Fake Embedding worker and intentionally creates
+  // its versioned profile. Run it last so older suites retain their isolated
+  // assumption that they are the first profile registrar in this temp DB.
+  await run("test:product-map-integration", {
+    ...env,
+    AI_PROVIDER: "fake",
+    AI_ASSISTANT_ENABLED: "true",
+    AI_EMBEDDING_PROVIDER: "fake",
+    AI_EMBEDDING_ENABLED: "true",
+  });
   process.stdout.write("Isolated UAT database integration suite passed; the temporary database will be removed.\n");
 } finally {
   if (created) await admin.query(`drop database if exists "${databaseName}" with (force)`);

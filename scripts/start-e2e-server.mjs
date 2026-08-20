@@ -33,6 +33,8 @@ const documentWorker = process.env.START_DOCUMENT_WORKER === "false"
 
 const proxy = http.createServer((request, response) => {
   const incomingUrl = new URL(request.url || "/", `http://${request.headers.host || host}`);
+  // Vinext keeps the configured base path for pages and APIs, while client
+  // assets are emitted under the standalone server's root /assets directory.
   const upstreamPath = incomingUrl.pathname.startsWith(assetPrefix)
     ? `${incomingUrl.pathname.slice(basePath.length)}${incomingUrl.search}`
     : `${incomingUrl.pathname}${incomingUrl.search}`;

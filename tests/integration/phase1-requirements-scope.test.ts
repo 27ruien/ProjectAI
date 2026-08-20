@@ -156,7 +156,7 @@ describe("Phase 1 Round 2 requirement and scope lifecycle", () => {
       threadId: thread.id,
       requestHeaders: headers,
       idempotencyKey: randomUUID(),
-      body: { question: "虚构客户要求什么？", modelProfileId: "qwen-project-assistant-cn-v2", sourceDocumentIds: [documentId] },
+      body: { question: "当前项目的虚构客户要求什么？", modelProfileId: "qwen-project-assistant-cn-v2", sourceDocumentIds: [documentId] },
     });
     assert.equal(response.assistantMessage.status, "completed");
     assert.ok(response.assistantMessage.citations.length > 0);

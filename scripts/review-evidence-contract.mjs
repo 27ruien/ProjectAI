@@ -3,6 +3,16 @@ const decimalIdPattern = /^[1-9][0-9]*$/;
 const digestPattern = /^sha256:[0-9a-f]{64}$/;
 const isoTimestampPattern =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const focusedTestedUsers = ["admin", "managerA", "viewerA", "outsider"];
+const focusedRoutes = {
+  assistantUi: "/assistant",
+  projectDataSpaceUi: "/data-spaces/projects",
+  companyDataSpaceUi: "/data-spaces/company",
+  authApi: "/api/auth",
+  assistantApi: "/api/ai",
+  projectApi: "/api/projects",
+  companyKnowledgeApi: "/api/company-knowledge",
+};
 
 function fail(message) {
   throw new Error(message);
@@ -23,6 +33,26 @@ function isIsoTimestamp(value) {
     typeof value === "string" &&
     isoTimestampPattern.test(value) &&
     Number.isFinite(Date.parse(value))
+  );
+}
+
+function hasExactStringArray(value, expected) {
+  return (
+    Array.isArray(value) &&
+    value.length === expected.length &&
+    value.every((entry, index) => entry === expected[index])
+  );
+}
+
+function hasExactStringRecord(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const expectedKeys = Object.keys(expected);
+  const actualKeys = Object.keys(value);
+  return (
+    actualKeys.length === expectedKeys.length &&
+    expectedKeys.every(
+      (key) => Object.hasOwn(value, key) && value[key] === expected[key],
+    )
   );
 }
 
@@ -52,11 +82,28 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
   if (Object.hasOwn(index, "commit")) {
     fail("The legacy product review commit field is not allowed.");
   }
+  if (Object.hasOwn(index, "testedMergeSha")) {
+    fail("The misleading testedMergeSha field is not allowed.");
+  }
   if (Object.hasOwn(index, "artifactId")) {
     fail("The pre-upload evidence index must not contain artifactId.");
   }
-  if (index.schemaVersion !== 3) {
+  if (index.schemaVersion !== 4) {
     fail("The product review evidence index has an unsupported schemaVersion.");
+  }
+  if (
+    index.evidenceProfile !== undefined &&
+    !["full", "focused-mvp"].includes(index.evidenceProfile)
+  ) {
+    fail("The product review evidence index has an unsupported evidence profile.");
+  }
+  if (index.evidenceProfile === "focused-mvp") {
+    if (!hasExactStringArray(index.testedUsers, focusedTestedUsers)) {
+      fail("Focused product review evidence has an invalid tested user set.");
+    }
+    if (!hasExactStringRecord(index.routes, focusedRoutes)) {
+      fail("Focused product review evidence has an invalid route set.");
+    }
   }
 
   const eventName = index.eventName;
@@ -71,8 +118,11 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
   }
 
   if (eventName === "local") {
-    if (index.headSha !== null || index.testedMergeSha !== null) {
+    if (index.headSha !== null || index.testedSha !== null) {
       fail("Local product review evidence must use null Git commit semantics.");
+    }
+    if (index.testedRefType !== "local_worktree") {
+      fail("Local product review evidence must identify a local worktree.");
     }
     if (index.workflowRunId !== null) {
       fail("Local product review evidence must use a null workflowRunId.");
@@ -87,11 +137,25 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
   }
 
   if (eventName === "pull_request") {
-    if (!isCommitSha(index.testedMergeSha)) {
-      fail("Pull request evidence requires a valid testedMergeSha.");
+    if (!isCommitSha(index.testedSha)) {
+      fail("Pull request evidence requires a valid testedSha.");
     }
-  } else if (index.testedMergeSha !== null) {
-    fail("Only pull request evidence may contain testedMergeSha.");
+    if (index.testedRefType !== "pull_request_head") {
+      fail("Pull request evidence must identify the tested ref as pull_request_head.");
+    }
+    if (index.testedSha !== index.headSha) {
+      fail("Pull request evidence must bind testedSha to the exact headSha.");
+    }
+  } else if (eventName === "push") {
+    if (!isCommitSha(index.testedSha)) {
+      fail("Push evidence requires a valid testedSha.");
+    }
+    if (index.testedRefType !== "push_head") {
+      fail("Push evidence must identify the tested ref as push_head.");
+    }
+    if (index.testedSha !== index.headSha) {
+      fail("Push evidence must bind testedSha to the exact headSha.");
+    }
   }
 
   if (index.stagingSha !== null && !isCommitSha(index.stagingSha)) {
@@ -173,6 +237,7 @@ export function assertEvidenceIndex(index, { ci = false } = {}) {
       typeof entry.reportType !== "string" ||
       !/^[a-z0-9-]{1,64}$/.test(entry.reportType) ||
       !isCommitSha(entry.releaseCandidateSha) ||
+      entry.releaseCandidateSha !== index.testedSha ||
       !digestPattern.test(entry.releaseImageDigest)
     ) {
       fail("The product review Release report digest map is invalid.");

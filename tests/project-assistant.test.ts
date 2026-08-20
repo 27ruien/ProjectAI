@@ -12,7 +12,11 @@ import {
 import { readQwenApiKey } from "../lib/ai/project-assistant/secrets";
 import { ProjectAssistantError } from "../lib/ai/project-assistant/errors";
 import { FakeProjectAssistantProvider } from "../lib/ai/project-assistant/fake-provider";
-import { ProjectAssistantGateway } from "../lib/ai/project-assistant/gateway";
+import {
+  AiGatewayObservedError,
+  ProjectAssistantGateway,
+} from "../lib/ai/project-assistant/gateway";
+import type { ProjectAssistantProvider } from "../lib/ai/project-assistant/provider-types";
 import { QwenProjectAssistantProvider } from "../lib/ai/project-assistant/qwen-provider";
 import {
   buildGroundedUserPrompt,
@@ -341,6 +345,80 @@ describe("Qwen adapter and Gateway", () => {
     assert.deepEqual(
       provider.calls.map((call) => call.model),
       ["qwen3.7-flash", "qwen3.7-flash", "qwen3.7-flash"],
+    );
+  });
+
+  it("allows unknown-side-effect workflows to disable automatic retries", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+    await assert.rejects(
+      gateway.generate({
+        purpose: "product_map_step",
+        systemPrompt: "system",
+        userPrompt: "FAKE_TIMEOUT",
+        maxAttempts: 1,
+      }),
+      ProjectAssistantError,
+    );
+    assert.equal(provider.calls.length, 1);
+  });
+
+  it("records zero external cost for the deterministic Fake Provider", async () => {
+    const provider = new FakeProjectAssistantProvider();
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+    const result = await gateway.generate({
+      purpose: "product_map_step",
+      systemPrompt: "system",
+      userPrompt:
+        '<product_map_step_json>{"stepId":"evidence_inventory"}</product_map_step_json>',
+      maxAttempts: 1,
+    });
+    assert.equal(result.costUsdMicros, 0);
+  });
+
+  it("preserves safe usage observations when a Provider returns the wrong model", async () => {
+    const provider: ProjectAssistantProvider = {
+      provider: "fake",
+      async generate() {
+        return {
+          text: "{}",
+          actualModel: "unexpected-model",
+          inputTokens: 11,
+          outputTokens: 3,
+          totalTokens: 14,
+          providerRequestId: "safe-wrong-model-request",
+          latencyMs: 7,
+        };
+      },
+    };
+    const gateway = new ProjectAssistantGateway(
+      fakeConfig(),
+      provider,
+      async () => undefined,
+    );
+    await assert.rejects(
+      gateway.generate({
+        purpose: "product_map_step",
+        model: "expected-model",
+        systemPrompt: "system",
+        userPrompt: "user",
+        maxAttempts: 1,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof AiGatewayObservedError);
+        assert.equal(error.observation.providerRequestId, "safe-wrong-model-request");
+        assert.equal(error.observation.totalTokens, 14);
+        assert.equal(error.observation.costUsdMicros, 0);
+        return true;
+      },
     );
   });
 

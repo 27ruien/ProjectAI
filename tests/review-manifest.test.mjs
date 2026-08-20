@@ -8,6 +8,7 @@ import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { withDigest } from "../scripts/release/contract.mjs";
+import { assertEvidenceIndex } from "../scripts/review-evidence-contract.mjs";
 
 const execFileAsync = promisify(execFile);
 const writer = new URL("../scripts/write-review-manifest.mjs", import.meta.url);
@@ -18,9 +19,52 @@ const finalizer = new URL(
 );
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const headSha = "a".repeat(40);
-const testedMergeSha = "b".repeat(40);
+const testedSha = headSha;
 const stagingSha = "c".repeat(40);
 const buildTime = "2026-07-14T08:00:00Z";
+const fullTestedUsers = [
+  "system_admin",
+  "project_manager_a",
+  "project_member_a",
+  "viewer_a",
+];
+const fullRoutes = {
+  login: "/login",
+  dashboardAdmin: "/dashboard",
+  projectsManagerA: "/projects",
+  projectAOverview: "/projects/project-001/overview",
+  projectAccessDenied: "/projects/project-002/overview",
+  viewerReadonly: "/projects/project-001/overview",
+  documents: "/projects/project-001/documents",
+  projectAssistant: "/projects/project-001/knowledge",
+  dailyReport: "/daily-report",
+};
+const focusedTestedUsers = ["admin", "managerA", "viewerA", "outsider"];
+const focusedRoutes = {
+  assistantUi: "/assistant",
+  projectDataSpaceUi: "/data-spaces/projects",
+  companyDataSpaceUi: "/data-spaces/company",
+  authApi: "/api/auth",
+  assistantApi: "/api/ai",
+  projectApi: "/api/projects",
+  companyKnowledgeApi: "/api/company-knowledge",
+};
+const focusedScreenshots = [
+  "screenshots/01-project-list.png",
+  "screenshots/02-project-overview.png",
+  "screenshots/03-project-files.png",
+  "screenshots/04-session-empty.png",
+  "screenshots/05-product-map-review.png",
+  "screenshots/06-requirement-success-local-fake.png",
+  "screenshots/08-ai-conversation.png",
+  "screenshots/10-company-knowledge.png",
+  "screenshots/11-company-upload-dialog.png",
+  "screenshots/12-mobile-navigation-375.png",
+];
+const onePixelPng = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 function isolatedEnvironment(overrides = {}) {
   return {
@@ -40,9 +84,11 @@ function isolatedEnvironment(overrides = {}) {
     REVIEW_BRANCH: "",
     REVIEW_COMMIT: "",
     REVIEW_EVENT_NAME: "",
+    REVIEW_EVIDENCE_PROFILE: "",
     REVIEW_HEAD_SHA: "",
     REVIEW_STAGING_SHA: "",
-    REVIEW_TESTED_MERGE_SHA: "",
+    REVIEW_TESTED_REF_TYPE: "",
+    REVIEW_TESTED_SHA: "",
     REVIEW_WORKFLOW_RUN_ID: "",
     ...overrides,
   };
@@ -59,7 +105,8 @@ function ciEnvironment(overrides = {}) {
     REVIEW_EVENT_NAME: "pull_request",
     REVIEW_HEAD_SHA: headSha,
     REVIEW_STAGING_SHA: stagingSha,
-    REVIEW_TESTED_MERGE_SHA: testedMergeSha,
+    REVIEW_TESTED_REF_TYPE: "pull_request_head",
+    REVIEW_TESTED_SHA: testedSha,
     REVIEW_WORKFLOW_RUN_ID: "29310000000",
     ...overrides,
   });
@@ -73,6 +120,16 @@ async function runWriter(root, env) {
   return execFileAsync(process.execPath, [writer.pathname], { cwd: root, env });
 }
 
+async function writeScreenshots(root, screenshots) {
+  const screenshotsRoot = path.join(root, "review-artifacts/screenshots");
+  await mkdir(screenshotsRoot, { recursive: true });
+  await Promise.all(
+    screenshots.map((filename) =>
+      writeFile(path.join(root, "review-artifacts", filename), onePixelPng),
+    ),
+  );
+}
+
 test("writes unambiguous PR provenance to evidence-index.json", async () => {
   const root = await temporaryRoot();
   try {
@@ -84,7 +141,9 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
       ),
     );
     assert.equal(index.headSha, headSha);
-    assert.equal(index.testedMergeSha, testedMergeSha);
+    assert.equal(index.evidenceProfile, "full");
+    assert.equal(index.testedSha, testedSha);
+    assert.equal(index.testedRefType, "pull_request_head");
     assert.equal(index.stagingSha, stagingSha);
     assert.equal(index.branch, "agent/document-processing-index");
     assert.equal(index.workflowRunId, "29310000000");
@@ -106,6 +165,10 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     );
     assert.deepEqual(index.releaseReportFiles, []);
     assert.deepEqual(index.missingReleaseReports, index.requiredReleaseReports);
+    assert.equal(index.requiredRetrievalReports.length, 6);
+    assert.equal(index.requiredReleaseReports.length, 20);
+    assert.deepEqual(index.testedUsers, fullTestedUsers);
+    assert.deepEqual(index.routes, fullRoutes);
     assert.deepEqual(index.screenshots, []);
     assert.equal(Object.hasOwn(index, "viewport"), false);
     assert.ok(index.requiredScreenshots.includes("screenshots/documents-empty.png"));
@@ -131,6 +194,115 @@ test("writes unambiguous PR provenance to evidence-index.json", async () => {
     );
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("publishes focused evidence from the users and route categories exercised by focused E2E", async () => {
+  const root = await temporaryRoot();
+  const artifactId = "8300888888";
+  const artifactDigest = "e".repeat(64);
+  const env = ciEnvironment({
+    NEXT_PUBLIC_APP_VERSION: "0.8.0-staging",
+    REVIEW_ARTIFACT_STATUS: "success",
+    REVIEW_EVIDENCE_PROFILE: "focused-mvp",
+  });
+  try {
+    await writeScreenshots(root, focusedScreenshots);
+    await runWriter(root, env);
+    const index = JSON.parse(
+      await readFile(
+        path.join(root, "review-artifacts/evidence-index.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(index.evidenceProfile, "focused-mvp");
+    assert.equal(index.testedSha, testedSha);
+    assert.equal(index.testedRefType, "pull_request_head");
+    assert.deepEqual(index.testedUsers, focusedTestedUsers);
+    assert.deepEqual(index.routes, focusedRoutes);
+    assert.deepEqual(index.requiredScreenshots, focusedScreenshots);
+    assert.deepEqual(index.missingScreenshots, []);
+    assert.equal(index.screenshotsComplete, true);
+    assert.deepEqual(index.requiredRetrievalReports, []);
+    assert.deepEqual(index.requiredReleaseReports, []);
+    assert.equal(index.testedUsers.includes("memberA"), false);
+    assert.equal(Object.hasOwn(index.routes, "dailyReport"), false);
+    assert.doesNotThrow(() => assertEvidenceIndex(index, { ci: true }));
+
+    await execFileAsync(process.execPath, [sanitizer.pathname], {
+      cwd: root,
+      env,
+    });
+    await execFileAsync(process.execPath, [finalizer.pathname], {
+      cwd: root,
+      env: {
+        ...env,
+        GITHUB_RUN_ID: "29310000000",
+        REVIEW_ARTIFACT_ID: artifactId,
+        REVIEW_ARTIFACT_NAME: "product-review-evidence-29310000000-1",
+        REVIEW_ARTIFACT_DIGEST: artifactDigest,
+      },
+    });
+    const manifest = JSON.parse(
+      await readFile(
+        path.join(root, "product-review-manifest/manifest.json"),
+        "utf8",
+      ),
+    );
+    assert.equal(manifest.evidenceProfile, "focused-mvp");
+    assert.equal(manifest.testedSha, testedSha);
+    assert.equal(manifest.testedRefType, "pull_request_head");
+    assert.deepEqual(manifest.testedUsers, focusedTestedUsers);
+    assert.deepEqual(manifest.routes, focusedRoutes);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("focused contract and sanitizer independently reject user or route drift", async (t) => {
+  const cases = [
+    {
+      name: "tested user drift",
+      mutate(index) {
+        index.testedUsers = [...focusedTestedUsers, "memberA"];
+      },
+      pattern: /invalid tested user set/i,
+    },
+    {
+      name: "route drift",
+      mutate(index) {
+        index.routes = { ...focusedRoutes, dailyReport: "/daily-report" };
+      },
+      pattern: /invalid route set/i,
+    },
+  ];
+  for (const { name, mutate, pattern } of cases) {
+    await t.test(name, async () => {
+      const root = await temporaryRoot();
+      const env = ciEnvironment({
+        REVIEW_EVIDENCE_PROFILE: "focused-mvp",
+      });
+      try {
+        await runWriter(root, env);
+        const indexPath = path.join(
+          root,
+          "review-artifacts/evidence-index.json",
+        );
+        const index = JSON.parse(await readFile(indexPath, "utf8"));
+        mutate(index);
+        assert.throws(() => assertEvidenceIndex(index, { ci: true }), pattern);
+        await writeFile(indexPath, `${JSON.stringify(index, null, 2)}\n`);
+        await assert.rejects(
+          execFileAsync(process.execPath, [sanitizer.pathname], {
+            cwd: root,
+            env,
+          }),
+          pattern,
+        );
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -190,12 +362,19 @@ test("indexes every CI Release JSON and Markdown digest with report identity", a
       assert.equal(entry.releaseImageDigest, image);
       assert.match(entry.reportDigest, /^sha256:[0-9a-f]{64}$/);
     }
+    const driftedReleaseIndex = structuredClone(index);
+    driftedReleaseIndex.releaseReportDigests[0].releaseCandidateSha =
+      "b".repeat(40);
+    assert.throws(
+      () => assertEvidenceIndex(driftedReleaseIndex, { ci: true }),
+      /Release report digest map is invalid/i,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("uses explicit null provenance for main push and local evidence", async () => {
+test("uses explicit tested-ref provenance for main push and local evidence", async () => {
   const pushRoot = await temporaryRoot();
   const localRoot = await temporaryRoot();
   try {
@@ -205,7 +384,8 @@ test("uses explicit null provenance for main push and local evidence", async () 
         REVIEW_BRANCH: "main",
         REVIEW_EVENT_NAME: "push",
         REVIEW_STAGING_SHA: "",
-        REVIEW_TESTED_MERGE_SHA: "",
+        REVIEW_TESTED_REF_TYPE: "push_head",
+        REVIEW_TESTED_SHA: headSha,
       }),
     );
     const pushIndex = JSON.parse(
@@ -215,7 +395,8 @@ test("uses explicit null provenance for main push and local evidence", async () 
       ),
     );
     assert.equal(pushIndex.headSha, headSha);
-    assert.equal(pushIndex.testedMergeSha, null);
+    assert.equal(pushIndex.testedSha, headSha);
+    assert.equal(pushIndex.testedRefType, "push_head");
     assert.equal(pushIndex.stagingSha, null);
 
     await runWriter(localRoot, isolatedEnvironment());
@@ -227,7 +408,8 @@ test("uses explicit null provenance for main push and local evidence", async () 
     );
     assert.equal(localIndex.eventName, "local");
     assert.equal(localIndex.headSha, null);
-    assert.equal(localIndex.testedMergeSha, null);
+    assert.equal(localIndex.testedSha, null);
+    assert.equal(localIndex.testedRefType, "local_worktree");
     assert.equal(localIndex.stagingSha, null);
     assert.equal(localIndex.workflowRunId, null);
     assert.equal(localIndex.branch, "local");
@@ -239,17 +421,13 @@ test("uses explicit null provenance for main push and local evidence", async () 
 
 test("reads each PNG screenshot's actual dimensions instead of declaring a viewport", async () => {
   const root = await temporaryRoot();
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-    "base64",
-  );
   try {
     await mkdir(path.join(root, "review-artifacts/screenshots"), {
       recursive: true,
     });
     await writeFile(
       path.join(root, "review-artifacts/screenshots/login.png"),
-      png,
+      onePixelPng,
     );
     await runWriter(root, ciEnvironment());
     const index = JSON.parse(
@@ -271,7 +449,10 @@ test("fails closed for missing, invalid, or legacy CI provenance", async (t) => 
   const cases = [
     ["eventName", { REVIEW_EVENT_NAME: "" }],
     ["headSha", { REVIEW_HEAD_SHA: "" }],
-    ["testedMergeSha", { REVIEW_TESTED_MERGE_SHA: "" }],
+    ["testedSha", { REVIEW_TESTED_SHA: "" }],
+    ["testedSha drift", { REVIEW_TESTED_SHA: "b".repeat(40) }],
+    ["testedRefType", { REVIEW_TESTED_REF_TYPE: "" }],
+    ["testedRefType drift", { REVIEW_TESTED_REF_TYPE: "push_head" }],
     ["stagingSha", { REVIEW_STAGING_SHA: "not-a-sha" }],
     ["branch", { REVIEW_BRANCH: "" }],
     ["workflowRunId", { REVIEW_WORKFLOW_RUN_ID: "not-an-id" }],
@@ -325,7 +506,8 @@ test("publishes a separate authoritative manifest after payload upload", async (
     assert.deepEqual(
       {
         headSha: manifest.headSha,
-        testedMergeSha: manifest.testedMergeSha,
+        testedSha: manifest.testedSha,
+        testedRefType: manifest.testedRefType,
         stagingSha: manifest.stagingSha,
         branch: manifest.branch,
         workflowRunId: manifest.workflowRunId,
@@ -335,7 +517,8 @@ test("publishes a separate authoritative manifest after payload upload", async (
       },
       {
         headSha,
-        testedMergeSha,
+        testedSha,
+        testedRefType: "pull_request_head",
         stagingSha: null,
         branch: "agent/document-processing-index",
         workflowRunId: "29310000000",
@@ -451,6 +634,28 @@ test("CI assigns the artifact ID only after uploading sanitized payload A", asyn
   assert.ok(artifactIdOutput < finalizeManifest);
   assert.ok(finalizeManifest < uploadManifest);
   assert.match(workflow, /tested_sha="\$\(git rev-parse HEAD\)"/);
+  assert.match(workflow, /REVIEW_TESTED_SHA=\$tested_sha/);
+  assert.match(workflow, /REVIEW_TESTED_REF_TYPE=\$tested_ref_type/);
   assert.doesNotMatch(workflow, /REVIEW_COMMIT:/);
   assert.doesNotMatch(workflow, /REVIEW_BUILD_TIME:/);
+});
+
+test("rejects the legacy merge-labelled field even when exact-head fields are valid", async () => {
+  const root = await temporaryRoot();
+  try {
+    await runWriter(root, ciEnvironment());
+    const index = JSON.parse(
+      await readFile(
+        path.join(root, "review-artifacts/evidence-index.json"),
+        "utf8",
+      ),
+    );
+    index.testedMergeSha = "b".repeat(40);
+    assert.throws(
+      () => assertEvidenceIndex(index, { ci: true }),
+      /misleading testedMergeSha field is not allowed/i,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

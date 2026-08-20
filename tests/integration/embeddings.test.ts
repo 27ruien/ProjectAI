@@ -368,7 +368,10 @@ before(async () => {
   await getDb().insert(aiEmbeddingProfile).values({
     id: profileV2,
     provider: "qwen",
-    model: "qwen3.7-text-embedding",
+    // Keep this fixture distinct from the insert-only seeded production-shaped
+    // profile. The definition uniqueness constraint intentionally rejects two
+    // profiles with the same provider/model/region/version tuple.
+    model: "qwen3.7-text-embedding-test",
     region: "cn-beijing",
     dimensions: 1024,
     distanceMetric: "cosine",

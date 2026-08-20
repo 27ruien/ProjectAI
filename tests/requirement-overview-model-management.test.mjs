@@ -108,3 +108,21 @@ test("requirement overview model selection remains server-controlled", async () 
   assert.match(schema, /guided_requirement_overview_comparison_runs/);
   assert.match(schema, /guided_requirement_overview_comparison_candidates/);
 });
+
+test("model management limits structured JSON capability to the Product Map scenario", async () => {
+  const ui = await source("components/system/AiModelManagementPage.tsx");
+  assert.match(ui, /const testedEnabledGenerationModels = useMemo/);
+  assert.match(
+    ui,
+    /item\.enabled && item\.lastTestStatus === "passed",\n\s*\) \?\? \[\],/,
+  );
+  assert.match(
+    ui,
+    /scenario !== "product_map_generation" \|\| model\.supportsJson/,
+  );
+  assert.match(ui, /usableModelsForScenario\(item\.scenario\)/);
+  assert.doesNotMatch(
+    ui,
+    /item\.enabled && item\.lastTestStatus === "passed" && item\.supportsJson/,
+  );
+});

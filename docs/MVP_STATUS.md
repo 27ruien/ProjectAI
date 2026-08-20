@@ -95,7 +95,7 @@ B3-A/B3-B1/B3-B2 的 Runtime、Prompt、Grounding、Citation、项目隔离和 S
 | 单元与架构 | Chat/Embedding 回归；Retrieval Profile、RRF、模式、评测门禁全绿 |
 | PostgreSQL 集成 | Exact Vector、复合约束、Coverage/Fallback、成本账本、幂等、unknown 与项目范围全绿 |
 | Playwright | B1/B2 回归和 8 个 B3-A 安全截图流程全绿 |
-| Evidence / Provenance | Manifest schema v3，记录实际 PNG 尺寸、AI Gateway Version 与 Profile；强 allowlist 和脱敏通过 |
+| Evidence / Provenance | Manifest schema v4，记录实际受测 SHA/Ref、PNG 尺寸、AI Gateway Version 与 Profile；强 allowlist 和脱敏通过 |
 | Staging | 五服务 Healthy；lexical→评测→shadow→报告→hybrid；Probe、Assistant/B3-B1 回归、清理全绿 |
 | Production | 精确不变 |
 
