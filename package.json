@@ -11,7 +11,7 @@
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern playwright-report --ignore-pattern test-results",
     "typecheck": "tsc --noEmit",
-    "test": "npm run test:unit && AUTH_PROVIDER=wecom NEXT_PUBLIC_BASE_PATH=/tool/projectai node --test --test-concurrency=1 tests/rendered-html.test.mjs tests/proxy-redirect.test.mjs",
+    "test": "npm run test:unit && npm run build && AUTH_PROVIDER=wecom NEXT_PUBLIC_BASE_PATH=/tool/projectai node --test --test-concurrency=1 tests/rendered-html.test.mjs tests/proxy-redirect.test.mjs",
     "test:unit": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=test AI_PROVIDER=fake AI_ASSISTANT_ENABLED=true node --import tsx --test --test-concurrency=1 tests/project-permissions.test.ts tests/product-v2-auth.test.ts tests/ragflow-client.test.ts tests/knowledge-query.test.ts tests/weekly-report.test.ts tests/timeline-maker.test.ts tests/requirement-analyst.test.ts tests/feasibility-research.test.ts",
     "test:integration": "node --import tsx --test --test-concurrency=1 tests/integration/identity-project-isolation.test.ts",
     "test:staging-test-login": "NODE_ENV=test NEXT_PUBLIC_APP_ENV=staging NEXT_PUBLIC_BASE_PATH=/tool/projectai-staging BETTER_AUTH_URL=https://gridworks.cn/tool/projectai-staging/api/auth AUTH_TRUSTED_ORIGINS=https://gridworks.cn AUTH_PROVIDER=mock-wecom ALLOW_MOCK_WECOM_AUTH=true ALLOW_STAGING_TEST_LOGIN=true AUTH_MOCK_LOGIN_RATE_LIMIT_MAX=100 node --import tsx --test --test-concurrency=1 tests/integration/staging-test-login.test.ts",

@@ -6,15 +6,16 @@ Last verified: 2026-08-24 (Asia/Shanghai)
 
 | Field | Frozen value |
 |---|---|
-| Baseline tag | `staging-validation-v1` |
+| Baseline tag | `staging-validation-v1.1` |
+| Superseded tag | `staging-validation-v1` — immutable; clean-checkout CI failed before integration because `npm test` did not build its required standalone output |
 | Source branch | `refactor/project-ai-slim` |
 | Pre-freeze parent | `56bfec5ed954146538af6a373dbc339073eaeab3` |
 | Package | `project-ai-slim@1.0.0-staging` |
 | Node contract | `>=22.13.0`; validation used Node `v24.18.0` and npm `11.16.0` |
 | Latest included migration | `drizzle/0036_normal_sister_grimm.sql` |
-| Canonical revision lookup | `git rev-parse staging-validation-v1^{commit}` |
+| Canonical revision lookup | `git rev-parse staging-validation-v1.1^{commit}` |
 
-The tag, rather than an embedded self-referential commit hash, is the repository source of truth. The tag must not be moved. Every Staging deployment and UAT report derived from this baseline must record the resolved 40-character commit SHA.
+The tag, rather than an embedded self-referential commit hash, is the repository source of truth. The tag must not be moved. Every Staging deployment and UAT report derived from this baseline must record the resolved 40-character commit SHA. `staging-validation-v1` remains preserved as failed freeze evidence and must not be retagged.
 
 This baseline freezes the complete Slim working tree, including the intentional legacy-module deletions, the current Project/RAGFlow/Skill implementation, the Slim deployment files, the current tests, the reconciled CI workflow, and this document. It is not a claim that the tagged revision has already been deployed.
 
@@ -48,16 +49,16 @@ All commands below were rerun against the final pre-commit frozen working tree o
 | Command | Result | Observed duration | Scope |
 |---|---:|---:|---|
 | `npm ci` | PASS | 12.93 s | Clean install from `package-lock.json` before the final patch-level refresh; a second clean install also passed after lockfile regeneration |
-| `npm test` | PASS, 77/77 | 6.62 s | 70 unit/contract tests and 7 rendered/proxy tests |
-| `npm run typecheck` | PASS | 2.45 s | TypeScript no-emit check |
-| `npm run lint` | PASS | 5.16 s | Active tree, excluding generated output |
-| `npm run build` | PASS | 7.16 s | Vinext production build; standalone output generated |
-| `npm run test:integration` | PASS, 31/31 | 3.84 s | Disposable PostgreSQL 17 + pgvector 0.8.1, isolated seed, Fake RAGFlow, Fake AI provider |
+| `npm test` | PASS, 77/77 | 11.55 s | Clean-checkout-safe command: 70 unit/contract tests, standalone build, and 7 rendered/proxy tests |
+| `npm run typecheck` | PASS | 2.27 s | TypeScript no-emit check |
+| `npm run lint` | PASS | 4.82 s | Active tree, excluding generated output |
+| `npm run build` | PASS | 5.20 s | Independent Vinext production build; standalone output generated |
+| `npm run test:integration` | PASS, 31/31 | 3.74 s | Disposable PostgreSQL 17 + pgvector 0.8.1, isolated seed, Fake RAGFlow, Fake AI provider |
 | `npm audit --omit=dev` | PASS WITH LIMITATIONS | n/a | 0 critical/high; 4 moderate findings in the Drizzle/esbuild migration-tool chain |
 
 The first integration setup attempt passed 28/31 and exposed a missing local Fake RAGFlow/AI environment configuration. After supplying the current test-only provider contract, the full suite passed 31/31. No existing local, Staging, or Production database was accessed or reset.
 
-The reconciled `.github/workflows/ci.yml` now runs only current Slim scripts and uses ephemeral test credentials, PostgreSQL 17 + pgvector 0.8.1, and Fake RAGFlow. It no longer invokes removed Product Map, file-workspace, Worker, release-evidence, or legacy E2E commands.
+The reconciled `.github/workflows/ci.yml` now runs only current Slim scripts and uses ephemeral test credentials, PostgreSQL 17 + pgvector 0.8.1, and Fake RAGFlow. It no longer invokes removed Product Map, file-workspace, Worker, release-evidence, or legacy E2E commands. `npm test` now builds its own standalone prerequisite so the documented command is reproducible in a clean checkout.
 
 ## 4. Deployment status
 
@@ -66,11 +67,11 @@ The reconciled `.github/workflows/ci.yml` now runs only current Slim scripts and
 - The same check found `/tool/projectai-slim-uat/api/health` healthy at app version `1.0.0-ui-refactor-v1.1`, but that endpoint returned no commit-SHA header, so its exact revision is unproven and it cannot be treated as this baseline.
 - Active Staging baseline status: **NOT DEPLOYED / NOT THE CURRENT UAT SOURCE OF TRUTH**.
 - Production: **OUT OF SCOPE; MUST REMAIN UNCHANGED**.
-- Remote exact-head CI: **NOT VERIFIED until the branch/tag is pushed and the workflow succeeds for that exact SHA**.
+- Remote exact-head CI: `staging-validation-v1` failed in both branch run `32712111436` and tag run `32712110780` because the clean runner had no prebuilt `dist/standalone`; the `v1.1` exact-head result must pass before deployment.
 
 Before this baseline can be called the active Staging UAT source of truth, a separate authorized Staging-only delivery must:
 
-1. resolve and record `staging-validation-v1^{commit}`;
+1. resolve and record `staging-validation-v1.1^{commit}`;
 2. obtain successful remote CI for that exact SHA;
 3. build an immutable image with the exact revision label and record its digest;
 4. back up Staging data and apply only committed migrations through `0036` using the controlled migration path;
@@ -93,7 +94,7 @@ Before this baseline can be called the active Staging UAT source of truth, a sep
 ## 6. UAT rules for this baseline
 
 1. Every UAT record must include the resolved baseline commit SHA, immutable image digest, Skill ID/version or asset hash, external Agent/model/version, case ID, start time, and first-run result.
-2. Do not run Skill UAT until live Staging reports the same exact commit SHA as `staging-validation-v1` and exact-head CI is green.
+2. Do not run Skill UAT until live Staging reports the same exact commit SHA as `staging-validation-v1.1` and exact-head CI is green.
 3. Use real PM work or explicitly marked synthetic fixtures only within an authorized Project. Never copy customer data into Git, logs, screenshots, prompts, or UAT artifacts.
 4. Run Weekly Report v1.2 first. Project AI supplies the Execution Package; the selected external Agent performs the Skill reasoning.
 5. Preserve the first answer. Do not repair prompts, manually rewrite the answer, add missing facts, or change the rubric before recording PASS/FAIL and defects.
@@ -101,11 +102,11 @@ Before this baseline can be called the active Staging UAT source of truth, a sep
 7. Keep facts, assumptions, gaps, unknowns, and sources visibly distinct. No external-Agent output may automatically overwrite Project, Timeline, Requirement, Scope, or other formal data.
 8. Evaluate cross-project isolation, source citation, date fidelity, missing-data behavior, and unsupported inference as release gates, not presentation polish.
 9. Do not use legacy branches, deleted runtimes, historical reports, or recovered Product Map assets to supplement this baseline.
-10. A defect may trigger a narrowly scoped fix and a new immutable revision. Do not move `staging-validation-v1`; create a new baseline tag after complete revalidation.
+10. A defect may trigger a narrowly scoped fix and a new immutable revision. Do not move an existing baseline tag; create a new baseline tag after complete revalidation.
 
 ## 7. Remaining validation sequence
 
-1. Push the frozen branch/tag and obtain exact-head CI success.
+1. Push the corrected branch and obtain exact-head CI success, then create/push `staging-validation-v1.1` and require its exact-head CI success.
 2. Perform the separately authorized Staging-only deployment and provenance verification.
 3. Run the four Weekly Report v1.2 external-Agent packs without repair prompts.
 4. Run Timeline Maker messy-document review and Cross-Agent UAT.

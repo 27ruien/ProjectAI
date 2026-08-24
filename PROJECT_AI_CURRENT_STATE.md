@@ -4,7 +4,7 @@ Last Verified: 2026-08-24
 
 Source of Truth: current working tree + tests + current repository docs/reports
 
-Working Tree: freeze target `staging-validation-v1` on `refactor/project-ai-slim`; pre-freeze parent `56bfec5ed954146538af6a373dbc339073eaeab3`
+Working Tree: corrected freeze target `staging-validation-v1.1` on `refactor/project-ai-slim`; immutable predecessor `staging-validation-v1` failed clean-checkout CI
 
 Audit Result: **PASS WITH CONDITIONS**
 
@@ -152,15 +152,15 @@ Evidence: `docs/PROJECT_AI_SLIM_MIGRATION_REPORT.md`, `docs/SLIM_DEPENDENCY_AUDI
 
 ## 8. KNOWN LIMITATIONS
 
-- The formerly extensive uncommitted Slim working tree is frozen by the immutable target tag `staging-validation-v1`; resolve and record its 40-character commit SHA before deployment or UAT.
-- `.github/workflows/ci.yml` has been reconciled to the current Slim `package.json` and no longer invokes removed Product Map/file-workspace/worker scripts. Remote exact-head CI remains **NOT VERIFIED** until the branch/tag is pushed and the workflow succeeds for the resolved tag commit.
+- The formerly extensive uncommitted Slim working tree is frozen by the corrected immutable target tag `staging-validation-v1.1`; resolve and record its 40-character commit SHA before deployment or UAT. The predecessor `staging-validation-v1` remains immutable failed-CI evidence.
+- `.github/workflows/ci.yml` has been reconciled to the current Slim `package.json` and no longer invokes removed Product Map/file-workspace/worker scripts. The first remote exact-head attempt exposed that `npm test` depended on locally prebuilt output; the corrected script now builds that prerequisite itself. `v1.1` remote exact-head CI remains required.
 - Real WeCom OAuth is not implemented. Test/staging credential behavior must not be described as production WeCom acceptance.
 - Weekly Report v1.2 has not completed manual Cross-Agent re-test.
 - Timeline Maker, Requirement Analyst, and Feasibility Research have deterministic contract coverage only; external-Agent interpretation quality is unverified.
 - Feasibility Research live-search and A/B packs remain `NOT_TESTED`; pack readiness is not real research evidence.
 - Project AI contains a Timeline persistence API but no active Timeline UI route/tab. Timeline Maker Paste/import and apply flows remain absent.
 - `docs/WEEKLY_REPORT_SKILL.md` still contains a pre-persistence statement saying no Project-linked Timeline repository exists; current code/tests supersede that statement.
-- `docs/PROJECT_AI_SLIM_MIGRATION_REPORT.md` records the earlier resource-blocked RAGFlow phase; the later `docs/RAGFLOW_LIVE_POC_REPORT.md` and `docs/STAGING_UAT_EVIDENCE.md` record successful live POC/UAT. A read-only 2026-08-24 probe found `/tool/projectai-staging` on old commit `b4bc6b92be4e222279a4d267466175bf24623cf2`, while `/tool/projectai-slim-uat` returned no commit-SHA header. The frozen `staging-validation-v1` revision is not currently proven deployed.
+- `docs/PROJECT_AI_SLIM_MIGRATION_REPORT.md` records the earlier resource-blocked RAGFlow phase; the later `docs/RAGFLOW_LIVE_POC_REPORT.md` and `docs/STAGING_UAT_EVIDENCE.md` record successful live POC/UAT. A read-only 2026-08-24 probe found `/tool/projectai-staging` on old commit `b4bc6b92be4e222279a4d267466175bf24623cf2`, while `/tool/projectai-slim-uat` returned no commit-SHA header. Neither `staging-validation-v1` nor corrected `v1.1` is currently proven deployed.
 - Current Production deployment/revision and live health were not inspected in this documentation-only task: **UNKNOWN**.
 - Current row counts and cleanup readiness for historical physical tables/object binaries were not inspected: **UNKNOWN**.
 
@@ -180,7 +180,7 @@ Fresh local validation on 2026-08-24:
 | Timeline persistence/provider integration subsection | **PASS — 5/5** within the 31 integration tests |
 | Live RAGFlow/Qwen/Staging re-test | **NOT_RUN in this audit**; repository reports from 2026-08-21 remain historical validation evidence |
 | Live deployment provenance check | **PASS / BASELINE NOT DEPLOYED**; old Staging reports `b4bc6b9...`, Slim UAT exposes no commit SHA |
-| Current repository CI workflow | **RECONCILED TO SLIM / LOCAL EQUIVALENT PASS**; not yet run as an exact-head remote CI |
+| Current repository CI workflow | **V1 REMOTE FAILURE DIAGNOSED / V1.1 FIX PENDING EXACT-HEAD CI**; clean-runner build prerequisite corrected |
 | External Skill UAT | Weekly v1.2: **NOT RETESTED**; Timeline Maker: **NOT RUN**; Requirement Analyst: **NOT_TESTED**; Feasibility live/Cross-Agent/A-B: **NOT_TESTED** |
 
 The final successful integration run used an isolated tmpfs database and test-only Fake RAGFlow and removed the temporary container afterward. Earlier setup attempts exposed environment mismatches (missing pgvector image, wrong auth provider/base path, and stale CI rate-limit override); no existing database was accessed or reset.
@@ -198,7 +198,7 @@ These are unfinished validation/productization items, not current capabilities.
 
 ### Near-term validation
 
-1. Push `refactor/project-ai-slim` and `staging-validation-v1`, then require exact-head CI success for the resolved tag commit before Staging UAT.
+1. Push the corrected `refactor/project-ai-slim`, require branch exact-head CI success, then create and validate immutable tag `staging-validation-v1.1` before Staging UAT.
 2. Run the four Weekly Report v1.2 portable packs manually across the selected external Agents and record first-run PASS/FAIL without repair prompts.
 3. Run Timeline Maker internal messy-document review and then Cross-Agent UAT; keep UI/apply claims absent until separately implemented and verified.
 4. Execute all Requirement Analyst portable Cross-Agent cases.
