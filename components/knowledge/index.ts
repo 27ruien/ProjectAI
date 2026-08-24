@@ -1,2 +1,2 @@
-export { ProjectKnowledgePage } from "./ProjectKnowledgePage";
-export { ProjectAssistantPanel } from "./ProjectAssistantPanel";
+export { CrossProjectKnowledgePanel } from "./CrossProjectKnowledgePanel";
+export { KnowledgeAnswerView } from "./KnowledgeAnswerView";

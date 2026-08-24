@@ -1,5 +1,3 @@
-import "server-only";
-
 import type {
   AuthorizedProjectSummary,
   ProjectUiPermissions,
@@ -59,7 +57,9 @@ export async function buildViewerContext(
         status: project.status,
         stage: project.stage,
         health: project.health,
+        startDate: project.startDate,
         targetLaunchDate: project.targetLaunchDate,
+        knowledgeStatus: project.knowledgeStatus,
         createdAt: project.createdAt.toISOString(),
         updatedAt: project.updatedAt.toISOString(),
         projectRole: project.projectRole,

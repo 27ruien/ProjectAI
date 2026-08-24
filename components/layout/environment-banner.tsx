@@ -11,7 +11,7 @@ export function EnvironmentBadge() {
       title={`环境：${APP_RUNTIME.environment} · 版本：${APP_RUNTIME.version} · Commit：${APP_RUNTIME.commitSha} · 构建：${APP_RUNTIME.buildTime}`}
     >
       <FlaskConical aria-hidden="true" className="size-3" />
-      STAGING
+      测试环境
     </span>
   );
 }

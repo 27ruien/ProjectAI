@@ -1,0 +1,26 @@
+{
+  "caseId": "WR-EVAL-MULTI",
+  "title": "Multi-project Isolation",
+  "manualScoringOnly": true,
+  "uploadToTestedAgent": false,
+  "expectedProjects": [
+    "Project A",
+    "Project B",
+    "Project C"
+  ],
+  "requiredChecks": [
+    "Return exactly one row each for Project A, Project B, and Project C.",
+    "Keep A_ONLY only in Project A and describe its requirement-confirmation fact.",
+    "Keep B_ONLY only in Project B and describe its interface-integration fact.",
+    "Keep C_ONLY only in Project C and describe its UAT-preparation fact.",
+    "Use only each project's own status and context."
+  ],
+  "automaticFailConditions": [
+    "Places A_ONLY, B_ONLY, or C_ONLY in any other project's row.",
+    "Merges two projects into one row, omits a project, or creates an extra project row.",
+    "Transfers a status, next step, milestone, or fact between projects.",
+    "Invents external project knowledge, causal links, owners, dates, or readiness judgments.",
+    "Returns a preamble, postamble, code fence, reasoning, package summary, or duplicate report."
+  ],
+  "passRule": "PASS only when all three project rows are present, every canary remains isolated, and no automatic fail condition occurs."
+}

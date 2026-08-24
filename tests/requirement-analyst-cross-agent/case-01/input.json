@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "projectai-requirement-analysis-input-v1",
+  "inputMode": "portable_user_supplied",
+  "projectId": null,
+  "title": "Vague Membership Campaign",
+  "language": "zh",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "我们想做一个会员活动页，下个月上线，先帮我们把需求理清。"
+    }
+  ],
+  "requestedOutcome": "Create a reviewable Requirement Analysis Pack without inventing missing facts."
+}

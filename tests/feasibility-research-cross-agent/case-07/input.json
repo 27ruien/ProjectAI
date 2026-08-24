@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "Eight-week Delivery and Cost",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Can the proposed project launch in eight weeks within an unconfirmed budget?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "Launch is requested in eight weeks. Scope includes design, integration, UAT, and onsite setup. There is no vendor quote, internal capacity estimate, acceptance owner, device inventory, or contingency plan."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

@@ -1,0 +1,35 @@
+{
+  "caseId": "RA-XAGENT-03",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "AI boundary",
+    "Human review fact",
+    "Data and permission gaps"
+  ],
+  "mustContain": [
+    "Draft-only AI Fact",
+    "Human confirmation Fact",
+    "evidence/failure Gap",
+    "retention Gap"
+  ],
+  "forbiddenClaims": [
+    "Automatic sending",
+    "Invented retention period",
+    "Invented admin access"
+  ],
+  "globalPassCriteria": [
+    "All ten required output sections are present.",
+    "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
+    "Critical Questions use P0, P1, or P2.",
+    "All controlled domains are assessed without filling gaps.",
+    "No external project knowledge or fabricated fact is used."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

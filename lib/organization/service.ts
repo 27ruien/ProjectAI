@@ -4,8 +4,6 @@ import { getDb, type DatabaseExecutor } from "@/lib/db/client";
 import {
   department,
   departmentMember,
-  knowledgeSpace,
-  projectDocument,
   project,
   organization,
   organizationMember,
@@ -41,24 +39,15 @@ export async function previewOrganizationDepartmentDelete(input: {
   const currentOrganization = await requireKivisenseSuperAdmin(input.principal, db);
   const [current] = await db.select().from(department).where(and(eq(department.id, input.departmentId), eq(department.organizationId, currentOrganization.id))).limit(1);
   if (!current) throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "部门不存在");
-  const [childCount, memberCount, projectCount, spaces] = await Promise.all([
+  const [childCount, memberCount, projectCount] = await Promise.all([
     db.select({ value: count() }).from(department).where(eq(department.parentDepartmentId, current.id)),
     db.select({ value: count() }).from(departmentMember).where(and(eq(departmentMember.departmentId, current.id), eq(departmentMember.isActive, true))),
     db.select({ value: count() }).from(project).where(and(eq(project.departmentId, current.id), eq(project.isInternal, false))),
-    db.select({ id: knowledgeSpace.id }).from(knowledgeSpace).where(eq(knowledgeSpace.departmentId, current.id)),
   ]);
-  const documentCount = spaces.length
-    ? await db
-        .select({ value: count() })
-        .from(projectDocument)
-        .where(inArray(projectDocument.knowledgeSpaceId, spaces.map((space) => space.id)))
-    : [{ value: 0 }];
-  const additionalSpaces = spaces.filter((space) => space.id !== `ks-department-${current.id}`).length;
-  const documents = Number(documentCount[0]?.value ?? 0);
   return {
     departmentId: current.id,
-    canDelete: Number(childCount[0]?.value ?? 0) === 0 && Number(memberCount[0]?.value ?? 0) === 0 && Number(projectCount[0]?.value ?? 0) === 0 && additionalSpaces === 0 && documents === 0,
-    dependencies: { childDepartments: Number(childCount[0]?.value ?? 0), activeMembers: Number(memberCount[0]?.value ?? 0), projects: Number(projectCount[0]?.value ?? 0), additionalKnowledgeSpaces: additionalSpaces, documents },
+    canDelete: Number(childCount[0]?.value ?? 0) === 0 && Number(memberCount[0]?.value ?? 0) === 0 && Number(projectCount[0]?.value ?? 0) === 0,
+    dependencies: { childDepartments: Number(childCount[0]?.value ?? 0), activeMembers: Number(memberCount[0]?.value ?? 0), projects: Number(projectCount[0]?.value ?? 0) },
   };
 }
 
@@ -71,23 +60,14 @@ export async function deleteOrganizationDepartment(input: {
     const currentOrganization = await requireKivisenseSuperAdmin(input.principal, tx);
     const [current] = await tx.select().from(department).where(and(eq(department.id, input.departmentId), eq(department.organizationId, currentOrganization.id))).limit(1).for("update", { of: department });
     if (!current) throw new KnowledgeManagementError(404, "RESOURCE_NOT_FOUND", "部门不存在");
-    const [children, members, projects, spaces] = await Promise.all([
+    const [children, members, projects] = await Promise.all([
       tx.select({ value: count() }).from(department).where(eq(department.parentDepartmentId, current.id)),
       tx.select({ value: count() }).from(departmentMember).where(and(eq(departmentMember.departmentId, current.id), eq(departmentMember.isActive, true))),
       tx.select({ value: count() }).from(project).where(and(eq(project.departmentId, current.id), eq(project.isInternal, false))),
-      tx.select({ id: knowledgeSpace.id }).from(knowledgeSpace).where(eq(knowledgeSpace.departmentId, current.id)),
     ]);
-    const documentCount = spaces.length
-      ? await tx
-          .select({ value: count() })
-          .from(projectDocument)
-          .where(inArray(projectDocument.knowledgeSpaceId, spaces.map((space) => space.id)))
-      : [{ value: 0 }];
-    const additionalSpaces = spaces.filter((space) => space.id !== `ks-department-${current.id}`);
-    if (Number(children[0]?.value ?? 0) || Number(members[0]?.value ?? 0) || Number(projects[0]?.value ?? 0) || additionalSpaces.length || Number(documentCount[0]?.value ?? 0)) {
-      throw new KnowledgeManagementError(409, "DEPARTMENT_NOT_EMPTY", "部门仍有关联子部门、成员、项目或资料，不能删除");
+    if (Number(children[0]?.value ?? 0) || Number(members[0]?.value ?? 0) || Number(projects[0]?.value ?? 0)) {
+      throw new KnowledgeManagementError(409, "DEPARTMENT_NOT_EMPTY", "部门仍有关联子部门、成员或项目，不能删除");
     }
-    await tx.delete(knowledgeSpace).where(eq(knowledgeSpace.id, `ks-department-${current.id}`));
     await tx.delete(department).where(eq(department.id, current.id));
     await writeAuditEvent({ actorUserId: input.principal.user.id, eventType: "department_deleted", entityType: "department", entityId: current.id, result: "succeeded", ...getRequestAuditContext(input.requestHeaders) }, tx);
     return { deleted: true } as const;
@@ -200,16 +180,6 @@ export async function createOrganizationDepartment(input: {
         createdBy: input.principal.user.id,
       })
       .returning();
-    await tx.insert(knowledgeSpace).values({
-      id: `ks-department-${id}`,
-      organizationId: currentOrganization.id,
-      departmentId: id,
-      type: "department",
-      visibility: "department_shared",
-      name: `${input.name} 共享空间`,
-      description: "部门默认共享知识空间",
-      createdBy: input.principal.user.id,
-    });
     await writeAuditEvent(
       {
         actorUserId: input.principal.user.id,
@@ -286,42 +256,17 @@ export async function updateOrganizationDepartment(input: {
       const activeChild = departments.some(
         (item) => item.parentDepartmentId === current.id && item.status === "active",
       );
-      const [[memberCount], activeSpaces] = await Promise.all([
-        tx
-          .select({ id: departmentMember.id })
-          .from(departmentMember)
-          .where(and(eq(departmentMember.departmentId, current.id), eq(departmentMember.isActive, true)))
-          .limit(1),
-        tx
-          .select({ id: knowledgeSpace.id })
-          .from(knowledgeSpace)
-          .where(and(eq(knowledgeSpace.departmentId, current.id), eq(knowledgeSpace.isActive, true)))
-      ]);
-      const activeDocuments = activeSpaces.length
-        ? await tx
-            .select({ id: projectDocument.id })
-            .from(projectDocument)
-            .where(and(
-              inArray(projectDocument.knowledgeSpaceId, activeSpaces.map((space) => space.id)),
-              inArray(projectDocument.status, ["pending", "active"]),
-            ))
-            .limit(1)
-        : [];
-      const onlyEmptyDefaultSpace =
-        activeSpaces.every((space) => space.id === `ks-department-${current.id}`) &&
-        activeDocuments.length === 0;
-      if (activeChild || memberCount || !onlyEmptyDefaultSpace) {
+      const [memberCount] = await tx
+        .select({ id: departmentMember.id })
+        .from(departmentMember)
+        .where(and(eq(departmentMember.departmentId, current.id), eq(departmentMember.isActive, true)))
+        .limit(1);
+      if (activeChild || memberCount) {
         throw new KnowledgeManagementError(
           409,
           "DEPARTMENT_NOT_EMPTY",
-          "停用前需先处理子部门、成员和知识空间",
+          "停用前需先处理子部门和成员",
         );
-      }
-      if (activeSpaces.length) {
-        await tx
-          .update(knowledgeSpace)
-          .set({ isActive: false, updatedAt: new Date() })
-          .where(inArray(knowledgeSpace.id, activeSpaces.map((space) => space.id)));
       }
     }
     if (input.headUserIds) {
@@ -352,21 +297,6 @@ export async function updateOrganizationDepartment(input: {
       })
       .where(eq(department.id, current.id))
       .returning();
-    if (input.status === "active") {
-      await tx
-        .update(knowledgeSpace)
-        .set({
-          isActive: true,
-          ...(input.name === undefined ? {} : { name: `${input.name} 共享空间` }),
-          updatedAt: new Date(),
-        })
-        .where(eq(knowledgeSpace.id, `ks-department-${current.id}`));
-    } else if (input.name !== undefined) {
-      await tx
-        .update(knowledgeSpace)
-        .set({ name: `${input.name} 共享空间`, updatedAt: new Date() })
-        .where(eq(knowledgeSpace.id, `ks-department-${current.id}`));
-    }
     await writeAuditEvent(
       {
         actorUserId: input.principal.user.id,

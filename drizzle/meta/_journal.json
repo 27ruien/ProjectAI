@@ -239,6 +239,27 @@
       "when": 1786089600000,
       "tag": "0033_product_map_skill",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1787232192064,
+      "tag": "0034_fearless_namora",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1787305212612,
+      "tag": "0035_fresh_alex_wilder",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1787309413829,
+      "tag": "0036_normal_sister_grimm",
+      "breakpoints": true
     }
   ]
 }

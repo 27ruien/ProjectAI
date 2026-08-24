@@ -1,0 +1,34 @@
+{
+  "caseId": "RA-XAGENT-05",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "Exact date preservation",
+    "Explicit scope exclusions",
+    "Constraint gaps"
+  ],
+  "mustContain": [
+    "2026-09-30 Fact",
+    "Chinese Web Fact",
+    "native and English out-of-scope Facts"
+  ],
+  "forbiddenClaims": [
+    "Moved launch date",
+    "Native app in scope",
+    "Invented budget"
+  ],
+  "globalPassCriteria": [
+    "All ten required output sections are present.",
+    "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
+    "Critical Questions use P0, P1, or P2.",
+    "All controlled domains are assessed without filling gaps.",
+    "No external project knowledge or fabricated fact is used."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

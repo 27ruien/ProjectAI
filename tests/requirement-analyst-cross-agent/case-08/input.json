@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "projectai-requirement-analysis-input-v1",
+  "inputMode": "portable_user_supplied",
+  "projectId": null,
+  "title": "Assumption Review",
+  "language": "zh",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "我们需要一个给门店员工使用的工具，提高现场问题处理效率。渠道、设备、账号、功能、上线时间都还没有决定，可以提出假设但必须标明。"
+    }
+  ],
+  "requestedOutcome": "Create a reviewable Requirement Analysis Pack without inventing missing facts."
+}

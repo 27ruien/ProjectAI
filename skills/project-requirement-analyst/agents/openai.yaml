@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Requirement Analyst"
+  short_description: "Build evidence-traceable requirement analysis packs"
+  default_prompt: "Use $project-requirement-analyst to turn these project materials into a reviewable Requirement Analysis Pack."

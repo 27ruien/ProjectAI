@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "projectai-requirement-analysis-input-v1",
+  "inputMode": "portable_user_supplied",
+  "projectId": null,
+  "title": "B2B Inventory Dashboard",
+  "language": "zh",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "区域库存经理每周一查看异常库存。交付物是一个 Web 看板，要减少人工对账时间。异常处理和成功指标还没讨论。"
+    }
+  ],
+  "requestedOutcome": "Create a reviewable Requirement Analysis Pack without inventing missing facts."
+}

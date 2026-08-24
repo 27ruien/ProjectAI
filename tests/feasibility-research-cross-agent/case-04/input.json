@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "Photo and Face Data",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Is the proposed photo-based experience feasible for a Shanghai pilot under the stated data flow?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "Users upload a face photo, a third-party service processes it, and a result is displayed. Consent, provider location, retention, deletion, notice, and security responsibilities are unknown."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

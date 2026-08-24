@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "projectai-requirement-analysis-input-v1",
+  "inputMode": "portable_user_supplied",
+  "projectId": null,
+  "title": "AI Support Draft Assistant",
+  "language": "zh",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "AI 根据客服粘贴的客户问题和内部说明生成回复草稿，必须人工确认后才能发送。尚未定义证据展示、失败处理、权限和数据保留。"
+    }
+  ],
+  "requestedOutcome": "Create a reviewable Requirement Analysis Pack without inventing missing facts."
+}

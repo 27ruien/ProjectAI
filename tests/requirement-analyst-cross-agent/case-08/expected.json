@@ -1,0 +1,35 @@
+{
+  "caseId": "RA-XAGENT-08",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "Bounded assumptions",
+    "Gap dominance",
+    "Confirmation requirement"
+  ],
+  "mustContain": [
+    "Store employee Fact",
+    "Business goal Fact",
+    "Channel/device/identity/function/deadline Gaps"
+  ],
+  "forbiddenClaims": [
+    "Web confirmed",
+    "Tablet confirmed",
+    "Launch date invented",
+    "Owner invented"
+  ],
+  "globalPassCriteria": [
+    "All ten required output sections are present.",
+    "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
+    "Critical Questions use P0, P1, or P2.",
+    "All controlled domains are assessed without filling gaps.",
+    "No external project knowledge or fabricated fact is used."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

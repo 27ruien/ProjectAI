@@ -17,6 +17,7 @@ export type AiGatewayResult = {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  tokenUsageEstimated: boolean;
   providerRequestId: string | null;
   latencyMs: number;
   /** Provider responses do not currently include a trustworthy price. */
@@ -38,7 +39,7 @@ export type ProjectAssistantGatewayInput = {
   systemPrompt: string;
   userPrompt: string;
   purpose: ProjectAssistantProviderPurpose;
-  /** Resolved server-side scenario binding; never accepted directly from UI. */
+  /** Optional server-resolved model override; never accepted directly from UI. */
   model?: string;
   /** Server-controlled model capability check; never accepted from the browser. */
   forceJsonObject?: boolean;
@@ -48,27 +49,8 @@ export type ProjectAssistantGatewayInput = {
   maxAttempts?: 1 | 2 | 3;
 };
 
-function responseFormatForPurpose(
-  purpose: ProjectAssistantProviderPurpose,
-): "text" | "json_object" {
-  return [
-    "requirement_extraction",
-    "requirement_repair",
-    "requirement_document",
-    "requirement_document_repair",
-    "requirement_overview",
-    "action_generation",
-    "risk_generation",
-    "weekly_report",
-    "timesheet_generation",
-    "timesheet_repair",
-    "product_map_step",
-    "product_map_step_repair",
-    "product_map_final",
-    "product_map_final_repair",
-  ].includes(purpose)
-    ? "json_object"
-    : "text";
+function responseFormatForPurpose(): "text" | "json_object" {
+  return "text";
 }
 
 function controlledProviderFailure(error: unknown): ProjectAssistantError {
@@ -137,7 +119,7 @@ export class ProjectAssistantGateway {
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       try {
         const model = input.model ?? PROJECT_ASSISTANT_PRIMARY_MODEL;
-        const result = this.result(await this.invoke(model, input), model, false);
+        const result = this.result(await this.invoke(model, input), model, false, input);
         if (result.actualModel !== model) throw new AiGatewayObservedError(result);
         return result;
       } catch (error) {
@@ -163,7 +145,7 @@ export class ProjectAssistantGateway {
       systemPrompt: input.systemPrompt,
       userPrompt: input.userPrompt,
       purpose: input.purpose,
-      responseFormat: input.forceJsonObject ? "json_object" : responseFormatForPurpose(input.purpose),
+      responseFormat: input.forceJsonObject ? "json_object" : responseFormatForPurpose(),
       disableThinkingForJson: input.disableThinkingForJson ?? true,
       timeoutMs: this.config.timeoutMs,
       temperature: this.config.temperature,
@@ -176,16 +158,21 @@ export class ProjectAssistantGateway {
     providerResult: ProjectAssistantProviderResult,
     requestedModel: string,
     fallbackUsed: boolean,
+    input: ProjectAssistantGatewayInput,
   ): AiGatewayResult {
+    const tokenUsageEstimated = providerResult.inputTokens === null || providerResult.outputTokens === null;
+    const inputTokens = providerResult.inputTokens ?? Math.max(1, Math.ceil((input.systemPrompt.length + input.userPrompt.length) / 3));
+    const outputTokens = providerResult.outputTokens ?? Math.max(1, Math.ceil(providerResult.text.length / 3));
     return {
       provider: this.provider.provider,
       requestedModel,
       actualModel: providerResult.actualModel,
       fallbackUsed,
       text: providerResult.text,
-      inputTokens: providerResult.inputTokens,
-      outputTokens: providerResult.outputTokens,
-      totalTokens: providerResult.totalTokens,
+      inputTokens,
+      outputTokens,
+      totalTokens: providerResult.totalTokens ?? inputTokens + outputTokens,
+      tokenUsageEstimated,
       providerRequestId: providerResult.providerRequestId,
       latencyMs: providerResult.latencyMs,
       // Fake calls are known to have zero external cost. DashScope does not

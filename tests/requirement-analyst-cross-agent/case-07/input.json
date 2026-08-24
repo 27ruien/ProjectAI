@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "projectai-requirement-analysis-input-v1",
+  "inputMode": "portable_user_supplied",
+  "projectId": null,
+  "title": "Explicit Phase Boundary",
+  "language": "zh",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "本期只交付活动落地页和报名表。抽奖、支付、CRM 自动同步、原生 App 明确不做；数据导出留到后续阶段。"
+    }
+  ],
+  "requestedOutcome": "Create a reviewable Requirement Analysis Pack without inventing missing facts."
+}

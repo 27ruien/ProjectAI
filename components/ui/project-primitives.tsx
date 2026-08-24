@@ -381,7 +381,7 @@ export function ScrollArea({ h, mah, className, m, mt, mb, ml, mr, mx, my, p, pt
 
 export function Modal({ opened, onClose, title, children, size, centered, ...props }: { opened: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; size?: string; centered?: boolean; [key: string]: unknown }) {
   void centered;
-  return <Dialog open={opened} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className={cn(size === "lg" ? "sm:max-w-2xl" : size === "xl" ? "sm:max-w-4xl" : "sm:max-w-lg")} {...(props as ComponentProps<typeof DialogContent>)}><DialogHeader>{title ? <DialogTitle>{title}</DialogTitle> : null}<DialogDescription className="sr-only">ProjectAI 操作对话框</DialogDescription></DialogHeader>{children}</DialogContent></Dialog>;
+  return <Dialog open={opened} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className={cn(size === "lg" ? "sm:max-w-[560px]" : size === "xl" ? "sm:max-w-4xl" : "sm:max-w-lg")} {...(props as ComponentProps<typeof DialogContent>)}><DialogHeader>{title ? <DialogTitle>{title}</DialogTitle> : null}<DialogDescription className="sr-only">ProjectAI 操作对话框</DialogDescription></DialogHeader>{children}</DialogContent></Dialog>;
 }
 
 export function Drawer({ opened, onClose, title, children, position = "right", size, ...props }: { opened: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; position?: "left" | "right" | "top" | "bottom"; size?: string | number; [key: string]: unknown }) {

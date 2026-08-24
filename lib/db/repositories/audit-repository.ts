@@ -9,6 +9,12 @@ import {
 const FORBIDDEN_METADATA_KEY =
   /password|passphrase|secret|token|cookie|authorization|api.?key|database.?url|connection|string|file.?content|document.?body|client.?content|object.?key|bucket|storage.?endpoint|presigned.?url|original.?filename/i;
 
+const SAFE_NUMERIC_USAGE_KEYS = new Set([
+  "inputTokens",
+  "outputTokens",
+  "totalTokens",
+]);
+
 function sanitizeValue(value: unknown, depth: number): unknown {
   if (depth > 3) return "[truncated]";
   if (value === null || typeof value === "boolean" || typeof value === "number") {
@@ -21,7 +27,13 @@ function sanitizeValue(value: unknown, depth: number): unknown {
   if (typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
-        .filter(([key]) => !FORBIDDEN_METADATA_KEY.test(key))
+        .filter(
+          ([key, item]) =>
+            !FORBIDDEN_METADATA_KEY.test(key) ||
+            (SAFE_NUMERIC_USAGE_KEYS.has(key) &&
+              (item === null ||
+                (typeof item === "number" && Number.isFinite(item)))),
+        )
         .slice(0, 30)
         .map(([key, item]) => [key, sanitizeValue(item, depth + 1)]),
     );

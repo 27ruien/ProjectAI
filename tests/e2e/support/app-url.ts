@@ -20,7 +20,7 @@ export function appPath(pathname: string) {
 
 export function appStorageKey(name: string) {
   const namespace = configuredBasePath().includes("projectai-staging")
-    ? "project-ai-os:staging"
-    : "project-ai-os";
+    ? "project-ai:staging"
+    : "project-ai";
   return `${namespace}:${name}`;
 }

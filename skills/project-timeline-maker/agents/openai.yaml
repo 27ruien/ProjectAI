@@ -1,0 +1,6 @@
+interface:
+  display_name: "Project Timeline Maker"
+  short_description: "将项目资料整理为可审核的结构化 Timeline Draft"
+  default_prompt: "Use $project-timeline-maker to turn these project materials into a reviewable Structured Timeline Draft."
+policy:
+  allow_implicit_invocation: true

@@ -25,20 +25,20 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (isLoopbackHost ? "http" : "https");
   const ogImage = `${protocol}://${host}${withBasePath("/og.png")}`;
   return {
-    title: { default: "Project AI OS", template: "%s · Project AI OS" },
-    description: "面向项目经理的 AI 项目交付工作台",
+    title: { default: "Project AI", template: "%s · Project AI" },
+    description: "轻量公司项目知识与效率工具",
     icons: { icon: withBasePath("/favicon.svg"), shortcut: withBasePath("/favicon.svg") },
     openGraph: {
-      title: "Project AI OS",
-      description: "项目交付的 AI 工作系统",
+      title: "Project AI",
+      description: "项目知识与跨项目综合查询",
       type: "website",
       locale: "zh_CN",
-      images: [{ url: ogImage, width: 1672, height: 941, alt: "Project AI OS 项目交付工作台" }],
+      images: [{ url: ogImage, width: 1672, height: 941, alt: "Project AI 项目知识工具" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "Project AI OS",
-      description: "项目交付的 AI 工作系统",
+      title: "Project AI",
+      description: "项目知识与跨项目综合查询",
       images: [ogImage],
     },
     robots: APP_RUNTIME.isStaging

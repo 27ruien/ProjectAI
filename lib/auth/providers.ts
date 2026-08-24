@@ -29,7 +29,12 @@ const authEnvironmentSchema = z.enum([
   "production",
 ]);
 
-const providerSchema = z.enum(["wecom", "mock-wecom", "legacy-credential-test"]);
+const providerSchema = z.enum([
+  "wecom",
+  "mock-wecom",
+  "legacy-credential-test",
+  "staging-credential",
+]);
 
 export type AuthProviderConfig = {
   environment: z.infer<typeof authEnvironmentSchema>;
@@ -54,9 +59,17 @@ export function getAuthProviderConfig(): AuthProviderConfig {
   const mockEnabled = process.env.ALLOW_MOCK_WECOM_AUTH === "true";
   const legacyCredentialTestEnabled =
     process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH === "true";
+  const stagingCredentialEnabled =
+    process.env.ALLOW_STAGING_CREDENTIAL_AUTH === "true";
 
   if (currentEnvironment === "production" && (provider === "mock-wecom" || mockEnabled)) {
     throw new Error("MOCK_WECOM_AUTH_PRODUCTION_FORBIDDEN");
+  }
+  if (
+    currentEnvironment === "production" &&
+    (provider === "staging-credential" || stagingCredentialEnabled)
+  ) {
+    throw new Error("STAGING_CREDENTIAL_AUTH_PRODUCTION_FORBIDDEN");
   }
   if (provider === "mock-wecom" && !mockEnabled) {
     throw new Error("MOCK_WECOM_AUTH_NOT_ENABLED");
@@ -66,6 +79,12 @@ export function getAuthProviderConfig(): AuthProviderConfig {
     (currentEnvironment !== "test" || !legacyCredentialTestEnabled)
   ) {
     throw new Error("LEGACY_CREDENTIAL_AUTH_TEST_ONLY");
+  }
+  if (
+    provider === "staging-credential" &&
+    (currentEnvironment !== "staging" || !stagingCredentialEnabled)
+  ) {
+    throw new Error("STAGING_CREDENTIAL_AUTH_NOT_ENABLED");
   }
 
   return { environment: currentEnvironment, provider, mockEnabled };
@@ -82,6 +101,11 @@ export function isMockWeComAuthEnabled(): boolean {
 
 export function isLegacyCredentialAuthEnabled(): boolean {
   return getAuthProviderConfig().provider === "legacy-credential-test";
+}
+
+export function isCredentialAuthEnabled(): boolean {
+  const provider = getAuthProviderConfig().provider;
+  return provider === "legacy-credential-test" || provider === "staging-credential";
 }
 
 export const MOCK_WECOM_IDENTITIES: Readonly<
@@ -162,6 +186,7 @@ export function publicAuthProvider(): {
   configured: boolean;
   implemented: boolean;
   stagingTestLoginEnabled: boolean;
+  credentialLoginEnabled: boolean;
 } {
   const config = getAuthProviderConfig();
   const stagingTestLoginEnabled = isStagingTestLoginEnabled();
@@ -171,14 +196,19 @@ export function publicAuthProvider(): {
       configured: true,
       implemented: true,
       stagingTestLoginEnabled,
+      credentialLoginEnabled: false,
     };
   }
-  if (config.provider === "legacy-credential-test") {
+  if (
+    config.provider === "legacy-credential-test" ||
+    config.provider === "staging-credential"
+  ) {
     return {
       provider: "wecom",
-      configured: false,
-      implemented: false,
+      configured: true,
+      implemented: true,
       stagingTestLoginEnabled,
+      credentialLoginEnabled: true,
     };
   }
   return {
@@ -191,5 +221,6 @@ export function publicAuthProvider(): {
     }).success,
     implemented: false,
     stagingTestLoginEnabled,
+    credentialLoginEnabled: false,
   };
 }

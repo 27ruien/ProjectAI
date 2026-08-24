@@ -131,10 +131,10 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
   const remove = async (item: Department) => {
     setDeleting(true);
     try {
-      const preview = await request<{ canDelete: boolean; dependencies: { childDepartments: number; activeMembers: number; projects: number; additionalKnowledgeSpaces: number; documents: number } }>("GET", undefined, `?previewDelete=${encodeURIComponent(item.id)}`);
+      const preview = await request<{ canDelete: boolean; dependencies: { childDepartments: number; activeMembers: number; projects: number } }>("GET", undefined, `?previewDelete=${encodeURIComponent(item.id)}`);
       if (!preview.canDelete) {
         const values = preview.dependencies;
-        setError(`“${item.name}”暂时不能删除：子部门 ${values.childDepartments}、成员 ${values.activeMembers}、项目 ${values.projects}、资料 ${values.documents}、额外资料空间 ${values.additionalKnowledgeSpaces}。请先处理这些关联项。`);
+        setError(`“${item.name}”暂时不能删除：子部门 ${values.childDepartments}、成员 ${values.activeMembers}、项目 ${values.projects}。请先处理这些关联项。`);
         setDeleteTarget(null);
         return;
       }
@@ -231,7 +231,7 @@ export function OrganizationPage({ mode = "structure" }: { mode?: "structure" | 
           onSave={save}
         />
       ) : null}
-      <ConfirmDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }} title={`删除部门「${deleteTarget?.name ?? ""}」？`} description="系统会先检查子部门、成员、项目和资料依赖；仅空部门可以永久删除。" confirmLabel="删除部门" destructive busy={deleting} onConfirm={() => { if (deleteTarget) void remove(deleteTarget); }} />
+      <ConfirmDialog open={deleteTarget !== null} onOpenChange={(open) => { if (!open && !deleting) setDeleteTarget(null); }} title={`删除部门「${deleteTarget?.name ?? ""}」？`} description="系统会先检查子部门、成员和项目依赖；仅空部门可以永久删除。" confirmLabel="删除部门" destructive busy={deleting} onConfirm={() => { if (deleteTarget) void remove(deleteTarget); }} />
     </div>
   );
 }

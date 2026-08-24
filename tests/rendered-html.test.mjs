@@ -3,14 +3,8 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const configuredBasePath = process.env.NEXT_PUBLIC_BASE_PATH?.trim() ?? "";
-const basePath = configuredBasePath
-  ? `/${configuredBasePath.replace(/^\/+|\/+$/g, "")}`
-  : "";
-
-function withBasePath(path) {
-  const normalized = path === "/" ? "/" : `/${path.replace(/^\/+/, "")}`;
-  return `${basePath}${normalized}`;
-}
+const basePath = configuredBasePath ? `/${configuredBasePath.replace(/^\/+|\/+$/g, "")}` : "";
+const withBasePath = (path) => `${basePath}${path === "/" ? "/" : `/${path.replace(/^\/+/, "")}`}`;
 
 async function render(path = "/") {
   const requestPath = withBasePath(path);
@@ -24,81 +18,33 @@ async function render(path = "/") {
   );
 }
 
-test("server-renders the public Project AI OS login", async () => {
+test("server-renders the public Project AI login", async () => {
   const response = await render("/login");
   assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
-  assert.match(html, /Project AI OS/);
+  assert.match(html, /Project AI/);
   assert.match(html, /企业微信登录/);
-  assert.match(html, /等待企业微信 OAuth 配置/);
-  assert.doesNotMatch(html, /进入测试环境|仅用于 Staging 产品验收/);
+  assert.doesNotMatch(html, /Project AI OS|Requirement|Workflow|Skill|Product Map/);
   assert.doesNotMatch(html, /type="password"|邮箱和密码|测试账号密码/);
-  assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
-test("root and active product routes use the Product V2 entry and authentication boundary", async () => {
-  const root = await render("/");
-  assert.match(String(root.status), /^30[2378]$/);
-  assert.match(root.headers.get("location") ?? "", /\/assistant$/);
-
-  const routes = [
-    "/assistant",
-    "/data-spaces/projects",
-    "/data-spaces/company",
-    "/organization",
-    "/settings",
-    "/admin/models",
-    "/help/models-and-api",
-  ];
-  for (const route of routes) {
-    const response = await render(route);
-    assert.match(String(response.status), /^30[2378]$/, `${route} should redirect`);
-    assert.match(response.headers.get("location") ?? "", /\/login(?:\?|$)/);
-  }
-});
-
-test("legacy product routes redirect to the retained Product V2 destinations", async () => {
-  const redirects = new Map([
-    ["/dashboard", "/assistant"],
-    ["/daily-report", "/assistant"],
-    ["/ai-workflows", "/assistant"],
-    ["/weekly-reports", "/assistant"],
-    ["/requirements", "/assistant"],
-    ["/projects", "/data-spaces/projects"],
-    ["/projects/project-001/overview", "/data-spaces/projects/project-001/overview"],
-    ["/knowledge", "/data-spaces"],
-    ["/chat", "/assistant"],
-    ["/company-knowledge", "/data-spaces/company"],
-    ["/settings/ai-models", "/admin/models"],
+test("root and catch-all source expose only Slim product routes", async () => {
+  const [home, catchAll] = await Promise.all([
+    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/[...slug]/page.tsx", import.meta.url), "utf8"),
   ]);
-  for (const [route, target] of redirects) {
-    const response = await render(route);
-    assert.match(String(response.status), /^30[2378]$/, `${route} should redirect`);
-    const location = new URL(response.headers.get("location") ?? "", "http://localhost");
-    assert.equal(`${location.pathname}${location.search}`, `${basePath}${target}`);
+  assert.match(home, /redirect\("\/projects"\)/);
+  assert.match(catchAll, /\["projects", "organization", "settings"\]/);
+  assert.doesNotMatch(catchAll, /assistant|requirements|timesheet|workflow|product-map/);
+});
+
+test("active source has no old routes, workers, agents, skills, or self-built RAG services", async () => {
+  const catchAll = await readFile(new URL("../app/[...slug]/page.tsx", import.meta.url), "utf8");
+  const packageJson = await readFile(new URL("../package.json", import.meta.url), "utf8");
+  assert.match(catchAll, /\["projects", "organization", "settings"\]/);
+  assert.doesNotMatch(catchAll, /assistant|requirements|timesheet|workflow|product-map/);
+  assert.equal(JSON.parse(packageJson).name, "project-ai-slim");
+  for (const relative of ["../scripts/document-worker.ts", "../skills/product-map/SKILL.md", "../extensions/wecom-timesheet/README.md", "../lib/ai/retrieval/index.ts", "../lib/ai/embeddings/index.ts", "../lib/product-map/service.ts"]) {
+    await assert.rejects(access(new URL(relative, import.meta.url)));
   }
-});
-
-test("login is the only public application page", async () => {
-  const response = await render("/login?returnTo=%2Fprojects");
-  assert.equal(response.status, 200);
-  const html = await response.text();
-  assert.match(html, /企业微信登录/);
-  assert.doesNotMatch(html, /邮箱|密码/);
-});
-
-test("keeps AI infrastructure centralized and removes starter preview", async () => {
-  const [packageJson, layout, gateway, knowledge] = await Promise.all([
-    readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../lib/ai/gateway/mock-ai-gateway.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/knowledge/mock-project-knowledge-service.ts", import.meta.url), "utf8"),
-  ]);
-  assert.match(packageJson, /"name": "project-ai-os"/);
-  assert.doesNotMatch(packageJson, /react-loading-skeleton/);
-  assert.match(layout, /Project AI OS/);
-  assert.match(gateway, /MockAIProvider/);
-  assert.match(knowledge, /answerProjectQuestion/);
-  await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
 });

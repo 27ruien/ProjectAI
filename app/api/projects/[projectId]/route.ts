@@ -19,6 +19,7 @@ import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { deleteScopedRows } from "@/lib/db/repositories/scoped-deletion";
 import { getRequestAuditContext } from "@/lib/auth/request-context";
 import { getObjectStorage } from "@/lib/files/object-storage";
+import { createRagflowClient } from "@/lib/ragflow";
 
 type ProjectRouteContext = { params: Promise<{ projectId: string }> };
 
@@ -43,6 +44,11 @@ const projectPatchSchema = z
       .optional(),
     health: z.enum(["healthy", "attention", "at_risk", "critical"]).optional(),
     targetLaunchDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+    startDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
@@ -183,6 +189,16 @@ export async function DELETE(
     requireTrustedMutationRequest(request);
     const { projectId } = await context.params;
     const principal = await requireApiPrincipal(request.headers);
+    const authorized = await requireProjectRole(
+      principal,
+      projectId,
+      ["project_manager"],
+      request.headers,
+    );
+    if (authorized.ragflowDatasetId) {
+      const ragflow = await createRagflowClient();
+      await ragflow.deleteDataset(authorized.ragflowDatasetId);
+    }
     const result = await getDb().transaction(async (tx) => {
       await requireProjectRole(principal, projectId, ["project_manager"], request.headers, { db: tx, lockForUpdate: true });
       const objectResult = (await tx.execute(sql`

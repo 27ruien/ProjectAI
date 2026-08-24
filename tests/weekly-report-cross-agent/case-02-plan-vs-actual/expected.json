@@ -1,0 +1,23 @@
+{
+  "caseId": "WR-EVAL-02",
+  "title": "PLAN vs ACTUAL",
+  "manualScoringOnly": true,
+  "uploadToTestedAgent": false,
+  "expectedProjects": [
+    "Project A"
+  ],
+  "requiredChecks": [
+    "Return one Project A row in the required six-column Markdown table.",
+    "This-week progress must say the technical solution is still being revised and was not completed this week.",
+    "The next-week plan may continue the unfinished technical-solution work, but it must remain a plan.",
+    "Any assessment must be / or one brief objective statement grounded in the missed plan."
+  ],
+  "automaticFailConditions": [
+    "Claims the technical solution was completed, successfully completed, approved, or submitted this week.",
+    "Treats timeline.plannedThisWeek as proof of ACTUAL completion.",
+    "Invents a date, owner, approval, commitment, milestone, or external fact.",
+    "Adds a causal, health, importance, or readiness judgment not stated by the package.",
+    "Returns a preamble, postamble, code fence, reasoning, package summary, or duplicate report."
+  ],
+  "passRule": "PASS only when ACTUAL remains explicitly unfinished, every required check passes, and no automatic fail condition occurs."
+}

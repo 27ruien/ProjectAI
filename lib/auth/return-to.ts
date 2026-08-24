@@ -1,20 +1,19 @@
-export const DEFAULT_APP_RETURN_TO = "/assistant";
+export const DEFAULT_APP_RETURN_TO = "/projects";
 
 const retiredRoutes = new Set([
   "/daily-report",
   "/ai-workflows",
   "/weekly-reports",
-  "/requirements/extract",
 ]);
 
 function isAllowedPathname(pathname: string): boolean {
-  return pathname === "/assistant"
-    || pathname === "/data-spaces"
-    || pathname === "/data-spaces/company"
-    || pathname.startsWith("/data-spaces/projects/")
+  return pathname === "/projects"
+    || pathname === "/projects/new"
+    || /^\/projects\/[^/]+\/(knowledge|members)$/u.test(pathname)
     || pathname === "/organization"
-    || pathname === "/settings/ai-models"
-    || pathname === "/admin/models";
+    || pathname === "/organization/structure"
+    || pathname === "/organization/members"
+    || pathname === "/settings";
 }
 
 /**

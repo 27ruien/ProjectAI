@@ -7,8 +7,6 @@ import {
 import {
   project,
   projectMember,
-  knowledgeSpace,
-  knowledgeSpaceMember,
   type NewProjectRecord,
   type ProjectRecord,
   type ProjectRole,
@@ -53,7 +51,11 @@ const projectSelection = {
   status: project.status,
   stage: project.stage,
   health: project.health,
+  startDate: project.startDate,
   targetLaunchDate: project.targetLaunchDate,
+  ragflowDatasetId: project.ragflowDatasetId,
+  knowledgeStatus: project.knowledgeStatus,
+  knowledgeFailureCode: project.knowledgeFailureCode,
   createdBy: project.createdBy,
   createdAt: project.createdAt,
   updatedAt: project.updatedAt,
@@ -194,32 +196,6 @@ export async function createProjectWithManager(
       role: "project_manager",
       createdBy: input.createdBy,
     });
-    const [space] = await executor
-      .select({ id: knowledgeSpace.id })
-      .from(knowledgeSpace)
-      .where(eq(knowledgeSpace.projectId, createdProject.id))
-      .limit(1);
-    if (!space) throw new Error("Project knowledge-space trigger did not create a space.");
-    await executor
-      .update(knowledgeSpace)
-      .set({
-        departmentId: createdProject.departmentId,
-        name: createdProject.name,
-        description: "项目知识空间",
-        updatedAt: new Date(),
-      })
-      .where(eq(knowledgeSpace.id, space.id));
-    await executor.insert(knowledgeSpaceMember).values({
-      id: crypto.randomUUID(),
-      knowledgeSpaceId: space.id,
-      userId: input.createdBy,
-      role: "editor",
-      accessLevel: "edit",
-      createdBy: input.createdBy,
-    }).onConflictDoUpdate({
-      target: [knowledgeSpaceMember.knowledgeSpaceId, knowledgeSpaceMember.userId],
-      set: { role: "manager", accessLevel: "edit", isActive: true, updatedAt: new Date() },
-    });
     return createdProject;
   };
   return db ? create(db) : getDb().transaction(create);
@@ -236,6 +212,7 @@ export async function updateProject(
       | "status"
       | "stage"
       | "health"
+      | "startDate"
       | "targetLaunchDate"
       | "departmentId"
     >
@@ -247,20 +224,5 @@ export async function updateProject(
     .set({ ...changes, updatedAt: new Date() })
     .where(eq(project.id, projectId))
     .returning();
-  if (record && (
-    changes.name !== undefined ||
-    changes.description !== undefined ||
-    changes.departmentId !== undefined
-  )) {
-    await db
-      .update(knowledgeSpace)
-      .set({
-        name: record.name,
-        description: record.description || "项目知识空间",
-        departmentId: record.departmentId,
-        updatedAt: new Date(),
-      })
-      .where(eq(knowledgeSpace.projectId, projectId));
-  }
   return record ?? null;
 }

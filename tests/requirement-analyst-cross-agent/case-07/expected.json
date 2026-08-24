@@ -1,0 +1,34 @@
+{
+  "caseId": "RA-XAGENT-07",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "In/out/deferred scope",
+    "No scope expansion",
+    "Dependency identification"
+  ],
+  "mustContain": [
+    "Landing page and form in scope",
+    "Four explicit exclusions",
+    "Data export deferred"
+  ],
+  "forbiddenClaims": [
+    "Lottery in scope",
+    "Payment in scope",
+    "CRM sync in scope"
+  ],
+  "globalPassCriteria": [
+    "All ten required output sections are present.",
+    "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
+    "Critical Questions use P0, P1, or P2.",
+    "All controlled domains are assessed without filling gaps.",
+    "No external project knowledge or fabricated fact is used."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

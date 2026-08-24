@@ -19,6 +19,7 @@ const original = {
   allowMock: process.env.ALLOW_MOCK_WECOM_AUTH,
   allowStagingTestLogin: process.env.ALLOW_STAGING_TEST_LOGIN,
   allowLegacyCredentialTest: process.env.ALLOW_LEGACY_CREDENTIAL_TEST_AUTH,
+  allowStagingCredential: process.env.ALLOW_STAGING_CREDENTIAL_AUTH,
   basePath: process.env.NEXT_PUBLIC_BASE_PATH,
   betterAuthUrl: process.env.BETTER_AUTH_URL,
   trustedOrigins: process.env.AUTH_TRUSTED_ORIGINS,
@@ -37,6 +38,7 @@ afterEach(() => {
   restore("ALLOW_MOCK_WECOM_AUTH", original.allowMock);
   restore("ALLOW_STAGING_TEST_LOGIN", original.allowStagingTestLogin);
   restore("ALLOW_LEGACY_CREDENTIAL_TEST_AUTH", original.allowLegacyCredentialTest);
+  restore("ALLOW_STAGING_CREDENTIAL_AUTH", original.allowStagingCredential);
   restore("NEXT_PUBLIC_BASE_PATH", original.basePath);
   restore("BETTER_AUTH_URL", original.betterAuthUrl);
   restore("AUTH_TRUSTED_ORIGINS", original.trustedOrigins);
@@ -83,12 +85,14 @@ describe("Product V2 auth provider guard", () => {
     assert.equal(publicConfig.provider, "mock-wecom");
     assert.deepEqual(Object.keys(publicConfig).sort(), [
       "configured",
+      "credentialLoginEnabled",
       "implemented",
       "provider",
       "stagingTestLoginEnabled",
     ]);
     assert.equal(publicConfig.implemented, true);
     assert.equal(publicConfig.stagingTestLoginEnabled, true);
+    assert.equal(publicConfig.credentialLoginEnabled, false);
     assert.deepEqual(validateStagingTestLoginRequest(stagingRequest()), {
       allowed: true,
     });
@@ -161,6 +165,28 @@ describe("Product V2 auth provider guard", () => {
     assert.throws(() => getAuthProviderConfig(), /LEGACY_CREDENTIAL_AUTH_TEST_ONLY/);
   });
 
+  it("enables credential login only for explicitly configured Staging", () => {
+    process.env.NEXT_PUBLIC_APP_ENV = "staging";
+    process.env.AUTH_PROVIDER = "staging-credential";
+    process.env.ALLOW_STAGING_CREDENTIAL_AUTH = "true";
+    const config = getAuthProviderConfig();
+    assert.equal(config.provider, "staging-credential");
+    assert.equal(publicAuthProvider().credentialLoginEnabled, true);
+
+    delete process.env.ALLOW_STAGING_CREDENTIAL_AUTH;
+    assert.throws(
+      () => getAuthProviderConfig(),
+      /STAGING_CREDENTIAL_AUTH_NOT_ENABLED/,
+    );
+
+    process.env.NEXT_PUBLIC_APP_ENV = "production";
+    process.env.ALLOW_STAGING_CREDENTIAL_AUTH = "true";
+    assert.throws(
+      () => getAuthProviderConfig(),
+      /STAGING_CREDENTIAL_AUTH_PRODUCTION_FORBIDDEN/,
+    );
+  });
+
   it("rejects external, protocol-relative, login, and cross-base return targets", () => {
     for (const value of [
       "https://attacker.invalid/",
@@ -169,12 +195,16 @@ describe("Product V2 auth provider guard", () => {
       "javascript:alert(1)",
       "/tool/not-projectai/knowledge",
     ]) {
-      assert.equal(safeReturnTo(value), "/assistant");
+      assert.equal(safeReturnTo(value), "/projects");
     }
-    assert.equal(safeReturnTo("/daily-report"), "/assistant");
-    assert.equal(safeReturnTo("/assistant"), "/assistant");
-    assert.equal(safeReturnTo("/data-spaces/projects/fictional/files"), "/data-spaces/projects/fictional/files");
-    assert.equal(safeServerReturnTo("/daily-report"), "/assistant");
-    assert.equal(safeServerReturnTo("/assistant"), "/assistant");
+    assert.equal(safeReturnTo("/daily-report"), "/projects");
+    assert.equal(safeReturnTo("/assistant"), "/projects");
+    assert.equal(safeReturnTo("/data-spaces/projects/fictional/files"), "/projects");
+    assert.equal(safeReturnTo("/projects"), "/projects");
+    assert.equal(safeReturnTo("/projects/uat-project-a/knowledge"), "/projects/uat-project-a/knowledge");
+    assert.equal(safeReturnTo("/projects/uat-project-a/members"), "/projects/uat-project-a/members");
+    assert.equal(safeReturnTo("/projects/uat-project-a/unknown"), "/projects");
+    assert.equal(safeServerReturnTo("/daily-report"), "/projects");
+    assert.equal(safeServerReturnTo("/projects"), "/projects");
   });
 });

@@ -1,0 +1,4 @@
+Use input.json as the project context.
+Perform one general web search query of your choice.
+Return a concise feasibility recommendation in Markdown.
+Do not read or use SKILL.md.

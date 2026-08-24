@@ -26,7 +26,9 @@ export interface AuthorizedProjectSummary {
   status: string;
   stage: string;
   health: string;
+  startDate: string | null;
   targetLaunchDate: string | null;
+  knowledgeStatus: "pending" | "ready" | "failed";
   createdAt: string;
   updatedAt: string;
   projectRole: ProjectMembershipRole | null;
@@ -48,41 +50,6 @@ export interface ViewerContext {
   aiConfigurationOrganizationId: string | null;
   canCreateProject: boolean;
   canViewAudit: boolean;
-}
-
-export type SerializableRecord = Record<string, unknown>;
-
-export interface ProjectMockPayload {
-  projectId: string;
-  project: SerializableRecord | null;
-  documents: SerializableRecord[];
-  citations: SerializableRecord[];
-  requirements: SerializableRecord[];
-  scopes: SerializableRecord[];
-  scopeChanges: SerializableRecord[];
-  actions: SerializableRecord[];
-  activities: SerializableRecord[];
-  decisions: SerializableRecord[];
-  reviews: SerializableRecord[];
-  risks: SerializableRecord[];
-  meetings: SerializableRecord[];
-}
-
-/**
- * Mock data that is safe to serialize into the authenticated workspace.
- *
- * Catalogs are global product configuration. Every array that contains a
- * projectId is filtered on the server before it reaches a Client Component.
- */
-export interface WorkspaceMockPayload {
-  skills: SerializableRecord[];
-  workflows: SerializableRecord[];
-  aiProviders: SerializableRecord[];
-  aiModels: SerializableRecord[];
-  aiModelProfiles: SerializableRecord[];
-  reviews: SerializableRecord[];
-  citations: SerializableRecord[];
-  aiExecutions: SerializableRecord[];
 }
 
 export function systemRoleLabel(role: SystemRole): string {

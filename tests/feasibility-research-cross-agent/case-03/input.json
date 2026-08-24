@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "Build versus Vendor",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Should the team build the capability internally or buy a vendor service?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "The team needs an AI visual generation capability for a six-month pilot. Traffic, SLA, integration limits, commercial quote, data terms, and exit strategy are not supplied."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

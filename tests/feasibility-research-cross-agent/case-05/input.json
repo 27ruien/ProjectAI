@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "Embedded Platform Constraints",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Can the experience run inside the specified embedded mobile browser without a native application?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "Entry is an embedded mobile browser. It needs file upload, camera, WebGL, and payment redirect. Exact platform version and policy approval are unknown."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

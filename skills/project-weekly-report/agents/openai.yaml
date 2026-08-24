@@ -1,0 +1,6 @@
+interface:
+  display_name: "Project Weekly Report"
+  short_description: "将日报与项目事实提炼为管理层周报 Markdown"
+  default_prompt: "Use $project-weekly-report to turn this Project AI execution package into a concise weekly report Markdown file."
+policy:
+  allow_implicit_invocation: true

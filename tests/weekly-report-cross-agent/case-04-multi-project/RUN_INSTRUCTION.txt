@@ -1,0 +1,6 @@
+Read SKILL.md first.
+Then use only execution-package.json as the factual source.
+Follow all rules in SKILL.md.
+Do not use external project knowledge.
+Do not invent missing facts.
+Return only the final weekly report in Markdown.

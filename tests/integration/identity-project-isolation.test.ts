@@ -9,6 +9,7 @@ import {
   auditEvent,
   project,
   projectMember,
+  projectTimeline,
   rateLimit,
   session,
   user,
@@ -43,7 +44,16 @@ import {
 } from "../../app/api/auth/[...all]/route";
 import { GET as getHealth } from "../../app/api/health/route";
 import { sanitizeAuditMetadata } from "../../lib/db/repositories/audit-repository";
-import { HYBRID_RETRIEVAL_PROFILE_ID } from "../../lib/ai/retrieval/config";
+import {
+  createDatabaseStructuredTimelineRepository,
+} from "../../lib/db/repositories/project-timeline-repository";
+import {
+  GET as getProjectTimelineRoute,
+  PUT as putProjectTimelineRoute,
+} from "../../app/api/projects/[projectId]/timeline/route";
+import { getProjectTimeline } from "../../lib/timeline";
+import { POST as postWeeklyReportContext } from "../../app/api/skills/project-weekly-report/context/route";
+import type { WeeklyReportExecutionPackage } from "../../lib/weekly-report";
 
 type SeedUser = NonNullable<Awaited<ReturnType<typeof findUserByEmail>>>;
 const execFileAsync = promisify(execFile);
@@ -308,16 +318,10 @@ describe("database constraints", () => {
       assert.equal(response.status, 200);
       assert.deepEqual(await response.json(), {
         status: "ok",
-        aiAssistantEnabled: false,
-        aiProviderConfigured: false,
+        aiAssistantEnabled: true,
+        aiProviderConfigured: true,
         aiGatewayVersion: "1",
-        aiEmbeddingEnabled: false,
-        embeddingGatewayVersion: "2",
-        pgvectorReady: false,
-        assistantRetrievalMode: "lexical",
-        hybridRetrievalProfile: HYBRID_RETRIEVAL_PROFILE_ID,
-        hybridRetrievalReady: false,
-        queryEmbeddingConfigured: false,
+        knowledgeServiceConfigured: true,
       });
       assert.equal(response.headers.get("x-projectai-commit-sha"), runtimeSha);
       assert.equal(response.headers.get("x-projectai-embedding-model"), null);
@@ -1248,5 +1252,263 @@ describe("database-backed authentication and API authorization", () => {
       userColumns.rows.some((column) => column.column_name === "password_hash"),
       false,
     );
+  });
+});
+
+describe("Project Timeline persistence and Weekly Report provider", () => {
+  const projectId = `project-timeline-integration-${crypto.randomUUID()}`;
+  const projectName = `Timeline Integration ${crypto.randomUUID()}`;
+  let managerCookie = "";
+  let viewerCookie = "";
+
+  const timelineData = {
+    schemaVersion: 1 as const,
+    language: "zh" as const,
+    includeStatus: true,
+    tasks: [
+      {
+        id: "timeline-task-1",
+        stage: "开发",
+        name: "结构化排期接入",
+        owners: ["Kivisense", "Brands"],
+        status: "incomplete" as const,
+        start: "2026-08-17",
+        end: "2026-08-28",
+      },
+    ],
+  };
+
+  before(async () => {
+    await getDb().transaction(async (tx) => {
+      await tx.insert(project).values({
+        id: projectId,
+        name: projectName,
+        clientName: "Timeline Integration Client",
+        description: "Synthetic Timeline persistence integration fixture",
+        status: "active",
+        stage: "development",
+        createdBy: managerA.id,
+      });
+      await tx.insert(projectMember).values([
+        {
+          id: `membership-${crypto.randomUUID()}`,
+          projectId,
+          userId: managerA.id,
+          role: "project_manager",
+          createdBy: managerA.id,
+        },
+        {
+          id: `membership-${crypto.randomUUID()}`,
+          projectId,
+          userId: viewerA.id,
+          role: "viewer",
+          createdBy: managerA.id,
+        },
+      ]);
+    });
+    const [managerLogin, viewerLogin] = await Promise.all([
+      signIn(
+        required("SEED_MANAGER_A_EMAIL"),
+        required("SEED_MANAGER_A_PASSWORD"),
+        "198.51.100.151",
+      ),
+      signIn(
+        required("SEED_VIEWER_A_EMAIL"),
+        required("SEED_VIEWER_A_PASSWORD"),
+        "198.51.100.152",
+      ),
+    ]);
+    assert.equal(managerLogin.response.status, 200);
+    assert.equal(viewerLogin.response.status, 200);
+    managerCookie = managerLogin.cookie;
+    viewerCookie = viewerLogin.cookie;
+  });
+
+  after(async () => {
+    await getDb().delete(auditEvent).where(eq(auditEvent.projectId, projectId));
+    await getDb().delete(project).where(eq(project.id, projectId));
+  });
+
+  function timelineRequest(
+    method: "GET" | "PUT",
+    cookie: string,
+    body?: Record<string, unknown>,
+  ): Request {
+    return new Request(`http://local.test/api/projects/${projectId}/timeline`, {
+      method,
+      headers: {
+        cookie,
+        ...(method === "PUT"
+          ? {
+              "content-type": "application/json",
+              origin: trustedAuthOrigin(),
+            }
+          : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  }
+
+  it("saves one Project-linked Timeline snapshot in PostgreSQL", async () => {
+    const response = await putProjectTimelineRoute(
+      timelineRequest("PUT", managerCookie, {
+        name: "真实结构化 Timeline",
+        data: timelineData,
+        expectedVersion: null,
+      }),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { timeline: { version: number } };
+    assert.equal(body.timeline.version, 1);
+
+    const [stored] = await getDb()
+      .select()
+      .from(projectTimeline)
+      .where(eq(projectTimeline.projectId, projectId));
+    assert.ok(stored);
+    assert.equal(stored.projectId, projectId);
+    assert.deepEqual(stored.dataJson, timelineData);
+    assert.equal(stored.updatedBy, managerA.id);
+  });
+
+  it("reloads the complete snapshot and prevents a stale overwrite", async () => {
+    const getResponse = await getProjectTimelineRoute(
+      timelineRequest("GET", managerCookie),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(getResponse.status, 200);
+    const loaded = (await getResponse.json()) as {
+      timeline: { data: typeof timelineData; version: number };
+    };
+    assert.deepEqual(loaded.timeline.data, timelineData);
+    assert.equal(loaded.timeline.version, 1);
+
+    const updateResponse = await putProjectTimelineRoute(
+      timelineRequest("PUT", managerCookie, {
+        name: "真实结构化 Timeline",
+        data: timelineData,
+        expectedVersion: 1,
+      }),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(updateResponse.status, 200);
+    assert.equal(((await updateResponse.json()) as { timeline: { version: number } }).timeline.version, 2);
+
+    const staleResponse = await putProjectTimelineRoute(
+      timelineRequest("PUT", managerCookie, {
+        name: "不应覆盖",
+        data: timelineData,
+        expectedVersion: 1,
+      }),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(staleResponse.status, 409);
+  });
+
+  it("allows Viewer read, rejects Viewer save, and hides cross-project reads", async () => {
+    const viewerRead = await getProjectTimelineRoute(
+      timelineRequest("GET", viewerCookie),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(viewerRead.status, 200);
+
+    const viewerWrite = await putProjectTimelineRoute(
+      timelineRequest("PUT", viewerCookie, {
+        name: "Viewer must not write",
+        data: timelineData,
+        expectedVersion: 2,
+      }),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(viewerWrite.status, 403);
+
+    const managerBLogin = await signIn(
+      required("SEED_MANAGER_B_EMAIL"),
+      required("SEED_MANAGER_B_PASSWORD"),
+      "198.51.100.153",
+    );
+    assert.equal(managerBLogin.response.status, 200);
+    const hiddenRead = await getProjectTimelineRoute(
+      timelineRequest("GET", managerBLogin.cookie),
+      { params: Promise.resolve({ projectId }) },
+    );
+    assert.equal(hiddenRead.status, 404);
+  });
+
+  it("adapts the real snapshot through StructuredTimelineRepository without loading a Timeline document", async () => {
+    const repository = createDatabaseStructuredTimelineRepository();
+    const structured = await repository.findProjectTimeline(projectId);
+    assert.equal(structured?.projectId, projectId);
+    assert.deepEqual(structured?.tasks[0], {
+      id: "timeline-task-1",
+      stage: "开发",
+      name: "结构化排期接入",
+      owners: ["Kivisense", "Brands"],
+      startDate: "2026-08-17",
+      endDate: "2026-08-28",
+      status: "incomplete",
+    });
+
+    let fallbackLoads = 0;
+    const context = await getProjectTimeline({
+      projectId,
+      authorizedProjectIds: new Set([projectId]),
+      period: { weekStart: "2026-08-17", weekEnd: "2026-08-23" },
+      structuredRepository: repository,
+      documentFallback: {
+        available: true,
+        async load() {
+          fallbackLoads += 1;
+          return [{
+            id: "T1",
+            kind: "timeline",
+            documentId: "timeline-document-must-not-load",
+            documentName: "Timeline.xlsx",
+            excerpt: "conflicting document schedule",
+            similarity: 1,
+          }];
+        },
+      },
+    });
+    assert.equal(context.source, "structured");
+    assert.equal(fallbackLoads, 0);
+    assert.deepEqual(context.documentEvidence, []);
+  });
+
+  it("returns structured Timeline from the real Weekly Report context API without repository injection", async () => {
+    const csv = [
+      "项目,任务,日期,状态,负责人",
+      `\"${projectName}\",\"完成真实 Provider 验证\",2026-08-20,进行中,Ryan`,
+    ].join("\n");
+    const form = new FormData();
+    form.set("dailyReport", new File([csv], "timeline-provider-daily-report.csv", {
+      type: "text/csv",
+    }));
+    form.set("weekStart", "2026-08-17");
+    form.set("weekEnd", "2026-08-23");
+    const response = await postWeeklyReportContext(new Request(
+      "http://local.test/api/skills/project-weekly-report/context",
+      {
+        method: "POST",
+        headers: {
+          cookie: managerCookie,
+          origin: trustedAuthOrigin(),
+        },
+        body: form,
+      },
+    ));
+    assert.equal(response.status, 201);
+    const { executionPackage } = (await response.json()) as {
+      executionPackage: WeeklyReportExecutionPackage;
+    };
+    assert.equal(executionPackage.projects.length, 1);
+    assert.equal(executionPackage.projects[0].project.id, projectId);
+    assert.equal(executionPackage.projects[0].timeline.source, "structured");
+    assert.equal(
+      executionPackage.projects[0].timeline.plannedThisWeek[0]?.name,
+      "结构化排期接入",
+    );
+    assert.deepEqual(executionPackage.projects[0].timeline.documentEvidence, []);
   });
 });

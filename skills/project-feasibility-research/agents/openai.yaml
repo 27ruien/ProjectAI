@@ -1,0 +1,4 @@
+interface:
+  display_name: "Project Feasibility Research"
+  short_description: "Run multi-pass evidence-backed feasibility research"
+  default_prompt: "Use $project-feasibility-research to research this project decision with a multi-pass evidence protocol."

@@ -1,0 +1,24 @@
+{
+  "caseId": "WR-EVAL-01",
+  "title": "Normal Aggregation",
+  "manualScoringOnly": true,
+  "uploadToTestedAgent": false,
+  "expectedProjects": [
+    "Project A"
+  ],
+  "requiredChecks": [
+    "Return one Project A row in the required six-column Markdown table.",
+    "Merge the repeated multi-day requirement-analysis work into outcomes rather than a day-by-day chronology.",
+    "State that requirement analysis was completed without duplicating the same confirmation work.",
+    "Keep this-week progress to no more than three concise bullets.",
+    "Use / for milestone and support; assessment must be / or one brief objective statement grounded only in the completed work."
+  ],
+  "automaticFailConditions": [
+    "Lists Monday through Friday as a chronology.",
+    "Includes low-value routine details such as attending the regular meeting or replying to messages.",
+    "Creates an unsupported next-week task, milestone, owner, date, support request, or generic assessment.",
+    "Uses 按计划, 将完成, 将启动, 预计完成, 下周完成, 下周上线, or 下周交付 without explicit plan evidence.",
+    "Returns a preamble, postamble, code fence, reasoning, package summary, or duplicate report."
+  ],
+  "passRule": "PASS only when every required check passes and no automatic fail condition occurs."
+}

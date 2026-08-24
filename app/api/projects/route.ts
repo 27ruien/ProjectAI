@@ -6,8 +6,6 @@ import {
 } from "@/lib/auth/session";
 import { writeAuditEvent } from "@/lib/db/repositories/audit-repository";
 import { getDb } from "@/lib/db/client";
-import { eq } from "drizzle-orm";
-import { knowledgeSpace } from "@/lib/db/schema";
 import {
   createProjectWithManager,
   listAuthorizedProjects,
@@ -16,7 +14,8 @@ import { knowledgeManagementErrorResponse } from "@/lib/knowledge/http";
 import {
   serializeAuthorizedProject,
 } from "@/lib/projects/serialization";
-import { resolveProjectCreationScope } from "@/lib/knowledge/product-v2";
+import { resolveProjectCreationScope } from "@/lib/projects/creation-scope";
+import { provisionProjectDataset } from "@/lib/knowledge-slim";
 
 const projectInputSchema = z
   .object({
@@ -41,6 +40,11 @@ const projectInputSchema = z
       .enum(["healthy", "attention", "at_risk", "critical"])
       .default("healthy"),
     targetLaunchDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .optional(),
+    startDate: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
       .nullable()
@@ -90,6 +94,7 @@ export async function POST(request: Request): Promise<Response> {
           ...parsed.data,
           organizationId: scope.organizationId,
           departmentId: scope.departmentId,
+          startDate: parsed.data.startDate ?? null,
           targetLaunchDate: parsed.data.targetLaunchDate ?? null,
           createdBy: principal.user.id,
         },
@@ -109,22 +114,33 @@ export async function POST(request: Request): Promise<Response> {
       );
       return created;
     });
-    const [createdSpace] = await getDb()
-      .select({ id: knowledgeSpace.id })
-      .from(knowledgeSpace)
-      .where(eq(knowledgeSpace.projectId, createdProject.id))
-      .limit(1);
-    if (!createdSpace) throw new Error("Created project is missing its knowledge space.");
-    return jsonResponse(
-      {
-        project: serializeAuthorizedProject(
-          { ...createdProject, projectRole: "project_manager" },
-          principal,
-        ),
-        knowledgeSpaceId: createdSpace.id,
-      },
-      { status: 201 },
-    );
+    try {
+      const provisioned = await provisionProjectDataset({
+        projectId: createdProject.id,
+        actorUserId: principal.user.id,
+      });
+      return jsonResponse(
+        {
+          project: serializeAuthorizedProject(
+            { ...provisioned, projectRole: "project_manager" },
+            principal,
+          ),
+        },
+        { status: 201 },
+      );
+    } catch {
+      return jsonResponse(
+        {
+          error: {
+            code: "PROJECT_KNOWLEDGE_PROVISION_FAILED",
+            message: "项目已保存，但知识空间创建失败；请在项目内重试",
+          },
+          projectId: createdProject.id,
+          knowledgeStatus: "failed",
+        },
+        { status: 502 },
+      );
+    }
   } catch (error) {
     if (error instanceof SyntaxError) {
       return jsonResponse(

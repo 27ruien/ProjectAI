@@ -1,0 +1,35 @@
+{
+  "caseId": "RA-XAGENT-04",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "Third-party dependency gaps",
+    "P0/P1 questions",
+    "No invented API"
+  ],
+  "mustContain": [
+    "Integration Fact",
+    "API documentation Gap",
+    "authentication Gap",
+    "test environment Gap"
+  ],
+  "forbiddenClaims": [
+    "Invented endpoint",
+    "Invented credential",
+    "Invented owner"
+  ],
+  "globalPassCriteria": [
+    "All ten required output sections are present.",
+    "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
+    "Critical Questions use P0, P1, or P2.",
+    "All controlled domains are assessed without filling gaps.",
+    "No external project knowledge or fabricated fact is used."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

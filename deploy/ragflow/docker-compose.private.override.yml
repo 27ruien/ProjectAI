@@ -1,0 +1,28 @@
+services:
+  ragflow-cpu:
+    ports: !reset
+      - "127.0.0.1:${RAGFLOW_LOOPBACK_WEB_PORT:-9388}:80"
+      - "127.0.0.1:${RAGFLOW_LOOPBACK_API_PORT:-9380}:9380"
+    networks:
+      - ragflow
+      - projectai-ragflow-private
+
+  es01:
+    ports: !reset []
+
+  opensearch01:
+    ports: !reset []
+
+  mysql:
+    ports: !reset []
+
+  minio:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+networks:
+  projectai-ragflow-private:
+    external: true
+    name: projectai-ragflow-private

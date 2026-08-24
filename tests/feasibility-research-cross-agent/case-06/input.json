@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "3D Content Production",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Is a 3D product experience feasible for 500 SKUs before the campaign launch?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "The campaign needs 500 product SKUs in 3D. No source asset inventory, quality standard, production throughput, review owner, localization scope, or rework rate is known."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

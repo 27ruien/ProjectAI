@@ -4,7 +4,7 @@ import { publicAuthProvider } from "@/lib/auth/providers";
 
 export const metadata: Metadata = {
   title: "登录",
-  description: "登录 Project AI OS 企业工作台",
+  description: "登录 Project AI 项目知识工具",
 };
 
 type LoginRouteProps = {
@@ -24,6 +24,7 @@ export default async function LoginRoute({ searchParams }: LoginRouteProps) {
       providerConfigured={authProvider.configured}
       providerImplemented={authProvider.implemented}
       stagingTestLoginEnabled={authProvider.stagingTestLoginEnabled}
+      credentialLoginEnabled={authProvider.credentialLoginEnabled}
     />
   );
 }

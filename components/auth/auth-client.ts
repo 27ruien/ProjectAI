@@ -44,6 +44,24 @@ export async function signInToStagingTestEnvironment(): Promise<void> {
   await response.text();
 }
 
+export async function signInWithEmail(input: {
+  email: string;
+  password: string;
+}): Promise<void> {
+  const response = await fetch(withBasePath("/api/auth/sign-in/email"), {
+    method: "POST",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      email: input.email.trim().toLowerCase(),
+      password: input.password,
+      rememberMe: true,
+    }),
+  });
+  if (!response.ok) throw new Error("CREDENTIAL_SIGN_IN_FAILED");
+  await response.text();
+}
+
 export async function signOut(): Promise<void> {
   const response = await fetch(withBasePath("/api/auth/sign-out"), {
     method: "POST",

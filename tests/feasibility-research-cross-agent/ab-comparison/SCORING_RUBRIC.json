@@ -1,0 +1,21 @@
+{
+  "executionStatus": "NOT_TESTED",
+  "comparisonRule": "Run both instructions in fresh external-Agent sessions with identical input.json and the same search capability/time budget. Score observed outputs only.",
+  "metrics": [
+    "research_dimension_coverage",
+    "first_party_sources",
+    "alternatives_considered",
+    "contradiction_searches",
+    "blockers_unknowns_identified",
+    "conclusion_change"
+  ],
+  "metricDefinitions": {
+    "research_dimension_coverage": "Count distinct required dimensions with evidence or an explicit Unknown (0-10).",
+    "first_party_sources": "Count valid Grade A direct first-party sources supporting a relevant claim.",
+    "alternatives_considered": "Count materially different approaches, not same-class vendor variants.",
+    "contradiction_searches": "Count documented counter-searches tied to a core option.",
+    "blockers_unknowns_identified": "Count decision-changing unknowns with a named resolution path.",
+    "conclusion_change": "Record whether contradiction/alternative evidence changed verdict or recommendation; do not assume that change is always better."
+  },
+  "passPolicy": "No automatic winner. Human reviewer records both observations; any superiority claim requires observed evidence across the listed metrics."
+}

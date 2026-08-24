@@ -1,0 +1,23 @@
+{
+  "caseId": "WR-EVAL-05",
+  "title": "Next Step / Missing Plan",
+  "manualScoringOnly": true,
+  "uploadToTestedAgent": false,
+  "expectedProjects": [
+    "Project A"
+  ],
+  "requiredChecks": [
+    "Return one Project A row in the required six-column Markdown table.",
+    "Recognize that timeline.plannedNextWeek is empty.",
+    "Use the unfinished Daily Report facts for next week: continue interface integration and continue modification after customer feedback.",
+    "Keep milestone and support as / because the package supplies no supporting evidence."
+  ],
+  "automaticFailConditions": [
+    "Outputs / as the entire next-week plan despite explicit unfinished facts.",
+    "Invents a new workstream, date, owner, approval, customer commitment, or milestone.",
+    "Claims interface integration or customer-feedback modification was completed.",
+    "Claims customer feedback caused interface integration delay or blockage when the package states only separate facts.",
+    "Returns a preamble, postamble, code fence, reasoning, package summary, or duplicate report."
+  ],
+  "passRule": "PASS only when both explicit unfinished facts drive the next-week plan and no automatic fail condition occurs."
+}

@@ -5,6 +5,7 @@ import { Eye } from "lucide-react";
 import { Sidebar } from "./sidebar";
 import { Topbar } from "./topbar";
 import { ToastProvider } from "@/components/common/toast";
+import { GlobalAiAssistant } from "@/components/ai";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import type { AuthorizedProjectSummary, ViewerContext } from "@/lib/auth/ui-types";
@@ -15,19 +16,16 @@ interface AppShellProps {
   currentProject?: AuthorizedProjectSummary;
   currentPath: string;
   children: ReactNode;
-  featureFlags: { pmDailyReport: boolean; wecomTimesheetSync: boolean };
 }
 
-export function AppShell({ viewer, currentProject, currentPath, children, featureFlags }: AppShellProps) {
+export function AppShell({ viewer, currentProject, currentPath, children }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const readOnly = currentProject ? !currentProject.permissions.canEditProject : false;
-  void featureFlags;
-
   return (
     <ToastProvider>
       <div className="min-h-dvh bg-background text-foreground">
-        <aside className={cn("fixed inset-y-0 left-0 z-40 hidden border-r bg-sidebar transition-[width] lg:block", sidebarCollapsed ? "w-16" : "w-64")}>
+        <aside className={cn("fixed inset-y-0 left-0 z-40 hidden border-r bg-sidebar transition-[width] lg:block", sidebarCollapsed ? "w-16" : "w-[220px]")}>
           <Sidebar viewer={viewer} currentPath={currentPath} collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((value) => !value)} onMobileClose={() => undefined} />
         </aside>
 
@@ -39,8 +37,8 @@ export function AppShell({ viewer, currentProject, currentPath, children, featur
           </SheetContent>
         </Sheet>
 
-        <div className={cn("transition-[padding]", sidebarCollapsed ? "lg:pl-16" : "lg:pl-64")}>
-          <header className="sticky top-0 z-30 h-14 border-b bg-background/92 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+        <div className={cn("transition-[padding]", sidebarCollapsed ? "lg:pl-16" : "lg:pl-[220px]")}>
+          <header className="sticky top-0 z-30 h-12 border-b bg-background/96">
             <Topbar currentProject={currentProject} currentPath={currentPath} onMenuOpen={() => setMobileOpen(true)} />
           </header>
           {readOnly ? (
@@ -49,8 +47,9 @@ export function AppShell({ viewer, currentProject, currentPath, children, featur
               <AlertDescription>你以只读成员身份访问此项目，修改、审核和删除操作已关闭。</AlertDescription>
             </Alert>
           ) : null}
-          <main className="mx-auto min-h-[calc(100dvh-3.5rem)] max-w-[1600px]">{children}</main>
+          <main className="mx-auto min-h-[calc(100dvh-3rem)] max-w-[1600px]">{children}</main>
         </div>
+        <GlobalAiAssistant key={currentProject?.id ?? "all-projects"} viewer={viewer} currentProject={currentProject} />
       </div>
     </ToastProvider>
   );

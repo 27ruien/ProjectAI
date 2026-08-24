@@ -1,0 +1,37 @@
+{
+  "caseId": "FR-XAGENT-03",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "Vendor/market and technical dimensions",
+    "Official pricing/terms attempt",
+    "Build and buy contradictions"
+  ],
+  "mustContain": [
+    "build and vendor options",
+    "commercial Unknown",
+    "data terms Unknown",
+    "exit risk"
+  ],
+  "globalPassCriteria": [
+    "Research Plan precedes research and covers all ten dimensions.",
+    "All six Research Protocol passes are evidenced in order.",
+    "Every core option has a contradiction search.",
+    "At least one materially different alternative is assessed.",
+    "A-D sources have real direct URLs and honest grades; inference is Grade E.",
+    "Blockers and Unknowns are explicit; cost and effort are sourced, assumed, or UNKNOWN.",
+    "No verdict is issued before every stopping criterion is met."
+  ],
+  "forbiddenClaims": [
+    "Invented URL, source, quote, price, platform capability, or legal conclusion.",
+    "One-search conclusion with no contradiction or alternative pass.",
+    "GO while a blocker Unknown remains."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

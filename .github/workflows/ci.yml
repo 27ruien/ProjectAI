@@ -1,21 +1,25 @@
-name: Focused MVP CI
+name: Project AI Slim CI
 
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - refactor/project-ai-slim
+    tags:
+      - "staging-validation-*"
 
 concurrency:
-  group: focused-mvp-${{ github.ref }}
+  group: projectai-slim-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  focused-mvp:
+  slim-validation:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     services:
       postgres:
         image: pgvector/pgvector:0.8.1-pg17
@@ -35,61 +39,22 @@ jobs:
       NODE_ENV: test
       NEXT_PUBLIC_APP_ENV: test
       NEXT_PUBLIC_BASE_PATH: /tool/projectai
+      NEXT_PUBLIC_APP_VERSION: 1.0.0-staging
       NEXT_PUBLIC_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-      FOCUSED_UI_EVIDENCE_DIR: review-artifacts/screenshots
-      REVIEW_EVIDENCE_PROFILE: focused-mvp
       DATABASE_URL: postgresql://projectai_ci:projectai_ci_database_only@127.0.0.1:5432/projectai_ci
       BETTER_AUTH_URL: http://127.0.0.1:3200/tool/projectai/api/auth
+      AUTH_TRUSTED_ORIGINS: http://127.0.0.1:3200
       AUTH_PROVIDER: legacy-credential-test
       ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true"
-      AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100"
       PROJECTAI_SEED_ENVIRONMENT: test
-      SEED_ADMIN_EMAIL: admin.focused-ci@projectai.invalid
-      SEED_ORG_ADMIN_EMAIL: org-admin.focused-ci@projectai.invalid
-      SEED_DEPT_ADMIN_EMAIL: dept-admin.focused-ci@projectai.invalid
-      SEED_MANAGER_A_EMAIL: manager-a.focused-ci@projectai.invalid
-      SEED_MANAGER_B_EMAIL: manager-b.focused-ci@projectai.invalid
-      SEED_MEMBER_A_EMAIL: member-a.focused-ci@projectai.invalid
-      SEED_VIEWER_A_EMAIL: viewer-a.focused-ci@projectai.invalid
-      SEED_OTHER_DEPT_EMAIL: other-dept.focused-ci@projectai.invalid
-      SEED_OUTSIDER_EMAIL: outsider.focused-ci@projectai.invalid
-      OBJECT_STORAGE_ENDPOINT: http://127.0.0.1:9000
-      OBJECT_STORAGE_REGION: us-east-1
-      OBJECT_STORAGE_BUCKET: projectai-focused-ci
-      OBJECT_STORAGE_FORCE_PATH_STYLE: "true"
-      OBJECT_STORAGE_USE_SSL: "false"
-      MAX_UPLOAD_BYTES: "52428800"
-      UPLOAD_ALLOWED_EXTENSIONS: pdf,docx,xlsx,pptx,txt,md
-      DOCUMENT_WORKER_POLL_MS: "250"
-      DOCUMENT_WORKER_LEASE_SECONDS: "120"
-      DOCUMENT_WORKER_MAX_ATTEMPTS: "3"
-      DOCUMENT_MAX_PAGES: "1000"
-      DOCUMENT_MAX_SLIDES: "1000"
-      DOCUMENT_MAX_SHEETS: "100"
-      DOCUMENT_MAX_ROWS: "100000"
-      DOCUMENT_MAX_COLUMNS: "1000"
-      DOCUMENT_MAX_CELLS: "500000"
-      DOCUMENT_MAX_CHARACTERS: "10000000"
-      DOCUMENT_MAX_SECTIONS: "20000"
-      DOCUMENT_MAX_CHUNKS: "50000"
-      DOCUMENT_PARSE_TIMEOUT_MS: "120000"
-      DOCUMENT_CHUNK_TARGET_CHARS: "1800"
-      DOCUMENT_CHUNK_OVERLAP_CHARS: "200"
-      DOCUMENT_CHUNK_MIN_CHARS: "120"
-      DOCUMENT_PARSER_VERSION: "1"
-      DOCUMENT_CHUNKER_VERSION: "1"
-      AI_PROVIDER: fake
       AI_ASSISTANT_ENABLED: "true"
+      AI_PROVIDER: fake
       AI_REGION: cn-beijing
       AI_PROJECT_ASSISTANT_PROFILE_ID: qwen-project-assistant-cn-v2
-      AI_ASSISTANT_RETRIEVAL_MODE: hybrid
-      AI_EMBEDDING_PROVIDER: fake
-      AI_EMBEDDING_ENABLED: "true"
-      AI_EMBEDDING_PROFILE_ID: qwen3.7-text-embedding-cn-v2
-      AI_EMBEDDING_DIMENSIONS: "1024"
+      RAGFLOW_BASE_URL: http://127.0.0.1:3210
 
     steps:
-      - name: Checkout exact pull-request head
+      - name: Checkout exact revision
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -99,21 +64,11 @@ jobs:
         shell: bash
         env:
           EXPECTED_TESTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          REVIEW_EVENT_NAME: ${{ github.event_name }}
         run: |
           set -Eeuo pipefail
           tested_sha="$(git rev-parse HEAD)"
-          [[ "$tested_sha" == "$EXPECTED_TESTED_SHA" ]]
-          if [[ "$REVIEW_EVENT_NAME" == "pull_request" ]]; then
-            tested_ref_type="pull_request_head"
-          elif [[ "$REVIEW_EVENT_NAME" == "push" ]]; then
-            tested_ref_type="push_head"
-          else
-            echo "Unsupported review event: $REVIEW_EVENT_NAME" >&2
-            exit 1
-          fi
-          echo "REVIEW_TESTED_SHA=$tested_sha" >> "$GITHUB_ENV"
-          echo "REVIEW_TESTED_REF_TYPE=$tested_ref_type" >> "$GITHUB_ENV"
+          test "$tested_sha" = "$EXPECTED_TESTED_SHA"
+          echo "PROJECTAI_TESTED_SHA=$tested_sha" >> "$GITHUB_ENV"
 
       - name: Use Node.js 22
         uses: actions/setup-node@v7
@@ -127,135 +82,58 @@ jobs:
           set -Eeuo pipefail
           seed_password="Ci-$(openssl rand -hex 16)-Aa1!"
           auth_secret="$(openssl rand -base64 48)"
-          storage_access="ci$(openssl rand -hex 8)"
-          storage_secret="$(openssl rand -base64 36 | tr -d '/+=')"
-          for value in "$seed_password" "$auth_secret" "$storage_access" "$storage_secret"; do
+          ragflow_api_key="ci-$(openssl rand -hex 24)"
+          for value in "$seed_password" "$auth_secret" "$ragflow_api_key"; do
             echo "::add-mask::$value"
           done
           {
-            echo "NEXT_PUBLIC_APP_VERSION=$(node -p 'require(\"./package.json\").version')"
-            echo "NEXT_PUBLIC_BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
             echo "BETTER_AUTH_SECRET=$auth_secret"
-            echo "OBJECT_STORAGE_ACCESS_KEY=$storage_access"
-            echo "OBJECT_STORAGE_SECRET_KEY=$storage_secret"
+            echo "RAGFLOW_API_KEY=$ragflow_api_key"
             for name in ADMIN ORG_ADMIN DEPT_ADMIN MANAGER_A MANAGER_B MEMBER_A VIEWER_A OTHER_DEPT OUTSIDER; do
+              normalized_name="$(printf '%s' "$name" | tr '[:upper:]_' '[:lower:]-')"
+              echo "SEED_${name}_EMAIL=${normalized_name}@projectai.invalid"
               echo "SEED_${name}_PASSWORD=$seed_password"
             done
           } >> "$GITHUB_ENV"
 
-      - name: Install dependencies
+      - name: Install locked dependencies
         run: npm ci
 
-      - name: Start isolated private object storage
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          docker run --detach --rm --name projectai-focused-ci-minio \
-            --publish 127.0.0.1:9000:9000 \
-            --tmpfs /data:rw,noexec,nosuid,nodev,size=512m \
-            --env MINIO_ROOT_USER="$OBJECT_STORAGE_ACCESS_KEY" \
-            --env MINIO_ROOT_PASSWORD="$OBJECT_STORAGE_SECRET_KEY" \
-            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z \
-            server /data --console-address :9001
-          ready=0
-          for _ in {1..30}; do
-            if curl --fail --silent --max-time 2 "$OBJECT_STORAGE_ENDPOINT/minio/health/live" >/dev/null; then
-              ready=1
-              break
-            fi
-            sleep 2
-          done
-          test "$ready" = 1
-          docker run --rm --network host --entrypoint /bin/sh \
-            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z \
-            -ec 'mc alias set ci "$1" "$2" "$3" >/dev/null && mc mb --ignore-existing "ci/$4" >/dev/null && mc anonymous set none "ci/$4" >/dev/null' \
-            _ "$OBJECT_STORAGE_ENDPOINT" "$OBJECT_STORAGE_ACCESS_KEY" "$OBJECT_STORAGE_SECRET_KEY" "$OBJECT_STORAGE_BUCKET"
-
-      - name: Apply committed migrations and isolated seed
+      - name: Apply migrations and seed isolated test data
         run: |
           npm run db:migrate
           npm run db:seed
 
-      - name: Focused static and contract gates
+      - name: Run Slim static and deterministic gates
         run: |
+          npm test
           npm run typecheck
           npm run lint
-          npm run test:artifacts
-          npm run test:focused
-          npm run test:product-map-contract
-          npm run test:file-workspace
-          npm run test:file-workspace-integration
-          npm run test:product-map-integration
-          npm run test:staging-deploy-policy
           npm run build
-          git diff --check
+          git diff --check HEAD^ HEAD
 
-      - name: Install Chromium for the single Happy Path
-        run: npx playwright install --with-deps chromium
-
-      - name: Focused MVP Happy Path
+      - name: Run Slim integration tests with Fake RAGFlow
         shell: bash
         run: |
           set -Eeuo pipefail
-          document_worker_log="$RUNNER_TEMP/focused-document-worker.log"
-          embedding_worker_log="$RUNNER_TEMP/focused-embedding-worker.log"
-          npm run worker:documents >"$document_worker_log" 2>&1 &
-          document_worker_pid=$!
-          npm run worker:embeddings >"$embedding_worker_log" 2>&1 &
-          embedding_worker_pid=$!
+          fake_ragflow_log="$RUNNER_TEMP/projectai-fake-ragflow.log"
+          node scripts/fake-ragflow-server.mjs >"$fake_ragflow_log" 2>&1 &
+          fake_ragflow_pid=$!
           cleanup() {
-            kill "$document_worker_pid" "$embedding_worker_pid" >/dev/null 2>&1 || true
-            wait "$document_worker_pid" >/dev/null 2>&1 || true
-            wait "$embedding_worker_pid" >/dev/null 2>&1 || true
+            kill "$fake_ragflow_pid" >/dev/null 2>&1 || true
+            wait "$fake_ragflow_pid" >/dev/null 2>&1 || true
           }
           trap cleanup EXIT
-          START_DOCUMENT_WORKER=false npm run test:focused:e2e
-
-      - name: Write product review evidence index
-        if: always()
-        env:
-          REVIEW_ARTIFACT_STATUS: ${{ job.status }}
-          REVIEW_EVENT_NAME: ${{ github.event_name }}
-          REVIEW_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          REVIEW_BRANCH: ${{ github.head_ref || github.ref_name }}
-          REVIEW_WORKFLOW_RUN_ID: ${{ github.run_id }}
-        run: node scripts/write-review-manifest.mjs
-
-      - name: Sanitize product review evidence
-        id: sanitize_evidence
-        if: always()
-        run: npm run review:sanitize
-
-      - name: Upload product review evidence
-        id: upload_evidence
-        if: always() && steps.sanitize_evidence.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: product-review-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            product-review-evidence/
-
-      - name: Finalize published product review manifest
-        id: finalize_review_manifest
-        if: always() && steps.upload_evidence.outcome == 'success'
-        env:
-          REVIEW_ARTIFACT_ID: ${{ steps.upload_evidence.outputs.artifact-id }}
-          REVIEW_ARTIFACT_NAME: product-review-evidence-${{ github.run_id }}-${{ github.run_attempt }}
-          REVIEW_ARTIFACT_DIGEST: ${{ steps.upload_evidence.outputs.artifact-digest }}
-        run: npm run review:finalize
-
-      - name: Upload product review provenance manifest
-        if: always() && steps.finalize_review_manifest.outcome == 'success'
-        uses: actions/upload-artifact@v7
-        with:
-          name: product-review-manifest-${{ github.run_id }}-${{ github.run_attempt }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            product-review-manifest/manifest.json
-
-      - name: Stop isolated object storage
-        if: always()
-        run: docker rm --force projectai-focused-ci-minio >/dev/null 2>&1 || true
+          ready=0
+          for _ in {1..30}; do
+            if curl --silent --max-time 1 http://127.0.0.1:3210/ >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if test "$ready" != 1; then
+            sed -n '1,120p' "$fake_ragflow_log" >&2
+            exit 1
+          fi
+          npm run test:integration

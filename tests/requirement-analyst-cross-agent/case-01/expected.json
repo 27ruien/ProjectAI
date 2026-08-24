@@ -1,0 +1,35 @@
+{
+  "caseId": "RA-XAGENT-01",
+  "executionStatus": "NOT_TESTED",
+  "tests": [
+    "Sparse brief expansion",
+    "P0 business goal and exact deadline questions",
+    "No invented campaign rules"
+  ],
+  "mustContain": [
+    "business_goal gap",
+    "success_metric gap",
+    "exact deadline gap",
+    "activity or operations rules gap"
+  ],
+  "forbiddenClaims": [
+    "Invented eligibility",
+    "Invented launch date",
+    "Invented reward rules"
+  ],
+  "globalPassCriteria": [
+    "All ten required output sections are present.",
+    "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
+    "Critical Questions use P0, P1, or P2.",
+    "All controlled domains are assessed without filling gaps.",
+    "No external project knowledge or fabricated fact is used."
+  ],
+  "uploadToAgent": [
+    "SKILL.md",
+    "input.json",
+    "RUN_INSTRUCTION.txt"
+  ],
+  "doNotUploadToAgent": [
+    "expected.json"
+  ]
+}

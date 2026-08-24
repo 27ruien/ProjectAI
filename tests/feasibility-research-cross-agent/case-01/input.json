@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "In-store Browser Experience",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Can a browser-based in-store guided experience run reliably on the stated screen and launch in eight weeks?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "Target is an in-store guided experience on an existing touch screen. Exact device model, browser version, camera permission, network quality, content volume, and budget are unknown. Desired launch window is eight weeks."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

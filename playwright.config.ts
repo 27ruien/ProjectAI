@@ -40,7 +40,16 @@ export default defineConfig({
   ],
   webServer: configuredTarget
     ? undefined
-    : {
+    : [
+      {
+        command: "NODE_ENV=test node scripts/fake-ragflow-server.mjs",
+        url: "http://127.0.0.1:3210/api/v1/datasets",
+        reuseExistingServer: false,
+        timeout: 15_000,
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+      {
         // Authentication uses Node PostgreSQL connections and the deployed
         // application runs the vinext standalone Node server. E2E therefore
         // exercises the exact production runtime built by the preceding
@@ -56,26 +65,22 @@ export default defineConfig({
           NEXT_PUBLIC_APP_ENV: "test",
           AI_PROVIDER: "fake",
           AI_ASSISTANT_ENABLED: "true",
+          AUTH_PROVIDER: "legacy-credential-test",
+          ALLOW_LEGACY_CREDENTIAL_TEST_AUTH: "true",
           AI_REGION: "cn-beijing",
           AI_PROJECT_ASSISTANT_PROFILE_ID:
             "qwen-project-assistant-cn-v2",
-          PM_DAILY_REPORT_ENABLED: "true",
-          WECOM_TIMESHEET_SYNC_ENABLED: "true",
+          RAGFLOW_BASE_URL: "http://127.0.0.1:3210/api/v1",
+          RAGFLOW_API_KEY: "fake-ragflow-test-key",
           // The complete serial suite intentionally exercises several actors
           // through the real credential endpoint. Production keeps the strict
           // limit; only this guarded test runtime raises the allowance.
           AUTH_TEST_LOGIN_RATE_LIMIT_MAX: "100",
-          // The serial focused browser case intentionally exercises several
-          // paid/failed/repair Product Map calls. These overrides are consumed
-          // only by the NODE_ENV=test + NEXT_PUBLIC_APP_ENV=test runtime and
-          // are ignored by staging/production code paths.
-          PRODUCT_MAP_TEST_PER_USER_MINUTE_LIMIT: "200",
-          PRODUCT_MAP_TEST_USER_DAILY_TOKEN_LIMIT: "5000000",
-          PRODUCT_MAP_TEST_PROJECT_DAILY_TOKEN_LIMIT: "20000000",
         },
         reuseExistingServer: false,
         timeout: 120_000,
         stdout: "pipe",
         stderr: "pipe",
       },
+    ],
 });

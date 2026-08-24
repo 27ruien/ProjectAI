@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db/client";
 import { betterAuthSchema } from "@/lib/db/schema";
 import { findUserById } from "@/lib/db/repositories/user-repository";
 import { mockWeComAuthPlugin } from "./mock-wecom-plugin";
-import { isLegacyCredentialAuthEnabled } from "./providers";
+import { isCredentialAuthEnabled } from "./providers";
 
 const AUTH_PATH = "/api/auth";
 
@@ -84,7 +84,7 @@ function createAuth() {
       : "projectai_local");
 
   return betterAuth({
-    appName: "Project AI OS",
+    appName: "Project AI",
     logger: { level: "error", disableColors: true },
     secret: requireAuthSecret(),
     baseURL: authBaseUrl,
@@ -96,7 +96,7 @@ function createAuth() {
       transaction: true,
     }),
     emailAndPassword: {
-      enabled: isLegacyCredentialAuthEnabled(),
+      enabled: isCredentialAuthEnabled(),
       disableSignUp: true,
       minPasswordLength: 12,
       maxPasswordLength: 128,

@@ -7,7 +7,18 @@ import type { AuthenticatedPrincipal } from "@/lib/auth/session";
 
 export function serializeProject(project: ProjectRecord) {
   return {
-    ...project,
+    id: project.id,
+    organizationId: project.organizationId,
+    departmentId: project.departmentId,
+    name: project.name,
+    clientName: project.clientName,
+    description: project.description,
+    status: project.status,
+    stage: project.stage,
+    health: project.health,
+    startDate: project.startDate,
+    targetLaunchDate: project.targetLaunchDate,
+    knowledgeStatus: project.knowledgeStatus,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   };

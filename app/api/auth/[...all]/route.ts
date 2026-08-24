@@ -15,7 +15,7 @@ import {
   updateLastLoginAt,
 } from "@/lib/db/repositories/user-repository";
 import {
-  isLegacyCredentialAuthEnabled,
+  isCredentialAuthEnabled,
   isMockWeComAuthEnabled,
 } from "@/lib/auth/providers";
 import { validateStagingTestLoginRequest } from "@/lib/auth/staging-test-login";
@@ -271,7 +271,7 @@ export async function POST(request: Request): Promise<Response> {
   // whose response contracts can contain raw Session tokens, so they stay
   // unreachable until each one has an explicit, sanitized product contract.
   if (!isLogin && !isLogout) return unsupportedAuthRoute();
-  if (isCredentialLogin && !isLegacyCredentialAuthEnabled()) {
+  if (isCredentialLogin && !isCredentialAuthEnabled()) {
     return unsupportedAuthRoute();
   }
   if (isMockLogin && !isMockWeComAuthEnabled()) {

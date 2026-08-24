@@ -1,0 +1,104 @@
+name: projectai-slim-staging
+
+x-projectai-build: &projectai-build
+  context: .
+  args:
+    NEXT_PUBLIC_BASE_PATH: ${NEXT_PUBLIC_BASE_PATH:-/tool/projectai-staging}
+    NEXT_PUBLIC_APP_ENV: ${NEXT_PUBLIC_APP_ENV:-staging}
+    NEXT_PUBLIC_APP_VERSION: ${NEXT_PUBLIC_APP_VERSION:-1.0.0-staging}
+    NEXT_PUBLIC_COMMIT_SHA: ${NEXT_PUBLIC_COMMIT_SHA:?NEXT_PUBLIC_COMMIT_SHA is required}
+    NEXT_PUBLIC_BUILD_TIME: ${NEXT_PUBLIC_BUILD_TIME:?NEXT_PUBLIC_BUILD_TIME is required}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-projectai_slim_staging}
+      POSTGRES_USER: ${POSTGRES_USER:-projectai}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - projectai-slim-postgres:/var/lib/postgresql/data
+    networks:
+      - projectai-slim-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-projectai} -d ${POSTGRES_DB:-projectai_slim_staging}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    ports: []
+    mem_limit: 512m
+
+  migrate:
+    image: ${PROJECTAI_DB_TOOLS_IMAGE:-projectai-slim-db-tools:local}
+    build:
+      <<: *projectai-build
+      target: db-tools
+    command: ["npm", "run", "db:migrate"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - projectai-slim-internal
+    restart: "no"
+
+  projectai-staging:
+    image: ${PROJECTAI_APP_IMAGE:-projectai-slim:local}
+    build:
+      <<: *projectai-build
+      target: runner
+    restart: unless-stopped
+    env_file:
+      - ${PROJECTAI_ENV_FILE:-.env.staging}
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-5}
+      QWEN_API_KEY_FILE: /run/secrets/qwen_api_key
+      RAGFLOW_BASE_URL: ${RAGFLOW_BASE_URL:?RAGFLOW_BASE_URL is required}
+      RAGFLOW_API_KEY_FILE: /run/secrets/ragflow_api_key
+    secrets:
+      - qwen_api_key
+      - ragflow_api_key
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - projectai-slim-internal
+      - projectai-slim-egress
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:${PROJECTAI_LOOPBACK_PORT:-3101}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 768m
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+
+networks:
+  projectai-slim-internal:
+    internal: true
+  projectai-slim-egress:
+
+volumes:
+  projectai-slim-postgres:
+
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE_HOST:?POSTGRES_PASSWORD_FILE_HOST is required}
+  qwen_api_key:
+    file: ${QWEN_API_KEY_FILE_HOST:?QWEN_API_KEY_FILE_HOST is required}
+  ragflow_api_key:
+    file: ${RAGFLOW_API_KEY_FILE_HOST:?RAGFLOW_API_KEY_FILE_HOST is required}

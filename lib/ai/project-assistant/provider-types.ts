@@ -1,21 +1,7 @@
 export type ProjectAssistantProviderPurpose =
   | "answer"
   | "repair"
-  | "probe"
-  | "requirement_extraction"
-  | "requirement_repair"
-  | "requirement_document"
-  | "requirement_document_repair"
-  | "requirement_overview"
-  | "action_generation"
-  | "risk_generation"
-  | "weekly_report"
-  | "timesheet_generation"
-  | "timesheet_repair"
-  | "product_map_step"
-  | "product_map_step_repair"
-  | "product_map_final"
-  | "product_map_final_repair";
+  | "probe";
 
 export type ProjectAssistantProviderRequest = {
   model: string;

@@ -3,12 +3,8 @@ import { and, eq, sql } from "drizzle-orm";
 import { closeDatabasePool, getDb } from "../../lib/db/client";
 import {
   account,
-  aiEmbeddingProfile,
-  aiModelProfile,
-  aiRetrievalProfile,
   department,
   departmentMember,
-  knowledgeSpace,
   organization,
   organizationMember,
   project,
@@ -203,53 +199,6 @@ async function main(): Promise<void> {
   ) {
     throw new Error("SEED_PRODUCTION_FORBIDDEN");
   }
-  await getDb()
-    .insert(aiEmbeddingProfile)
-    .values({
-      id: "qwen3.7-text-embedding-cn-v2",
-      provider: "qwen",
-      model: "qwen3.7-text-embedding",
-      region: "cn-beijing",
-      dimensions: 1024,
-      distanceMetric: "cosine",
-      profileVersion: 2,
-      enabled: true,
-    })
-    .onConflictDoNothing({ target: aiEmbeddingProfile.id });
-
-  await getDb()
-    .insert(aiRetrievalProfile)
-    .values({
-      id: "hybrid-rrf-qwen37-v2",
-      profileVersion: 2,
-      lexicalCandidateLimit: 30,
-      vectorCandidateLimit: 30,
-      fusedCandidateLimit: 30,
-      evidenceLimit: 10,
-      rrfK: 60,
-      lexicalWeight: 1,
-      vectorWeight: 1,
-      vectorMaxDistance: 0.55,
-      minEmbeddingCoverageBps: 9_800,
-      embeddingProfileId: "qwen3.7-text-embedding-cn-v2",
-      enabled: true,
-    })
-    .onConflictDoNothing({ target: aiRetrievalProfile.id });
-
-  await getDb()
-    .insert(aiModelProfile)
-    .values({
-      id: "qwen-project-assistant-cn-v2",
-      provider: "qwen",
-      purpose: "project_assistant",
-      primaryModel: "qwen3.7-flash",
-      fallbackModel: "qwen3.7-flash",
-      region: "cn-beijing",
-      enabled: true,
-      gatewayVersion: "1",
-    })
-    .onConflictDoNothing({ target: aiModelProfile.id });
-
   const userIds = new Map<SeedUserKey, string>();
   for (const spec of seedUsers) {
     userIds.set(spec.key, await seedIdentity(spec));
@@ -345,46 +294,6 @@ async function main(): Promise<void> {
       .onConflictDoNothing({
         target: [departmentMember.departmentId, departmentMember.userId],
       });
-  }
-
-  const sharedSpaces = [
-    {
-      id: "ks-organization-shared-test",
-      type: "organization" as const,
-      visibility: "organization_shared" as const,
-      name: "公司共享知识",
-      departmentId: null,
-    },
-    {
-      id: "ks-department-shared-test",
-      type: "department" as const,
-      visibility: "department_shared" as const,
-      name: "交付部共享知识",
-      departmentId: "dept-legacy-default",
-    },
-    {
-      id: "ks-department-restricted-test",
-      type: "restricted" as const,
-      visibility: "restricted" as const,
-      name: "交付部受限知识",
-      departmentId: "dept-legacy-default",
-    },
-  ];
-  for (const item of sharedSpaces) {
-    await db
-      .insert(knowledgeSpace)
-      .values({
-        id: item.id,
-        organizationId,
-        departmentId: item.departmentId,
-        projectId: null,
-        type: item.type,
-        visibility: item.visibility,
-        name: item.name,
-        description: "仅使用虚构资料的非生产知识空间。",
-        createdBy: organizationCreator,
-      })
-      .onConflictDoNothing({ target: knowledgeSpace.id });
   }
 
   for (const item of seedProjects) {

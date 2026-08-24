@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "Synthetic In-store AI Visual Experience A/B",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Should an eight-week Shanghai pilot use a browser-based AI visual vendor, an internal build, or a reduced manual-assisted alternative?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-ab-brief.txt",
+      "content": "The pilot uses existing in-store screens and customer face photos. Device/browser versions, vendor data location, retention, traffic, quote, content-production capacity, onsite network, UAT owner, and rollback are unknown. Target window is eight weeks."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

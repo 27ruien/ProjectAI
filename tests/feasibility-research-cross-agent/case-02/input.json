@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "portable_standalone",
+  "projectId": null,
+  "title": "Browser versus Native",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Should the project use browser, native application, or a reduced offline-assisted approach?",
+  "materials": [
+    {
+      "id": "SRC-01",
+      "label": "synthetic-brief.txt",
+      "content": "The experience needs camera access, low latency, offline tolerance, and kiosk operation. Target OS and device fleet are not confirmed."
+    }
+  ],
+  "requirementAnalysisPack": null
+}

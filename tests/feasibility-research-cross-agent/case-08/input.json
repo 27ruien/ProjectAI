@@ -1,0 +1,950 @@
+{
+  "schemaVersion": "projectai-feasibility-research-input-v1",
+  "inputMode": "requirement_analysis_pack",
+  "projectId": null,
+  "title": "Requirement Pack Consumption",
+  "language": "zh",
+  "currentDate": "2026-08-24",
+  "decisionQuestion": "Which implementation approach is feasible for the supplied Requirement Analysis Pack?",
+  "materials": [],
+  "requirementAnalysisPack": {
+    "schemaVersion": "projectai-requirement-analysis-pack-v1",
+    "skillId": "project-requirement-analyst",
+    "skillVersion": "0.1.0",
+    "title": "Synthetic upstream requirement pack for feasibility UAT",
+    "language": "zh",
+    "sourceSummary": "Synthetic fixture used only for deterministic contract evaluation.",
+    "sourceMaterialIds": [
+      "SRC-01"
+    ],
+    "statements": [
+      {
+        "id": "F-01",
+        "basis": "FACT",
+        "domain": "business_goal",
+        "statement": "Reduce in-store consultation time",
+        "sourceEvidence": "Reduce in-store consultation time",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "F-02",
+        "basis": "FACT",
+        "domain": "user",
+        "statement": "Retail customer and store associate",
+        "sourceEvidence": "Retail customer and store associate",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "F-03",
+        "basis": "FACT",
+        "domain": "scenario",
+        "statement": "In-store assisted product trial",
+        "sourceEvidence": "In-store assisted product trial",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "F-04",
+        "basis": "FACT",
+        "domain": "deliverable",
+        "statement": "Assisted trial experience",
+        "sourceEvidence": "Assisted trial experience",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "G-01",
+        "basis": "GAP",
+        "domain": "deliverable",
+        "statement": "The input does not fully define deliverable",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-02",
+        "basis": "GAP",
+        "domain": "success_metric",
+        "statement": "The input does not fully define success_metric",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "F-05",
+        "basis": "FACT",
+        "domain": "channel",
+        "statement": "In-store screen",
+        "sourceEvidence": "In-store screen",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "F-06",
+        "basis": "FACT",
+        "domain": "deadline",
+        "statement": "Pilot target is 2026-11-30",
+        "sourceEvidence": "Pilot target is 2026-11-30",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "F-07",
+        "basis": "FACT",
+        "domain": "constraint",
+        "statement": "Existing store hardware should be reused where feasible",
+        "sourceEvidence": "Existing store hardware should be reused where feasible",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "G-03",
+        "basis": "GAP",
+        "domain": "constraint",
+        "statement": "The input does not fully define constraint",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-04",
+        "basis": "GAP",
+        "domain": "user_journey",
+        "statement": "The input does not fully define user_journey",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-05",
+        "basis": "GAP",
+        "domain": "functional_scope",
+        "statement": "The input does not fully define functional_scope",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-06",
+        "basis": "GAP",
+        "domain": "identity_permission",
+        "statement": "The input does not fully define identity_permission",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "F-08",
+        "basis": "FACT",
+        "domain": "data",
+        "statement": "Customer photo may be used for the trial",
+        "sourceEvidence": "Customer photo may be used for the trial",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "G-07",
+        "basis": "GAP",
+        "domain": "data",
+        "statement": "The input does not fully define data",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "F-09",
+        "basis": "FACT",
+        "domain": "ai_behavior",
+        "statement": "AI may generate a visual draft for human review",
+        "sourceEvidence": "AI may generate a visual draft for human review",
+        "sourceIds": [
+          "SRC-01"
+        ],
+        "reason": "Explicitly supplied by the synthetic fixture"
+      },
+      {
+        "id": "G-08",
+        "basis": "GAP",
+        "domain": "ai_behavior",
+        "statement": "The input does not fully define ai_behavior",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-09",
+        "basis": "GAP",
+        "domain": "third_party_integration",
+        "statement": "The input does not fully define third_party_integration",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-10",
+        "basis": "GAP",
+        "domain": "content_asset",
+        "statement": "The input does not fully define content_asset",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-11",
+        "basis": "GAP",
+        "domain": "operations_rules",
+        "statement": "The input does not fully define operations_rules",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-12",
+        "basis": "GAP",
+        "domain": "test_launch",
+        "statement": "The input does not fully define test_launch",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      },
+      {
+        "id": "G-13",
+        "basis": "GAP",
+        "domain": "project_dependency",
+        "statement": "The input does not fully define project_dependency",
+        "sourceEvidence": null,
+        "sourceIds": [],
+        "reason": "Required domain information is absent or ambiguous"
+      }
+    ],
+    "domainAssessments": [
+      {
+        "domain": "business_goal",
+        "coverage": "COMPLETE",
+        "statementIds": [
+          "F-01"
+        ],
+        "rationale": "Synthetic COMPLETE assessment for business_goal"
+      },
+      {
+        "domain": "user",
+        "coverage": "COMPLETE",
+        "statementIds": [
+          "F-02"
+        ],
+        "rationale": "Synthetic COMPLETE assessment for user"
+      },
+      {
+        "domain": "scenario",
+        "coverage": "COMPLETE",
+        "statementIds": [
+          "F-03"
+        ],
+        "rationale": "Synthetic COMPLETE assessment for scenario"
+      },
+      {
+        "domain": "deliverable",
+        "coverage": "PARTIAL",
+        "statementIds": [
+          "F-04",
+          "G-01"
+        ],
+        "rationale": "Synthetic PARTIAL assessment for deliverable"
+      },
+      {
+        "domain": "success_metric",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-02"
+        ],
+        "rationale": "Synthetic MISSING assessment for success_metric"
+      },
+      {
+        "domain": "channel",
+        "coverage": "COMPLETE",
+        "statementIds": [
+          "F-05"
+        ],
+        "rationale": "Synthetic COMPLETE assessment for channel"
+      },
+      {
+        "domain": "deadline",
+        "coverage": "COMPLETE",
+        "statementIds": [
+          "F-06"
+        ],
+        "rationale": "Synthetic COMPLETE assessment for deadline"
+      },
+      {
+        "domain": "constraint",
+        "coverage": "PARTIAL",
+        "statementIds": [
+          "F-07",
+          "G-03"
+        ],
+        "rationale": "Synthetic PARTIAL assessment for constraint"
+      },
+      {
+        "domain": "user_journey",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-04"
+        ],
+        "rationale": "Synthetic MISSING assessment for user_journey"
+      },
+      {
+        "domain": "functional_scope",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-05"
+        ],
+        "rationale": "Synthetic MISSING assessment for functional_scope"
+      },
+      {
+        "domain": "identity_permission",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-06"
+        ],
+        "rationale": "Synthetic MISSING assessment for identity_permission"
+      },
+      {
+        "domain": "data",
+        "coverage": "PARTIAL",
+        "statementIds": [
+          "F-08",
+          "G-07"
+        ],
+        "rationale": "Synthetic PARTIAL assessment for data"
+      },
+      {
+        "domain": "ai_behavior",
+        "coverage": "PARTIAL",
+        "statementIds": [
+          "F-09",
+          "G-08"
+        ],
+        "rationale": "Synthetic PARTIAL assessment for ai_behavior"
+      },
+      {
+        "domain": "third_party_integration",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-09"
+        ],
+        "rationale": "Synthetic MISSING assessment for third_party_integration"
+      },
+      {
+        "domain": "content_asset",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-10"
+        ],
+        "rationale": "Synthetic MISSING assessment for content_asset"
+      },
+      {
+        "domain": "operations_rules",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-11"
+        ],
+        "rationale": "Synthetic MISSING assessment for operations_rules"
+      },
+      {
+        "domain": "test_launch",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-12"
+        ],
+        "rationale": "Synthetic MISSING assessment for test_launch"
+      },
+      {
+        "domain": "project_dependency",
+        "coverage": "MISSING",
+        "statementIds": [
+          "G-13"
+        ],
+        "rationale": "Synthetic MISSING assessment for project_dependency"
+      }
+    ],
+    "requirementSummary": {
+      "summary": "Synthetic Requirement Analysis Pack for deterministic validation.",
+      "statementIds": [
+        "F-01",
+        "F-02",
+        "F-03",
+        "F-04",
+        "G-01",
+        "G-02"
+      ]
+    },
+    "userJourneyDraft": [
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-04"
+        ],
+        "id": "J-01",
+        "order": 1,
+        "actor": "User to confirm",
+        "action": "Complete the primary project interaction",
+        "outcome": "Reach the intended outcome"
+      }
+    ],
+    "functionalScopeDraft": [
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-05"
+        ],
+        "id": "S-01",
+        "title": "Primary project capability",
+        "disposition": "UNRESOLVED",
+        "rationale": "Synthetic scope row follows the functional-scope evidence class"
+      }
+    ],
+    "requirementMatrix": [
+      {
+        "basis": "FACT",
+        "statementIds": [
+          "F-01"
+        ],
+        "id": "R-01",
+        "domain": "business_goal",
+        "requirement": "Reduce in-store consultation time",
+        "status": "CONFIRMED",
+        "priority": "P0",
+        "acceptanceSignal": "Confirm against supplied evidence"
+      },
+      {
+        "basis": "FACT",
+        "statementIds": [
+          "F-02"
+        ],
+        "id": "R-02",
+        "domain": "user",
+        "requirement": "Retail customer and store associate",
+        "status": "CONFIRMED",
+        "priority": "P0",
+        "acceptanceSignal": "Confirm against supplied evidence"
+      },
+      {
+        "basis": "FACT",
+        "statementIds": [
+          "F-03"
+        ],
+        "id": "R-03",
+        "domain": "scenario",
+        "requirement": "In-store assisted product trial",
+        "status": "CONFIRMED",
+        "priority": "P0",
+        "acceptanceSignal": "Confirm against supplied evidence"
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-01"
+        ],
+        "id": "R-04",
+        "domain": "deliverable",
+        "requirement": "The input does not fully define deliverable",
+        "status": "MISSING",
+        "priority": "P0",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-02"
+        ],
+        "id": "R-05",
+        "domain": "success_metric",
+        "requirement": "The input does not fully define success_metric",
+        "status": "MISSING",
+        "priority": "P0",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "FACT",
+        "statementIds": [
+          "F-05"
+        ],
+        "id": "R-06",
+        "domain": "channel",
+        "requirement": "In-store screen",
+        "status": "CONFIRMED",
+        "priority": "P0",
+        "acceptanceSignal": "Confirm against supplied evidence"
+      },
+      {
+        "basis": "FACT",
+        "statementIds": [
+          "F-06"
+        ],
+        "id": "R-07",
+        "domain": "deadline",
+        "requirement": "Pilot target is 2026-11-30",
+        "status": "CONFIRMED",
+        "priority": "P0",
+        "acceptanceSignal": "Confirm against supplied evidence"
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-03"
+        ],
+        "id": "R-08",
+        "domain": "constraint",
+        "requirement": "The input does not fully define constraint",
+        "status": "MISSING",
+        "priority": "P0",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-04"
+        ],
+        "id": "R-09",
+        "domain": "user_journey",
+        "requirement": "The input does not fully define user_journey",
+        "status": "MISSING",
+        "priority": "P1",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-05"
+        ],
+        "id": "R-10",
+        "domain": "functional_scope",
+        "requirement": "The input does not fully define functional_scope",
+        "status": "MISSING",
+        "priority": "P1",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-06"
+        ],
+        "id": "R-11",
+        "domain": "identity_permission",
+        "requirement": "The input does not fully define identity_permission",
+        "status": "MISSING",
+        "priority": "P1",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-07"
+        ],
+        "id": "R-12",
+        "domain": "data",
+        "requirement": "The input does not fully define data",
+        "status": "MISSING",
+        "priority": "P1",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-08"
+        ],
+        "id": "R-13",
+        "domain": "ai_behavior",
+        "requirement": "The input does not fully define ai_behavior",
+        "status": "MISSING",
+        "priority": "P1",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-09"
+        ],
+        "id": "R-14",
+        "domain": "third_party_integration",
+        "requirement": "The input does not fully define third_party_integration",
+        "status": "MISSING",
+        "priority": "P1",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-10"
+        ],
+        "id": "R-15",
+        "domain": "content_asset",
+        "requirement": "The input does not fully define content_asset",
+        "status": "MISSING",
+        "priority": "P2",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-11"
+        ],
+        "id": "R-16",
+        "domain": "operations_rules",
+        "requirement": "The input does not fully define operations_rules",
+        "status": "MISSING",
+        "priority": "P2",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-12"
+        ],
+        "id": "R-17",
+        "domain": "test_launch",
+        "requirement": "The input does not fully define test_launch",
+        "status": "MISSING",
+        "priority": "P2",
+        "acceptanceSignal": null
+      },
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-13"
+        ],
+        "id": "R-18",
+        "domain": "project_dependency",
+        "requirement": "The input does not fully define project_dependency",
+        "status": "MISSING",
+        "priority": "P2",
+        "acceptanceSignal": null
+      }
+    ],
+    "missingInformation": [
+      {
+        "id": "MI-01",
+        "domain": "deliverable",
+        "description": "The input does not fully define deliverable",
+        "priority": "P0",
+        "impact": "May change the deliverable decision",
+        "gapStatementIds": [
+          "G-01"
+        ]
+      },
+      {
+        "id": "MI-02",
+        "domain": "success_metric",
+        "description": "The input does not fully define success_metric",
+        "priority": "P0",
+        "impact": "May change the success_metric decision",
+        "gapStatementIds": [
+          "G-02"
+        ]
+      },
+      {
+        "id": "MI-03",
+        "domain": "constraint",
+        "description": "The input does not fully define constraint",
+        "priority": "P0",
+        "impact": "May change the constraint decision",
+        "gapStatementIds": [
+          "G-03"
+        ]
+      },
+      {
+        "id": "MI-04",
+        "domain": "user_journey",
+        "description": "The input does not fully define user_journey",
+        "priority": "P1",
+        "impact": "May change the user_journey decision",
+        "gapStatementIds": [
+          "G-04"
+        ]
+      },
+      {
+        "id": "MI-05",
+        "domain": "functional_scope",
+        "description": "The input does not fully define functional_scope",
+        "priority": "P1",
+        "impact": "May change the functional_scope decision",
+        "gapStatementIds": [
+          "G-05"
+        ]
+      },
+      {
+        "id": "MI-06",
+        "domain": "identity_permission",
+        "description": "The input does not fully define identity_permission",
+        "priority": "P1",
+        "impact": "May change the identity_permission decision",
+        "gapStatementIds": [
+          "G-06"
+        ]
+      },
+      {
+        "id": "MI-07",
+        "domain": "data",
+        "description": "The input does not fully define data",
+        "priority": "P1",
+        "impact": "May change the data decision",
+        "gapStatementIds": [
+          "G-07"
+        ]
+      },
+      {
+        "id": "MI-08",
+        "domain": "ai_behavior",
+        "description": "The input does not fully define ai_behavior",
+        "priority": "P1",
+        "impact": "May change the ai_behavior decision",
+        "gapStatementIds": [
+          "G-08"
+        ]
+      },
+      {
+        "id": "MI-09",
+        "domain": "third_party_integration",
+        "description": "The input does not fully define third_party_integration",
+        "priority": "P1",
+        "impact": "May change the third_party_integration decision",
+        "gapStatementIds": [
+          "G-09"
+        ]
+      },
+      {
+        "id": "MI-10",
+        "domain": "content_asset",
+        "description": "The input does not fully define content_asset",
+        "priority": "P2",
+        "impact": "May change the content_asset decision",
+        "gapStatementIds": [
+          "G-10"
+        ]
+      },
+      {
+        "id": "MI-11",
+        "domain": "operations_rules",
+        "description": "The input does not fully define operations_rules",
+        "priority": "P2",
+        "impact": "May change the operations_rules decision",
+        "gapStatementIds": [
+          "G-11"
+        ]
+      },
+      {
+        "id": "MI-12",
+        "domain": "test_launch",
+        "description": "The input does not fully define test_launch",
+        "priority": "P2",
+        "impact": "May change the test_launch decision",
+        "gapStatementIds": [
+          "G-12"
+        ]
+      },
+      {
+        "id": "MI-13",
+        "domain": "project_dependency",
+        "description": "The input does not fully define project_dependency",
+        "priority": "P2",
+        "impact": "May change the project_dependency decision",
+        "gapStatementIds": [
+          "G-13"
+        ]
+      }
+    ],
+    "criticalQuestions": [
+      {
+        "id": "Q-01",
+        "priority": "P0",
+        "question": "What is the confirmed deliverable requirement?",
+        "why": "It resolves G-01 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-01"
+        ]
+      },
+      {
+        "id": "Q-02",
+        "priority": "P0",
+        "question": "What is the confirmed success_metric requirement?",
+        "why": "It resolves G-02 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-02"
+        ]
+      },
+      {
+        "id": "Q-03",
+        "priority": "P0",
+        "question": "What is the confirmed constraint requirement?",
+        "why": "It resolves G-03 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-03"
+        ]
+      },
+      {
+        "id": "Q-04",
+        "priority": "P1",
+        "question": "What is the confirmed user_journey requirement?",
+        "why": "It resolves G-04 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-04"
+        ]
+      },
+      {
+        "id": "Q-05",
+        "priority": "P1",
+        "question": "What is the confirmed functional_scope requirement?",
+        "why": "It resolves G-05 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-05"
+        ]
+      },
+      {
+        "id": "Q-06",
+        "priority": "P1",
+        "question": "What is the confirmed identity_permission requirement?",
+        "why": "It resolves G-06 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-06"
+        ]
+      },
+      {
+        "id": "Q-07",
+        "priority": "P1",
+        "question": "What is the confirmed data requirement?",
+        "why": "It resolves G-07 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-07"
+        ]
+      },
+      {
+        "id": "Q-08",
+        "priority": "P1",
+        "question": "What is the confirmed ai_behavior requirement?",
+        "why": "It resolves G-08 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-08"
+        ]
+      },
+      {
+        "id": "Q-09",
+        "priority": "P1",
+        "question": "What is the confirmed third_party_integration requirement?",
+        "why": "It resolves G-09 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-09"
+        ]
+      },
+      {
+        "id": "Q-10",
+        "priority": "P2",
+        "question": "What is the confirmed content_asset requirement?",
+        "why": "It resolves G-10 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-10"
+        ]
+      },
+      {
+        "id": "Q-11",
+        "priority": "P2",
+        "question": "What is the confirmed operations_rules requirement?",
+        "why": "It resolves G-11 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-11"
+        ]
+      },
+      {
+        "id": "Q-12",
+        "priority": "P2",
+        "question": "What is the confirmed test_launch requirement?",
+        "why": "It resolves G-12 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-12"
+        ]
+      },
+      {
+        "id": "Q-13",
+        "priority": "P2",
+        "question": "What is the confirmed project_dependency requirement?",
+        "why": "It resolves G-13 without invention",
+        "answerOwner": null,
+        "resolvesGapStatementIds": [
+          "G-13"
+        ]
+      }
+    ],
+    "dependencies": [
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-13"
+        ],
+        "id": "D-01",
+        "description": "The input does not fully define project_dependency",
+        "impact": "May block downstream scope or delivery planning"
+      }
+    ],
+    "risksUnknowns": [
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-07"
+        ],
+        "id": "RU-01",
+        "kind": "UNKNOWN",
+        "priority": "P1",
+        "description": "The input does not fully define data",
+        "impact": "May change data handling and acceptance"
+      }
+    ],
+    "initialScopeBoundary": {
+      "inScopeIds": [],
+      "outOfScopeIds": [],
+      "deferredIds": [],
+      "unresolvedIds": [
+        "S-01"
+      ]
+    },
+    "suggestedNextStep": {
+      "basis": "GAP",
+      "statementIds": [
+        "G-01"
+      ],
+      "action": "Resolve the highest-priority open requirement before commitment",
+      "requiresUserConfirmation": true
+    },
+    "warnings": [
+      "Synthetic contract fixture; not a real project analysis."
+    ]
+  }
+}
