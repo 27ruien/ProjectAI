@@ -102,7 +102,7 @@ async function loadAdapters() {
 const officialSkillMetadata = [
   ["project-weekly-report", "1.2.0", "active"],
   ["project-timeline-maker", "0.1.0", "experimental"],
-  ["project-requirement-analyst", "0.2.0", "experimental"],
+  ["project-requirement-analyst", "0.2.1", "experimental"],
   ["project-feasibility-research", "0.1.0", "experimental"],
 ].map(([id, version, status]) => ({
   id,

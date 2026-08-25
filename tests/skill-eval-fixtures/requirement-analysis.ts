@@ -108,7 +108,7 @@ export function makeRequirementAnalysisPack(input: {
   return requirementAnalysisPackSchema.parse({
     schemaVersion: "projectai-requirement-analysis-pack-v2",
     skillId: "project-requirement-analyst",
-    skillVersion: "0.2.0",
+    skillVersion: "0.2.1",
     title: input.title,
     language: "zh",
     sourceSummary: "Synthetic fixture used only for deterministic contract evaluation.",

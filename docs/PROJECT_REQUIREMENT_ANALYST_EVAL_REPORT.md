@@ -2,7 +2,7 @@
 
 ## Result
 
-**SKILL VERSION: `0.2.0`**
+**SKILL VERSION: `0.2.1`**
 
 **DETERMINISTIC STATUS: PASS**
 
@@ -18,7 +18,7 @@
 | Requirement Analyst test module | 12 / 12 PASS |
 | Full repository `npm test` | 105 / 105 PASS (98 unit + 7 rendered/proxy) |
 | Typecheck / Lint / Build / `git diff --check` | PASS / PASS / PASS / PASS |
-| Official Skill distribution metadata | `project-requirement-analyst@0.2.0` PASS |
+| Official Skill distribution metadata | `project-requirement-analyst@0.2.1` PASS |
 
 The deterministic tests now cover:
 
@@ -52,7 +52,7 @@ prove long-document interpretation quality or cross-model consistency.
 
 ## Recommendation
 
-Deploy the exact Staging candidate, sync `project-requirement-analyst@0.2.0`
+Deploy the exact Staging candidate, sync `project-requirement-analyst@0.2.1`
 through the browser plugin, run one real smoke task on ChatGPT, DeepSeek, and
 Qwen, and then execute all eight formal portable cases before promoting the
 Skill from experimental status.

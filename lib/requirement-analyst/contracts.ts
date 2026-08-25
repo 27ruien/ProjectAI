@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const REQUIREMENT_ANALYST_SKILL_ID = "project-requirement-analyst";
-export const REQUIREMENT_ANALYST_SKILL_VERSION = "0.2.0";
+export const REQUIREMENT_ANALYST_SKILL_VERSION = "0.2.1";
 export const REQUIREMENT_ANALYSIS_INPUT_SCHEMA_VERSION =
   "projectai-requirement-analysis-input-v1";
 export const REQUIREMENT_ANALYSIS_PACK_SCHEMA_VERSION =

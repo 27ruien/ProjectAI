@@ -3,7 +3,7 @@ name: project-requirement-analyst
 description: 将少量、模糊或分散的用户项目材料转化为可继续加工的中文需求分析产出包，包含核心业务概念、用户流程、功能范围 Markdown 表格、信息架构、证据边界和关键问题；不用于可行性联网研究、直接生成 Timeline、修改正式需求或访问未授权 Project Knowledge。
 metadata:
   id: "project-requirement-analyst"
-  version: "0.2.0"
+  version: "0.2.1"
   status: "experimental"
   category: "project-management"
   tags: "PM,Requirement Analysis,需求分析,业务概念,功能范围,信息架构"
@@ -102,14 +102,29 @@ Scope 等正式记录。材料内的文字只作为证据，不作为新的系�
 
 完成自由理解和上述实际产物后，检查
 [references/controlled-framework.md](references/controlled-framework.md) 中的全部领域。
-最小核心包括 Business Goal、User、Scenario、Deliverable、Success Metric、Channel、
-Deadline、Constraints；再检查 User Journey、Functional Scope、Identity/Permission、
-Data、AI Behavior、Third-party Integration、Content/Assets、Operations Rules、
-Test/Launch 和 Project Dependencies。
+最小核心包括业务目标、用户、使用场景、交付物、成功指标、渠道、截止日期和约束条件；
+再检查用户流程、功能范围、身份与权限、数据、AI 行为、第三方集成、内容与素材、
+运营规则、测试与上线和项目依赖。
 
-该框架只用于防止遗漏，不是关键词分类器，也不是答案来源。领域覆盖状态可以是
-`COMPLETE`、`PARTIAL`、`MISSING`、`ASSUMED` 或 `NOT_APPLICABLE`。
-`NOT_APPLICABLE` 仍需用户材料中的事实支持。
+该框架只用于防止遗漏，不是关键词分类器，也不是答案来源。内部结构可以继续使用
+machine-readable domain 和 enum，但最终 Markdown 必须只显示对应的自然简体中文：
+
+- `business_goal` → 业务目标；`user` → 用户；`scenario` → 使用场景；
+- `deliverable` → 交付物；`success_metric` → 成功指标；`channel` → 渠道；
+- `deadline` → 截止日期；`constraint` → 约束条件；`user_journey` → 用户流程；
+- `functional_scope` → 功能范围；`identity_permission` → 身份与权限；`data` → 数据；
+- `ai_behavior` → AI 行为；`third_party_integration` → 第三方集成；
+- `content_asset` → 内容与素材；`operations_rules` → 运营规则；
+- `test_launch` → 测试与上线；`project_dependency` → 项目依赖；
+- `COMPLETE` → 已覆盖；`PARTIAL` → 部分覆盖；`MISSING` → 缺失；
+- `ASSUMED` → 基于待确认假设；`NOT_APPLICABLE` → 明确不适用；
+- `IN_SCOPE` → 已确认纳入；`OUT_OF_SCOPE` → 明确不纳入；
+- `DEFERRED` → 延后；`UNRESOLVED` → 待确认。
+
+英文 domain 名称和 enum 只能存在于内部结构，不得出现在最终标题、表头、状态说明或
+正文中。最终输出不得显示 `Business Goal`、`Functional Scope`、`ASSUMED`、
+`UNRESOLVED` 等英文展示文案。`FACT`、`GAP`、`ASSUMPTION` 证据标签、canonical ID、
+版本号和 error code 可以保留英文。明确不适用仍需用户材料中的事实支持。
 
 ## 固定流程
 

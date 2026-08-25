@@ -2,7 +2,7 @@
 
 ## Status
 
-`project-requirement-analyst` `0.2.0` is an experimental upstream Skill. It
+`project-requirement-analyst` `0.2.1` is an experimental upstream Skill. It
 turns sparse user-supplied project material into a usable Simplified Chinese
 Requirement Analysis Pack. It does not persist approved requirements or replace
 project authorization.

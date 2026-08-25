@@ -182,7 +182,7 @@ test("RA-09 produces usable business concepts, functional scope, user flow, and 
       user_journey: "Assume an entry-to-completion flow for discussion",
     },
   });
-  assert.equal(REQUIREMENT_ANALYST_SKILL_VERSION, "0.2.0");
+  assert.equal(REQUIREMENT_ANALYST_SKILL_VERSION, "0.2.1");
   assert.equal(pack.businessConcepts[0]?.name, "会员活动页");
   assert.equal(pack.functionalScopeDraft[0]?.disposition, "UNRESOLVED");
   assert.match(pack.functionalScopeDraft[0]?.notes ?? "", /not confirmed scope/u);
@@ -195,6 +195,7 @@ test("RA-09 produces usable business concepts, functional scope, user flow, and 
   assert.match(markdown, /\| 序号 \| 端 \| 功能模块 \| 功能说明 \| 范围状态 \| 依据 \| 备注 \|/u);
   assert.match(markdown, /## 信息架构/u);
   assert.doesNotMatch(markdown, /```mermaid|<img|!\[/u);
+  assert.doesNotMatch(markdown, /\| (?:Business Goal|Functional Scope|ASSUMED|UNRESOLVED) \|/u);
 });
 
 test("Requirement Analysis contract rejects untraceable facts and incomplete framework coverage", () => {

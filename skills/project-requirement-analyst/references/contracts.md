@@ -1,7 +1,7 @@
 # Requirement Analysis Pack Contract v0.2
 
 Provider-neutral structured contract: `projectai-requirement-analysis-pack-v2`.
-Skill: `project-requirement-analyst@0.2.0`.
+Skill: `project-requirement-analyst@0.2.1`.
 
 ## Core structures
 
@@ -57,6 +57,11 @@ such as:
 - `[GAP:G-01][success_metric] ...`
 - `[ASSUMPTION:A-01][functional_scope] ...`
 - `[P0:Q-01] ... — 解决：G-01`
+
+Machine-readable domain names and enum values remain unchanged in the structured
+contract. The final Markdown must render their Simplified Chinese display labels
+and must not expose English domain names or enum values. Evidence labels,
+canonical IDs, versions, and error codes remain unchanged.
 
 Use `/` only for an intentionally empty section. Escape table pipes.
 
