@@ -7,6 +7,8 @@
     displayName: "DeepSeek",
     hosts: ["chat.deepseek.com"],
     verificationStatus: "NEEDS_MANUAL_VERIFICATION",
+    preferAssistantBlockFallback: true,
+    preserveAssistantBlockText: true,
     composerSelectors: [
       "textarea#chat-input",
       "textarea[data-testid='chat-input']",
@@ -21,10 +23,11 @@
       "[class*='assistant'][class*='message']",
     ],
     responseContentSelectors: [
-      "[data-role='assistant'] .markdown",
-      "[class*='markdown']",
       "[class*='message-content']",
       "[class*='content']",
+      ".ds-markdown",
+      "[data-role='assistant'] .markdown",
+      "[class*='markdown']",
     ],
     stripSelectors: [
       "button",
@@ -32,6 +35,8 @@
       "[aria-hidden='true']",
       "[class*='action']",
       "[class*='toolbar']",
+      "[class*='thinking']",
+      "[class*='reasoning']",
     ],
   });
 

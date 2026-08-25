@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Project AI Skill UAT Adapter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Syncs official Skills through the current Project AI Staging session, injects them into supported chats, and captures manual UAT results.",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [

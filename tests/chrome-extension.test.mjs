@@ -437,7 +437,7 @@ test("latest response extraction scans assistant blocks newest to oldest and ski
     (candidate) => candidate.id === "deepseek",
   );
   const olderContent = new FakeElement({ order: 1, text: "Older response" });
-  const olderBlock = new FakeElement({ order: 1 }).addQuery(
+  const olderBlock = new FakeElement({ order: 1, text: "Older response" }).addQuery(
     adapter.selectors.responseContent[0],
     [olderContent],
   );
@@ -453,6 +453,39 @@ test("latest response extraction scans assistant blocks newest to oldest and ski
   const result = adapter.extractLatestResponse(root);
   assert.equal(result.text, "Older response");
   assert.equal(result.format, "rendered_text");
+});
+
+test("DeepSeek extraction preserves the complete assistant block instead of markdown fragments", async () => {
+  const context = await loadAdapters();
+  const adapter = context.ProjectAIUAT.adapters.find(
+    (candidate) => candidate.id === "deepseek",
+  );
+  const completeResponse = new FakeElement({
+    text: "Requirement Analysis Pack\nRequirement Matrix\nRM-001 Business Goal",
+  });
+  const fragmentedParagraph = new FakeElement({
+    text: "RM-001 Business Goal",
+  });
+  const responseBlock = new FakeElement({
+    order: 1,
+    text: "Requirement Analysis Pack\nRequirement Matrix\nRM-001 Business Goal",
+  });
+  for (const selector of adapter.selectors.responseContent) {
+    responseBlock.addQuery(selector, []);
+  }
+  responseBlock.addQuery("[class*='content']", [completeResponse]);
+  responseBlock.addQuery(".ds-markdown", [fragmentedParagraph]);
+  responseBlock.addQuery("[class*='markdown']", [fragmentedParagraph]);
+  const root = fakeRoot([
+    [adapter.selectors.assistant[0], [responseBlock]],
+  ]);
+
+  const result = adapter.extractLatestResponse(root);
+  assert.equal(
+    result.text,
+    "Requirement Analysis Pack\nRequirement Matrix\nRM-001 Business Goal",
+  );
+  assert.equal(result.contentSelector, null);
 });
 
 test("latest response extraction prefers the newest valid assistant block in DOM order", async () => {

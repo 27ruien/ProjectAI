@@ -260,13 +260,17 @@
 
         for (let index = matches.length - 1; index >= 0; index -= 1) {
           const match = matches[index];
-          const selected = extractUsingSelectors(
-            match.element,
-            config.responseContentSelectors,
-          );
+          const selected = config.preferAssistantBlockFallback
+            ? null
+            : extractUsingSelectors(
+                match.element,
+                config.responseContentSelectors,
+              );
           const fallback = selected
             ? selected.text
-            : extractFallback(match.element, config.stripSelectors);
+            : config.preserveAssistantBlockText
+              ? elementText(match.element)
+              : extractFallback(match.element, config.stripSelectors);
           if (fallback.trim()) {
             return { ...match, extracted: selected || { text: fallback, selector: null } };
           }
