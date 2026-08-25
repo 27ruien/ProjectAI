@@ -8,6 +8,8 @@
 
 **FORMAL EIGHT-CASE WEB-AI UAT: NOT_TESTED**
 
+**REAL THREE-SITE SMOKE: PASS**
+
 ## Automated evidence
 
 | Check | Result |
@@ -28,6 +30,8 @@ The deterministic tests now cover:
 - unresolved status for unsupported candidate functionality;
 - parent-linked text Information Architecture derived from Functional Scope;
 - all thirteen Simplified Chinese output sections;
+- Simplified Chinese display labels for controlled domains, scope dispositions,
+  and coverage states while preserving machine-readable contract values;
 - downstream Feasibility Research acceptance of Requirement Analysis Pack v2;
 - no image or Mermaid output from the deterministic renderer.
 
@@ -44,6 +48,23 @@ inventory. This addresses the previous failure mode where the analysis listed
 many unknowns without first producing a usable concept model, flow, scope table,
 and information hierarchy.
 
+## Real web-AI smoke
+
+The exact Staging Skill `project-requirement-analyst@0.2.1` was synced through
+the unpacked Extension and executed in signed-in ChatGPT, DeepSeek, and Qwen
+web conversations using the same sparse member-campaign brief.
+
+All three final answers included Simplified Chinese headings, core business
+concepts, a user flow, the fixed functional-scope table, a text information
+architecture, and visible pending-confirmation notes for unsupported core-flow
+candidates. A response-only accessibility-tree scan found zero occurrences of
+English controlled-domain labels or English state enums. Injection remained
+manual-send only.
+
+This is one real cross-platform smoke task. It validates the requested output
+shape and language behavior, but it is not substituted for the eight formal
+portable cases or a business-quality score.
+
 ## Remaining external coverage gap
 
 The eight formal portable packs have not been executed against current external
@@ -52,7 +73,7 @@ prove long-document interpretation quality or cross-model consistency.
 
 ## Recommendation
 
-Deploy the exact Staging candidate, sync `project-requirement-analyst@0.2.1`
-through the browser plugin, run one real smoke task on ChatGPT, DeepSeek, and
-Qwen, and then execute all eight formal portable cases before promoting the
-Skill from experimental status.
+Keep `project-requirement-analyst@0.2.1` experimental and execute all eight
+formal portable cases before any promotion. The current Staging release is
+ready for that Chinese full-chain UAT, subject to the separately recorded
+Staging disk-capacity condition.

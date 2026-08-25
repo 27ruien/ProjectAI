@@ -2,137 +2,205 @@
 
 最后更新：2026-08-25
 
-## 1. 范围与边界
+## 结论
 
-本审计覆盖当前 Project AI Web 与以“加载已解压的扩展程序”方式运行的浏览器插件中的用户可见文案。实现范围仅限界面文案、无障碍标签、用户可见诊断信息、Markdown 摘要标签，以及 Skill 名称和机器可读状态的显示映射。
+**CHINESE UI LOCALIZATION STATUS: PASS WITH CONDITIONS**
 
-以下内容保持不变：
+- Project AI Web：**PASS**
+- 浏览器插件：**PASS**
+- Skill 显示名称：**PASS**
+- 用户可见错误与状态标签：**PASS**
+- Manifest 用户可见信息：**PASS**
+- ChatGPT / DeepSeek / Qwen 简体中文回复：**PASS**
+- Requirement Analyst 实际产品分析产物：**PASS（真实三平台 smoke）**
+- UI 英文漏翻：**0**
+- Production：**NOT TOUCHED**
 
-- 所有 `skills/**/SKILL.md` 文件，以及 Skill 内容、版本和协议数据；
-- canonical Skill ID 和机器可读状态值；
-- `<SKILL>...</SKILL>` 与 `<USER_TASK>...</USER_TASK>` 注入边界；
-- API 路由与协议、JSON schema、数据库、RAGFlow、认证和会话行为；
-- ChatGPT、DeepSeek、Qwen 适配器选择器和“禁止自动发送”行为；
-- UAT Result JSON schema 与保存的原始回复数据；
-- `<USER_TASK>` 标签结构保持不变；插件仅在其内容前统一加入“请使用简体中文回复”，不修改 Skill；
-- Production.
+条件：Requirement Analyst 的八个正式 portable web-AI 用例仍为
+`NOT_TESTED`，本轮三平台结果是一条受控真实 smoke，不等同于完整业务质量评估；
+Staging 根分区部署后仅余约 `439 MiB`，未获得清理授权，因此没有删除历史镜像、
+构建缓存或发布资产。
 
-变更前仓库基线：
+## 范围与授权边界
 
-- 分支：`refactor/project-ai-slim`；
-- HEAD：`90f0cafdc96943bea853319479ae067feaff0b4d`；
-- 服务器测试环境基线：`staging-validation-v1.2`，对应
-  `9fe4eab20390a312c1f9300f18e8525e83fca60c`;
-- 浏览器插件修复基线：`staging-validation-v1.2.1`，对应
-  `9327c16e578f5ed63e9a54b5841553a05ad63d1e`;
-- 预先存在且未跟踪的 `chrome-extension.crx`：已原样保留，未作为本轮验证来源。
+最初范围是 Project AI Web 与浏览器插件的纯 UI 中文化，不修改 Skill。执行期间用户
+随后明确要求：
 
-## 2. 审计方法
+1. 外部 AI 最终回复必须是简体中文；
+2. 只升级 `project-requirement-analyst`，让它先形成核心业务概念、用户流程、功能范围
+   Markdown 表格与文字信息架构；
+3. 没有材料证据、但核心链路需要考虑的候选功能必须标记待确认；
+4. 不生成图片。
 
-1. 读取 `PROJECT_AI_CURRENT_STATE.md`、仓库规则、当前路由、组件、消息、浏览器插件 Popup/content/shared 脚本、Manifest，以及当前 Git、CI 和 tag 状态。
-2. 变更前使用 Computer Use 检查当时真实运行的测试环境页面和已安装的浏览器插件 Popup。
-3. 扫描 Web JSX 文案与无障碍属性，以及浏览器插件的界面、错误和导出文案；区分用户可见文案与代码标识、选择器、协议字段、业务数据和外部输入内容。
-4. 增加确定性回归检查，覆盖中文 Manifest/Popup、canonical Skill ID 保留、中文 Skill 显示名称和中文状态映射。
-5. 运行完整仓库验证门禁。
-6. 创建新的不可变候选版本，仅部署测试环境，核验在线来源，并使用 Computer Use 检查 Web 和浏览器插件的正常及非正常状态。
+因此最终允许的 Skill 例外仅为 Requirement Analyst `0.2.1`。以下三个 Skill 的
+`SKILL.md` 未修改：
 
-第 6 步将在实际执行后记录；本文不会提前把在线检查标记为通过。
+- `project-weekly-report`
+- `project-timeline-maker`
+- `project-feasibility-research`
 
-## 3. 英文界面发现
+以下边界保持不变：API 路由与对外协议、认证/会话、数据库、RAGFlow、Project
+Knowledge、Timeline 数据、UAT Result JSON schema、插件 Project AI Sync 与注入
+wrapper、适配器选择器、安全边界和禁止自动发送行为。Production 未部署、未重启、
+未写入。
 
-### A. Project AI Web
+预先存在且未跟踪的 `chrome-extension.crx` 原样保留，不是本轮验证来源。
 
-当前 Web 主流程原本已以中文为主。静态审计发现并修复了以下英文残留类型：
+## 实现结果
 
-- 外观按钮无障碍标签直接显示底层主题值；
-- 测试环境提示中的 `Commit`；
-- 登录说明中的 `Mock Provider`、`Seed`、`Staging`、`Local`、`OAuth`；
-- 系统设置中的 `Dataset`、`Prompt`、`Provider`、`Secret`、`Secret File`；
-- Sonner 默认容器标签 `Notifications`；
-- 仅屏幕阅读器可见的对话框和导航标签中不一致的 `ProjectAI`；
-- 未知项目状态直接暴露底层机器值；
-- 组织架构校验错误 `No changes supplied` 可能直接显示给用户。
+### Project AI Web
 
-这些内容均在 UI 层映射为自然的简体中文。项目数据、用户名、邮箱、文件名和 AI 回复属于业务或外部数据，不是产品界面文案，因此不改写。
+当前用户可见导航、标题、按钮、输入提示、对话框、空状态、加载/错误/成功反馈、
+状态、登录与权限提示、项目、项目知识、成员及问 AI 界面统一为自然简体中文。
+当前产品没有 Timeline 页面或标签，因此没有把不存在的 Timeline UI 计为已验证能力。
 
-### B. Chrome Extension
+### 浏览器插件
 
-变更前 Popup、Manifest、诊断信息、空状态、操作反馈和 Markdown 摘要以英文为主。现已改为简体中文，同时保留 `Project AI`、`Skill` 和 `UAT` 等约定术语。
+插件版本为 `0.1.4`。Popup、Manifest、同步、Skill 选择、站点/Session 状态、任务
+说明、注入、回复预览、复制、下载、保存、导出、空状态和诊断信息均使用简体中文。
+用户界面统一称“浏览器插件”。
 
-仅用于显示的 Skill 映射：
+每次注入仍保留原始 wrapper：
 
-| Canonical ID | 界面显示名称 |
+```text
+<SKILL>
+...
+</SKILL>
+
+<USER_TASK>
+...
+</USER_TASK>
+```
+
+插件只在 `<USER_TASK>` 内加入固定中文回复要求，不改写已同步 Skill 内容，也不会
+自动点击第三方平台的发送按钮。
+
+### Skill 显示映射
+
+| Canonical ID | 中文显示名称 |
 |---|---|
 | `project-weekly-report` | 项目周报 |
 | `project-timeline-maker` | 项目时间线生成 |
 | `project-requirement-analyst` | 项目需求分析 |
 | `project-feasibility-research` | 项目可行性研究 |
 
-仅用于显示的状态映射包括：
+canonical ID、版本和底层状态值保持不变，仅在 UI 显示层映射。
 
-| 机器可读值 | 界面标签 |
+### Requirement Analyst `0.2.1`
+
+最终 Markdown 固定先输出：需求摘要、核心业务概念、用户流程、功能范围、信息架构，
+再输出需求矩阵、证据/覆盖、问题、依赖、风险、范围边界和建议下一步。
+
+功能范围表固定为：
+
+`序号 | 端 | 功能模块 | 功能说明 | 范围状态 | 依据 | 备注`
+
+没有事实证据的核心链路候选保持 `ASSUMPTION + GAP`，最终显示状态为“待确认”，
+备注明确说明“核心链路待确认，不作为已确认范围”。信息架构只使用功能范围中已有
+节点，以 Markdown 嵌套列表输出，不生成图片、Mermaid 或 JSON。
+
+内部 domain 与 enum 不变；最终 Markdown 显示层使用中文领域名和中文状态。真实
+三平台复测未发现 `Business Goal`、`Functional Scope`、`COMPLETE`、`PARTIAL`、
+`MISSING`、`ASSUMED`、`NOT_APPLICABLE`、`UNRESOLVED` 等英文展示残留。
+
+## Computer Use 真实审计
+
+### Project AI Web
+
+在部署后的真实 Staging 会话检查了登录相关界面、主导航、项目列表与搜索/状态筛选、
+新建项目对话框、项目知识、成员、问 AI 抽屉及相关状态。当前 Web UI 的非必要英文
+残留为 `0`。
+
+### 浏览器插件与外部 AI
+
+以 Chrome“加载已解压的扩展程序”运行当前 `chrome-extension/`：
+
+- Project AI：成功同步 4 个正式 Skill；Requirement Analyst 显示为
+  `项目需求分析 · v0.2.1`，次级信息保留 canonical ID；
+- ChatGPT：注入成功、未自动发送；人工触发发送后输出中文核心业务概念、用户流程、
+  功能范围表、信息架构及中文覆盖状态；英文 domain/enum 残留 `0`；
+- DeepSeek：同样通过；英文 domain/enum 残留 `0`；
+- Qwen：同样通过；英文 domain/enum 残留 `0`；
+- 最新回复读取、复制、Markdown 下载、本地 UAT 保存、JSON/摘要导出已在真实链路
+  验证；三个适配器仍保持 no-auto-send。
+
+第三方站点自身的英文导航、模型名或系统免责声明不属于 Project AI UI。Mac 在 Qwen
+最终可访问性树审计完成后自动锁屏，因此 v0.2.1 的 Qwen 最终截图未新增；Qwen 的
+v0.2.0 结构化输出截图和 v0.2.1 最终 AX 文本审计均已完成。
+
+截图证据保存在 `docs/ui-audit/chinese-ui-localization/`，包括 Project AI、插件同步、
+三平台中文回复、操作按钮、功能范围、待确认备注和信息架构。
+
+## English residue audit
+
+### A. 有意保留
+
+- `Project AI`、`Skill`、`UAT`、`AI`、`API`、`RAGFlow`；
+- `ChatGPT`、`DeepSeek`、`Qwen`；
+- `Markdown`、`JSON`、`URL`、`HTTP`、`HTTPS`；
+- canonical Skill ID、version、SHA、时间戳、error code；
+- `[FACT:*]`、`[GAP:*]`、`[ASSUMPTION:*]`、`P0/P1/P2` 证据与优先级标签；
+- 项目数据、用户名、邮箱、文件名、第三方站点内容及不可变技术标识；
+- 不作为界面文案渲染的源码变量、选择器、路由、存储键和协议字段。
+
+### B. UI 漏翻
+
+**0**
+
+## 问题与复测
+
+| ID | 发现 | 结果 |
+|---|---|---|
+| `LOC-001` | 插件 Popup、Manifest、操作与导出文案为英文 | **FIXED / REAL BROWSER VERIFIED** |
+| `LOC-002` | Web 登录、设置、环境与无障碍标签含非必要英文 | **FIXED / REAL BROWSER VERIFIED** |
+| `LOC-003` | 诊断可能透传英文运行时消息 | **FIXED / DETERMINISTIC + REAL UI VERIFIED** |
+| `LOC-004` | 组织架构校验可能显示 `No changes supplied` | **FIXED** |
+| `LOC-005` | 英文 Skill 令外部 AI 默认英文回复 | **FIXED / THREE-SITE VERIFIED** |
+| `LOC-006` | Requirement Analyst 只罗列缺口，没有实际产品产物 | **FIXED IN 0.2.0 / THREE-SITE VERIFIED** |
+| `LOC-007` | 外部 AI 仍显示英文领域名与状态 enum | **FIXED IN 0.2.1 / THREE-SITE VERIFIED** |
+
+## 测试、CI 与部署来源
+
+| 检查 | 结果 |
 |---|---|
-| `PASS` | 通过 |
-| `FAIL` | 失败 |
-| `BLOCKED` | 阻塞 |
-| `IMPLEMENTED` | 已实现 |
-| `MANUAL_VERIFIED` / `MANUAL VERIFIED` | 已人工验证 |
-| `NOT_VERIFIED` / `NOT VERIFIED` | 未验证 |
-| `NEEDS_MANUAL_VERIFICATION` / `NEEDS MANUAL VERIFICATION` | 待人工验证 |
-| `active` | 已启用 |
-| `experimental` | 实验版 |
+| Requirement Analyst 模块 | **12/12 PASS** |
+| 浏览器插件确定性测试 | **23/23 PASS** |
+| 完整 `npm test` | **105/105 PASS**（98 unit + 7 rendered/proxy） |
+| `npm run typecheck` | **PASS** |
+| `npm run lint` | **PASS** |
+| `npm run build` | **PASS** |
+| `git diff --check` | **PASS** |
+| 分支精确 SHA CI | **PASS** — `32838451483` |
+| 标签精确 SHA CI | **PASS** — `32838648294` |
 
-canonical ID 仍作为次级信息显示。Project AI 返回的状态值和 Skill 元数据不被改写，也不会以中文语义重新持久化。
+最终 Staging 来源：
 
-浏览器插件的用户可见诊断信息现统一使用中文。当存在结构化错误码时，Popup 分别以 `错误：...` 和 `错误代码：...` 展示中文消息与机器码。未预期的浏览器或运行时英文错误不会直接透传给用户。
+- tag：`staging-validation-v1.4.1`；
+- SHA：`119ab621eeea8ac8790e1270305c6dadc0a168ee`；
+- release：`20260825T104820Z`；
+- image：`projectai-slim-uat:20260825T104820Z-staging-validation-v1.4.1`；
+- image ID：`sha256:8f801ca45a66292ec3b889376caa2541512f4c9ce0daa3e8f1f97bd8f7bad5cb`；
+- source archive SHA-256：`6dba77cc7884d68756e71310f1f7d7592d1c1cc23f15fba65f7735bb269ae0dc`；
+- image archive SHA-256：`9095083adf46742608cba52ae0d9d1d33019c632293fe93ead1ce4c4808f57fe`；
+- 公共健康接口：HTTP 200，version 与 commit header 均匹配精确标签；
+- 应用容器：running / healthy / restart `0`；
+- PostgreSQL：镜像、启动时间、健康状态与重启次数均未改变；
+- Production：镜像仍为
+  `sha256:a4b6d41941ebb8f995cf2ecaba65a595990187b8b93d03758287f42443cb5469`，
+  running / healthy / restart `0`，启动时间未改变。
 
-Markdown UAT 摘要使用中文标题和标签。JSON 导出及其 schema、字段名保持不变。
+旧标签 `staging-validation-v1.1`、`staging-validation-v1.2`、
+`staging-validation-v1.2.1`、`staging-validation-v1.3`、
+`staging-validation-v1.3.1` 和 `staging-validation-v1.4` 均未移动。
 
-## 4. 有意保留的英文术语
+## 最终边界声明
 
-以下内容属于产品名、约定技术术语、文件或协议格式、不可变标识或机器可读数据，因此保留：
+- Skill 文件修改：**YES — 仅 Requirement Analyst，来自用户后续明确授权**
+- 其他三个 Skill 内容：**UNCHANGED**
+- 业务逻辑修改：**YES — 仅 Requirement Analyst Pack/renderer 与输出规则**
+- API 路由/认证/数据库/RAGFlow/Timeline/Knowledge：**UNCHANGED**
+- 插件注入与同步 contract：**UNCHANGED**
+- Production：**NOT TOUCHED**
 
-- `Project AI`, `Skill`, `UAT`, `AI`, `API`, `RAGFlow`, `Kivisense`;
-- `ChatGPT`, `DeepSeek`, `Qwen`;
-- `Markdown`, `JSON`, `PDF`, `DOCX`, `XLSX`, `PPTX`, `TXT`;
-- `URL`, `HTTP`, `HTTPS`, email addresses, versions, SHAs, and timestamps;
-- canonical Skill IDs and machine-readable error/status codes;
-- 外部站点内容、项目/用户/测试夹具数据、文件名和 AI 回复；
-- 不作为界面文案渲染的源码标识、CSS 类、选择器、存储键、路由和内部协议字段。
-
-`chrome-extension/README.md` 等开发者文档不属于本次纯 UI 中文化范围。任何 `SKILL.md` 内的英文均不视为 UI 漏翻，也未被修改。
-
-## 5. 问题与复测记录
-
-| ID | 严重度 | 发现 | 期望 | 修复 | 复测 |
-|---|---|---|---|---|---|
-| `LOC-001` | S3 | 浏览器插件 Popup、Manifest 和操作文案为英文 | 简体中文界面 | 中文化可见文案与 Manifest 元数据 | 静态回归通过；在线复测待执行 |
-| `LOC-002` | S4 | Web 登录、设置、环境和无障碍标签含不必要英文 | 自然中文标签 | 中文化纯 UI 标签和回退文案 | 类型检查与代码规范检查通过；在线复测待执行 |
-| `LOC-003` | S3 | 浏览器插件诊断可能透传英文运行时消息 | 中文消息并保留错误码 | 增加受控中文回退和结构化错误码显示 | 确定性测试通过；在线复测待执行 |
-| `LOC-004` | S4 | 组织架构校验可能显示 `No changes supplied` | 中文校验提示 | UI 层精确映射为“请至少修改一项部门信息” | 完整验证待最终运行 |
-| `LOC-005` | S2 | 英文 Skill 可能令外部 AI 平台默认使用英文回复 | 三个平台均以简体中文回复 | Popup 在每次注入的 `<USER_TASK>` 中固定加入中文回复要求，Skill 原文不变 | v0.1.3 真实三平台复测待执行 |
-
-## 6. 验证状态
-
-| 验证项 | 结果 |
-|---|---|
-| 浏览器插件确定性测试 | **通过 — 23/23** |
-| 完整 `npm test` | **通过 — 104/104** |
-| 类型检查 | **通过** |
-| 代码规范检查 | **通过** |
-| 构建 | **通过（`npm test` 内一次，独立命令一次）** |
-| `git diff --check` | **通过** |
-| 精确 HEAD CI | **待执行** |
-| 测试环境来源核验 | **待执行** |
-| 真实 Project AI Web 中文化检查 | **待执行** |
-| 真实浏览器插件中文化检查 | **待执行** |
-| UI 英文漏翻 | **待真实界面复核** |
-
-## 7. 最终验收
-
-最终状态将在新候选版本运行于测试环境并完成 Computer Use 复核后填写，不提前标记为通过。
-
-- Production: **NOT TOUCHED**
-- Skill 文件修改：**NO**
-- 业务逻辑修改：**NO**
-- API contract 修改：**NO**
+推荐：**READY FOR CHINESE FULL-CHAIN UAT，WITH CONDITIONS**。下一步是执行八个正式
+Requirement Analyst portable 用例，并在获得单独授权后处理 Staging 磁盘容量。

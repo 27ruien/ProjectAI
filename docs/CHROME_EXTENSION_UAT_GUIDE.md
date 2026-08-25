@@ -1,214 +1,209 @@
-# Chrome Extension Real Full-Chain UAT Guide
+# 浏览器插件真实全链路 UAT 指南
 
-Last Updated: 2026-08-25
+最后更新：2026-08-25
 
-## START HERE — business-quality UAT
+## 从这里开始：业务质量 UAT
 
-The technical full chain is now manually verified with Computer Use. The user
-can focus on judging the business output and does not need to discover,
-reproduce, screenshot, or document adapter problems.
+技术全链路已经通过 Computer Use 人工验证。业务用户只需要判断输出是否满足业务
+要求，不需要寻找适配器问题、收集控制台日志或自行编写缺陷记录。
 
-1. Open `https://gridworks.cn/tool/projectai-slim-uat/` and use the normal
-   Staging login.
-2. Load or reload the unpacked Extension from
-   `/Users/ryan/Documents/ProjectAI-Focused-MVP/chrome-extension`.
-3. Sync Skills on the Project AI page and select
-   `project-requirement-analyst v0.1.0`.
-4. Use the same approved task/materials in fresh ChatGPT, DeepSeek, and Qwen
-   chats; inspect the injected content, then send through the site's native UI.
-5. Refresh, Save, and Export each result. Judge business quality only.
+1. 打开 `https://gridworks.cn/tool/projectai-slim-uat/`，使用测试环境账号正常登录。
+2. 在 `chrome://extensions` 重新加载以下目录中的浏览器插件：
+   `/Users/ryan/Documents/ProjectAI-Focused-MVP/chrome-extension`。
+3. 在 Project AI 页面同步 Skill，并选择
+   `项目需求分析 · v0.2.1`（canonical ID：`project-requirement-analyst`）。
+4. 在新的 ChatGPT、DeepSeek 和 Qwen 对话中使用同一份已批准、已脱敏的任务与材料；
+   先检查注入内容，再通过网站自己的发送按钮人工发送。
+5. 读取、复制、下载并保存每个平台的结果，最后导出 UAT 结果，判断业务质量。
 
-If a technical step fails or a third-party page changes, stop that site and
-hand the task back to Codex/operator. Do not spend time finding selectors,
-collecting console logs, reproducing the issue, or writing the defect record.
-The preserved technical evidence and current issue history are in
-`docs/CHROME_EXTENSION_REAL_UAT_REPORT.md` and
-`docs/CHROME_EXTENSION_REAL_UAT_ISSUES.md`.
+如果某个技术步骤失败或第三方页面结构变化，请停止该平台的测试并交还给
+Codex/技术人员处理。不要让业务用户寻找选择器、复现问题或整理技术日志。既有技术
+证据和问题记录见 `docs/CHROME_EXTENSION_REAL_UAT_REPORT.md` 与
+`docs/CHROME_EXTENSION_REAL_UAT_ISSUES.md`。
 
-## Readiness boundary
+## 验证边界
 
-This guide covers the intended manual path:
+本指南覆盖以下人工链路：
 
 ```text
-Project AI authenticated Skill read
-  -> Extension session sync and selection
-  -> external Agent injection
-  -> manual send
-  -> latest assistant response capture
-  -> explicit local save/export
+Project AI 登录态 Skill 读取
+  → 浏览器插件同步与选择
+  → 注入网页 AI 平台
+  → 用户人工发送
+  → 读取最新 AI 回复
+  → 用户明确触发本地保存与导出
 ```
 
-The exact v1.2 server and v0.1.1 Extension completed this path on signed-in
-ChatGPT, DeepSeek, and Qwen on 2026-08-25. This verifies the transport/capture
-chain, not Requirement Analyst answer quality. Third-party DOMs and login
-Sessions can change, so a future failure must be recorded as a new technical
-UAT issue rather than delegated to the business user.
+当前 Staging `staging-validation-v1.4.1` 与浏览器插件 `v0.1.4` 已在登录状态下
+完成 ChatGPT、DeepSeek、Qwen 真实链路检查。Requirement Analyst `v0.2.1` 还在
+三个平台完成了一条中文结构化输出 smoke：核心业务概念、用户流程、功能范围表、
+文字信息架构、待确认备注及中文状态显示均通过。
 
-## Install or reload the Extension
+这不等于八个正式业务用例已完成。第三方页面和登录状态可能变化；后续技术失败应
+记录为新的 UAT 问题，不应转交给业务用户排查。
 
-1. Open `chrome://extensions`.
-2. Enable **Developer mode**.
-3. If this is the first install, click **Load unpacked** and select the
-   repository `chrome-extension/` directory.
-4. If it is already installed, click **Reload** on **Project AI Skill UAT
-   Adapter**.
-5. Pin the Extension if desired.
+## 安装或重新加载浏览器插件
 
-Expected: Chrome accepts the manifest. The Extension has `activeTab`, `storage`,
-the three exact chat hosts, and only the reviewed Project AI Staging path. It
-does not request `cookies`.
+1. 打开 `chrome://extensions`。
+2. 开启“开发者模式”。
+3. 首次安装时，点击“加载已解压的扩展程序”，选择仓库中的
+   `chrome-extension/` 目录。
+4. 已安装时，在“Project AI 助手”卡片上点击“重新加载”。
+5. 如有需要，将浏览器插件固定在工具栏。
 
-## STEP 1 — Open and log in to Project AI Staging
+预期：Chrome 接受 Manifest。插件只申请 `activeTab`、`storage`、三个指定 AI
+平台域名和已审核的 Project AI Staging 路径，不申请 `cookies` 权限。
 
-Open:
+## 第 1 步：打开并登录 Project AI Staging
 
-`https://gridworks.cn/tool/projectai-slim-uat/`
+打开：`https://gridworks.cn/tool/projectai-slim-uat/`
 
-Log in with the separately provided test account. Do not place a password,
-cookie, Session token, API key, or customer data in UAT evidence.
+使用单独提供的测试账号登录。不要在 UAT 证据中记录密码、Cookie、Session token、
+API key 或客户敏感数据。
 
-Expected: the normal Project AI page remains logged in after navigation or
-refresh.
+预期：Project AI 页面完成登录，页面导航或刷新后登录状态仍有效。
 
-## STEP 2 — Sync official Skills from Project AI
+## 第 2 步：从 Project AI 同步正式 Skill
 
-While the active tab is still on the logged-in Project AI Staging page:
+保持当前标签页为已登录的 Project AI Staging 页面：
 
-1. Open **Project AI Skill UAT Adapter**.
-2. Confirm the badge says **Project AI: Sync ready**.
-3. Click **Sync Skills from Project AI**.
+1. 打开“Project AI 助手”。
+2. 确认状态显示“Project AI：可以同步”。
+3. 点击“从 Project AI 同步 Skill”。
 
-Expected: the Skill dropdown displays repository-derived metadata for exactly:
+预期：下拉列表显示仓库提供的四个正式 Skill：
 
-- `project-weekly-report` v1.2.0;
-- `project-timeline-maker` v0.1.0;
-- `project-requirement-analyst` v0.1.0;
-- `project-feasibility-research` v0.1.0.
+- 项目周报 `project-weekly-report` v1.2.0；
+- 项目时间线生成 `project-timeline-maker` v0.1.0；
+- 项目需求分析 `project-requirement-analyst` v0.2.1；
+- 项目可行性研究 `project-feasibility-research` v0.1.0。
 
-The popup also shows **Last synced**, the selected Skill status, and
-`source = Project AI`.
+Popup 同时显示上次同步时间、当前 Skill 状态以及来源 Project AI。
 
-If the popup reports `PROJECT_AI_UNAUTHENTICATED`, log in on that same Staging
-page and click Sync again. Do not copy a cookie or token into the Extension.
-If it reports an API or invalid-response diagnostic, stop the full-chain run
-and record the exact diagnostic; use the manual fallback only to isolate whether
-the remaining chat adapter still works.
+如果显示错误代码 `PROJECT_AI_UNAUTHENTICATED`，请在同一个 Staging 页面完成
+登录后重新同步。不要把 Cookie 或 token 复制进插件。如果出现 API 或响应格式诊断，
+停止全链路测试并记录准确的中文错误信息与错误代码；“手动备用模式”只能用于定位，
+不能代替 Project AI 同步验收。
 
-## STEP 3 — Select the first smoke Skill
+## 第 3 步：选择项目需求分析
 
-Choose:
+选择：`项目需求分析 · v0.2.1`
 
-`project-requirement-analyst v0.1.0`
+预期：选择结果保存在 `chrome.storage.session`。在同一浏览器 Session 中，关闭并
+重新打开 Popup 或切换标签页后，所选 Skill 仍然保持。Skill 正文不会写入长期 UAT
+结果存储。
 
-Expected: the selection is stored in `chrome.storage.session`. Closing and
-reopening the popup, or switching tabs, keeps this Skill selected for the same
-browser session. Its text is not written to long-lived result storage.
+## 第 4 步：新建网页 AI 对话
 
-## STEP 4 — Open one new external-Agent conversation
+分别在以下平台运行同一流程：
 
-Run the following flow separately on:
+- ChatGPT：`https://chatgpt.com/`
+- DeepSeek：`https://chat.deepseek.com/`
+- Qwen：`https://chat.qwen.ai/`
 
-- ChatGPT: `https://chatgpt.com/`
-- DeepSeek: `https://chat.deepseek.com/`
-- Qwen: `https://chat.qwen.ai/`
+通过平台自己的界面登录并新建空白对话。若用例需要附件，请使用平台自身的上传控件；
+浏览器插件不负责上传文件。
 
-Log in using the site's normal UI and start a new empty conversation. If the
-case requires attachments, upload them using that site's native upload control.
-The Extension does not upload files.
+预期：重新打开插件后，当前站点显示“已支持”，并保留同一个已同步 Skill。
 
-Expected: reopening the Extension shows the same synced Skill and the current
-site as **Supported**.
+## 第 5 步：输入真实脱敏任务并注入
 
-## STEP 5 — Add one real, sanitized task and inject
+1. 在“任务说明”中输入同一份真实或已脱敏的需求。
+2. 点击“注入当前对话”。
+3. 在发送前检查网页 AI 平台的输入框。
 
-1. Enter the same real or sanitized requirement in **Task Instruction**.
-2. Click **Inject into current chat**.
-3. Inspect the external Agent composer before sending.
-
-Expected exact shape:
+预期 wrapper 结构保持不变：
 
 ```text
 <SKILL>
-{exact SKILL.md returned by Project AI}
+{Project AI 返回的原始 SKILL.md}
 </SKILL>
 
 <USER_TASK>
-{exact Task Instruction entered by the user}
+请使用简体中文回复，包括所有标题、表头、状态说明和正文；仅保留 canonical ID、
+error code、版本号、证据标签及不可变技术标识。
+
+{用户输入的任务说明}
 </USER_TASK>
 ```
 
-The Skill body must not be rewritten, shortened, or supplemented. No persona,
-model role, answer judge, or prompt suffix is added. The Extension must not
-send the message.
+插件不得改写或缩短 Skill 正文，不得自动发送。若用例需要附件，请在确认三个平台
+使用同一份已批准、已脱敏材料后，通过平台自身界面上传。
 
-If the site needs an attachment, attach it in the site's native UI after
-checking that the same approved/sanitized material will be used on every Agent.
+## 第 6 步：人工发送
 
-## STEP 6 — Send manually
+检查输入框中的完整内容后，点击网页 AI 平台自身的“发送”按钮或使用其正常键盘
+操作。
 
-After checking the complete composer, click the site's normal Send button or
-use its normal manual keyboard action.
+预期：消息只由用户操作发送；浏览器插件没有自动发送入口。
 
-Expected: the message is sent only by the user's action. The Extension exposes
-no auto-send control.
+## 第 7 步：检查项目需求分析产物
 
-## STEP 7 — Capture and save the latest response
+等待网页 AI 完成回复，确认至少包含：
 
-Wait until the Agent finishes. Reopen the Extension and:
+1. 需求摘要；
+2. 核心业务概念表；
+3. 用户流程文字与表格；
+4. 功能范围 Markdown 表格，固定列为
+   `序号 | 端 | 功能模块 | 功能说明 | 范围状态 | 依据 | 备注`；
+5. 文字信息架构，以 Markdown 嵌套列表呈现，不生成图片；
+6. 没有材料证据但核心链路需要考虑的功能，显示“待确认”，备注包含
+   “核心链路待确认，不作为已确认范围”；
+7. 需求矩阵、依据与覆盖、待确认信息、问题、依赖、风险、范围边界及下一步建议。
 
-1. Click **Refresh** under **Latest assistant response**.
-2. Confirm the preview matches only the newest non-empty assistant answer.
-3. Click **Copy Result** and verify the copied text is unchanged.
-4. Click **Download .md** and verify the downloaded body is unchanged.
-5. Optionally enter a short **Task Label** and **Notes**.
-6. Click **Save UAT Result locally**.
+用户可见领域名与状态应为自然简体中文，不应显示 `Functional Scope`、`COMPLETE`、
+`PARTIAL`、`MISSING`、`ASSUMED`、`NOT_APPLICABLE`、`UNRESOLVED` 等内部英文值。
+证据标签 `[FACT:*]`、`[GAP:*]`、`[ASSUMPTION:*]`、canonical ID、版本号与错误码
+可以保留。
 
-Expected saved fields include `skillId = project-requirement-analyst`,
-`skillVersion = 0.1.0`, `skillSource = project_ai`, the current Agent/site,
-timestamp, sanitized origin/path, and `rawResponse`. Closing the popup after
-injection must not turn the synced Skill metadata into `null`.
+## 第 8 步：读取、复制、下载和保存最新回复
 
-The Skill body and Task Instruction are not saved with the result.
+重新打开浏览器插件：
 
-## STEP 8 — Repeat on another Agent with the same inputs
+1. 点击“读取最新回复”。
+2. 确认预览只包含最新一条非空 AI 回复。
+3. 点击“复制结果”，确认剪贴板内容未被改写。
+4. 点击“下载 Markdown”，确认下载正文未被改写。
+5. 如有需要，填写简短的“任务标签”和“备注”。
+6. 点击“保存 UAT 结果”。
 
-Open a new conversation on the next Agent site. Keep the selected synced Skill
-and reuse the exact same Task Instruction and approved attachments. Repeat
-Steps 5–7.
+预期保存字段包含 `skillId = project-requirement-analyst`、
+`skillVersion = 0.2.1`、`skillSource = project_ai`、当前平台、时间戳、已脱敏的
+origin/path 和 `rawResponse`。关闭 Popup 不应令已同步 Skill 元数据变成 `null`。
 
-Expected: only the Agent/site and returned answer vary. The selected Skill ID,
-version, source, Task Instruction, and attachments remain comparable.
+Skill 正文与任务说明不会随结果长期保存。
 
-## STEP 9 — Export for Cross-Agent comparison
+## 第 9 步：在另外两个平台重复
 
-After completing the selected sites:
+在下一个网页 AI 平台新建对话，保持同一个 Skill、任务说明和附件，重复第 5 至
+第 8 步。
 
-1. Click **Export JSON**.
-2. Confirm `schemaVersion`, `resultCount`, and every full saved result are
-   present.
-3. Click **Export Summary**.
-4. Confirm the Markdown table lists timestamp, site, Skill, source, task label,
-   response length, and notes.
+预期：只有平台与返回内容允许不同；Skill ID、版本、来源、任务和附件保持可比较。
 
-Expected: JSON contains the raw responses; the summary remains concise. Neither
-export contains cookies, tokens, Skill text, Task Instruction, query strings,
-or URL fragments.
+## 第 10 步：导出跨平台 UAT 结果
 
-## Manual fallback for diagnosis only
+完成选定平台后：
 
-Open **Advanced / Manual fallback**, enable the manual toggle, and paste one
-exact `SKILL.md`. This can separate a Project AI sync defect from a chat adapter
-defect. A fallback success does not count as full-chain Project AI Sync UAT.
+1. 点击“导出 JSON”，确认包含 `schemaVersion`、`resultCount` 和完整保存结果。
+2. 点击“导出摘要”，确认 Markdown 表格包含时间、平台、Skill、来源、任务标签、
+   回复长度和备注。
 
-## Per-site acceptance record
+预期：JSON 包含原始回复；摘要保持简洁。两种导出都不包含 Cookie、token、Skill
+正文、任务说明、URL query 或 fragment。
 
-| Site | Status | Project AI sync | Exact injection | Manual send only | Latest response exact | Copy | Download | Save metadata | Export | Diagnostic / notes |
+## 仅用于诊断的手动备用模式
+
+展开“高级 / 手动备用模式”，开启手动开关并粘贴一份原始 `SKILL.md`。这可以帮助
+区分 Project AI 同步问题与第三方平台适配问题。手动备用模式成功不计为 Project AI
+同步全链路通过。
+
+## 当前各平台验收记录
+
+| 平台 | 状态 | Project AI 同步 | 精确注入 | 仅人工发送 | 最新回复 | 复制 | 下载 | 保存 | 导出 | 备注 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| ChatGPT | MANUAL VERIFIED | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | Computer Use, signed-in live DOM, 2026-08-25 |
-| DeepSeek | MANUAL VERIFIED AFTER FIX | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | `EXT-UAT-001` fixed in v0.1.1; fresh post-CI rerun PASS |
-| Qwen | MANUAL VERIFIED | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | Computer Use, signed-in live DOM, 2026-08-25 |
+| ChatGPT | 已人工验证 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | Computer Use，登录态真实页面，2026-08-25 |
+| DeepSeek | 修复后已人工验证 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 历史问题 `EXT-UAT-001` 已修复并重新验证 |
+| Qwen | 已人工验证 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | 通过 | Computer Use，登录态真实页面，2026-08-25 |
 
-Use **PASS** only after the exact signed-in flow passes. Use **BLOCKED** when
-login, missing Staging deployment, or a live DOM mismatch prevents the flow.
-Deterministic tests are not a substitute for this record; the table above is
-backed by the real evidence report and screenshots.
+仅在真实登录链路完整通过后记录“通过”。登录失败、Staging 不可用或第三方 DOM
+变化导致无法继续时，记录“阻塞”。确定性测试不能替代本表的真实浏览器证据。

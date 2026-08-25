@@ -30,17 +30,20 @@ The output now leads with four concrete artifacts:
 4. Information Architecture: a minimal Markdown nested list derived from the
    Functional Scope.
 
-A concrete feature not supported by supplied evidence can appear only as an
-`ASSUMPTION` with `UNRESOLVED` status. Its notes must say that it is a core-flow
-consideration rather than confirmed scope, and a Gap/question must request user
-confirmation. Conventional login, analytics, configuration, sharing, payment,
-or admin features are never added by default.
+A concrete feature not supported by supplied evidence can appear internally
+only as an `ASSUMPTION` with `UNRESOLVED` status. The final Markdown displays
+that status as “待确认”. Its notes must say that it is a core-flow consideration
+rather than confirmed scope, and a Gap/question must request user confirmation.
+Conventional login, analytics, configuration, sharing, payment, or admin
+features are never added by default.
 
 ## Controlled framework and evidence
 
 After the usable artifacts, the Skill still evaluates all eighteen controlled
-domains. Each domain is `COMPLETE`, `PARTIAL`, `MISSING`, `ASSUMED`, or
-factually `NOT_APPLICABLE`.
+domains. Internal structured values remain `COMPLETE`, `PARTIAL`, `MISSING`,
+`ASSUMED`, or factually `NOT_APPLICABLE`; the final Markdown renders their
+Chinese display labels and does not expose those enum values as user-facing
+status text.
 
 - `FACT`: explicit supplied source excerpt plus source ID.
 - `GAP`: absent, ambiguous, or contradictory required information.
