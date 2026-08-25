@@ -2,10 +2,10 @@
 
 ## Status
 
-`project-requirement-analyst` `0.1.0` is an experimental upstream Skill. It
-turns sparse user-supplied project material into a reviewable Requirement
-Analysis Pack; it does not persist approved requirements or replace project
-authorization.
+`project-requirement-analyst` `0.2.0` is an experimental upstream Skill. It
+turns sparse user-supplied project material into a usable Simplified Chinese
+Requirement Analysis Pack. It does not persist approved requirements or replace
+project authorization.
 
 ## Input and boundary
 
@@ -14,62 +14,73 @@ no `projectId`. Project-bound mode requires a server-authorized `projectId` and
 pre-cut context. The Skill cannot retrieve Project Knowledge, query RAGFlow or
 the database, create a Project, or write Requirement, Scope, or Timeline data.
 
-Use this Skill before feasibility research or Timeline planning when the project
-description is too sparse or ambiguous to support those decisions.
+The same Skill is designed to work in a plain ChatGPT, DeepSeek, or Qwen web
+conversation. It returns copyable Chinese Markdown and does not require Agent
+tools. It does not generate images, Mermaid, or JSON.
 
-## Free understanding plus controlled framework
+## Usable product artifacts
 
-The Agent first understands the actual project instead of matching keywords.
-It then assesses eighteen controlled domains:
+The output now leads with four concrete artifacts:
 
-- Business Goal, User, Scenario, Deliverable, Success Metric, Channel,
-  Deadline, and Constraint;
-- User Journey, Functional Scope, Identity/Permission, Data, AI Behavior,
-  Third-party Integration, Content/Assets, Operations Rules, Test/Launch, and
-  Project Dependencies.
+1. Core business concepts: definitions, key attributes/states, relationships,
+   evidence, and notes.
+2. User flow: ordered actor, action, outcome, evidence, and notes.
+3. Functional Scope: a Markdown table with `序号 | 端 | 功能模块 | 功能说明 |
+   范围状态 | 依据 | 备注`.
+4. Information Architecture: a minimal Markdown nested list derived from the
+   Functional Scope.
 
-Each domain is `COMPLETE`, `PARTIAL`, `MISSING`, `ASSUMED`, or explicitly
-`NOT_APPLICABLE`. The framework is a completeness gate and never supplies a
-missing answer.
+A concrete feature not supported by supplied evidence can appear only as an
+`ASSUMPTION` with `UNRESOLVED` status. Its notes must say that it is a core-flow
+consideration rather than confirmed scope, and a Gap/question must request user
+confirmation. Conventional login, analytics, configuration, sharing, payment,
+or admin features are never added by default.
 
-## Evidence model
+## Controlled framework and evidence
 
-- `FACT`: explicit source excerpt plus supplied source ID.
-- `GAP`: relevant information is absent, ambiguous, or contradictory.
-- `ASSUMPTION`: bounded working hypothesis with no source-evidence claim.
+After the usable artifacts, the Skill still evaluates all eighteen controlled
+domains. Each domain is `COMPLETE`, `PARTIAL`, `MISSING`, `ASSUMED`, or
+factually `NOT_APPLICABLE`.
 
-Every downstream journey, scope, matrix, dependency, risk, and suggested next
-step references a statement with the same basis. All Gaps appear in Missing
-Information and receive an equal- or higher-priority Critical Question.
+- `FACT`: explicit supplied source excerpt plus source ID.
+- `GAP`: absent, ambiguous, or contradictory required information.
+- `ASSUMPTION`: bounded discussion hypothesis with no source-evidence claim.
 
-Question priority is decision-based: P0 blocks safe commitment or architecture;
-P1 materially changes experience/effort/dependency; P2 improves later
-completeness.
+Every downstream concept, flow, scope item, information node, dependency, risk,
+and next step references an analysis statement. Gap- or Assumption-based next
+steps require user confirmation.
 
 ## Output
 
-The Markdown renderer produces:
+The Simplified Chinese Markdown renderer produces:
 
-1. Requirement Summary and Evidence Register;
-2. User Journey Draft;
-3. Functional Scope Draft;
-4. Requirement Matrix;
-5. Missing Information;
-6. Critical Questions;
-7. Dependencies;
-8. Risks / Unknowns;
-9. Initial Scope Boundary;
-10. Suggested Next Step.
+1. 需求摘要
+2. 核心业务概念
+3. 用户流程
+4. 功能范围
+5. 信息架构
+6. 需求矩阵
+7. 分析依据与覆盖检查
+8. 待确认信息
+9. 关键问题
+10. 依赖
+11. 风险与未知项
+12. 初始范围边界
+13. 建议下一步
 
-The output is an analysis draft. Gap- or Assumption-based next steps always
-require user confirmation.
+The first five sections are the usable analysis product. Audit-oriented
+evidence and coverage follow them so a user does not have to read a long Gap
+inventory before reaching the product output.
 
 ## Implementation
 
 - Skill: `skills/project-requirement-analyst/`
+- Structured Contract: `projectai-requirement-analysis-pack-v2`
 - Contracts and renderer: `lib/requirement-analyst/`
 - Deterministic Eval: `tests/requirement-analyst.test.ts`
 - Portable UAT: `tests/requirement-analyst-cross-agent/`
 
-No UI, Agent Runtime, Workflow, Registry, Extension, MCP, PAT, API, database, or
-deployment change is part of this implementation.
+This revision changes only the Requirement Analyst Skill and its contract,
+renderer, tests, documentation, and official distribution metadata. It does not
+change the other three Skills, Project Knowledge, Timeline data, RAGFlow, auth,
+database, or Production.

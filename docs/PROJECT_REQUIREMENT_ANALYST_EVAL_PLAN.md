@@ -19,6 +19,7 @@ an LLM judge.
 | RA-06 | Conflicting identity statements | Keep both supplied statements and create an unresolved identity Gap |
 | RA-07 | Explicit phase boundary | Preserve in-scope, out-of-scope, and deferred work |
 | RA-08 | Provisional channel | Keep planning assumption explicit and require confirmation |
+| RA-09 | Product decomposition | Produce core business concepts, user flow, functional-scope table, and text Information Architecture without promoting unsupported candidates to confirmed scope |
 
 ## Deterministic gates
 
@@ -28,8 +29,11 @@ an LLM judge.
 - every Gap appears in Missing Information and a Critical Question;
 - matrix status cannot silently convert a Gap or Assumption to confirmed;
 - unresolved scope cannot become committed scope;
-- all ten Markdown sections are rendered;
+- Information Architecture must derive from Functional Scope evidence;
+- Functional Scope renders `序号 | 端 | 功能模块 | 功能说明 | 范围状态 | 依据 | 备注`;
+- all thirteen Simplified Chinese Markdown sections are rendered;
+- no image or Mermaid output is generated;
 - eight portable packs carry the exact current Skill and unified instruction.
 
-External Agent behavior is scored manually with each pack's `expected.json`.
-That file is not uploaded to the tested Agent.
+External AI behavior is scored manually with each pack's `expected.json`.
+That file is not uploaded to the tested AI platform.

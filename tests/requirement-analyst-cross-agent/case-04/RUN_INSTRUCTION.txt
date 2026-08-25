@@ -3,4 +3,5 @@ Then use only input.json as the factual source.
 Follow all rules in SKILL.md.
 Do not use external project knowledge.
 Do not invent missing facts.
-Return only the final Requirement Analysis Pack in Markdown.
+Return only the final Simplified Chinese Requirement Analysis Pack in Markdown.
+Do not generate images or Mermaid.

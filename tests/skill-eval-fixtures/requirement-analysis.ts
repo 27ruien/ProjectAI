@@ -95,6 +95,7 @@ export function makeRequirementAnalysisPack(input: {
   };
   const journeyStatement = primaryForDomain("user_journey");
   const scopeStatement = primaryForDomain("functional_scope");
+  const deliverableStatement = primaryForDomain("deliverable");
   const dependencyStatement = primaryForDomain("project_dependency");
   const dataStatement = primaryForDomain("data");
   const scopeDisposition = input.coverage?.functional_scope === "NOT_APPLICABLE"
@@ -105,9 +106,9 @@ export function makeRequirementAnalysisPack(input: {
   const nextStatement = gaps[0] ?? statements.find((item) => item.basis === "ASSUMPTION") ?? statements[0];
 
   return requirementAnalysisPackSchema.parse({
-    schemaVersion: "projectai-requirement-analysis-pack-v1",
+    schemaVersion: "projectai-requirement-analysis-pack-v2",
     skillId: "project-requirement-analyst",
-    skillVersion: "0.1.0",
+    skillVersion: "0.2.0",
     title: input.title,
     language: "zh",
     sourceSummary: "Synthetic fixture used only for deterministic contract evaluation.",
@@ -123,20 +124,55 @@ export function makeRequirementAnalysisPack(input: {
       summary: "Synthetic Requirement Analysis Pack for deterministic validation.",
       statementIds: statements.slice(0, 6).map((item) => item.id),
     },
+    businessConcepts: [{
+      id: "BC-01",
+      order: 1,
+      name: deliverableStatement.statement,
+      definition: "从当前交付物材料抽象的核心业务概念。",
+      keyAttributes: ["定义边界待核验"],
+      relationships: ["与用户、场景和功能范围相关"],
+      notes: deliverableStatement.basis === "FACT"
+        ? "概念名称有材料依据；详细属性仍需继续澄清。"
+        : "材料不足，仅作为待确认的概念占位。",
+      basis: deliverableStatement.basis,
+      statementIds: [deliverableStatement.id],
+    }],
     userJourneyDraft: [{
       id: "J-01",
       order: 1,
       actor: journeyStatement.basis === "FACT" ? "Confirmed user" : "User to confirm",
       action: "Complete the primary project interaction",
       outcome: "Reach the intended outcome",
+      notes: journeyStatement.basis === "FACT"
+        ? "Flow step is grounded in supplied material."
+        : "Core-flow consideration only; not confirmed scope.",
       basis: journeyStatement.basis,
       statementIds: [journeyStatement.id],
     }],
     functionalScopeDraft: [{
       id: "S-01",
-      title: "Primary project capability",
+      order: 1,
+      surface: "待确认端",
+      module: "Primary project capability",
+      description: scopeStatement.statement,
       disposition: scopeDisposition,
-      rationale: "Synthetic scope row follows the functional-scope evidence class",
+      notes: scopeStatement.basis === "FACT"
+        ? "Confirmed by the synthetic functional-scope evidence."
+        : "Core-link consideration only; not confirmed scope.",
+      basis: scopeStatement.basis,
+      statementIds: [scopeStatement.id],
+    }],
+    informationArchitecture: [{
+      id: "IA-01",
+      parentId: null,
+      order: 1,
+      surface: "待确认端",
+      label: "主要信息入口",
+      nodeType: "SURFACE",
+      description: "承载当前主要交付物的信息入口。",
+      notes: scopeStatement.basis === "FACT"
+        ? "节点有功能范围依据。"
+        : "候选节点，需确认后才能纳入正式信息架构。",
       basis: scopeStatement.basis,
       statementIds: [scopeStatement.id],
     }],

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   REQUIREMENT_ANALYSIS_MARKDOWN_SECTIONS,
+  REQUIREMENT_ANALYST_SKILL_VERSION,
   assertRequirementDomainCatalogComplete,
   renderRequirementAnalysisMarkdown,
   requirementAnalysisInputSchema,
@@ -167,6 +168,35 @@ test("RA-08 Planning assumption stays visible and forces user confirmation", () 
   assert.equal(pack.suggestedNextStep.requiresUserConfirmation, true);
 });
 
+test("RA-09 produces usable business concepts, functional scope, user flow, and information architecture", () => {
+  const pack = makeRequirementAnalysisPack({
+    title: "Synthetic product decomposition",
+    coverage: {
+      deliverable: "COMPLETE",
+      functional_scope: "ASSUMED",
+      user_journey: "ASSUMED",
+    },
+    factText: { deliverable: "会员活动页" },
+    assumptionText: {
+      functional_scope: "Assume a primary member interaction for discussion",
+      user_journey: "Assume an entry-to-completion flow for discussion",
+    },
+  });
+  assert.equal(REQUIREMENT_ANALYST_SKILL_VERSION, "0.2.0");
+  assert.equal(pack.businessConcepts[0]?.name, "会员活动页");
+  assert.equal(pack.functionalScopeDraft[0]?.disposition, "UNRESOLVED");
+  assert.match(pack.functionalScopeDraft[0]?.notes ?? "", /not confirmed scope/u);
+  assert.equal(pack.informationArchitecture[0]?.parentId, null);
+
+  const markdown = renderRequirementAnalysisMarkdown(pack);
+  assert.match(markdown, /# 需求分析产出包/u);
+  assert.match(markdown, /\| 序号 \| 核心业务概念 \| 概念定义 \|/u);
+  assert.match(markdown, /\| 序号 \| 角色 \| 操作\/步骤 \| 结果\/反馈 \|/u);
+  assert.match(markdown, /\| 序号 \| 端 \| 功能模块 \| 功能说明 \| 范围状态 \| 依据 \| 备注 \|/u);
+  assert.match(markdown, /## 信息架构/u);
+  assert.doesNotMatch(markdown, /```mermaid|<img|!\[/u);
+});
+
 test("Requirement Analysis contract rejects untraceable facts and incomplete framework coverage", () => {
   const pack = makeRequirementAnalysisPack({ title: "Synthetic negative control" });
   const noEvidence = structuredClone(pack);
@@ -191,6 +221,14 @@ test("Requirement Analysis contract rejects untraceable facts and incomplete fra
   silentlyResolved.requirementMatrix[0].basis = "GAP";
   silentlyResolved.requirementMatrix[0].status = "CONFIRMED";
   assert.equal(requirementAnalysisPackSchema.safeParse(silentlyResolved).success, false);
+
+  const inventedArchitecture = structuredClone(pack);
+  const unrelated = inventedArchitecture.statements.find((item) => item.domain === "data");
+  if (unrelated) {
+    inventedArchitecture.informationArchitecture[0].basis = unrelated.basis;
+    inventedArchitecture.informationArchitecture[0].statementIds = [unrelated.id];
+  }
+  assert.equal(requirementAnalysisPackSchema.safeParse(inventedArchitecture).success, false);
 });
 
 test("Requirement Analysis renderer exposes every required section and evidence class", () => {
@@ -215,7 +253,8 @@ test("Requirement Analyst Skill and eight portable UAT packs stay synchronized",
     "Follow all rules in SKILL.md.",
     "Do not use external project knowledge.",
     "Do not invent missing facts.",
-    "Return only the final Requirement Analysis Pack in Markdown.",
+    "Return only the final Simplified Chinese Requirement Analysis Pack in Markdown.",
+    "Do not generate images or Mermaid.",
   ].join("\n") + "\n";
   for (let index = 1; index <= 8; index += 1) {
     const root = new URL(`./requirement-analyst-cross-agent/case-${String(index).padStart(2, "0")}/`, import.meta.url);
@@ -228,6 +267,12 @@ test("Requirement Analyst Skill and eight portable UAT packs stay synchronized",
     assert.equal(copiedSkill, skill);
     assert.equal(copiedInstruction, instruction);
     assert.equal(requirementAnalysisInputSchema.parse(JSON.parse(inputText)).projectId, null);
-    assert.equal(JSON.parse(expectedText).executionStatus, "NOT_TESTED");
+    const expected = JSON.parse(expectedText) as {
+      executionStatus: string;
+      globalPassCriteria: string[];
+    };
+    assert.equal(expected.executionStatus, "NOT_TESTED");
+    assert.ok(expected.globalPassCriteria.some((item) => /thirteen required output sections/u.test(item)));
+    assert.ok(expected.globalPassCriteria.some((item) => /Functional Scope is a Markdown table/u.test(item)));
   }
 });

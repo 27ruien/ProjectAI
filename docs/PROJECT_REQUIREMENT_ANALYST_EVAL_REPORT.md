@@ -2,40 +2,57 @@
 
 ## Result
 
+**SKILL VERSION: `0.2.0`**
+
 **DETERMINISTIC STATUS: PASS**
 
-**CROSS-AGENT STATUS: NOT_TESTED**
+**FORMAL EIGHT-CASE WEB-AI UAT: NOT_TESTED**
 
 ## Automated evidence
 
 | Check | Result |
 |---|---|
-| Required representative Cases | 8 / 8 PASS |
-| Contract/negative controls | 2 / 2 PASS |
+| Required representative Cases | 9 / 9 PASS |
+| Contract/renderer negative controls | 2 / 2 PASS |
 | Portable-pack synchronization | 1 / 1 PASS |
-| Requirement Analyst test module | 11 / 11 PASS |
-| Full repository `npm test` | 77 / 77 PASS (70 unit + 7 rendered/proxy) |
-| Typecheck / Lint / `git diff --check` | PASS / PASS / PASS |
-| Formal Skill validation | PASS |
+| Requirement Analyst test module | 12 / 12 PASS |
+| Full repository `npm test` | 105 / 105 PASS (98 unit + 7 rendered/proxy) |
+| Typecheck / Lint / Build / `git diff --check` | PASS / PASS / PASS / PASS |
+| Official Skill distribution metadata | `project-requirement-analyst@0.2.0` PASS |
 
-The tests use synthetic classifications and assert observable contract
-invariants. They do not prove that an external Agent can correctly interpret a
-long, messy project document.
+The deterministic tests now cover:
+
+- core business concept rows with evidence references;
+- ordered user flow with visible notes;
+- the fixed Functional Scope Markdown columns;
+- unresolved status for unsupported candidate functionality;
+- parent-linked text Information Architecture derived from Functional Scope;
+- all thirteen Simplified Chinese output sections;
+- downstream Feasibility Research acceptance of Requirement Analysis Pack v2;
+- no image or Mermaid output from the deterministic renderer.
 
 ## Findings
 
-No deterministic blocker remains. The Contract rejects untraceable Facts,
-incomplete controlled-framework coverage, silent Gap confirmation, invalid
-scope boundaries, missing Gap questions, and unconfirmed assumption-based next
+The v2 Contract rejects untraceable Facts, incomplete controlled-framework
+coverage, silent Gap confirmation, committed Gap/Assumption scope, missing Gap
+questions, invalid scope boundaries, Information Architecture that is not
+derived from Functional Scope evidence, and unconfirmed assumption-based next
 steps.
 
-## External coverage gap
+The output order now places usable product artifacts before the evidence and Gap
+inventory. This addresses the previous failure mode where the analysis listed
+many unknowns without first producing a usable concept model, flow, scope table,
+and information hierarchy.
 
-No ChatGPT, Claude, DeepSeek, Qwen, or other external Agent was run. All eight
-portable packs remain `NOT_TESTED`; no Cross-Agent PASS is claimed.
+## Remaining external coverage gap
+
+The eight formal portable packs have not been executed against current external
+web AI models. Their status remains `NOT_TESTED`; deterministic PASS does not
+prove long-document interpretation quality or cross-model consistency.
 
 ## Recommendation
 
-Proceed to internal manual review of the Pack structure, then run all eight
-portable Cases across the chosen external Agents. Keep the Skill experimental
-until free-understanding quality and cross-model consistency are observed.
+Deploy the exact Staging candidate, sync `project-requirement-analyst@0.2.0`
+through the browser plugin, run one real smoke task on ChatGPT, DeepSeek, and
+Qwen, and then execute all eight formal portable cases before promoting the
+Skill from experimental status.

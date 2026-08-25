@@ -42,7 +42,7 @@ test("authenticated official Skill list returns repository metadata for four dis
     [
       ["project-weekly-report", "1.2.0", "active"],
       ["project-timeline-maker", "0.1.0", "experimental"],
-      ["project-requirement-analyst", "0.1.0", "experimental"],
+      ["project-requirement-analyst", "0.2.0", "experimental"],
       ["project-feasibility-research", "0.1.0", "experimental"],
     ],
   );
@@ -71,7 +71,7 @@ test("authenticated official Skill read returns the exact current SKILL.md only"
   assert.equal(body.source, "project_ai");
   assert.equal(body.skill.skillMarkdown, expected);
   assert.equal(body.skill.id, skillId);
-  assert.equal(body.skill.version, "0.1.0");
+  assert.equal(body.skill.version, "0.2.0");
   assert.deepEqual(Object.keys(body.skill).sort(), [
     "category",
     "contentType",

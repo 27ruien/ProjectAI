@@ -18,7 +18,10 @@
     "Invented owner"
   ],
   "globalPassCriteria": [
-    "All ten required output sections are present.",
+    "All thirteen required output sections are present in Simplified Chinese.",
+    "Core business concepts, user flow, functional scope, and text information architecture are usable outputs.",
+    "Functional Scope is a Markdown table with surface, module, description, status, evidence, and notes.",
+    "Unsupported candidate functions remain unresolved and visibly marked for confirmation.",
     "Every analytical statement is visibly FACT, GAP, or ASSUMPTION.",
     "Critical Questions use P0, P1, or P2.",
     "All controlled domains are assessed without filling gaps.",

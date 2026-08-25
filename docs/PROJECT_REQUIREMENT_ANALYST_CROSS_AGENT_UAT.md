@@ -30,10 +30,14 @@ Upload or provide only:
 
 Do not upload `expected.json`; it is the human scoring truth source.
 
-Run every Case in a fresh Agent conversation with no external project context.
-Record the final Markdown, Agent name/version, date, and PASS/FAIL against every
+Run every Case in a fresh AI conversation with no external project context.
+An Agent is not required; ChatGPT, DeepSeek, or Qwen web chat is sufficient.
+Record the final Markdown, AI platform/model, date, and PASS/FAIL against every
 must-have, forbidden claim, and global criterion in `expected.json`.
 
-PASS requires all ten output sections, explicit Fact/Gap/Assumption labels,
-prioritized questions, full controlled-domain assessment, no invented fact, and
-no hidden external Project knowledge. Formatting alone cannot make a Case pass.
+PASS requires all thirteen output sections, a usable core-business-concept
+table, user-flow table, functional-scope table, text Information Architecture,
+explicit Fact/Gap/Assumption labels, prioritized questions, full
+controlled-domain assessment, no invented fact, and no hidden external Project
+knowledge. Candidate functionality without evidence must remain unresolved and
+visibly marked for confirmation. Images, Mermaid, and JSON are forbidden.

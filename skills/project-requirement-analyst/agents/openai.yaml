@@ -1,4 +1,4 @@
 interface:
-  display_name: "Project Requirement Analyst"
-  short_description: "Build evidence-traceable requirement analysis packs"
-  default_prompt: "Use $project-requirement-analyst to turn these project materials into a reviewable Requirement Analysis Pack."
+  display_name: "项目需求分析"
+  short_description: "生成可继续加工的中文需求分析产出包"
+  default_prompt: "使用 $project-requirement-analyst 将这些项目材料整理为包含核心业务概念、用户流程、功能范围表和信息架构的中文 Markdown 需求分析产出包。"

@@ -8,9 +8,9 @@
   "decisionQuestion": "Which implementation approach is feasible for the supplied Requirement Analysis Pack?",
   "materials": [],
   "requirementAnalysisPack": {
-    "schemaVersion": "projectai-requirement-analysis-pack-v1",
+    "schemaVersion": "projectai-requirement-analysis-pack-v2",
     "skillId": "project-requirement-analyst",
-    "skillVersion": "0.1.0",
+    "skillVersion": "0.2.0",
     "title": "Synthetic upstream requirement pack for feasibility UAT",
     "language": "zh",
     "sourceSummary": "Synthetic fixture used only for deterministic contract evaluation.",
@@ -396,6 +396,25 @@
         "G-02"
       ]
     },
+    "businessConcepts": [
+      {
+        "basis": "FACT",
+        "statementIds": [
+          "F-04"
+        ],
+        "id": "BC-01",
+        "order": 1,
+        "name": "Assisted trial experience",
+        "definition": "The main business experience explicitly supplied by the synthetic pack.",
+        "keyAttributes": [
+          "In-store"
+        ],
+        "relationships": [
+          "Connects retail customer and store associate"
+        ],
+        "notes": "Concept is evidence-backed; detailed behavior remains subject to downstream gaps."
+      }
+    ],
     "userJourneyDraft": [
       {
         "basis": "GAP",
@@ -406,7 +425,8 @@
         "order": 1,
         "actor": "User to confirm",
         "action": "Complete the primary project interaction",
-        "outcome": "Reach the intended outcome"
+        "outcome": "Reach the intended outcome",
+        "notes": "Core-flow consideration only; not confirmed scope."
       }
     ],
     "functionalScopeDraft": [
@@ -416,9 +436,28 @@
           "G-05"
         ],
         "id": "S-01",
-        "title": "Primary project capability",
+        "order": 1,
+        "surface": "In-store screen",
+        "module": "Primary project capability",
+        "description": "The input does not fully define functional_scope",
         "disposition": "UNRESOLVED",
-        "rationale": "Synthetic scope row follows the functional-scope evidence class"
+        "notes": "Core-flow consideration only; not confirmed scope."
+      }
+    ],
+    "informationArchitecture": [
+      {
+        "basis": "GAP",
+        "statementIds": [
+          "G-05"
+        ],
+        "id": "IA-01",
+        "parentId": null,
+        "order": 1,
+        "surface": "In-store screen",
+        "label": "Primary experience entry",
+        "nodeType": "SURFACE",
+        "description": "Candidate entry derived from unresolved Functional Scope.",
+        "notes": "Candidate node; requires confirmation."
       }
     ],
     "requirementMatrix": [

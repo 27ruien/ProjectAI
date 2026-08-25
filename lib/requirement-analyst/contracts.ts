@@ -1,11 +1,11 @@
 import { z } from "zod";
 
 export const REQUIREMENT_ANALYST_SKILL_ID = "project-requirement-analyst";
-export const REQUIREMENT_ANALYST_SKILL_VERSION = "0.1.0";
+export const REQUIREMENT_ANALYST_SKILL_VERSION = "0.2.0";
 export const REQUIREMENT_ANALYSIS_INPUT_SCHEMA_VERSION =
   "projectai-requirement-analysis-input-v1";
 export const REQUIREMENT_ANALYSIS_PACK_SCHEMA_VERSION =
-  "projectai-requirement-analysis-pack-v1";
+  "projectai-requirement-analysis-pack-v2";
 
 export const REQUIREMENT_ANALYSIS_DOMAINS = [
   "business_goal",
@@ -149,19 +149,44 @@ const basedReferenceSchema = z.object({
   statementIds: z.array(z.string().regex(/^(?:F|G|A)-\d{2,3}$/u)).min(1),
 }).strict();
 
+export const requirementBusinessConceptSchema = basedReferenceSchema.extend({
+  id: z.string().regex(/^BC-\d{2,3}$/u),
+  order: z.number().int().positive(),
+  name: z.string().trim().min(1).max(300),
+  definition: z.string().trim().min(1).max(1_000),
+  keyAttributes: z.array(z.string().trim().min(1).max(300)).max(30),
+  relationships: z.array(z.string().trim().min(1).max(500)).max(30),
+  notes: z.string().trim().min(1).max(1_000),
+}).strict();
+
 export const requirementJourneyStepSchema = basedReferenceSchema.extend({
   id: z.string().regex(/^J-\d{2,3}$/u),
   order: z.number().int().positive(),
   actor: z.string().trim().min(1).max(200),
   action: z.string().trim().min(1).max(1_000),
   outcome: z.string().trim().min(1).max(1_000),
+  notes: z.string().trim().min(1).max(1_000),
 }).strict();
 
 export const requirementScopeItemSchema = basedReferenceSchema.extend({
   id: z.string().regex(/^S-\d{2,3}$/u),
-  title: z.string().trim().min(1).max(500),
+  order: z.number().int().positive(),
+  surface: z.string().trim().min(1).max(200),
+  module: z.string().trim().min(1).max(300),
+  description: z.string().trim().min(1).max(1_000),
   disposition: z.enum(["IN_SCOPE", "OUT_OF_SCOPE", "DEFERRED", "UNRESOLVED"]),
-  rationale: z.string().trim().min(1).max(1_000),
+  notes: z.string().trim().min(1).max(1_000),
+}).strict();
+
+export const requirementInformationArchitectureNodeSchema = basedReferenceSchema.extend({
+  id: z.string().regex(/^IA-\d{2,3}$/u),
+  parentId: z.string().regex(/^IA-\d{2,3}$/u).nullable(),
+  order: z.number().int().positive(),
+  surface: z.string().trim().min(1).max(200),
+  label: z.string().trim().min(1).max(300),
+  nodeType: z.enum(["SURFACE", "SECTION", "PAGE", "FEATURE", "CONTENT"]),
+  description: z.string().trim().min(1).max(1_000),
+  notes: z.string().trim().min(1).max(1_000),
 }).strict();
 
 export const requirementMatrixItemSchema = basedReferenceSchema.extend({
@@ -220,8 +245,10 @@ export const requirementAnalysisPackSchema = z
       summary: z.string().trim().min(1).max(3_000),
       statementIds: z.array(z.string().regex(/^(?:F|G|A)-\d{2,3}$/u)).min(1),
     }).strict(),
+    businessConcepts: z.array(requirementBusinessConceptSchema).max(100),
     userJourneyDraft: z.array(requirementJourneyStepSchema).max(100),
     functionalScopeDraft: z.array(requirementScopeItemSchema).max(200),
+    informationArchitecture: z.array(requirementInformationArchitectureNodeSchema).max(300),
     requirementMatrix: z.array(requirementMatrixItemSchema).min(1).max(300),
     missingInformation: z.array(requirementMissingInformationSchema).max(200),
     criticalQuestions: z.array(requirementCriticalQuestionSchema).max(100),
@@ -318,8 +345,10 @@ export const requirementAnalysisPackSchema = z
 
     reference(pack.requirementSummary.statementIds, ["requirementSummary", "statementIds"]);
     const basedCollections = [
+      ["businessConcepts", pack.businessConcepts],
       ["userJourneyDraft", pack.userJourneyDraft],
       ["functionalScopeDraft", pack.functionalScopeDraft],
+      ["informationArchitecture", pack.informationArchitecture],
       ["requirementMatrix", pack.requirementMatrix],
       ["dependencies", pack.dependencies],
       ["risksUnknowns", pack.risksUnknowns],
@@ -367,6 +396,57 @@ export const requirementAnalysisPackSchema = z
           path: ["functionalScopeDraft", index, "disposition"],
           message: "Gap- or assumption-based scope must remain UNRESOLVED",
         });
+      }
+    }
+
+    const architectureById = new Map(
+      pack.informationArchitecture.map((item) => [item.id, item] as const),
+    );
+    const scopeStatementIds = new Set(
+      pack.functionalScopeDraft.flatMap((item) => item.statementIds),
+    );
+    if (architectureById.size !== pack.informationArchitecture.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["informationArchitecture"],
+        message: "Information Architecture node IDs must be unique",
+      });
+    }
+    for (const [index, item] of pack.informationArchitecture.entries()) {
+      if (item.parentId && !architectureById.has(item.parentId)) {
+        context.addIssue({
+          code: "custom",
+          path: ["informationArchitecture", index, "parentId"],
+          message: `Unknown Information Architecture parent ${item.parentId}`,
+        });
+      }
+      if (item.parentId === item.id) {
+        context.addIssue({
+          code: "custom",
+          path: ["informationArchitecture", index, "parentId"],
+          message: "Information Architecture node cannot be its own parent",
+        });
+      }
+      if (!item.statementIds.some((id) => scopeStatementIds.has(id))) {
+        context.addIssue({
+          code: "custom",
+          path: ["informationArchitecture", index, "statementIds"],
+          message: "Information Architecture must derive from Functional Scope evidence",
+        });
+      }
+      const ancestors = new Set<string>([item.id]);
+      let parentId = item.parentId;
+      while (parentId) {
+        if (ancestors.has(parentId)) {
+          context.addIssue({
+            code: "custom",
+            path: ["informationArchitecture", index, "parentId"],
+            message: "Information Architecture must not contain a cycle",
+          });
+          break;
+        }
+        ancestors.add(parentId);
+        parentId = architectureById.get(parentId)?.parentId ?? null;
       }
     }
 
@@ -453,4 +533,8 @@ export type RequirementAnalysisPriority = z.infer<typeof requirementAnalysisPrio
 export type RequirementAnalysisInput = z.infer<typeof requirementAnalysisInputSchema>;
 export type RequirementStatement = z.infer<typeof requirementStatementSchema>;
 export type RequirementDomainAssessment = z.infer<typeof requirementDomainAssessmentSchema>;
+export type RequirementBusinessConcept = z.infer<typeof requirementBusinessConceptSchema>;
+export type RequirementInformationArchitectureNode = z.infer<
+  typeof requirementInformationArchitectureNodeSchema
+>;
 export type RequirementAnalysisPack = z.infer<typeof requirementAnalysisPackSchema>;

@@ -35,6 +35,21 @@ default answer.
 
 Do not mark a domain complete merely because a common industry default exists.
 
+## Product artifact derivation
+
+The controlled framework checks completeness after the Skill has produced the
+four usable artifacts. It must not replace them.
+
+- Business concepts are abstractions of supplied objects, actors, rules,
+  behaviors, states, or outcomes. A page name alone is not a complete concept.
+- User flow expresses ordered actor actions and outcomes. An inferred core-flow
+  step must remain an Assumption and must identify the unresolved Gap.
+- Functional Scope uses the fixed surface/module/description/status/evidence/
+  notes table. A concrete item without evidence stays `UNRESOLVED`.
+- Information Architecture is the smallest hierarchy supported by Functional
+  Scope. It must not introduce conventional admin pages or platform features by
+  default.
+
 ## Question priority
 
 - `P0`: answer is required before committing scope, feasibility, architecture,
