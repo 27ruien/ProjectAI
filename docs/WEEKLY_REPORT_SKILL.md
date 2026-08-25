@@ -60,9 +60,11 @@ GET /api/skills/project-weekly-report
 ```
 
 Requires an authenticated Project AI session. The response includes the full
-Skill Markdown, active version, SHA-256 digest, and content type. The asset is
-read from the repository on each request; an adapter must not permanently
-cache it.
+main Skill Markdown plus repository-derived metadata and content type. It uses
+the same controlled official Skill distribution contract as `GET /api/skills`;
+references and directory contents are not returned. The Extension may cache
+this portable Skill in `chrome.storage.session`, but not in long-lived local
+storage.
 
 ### Build an execution package
 

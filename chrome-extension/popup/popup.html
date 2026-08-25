@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Project AI Skill UAT</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div>
+          <p class="eyebrow">Project AI</p>
+          <h1>Skill UAT Adapter</h1>
+        </div>
+        <span id="site-status" class="status status-pending">Checking…</span>
+      </header>
+
+      <section aria-labelledby="skill-source-heading">
+        <h2 id="skill-source-heading">Project AI Skill Source</h2>
+        <p class="muted">Open the logged-in Project AI Staging page in the current tab, then sync the official Skills.</p>
+        <button id="sync-button" class="primary" type="button" disabled>
+          Sync Skills from Project AI
+        </button>
+        <p id="last-synced" class="muted">Not synced in this browser session</p>
+
+        <label for="skill-select">Skill</label>
+        <select id="skill-select" disabled>
+          <option value="">Sync from Project AI first</option>
+        </select>
+        <p id="skill-metadata" class="skill-metadata">No Project AI Skill selected</p>
+
+        <details id="manual-fallback">
+          <summary>Advanced / Manual fallback</summary>
+          <label class="toggle-row" for="manual-fallback-toggle">
+            <input id="manual-fallback-toggle" type="checkbox" />
+            Use a manually pasted Skill for troubleshooting
+          </label>
+          <label for="skill-content">Manual Skill Content</label>
+          <textarea
+            id="skill-content"
+            rows="7"
+            spellcheck="false"
+            placeholder="Paste the exact SKILL.md only when troubleshooting sync"
+            disabled
+          ></textarea>
+        </details>
+      </section>
+
+      <section aria-labelledby="injection-heading">
+        <h2 id="injection-heading">Inject into current chat</h2>
+
+        <label for="task-instruction">Task Instruction <span class="optional">optional</span></label>
+        <textarea
+          id="task-instruction"
+          rows="4"
+          placeholder="Add this UAT task without changing the Skill"
+        ></textarea>
+
+        <button id="inject-button" class="primary" type="button" disabled>
+          Inject into current chat
+        </button>
+        <p class="safety-note">The Extension never sends the message. Review it in the chat and send manually.</p>
+      </section>
+
+      <section aria-labelledby="response-heading">
+        <div class="section-heading">
+          <h2 id="response-heading">Latest assistant response</h2>
+          <button id="refresh-button" class="secondary compact" type="button" disabled>
+            Refresh
+          </button>
+        </div>
+        <textarea
+          id="response-preview"
+          rows="9"
+          readonly
+          placeholder="After the Agent replies, click Refresh. Only the newest non-empty assistant response is read."
+        ></textarea>
+
+        <div class="button-grid">
+          <button id="copy-button" class="secondary" type="button" disabled>Copy Result</button>
+          <button id="download-button" class="secondary" type="button" disabled>Download .md</button>
+        </div>
+
+        <label for="task-label">Task Label <span class="optional">optional</span></label>
+        <input id="task-label" type="text" maxlength="160" placeholder="e.g. Weekly UAT case 01" />
+
+        <label for="notes">Notes <span class="optional">optional</span></label>
+        <textarea id="notes" rows="2" maxlength="1000" placeholder="Manual observations only"></textarea>
+
+        <button id="save-button" class="primary" type="button" disabled>Save UAT Result locally</button>
+      </section>
+
+      <section aria-labelledby="export-heading">
+        <h2 id="export-heading">Saved UAT Results</h2>
+        <p id="saved-count" class="muted">0 results saved locally</p>
+        <div class="button-grid">
+          <button id="export-json-button" class="secondary" type="button">Export JSON</button>
+          <button id="export-markdown-button" class="secondary" type="button">Export Summary</button>
+        </div>
+      </section>
+
+      <p id="diagnostic" class="diagnostic" role="status" aria-live="polite"></p>
+    </main>
+
+    <script src="../src/shared/format.js"></script>
+    <script src="../src/shared/session-cache.js"></script>
+    <script src="../src/shared/uat-results.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

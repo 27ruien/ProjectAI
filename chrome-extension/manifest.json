@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Project AI Skill UAT Adapter",
+  "version": "0.1.0",
+  "description": "Syncs official Skills through the current Project AI Staging session, injects them into supported chats, and captures manual UAT results.",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": [
+    "https://chatgpt.com/*",
+    "https://chat.deepseek.com/*",
+    "https://chat.qwen.ai/*"
+  ],
+  "action": {
+    "default_title": "Project AI Skill UAT",
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.deepseek.com/*",
+        "https://chat.qwen.ai/*"
+      ],
+      "js": [
+        "src/content/adapter-core.js",
+        "src/content/chatgpt-adapter.js",
+        "src/content/deepseek-adapter.js",
+        "src/content/qwen-adapter.js",
+        "src/content/content-script.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://gridworks.cn/tool/projectai-slim-uat/*"],
+      "js": [
+        "src/shared/project-ai-source.js",
+        "src/content/project-ai-content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
