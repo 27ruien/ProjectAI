@@ -46,7 +46,8 @@
   let pageStatus = null;
   let skillCache = null;
   let latestResponse = null;
-  const responseLanguageInstruction = "请使用简体中文回复。";
+  const responseLanguageInstruction =
+    "请使用简体中文回复，包括所有标题、表头、状态说明和正文；仅保留 canonical ID、error code、版本号、证据标签及不可变技术标识。";
 
   const skillDisplayNames = Object.freeze({
     "project-weekly-report": "项目周报",
