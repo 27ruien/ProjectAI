@@ -46,6 +46,7 @@
   let pageStatus = null;
   let skillCache = null;
   let latestResponse = null;
+  const responseLanguageInstruction = "请使用简体中文回复。";
 
   const skillDisplayNames = Object.freeze({
     "project-weekly-report": "项目周报",
@@ -80,6 +81,13 @@
   function userErrorMessage(error, fallback) {
     const message = error instanceof Error ? error.message : String(error || "");
     return /[\u3400-\u9fff]/u.test(message) ? message : fallback;
+  }
+
+  function chineseResponseTaskInstruction(taskInstruction) {
+    const task = String(taskInstruction || "").trim();
+    return task
+      ? `${responseLanguageInstruction}\n\n${task}`
+      : responseLanguageInstruction;
   }
 
   function setDiagnostic(message, kind) {
@@ -293,7 +301,7 @@
       }
       const text = formatInjection(
         selection.skillMarkdown,
-        elements.taskInstruction.value,
+        chineseResponseTaskInstruction(elements.taskInstruction.value),
       );
       const response = await sendToActiveTab("INJECT_TEXT", { text });
       if (!response || !response.ok) {
@@ -304,7 +312,7 @@
         ? `${skillDisplayName(selection.id)}${selection.version ? ` v${selection.version}` : ""}`
         : "手动 Skill";
       setDiagnostic(
-        `已成功注入 ${skillLabel}，共 ${response.injectedLength} 个字符。请检查后手动发送。`,
+        `已成功注入 ${skillLabel}，共 ${response.injectedLength} 个字符。AI 将使用简体中文回复；请检查后手动发送。`,
         "success",
       );
     } catch (error) {

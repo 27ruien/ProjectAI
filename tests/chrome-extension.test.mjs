@@ -165,7 +165,7 @@ test("Extension manifest is MV3 with exact chat hosts, the reviewed Staging path
   );
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.name, "Project AI 助手");
-  assert.equal(manifest.version, "0.1.2");
+  assert.equal(manifest.version, "0.1.3");
   assert.match(manifest.description, /同步 Skill/u);
   assert.equal(manifest.action.default_title, "Project AI 助手");
   assert.deepEqual(manifest.permissions, ["activeTab", "storage"]);
@@ -236,6 +236,11 @@ test("Extension UI keeps canonical values while displaying Chinese Skill names a
     assert.match(popupSource, new RegExp(displayStatus, "u"));
   }
   assert.match(popupSource, /Skill ID：\$\{selected\.id\}/u);
+  assert.match(popupSource, /const responseLanguageInstruction = "请使用简体中文回复。"/u);
+  assert.match(
+    popupSource,
+    /chineseResponseTaskInstruction\(elements\.taskInstruction\.value\)/u,
+  );
   assert.doesNotMatch(
     popupSource,
     /Unsupported page|Syncing official Skills|Response extraction failed|Extension initialization failed/u,
