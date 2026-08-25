@@ -20,7 +20,7 @@
         ok: true,
         supported: false,
         mode: "chat",
-        site: "Unsupported",
+        site: "暂不支持",
         agent: null,
         pageUrl: safePageUrl(),
       };
@@ -51,7 +51,7 @@
           ok: false,
           error: {
             code: "UNSUPPORTED_PAGE",
-            message: "The current page does not have a configured adapter.",
+            message: "当前页面没有可用的适配器。",
           },
         });
         return false;
@@ -70,17 +70,17 @@
         ok: false,
         error: {
           code: "UNKNOWN_MESSAGE",
-          message: "The Extension received an unknown operation.",
+          message: "浏览器插件收到了未知操作。",
         },
       });
     } catch (error) {
       const diagnostic =
         error instanceof namespace.adapterCore.AdapterDiagnosticError
-          ? error.toDiagnostic(adapter ? adapter.displayName : "Unsupported")
+          ? error.toDiagnostic(adapter ? adapter.displayName : "暂不支持")
           : {
               code: "ADAPTER_OPERATION_FAILED",
-              message: error instanceof Error ? error.message : String(error),
-              site: adapter ? adapter.displayName : "Unsupported",
+              message: "浏览器插件操作失败，请重试。",
+              site: adapter ? adapter.displayName : "暂不支持",
               details: {},
             };
       sendResponse({ ok: false, error: diagnostic });

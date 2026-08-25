@@ -47,6 +47,41 @@
   let skillCache = null;
   let latestResponse = null;
 
+  const skillDisplayNames = Object.freeze({
+    "project-weekly-report": "项目周报",
+    "project-timeline-maker": "项目时间线生成",
+    "project-requirement-analyst": "项目需求分析",
+    "project-feasibility-research": "项目可行性研究",
+  });
+
+  const statusDisplayNames = Object.freeze({
+    PASS: "通过",
+    FAIL: "失败",
+    BLOCKED: "阻塞",
+    IMPLEMENTED: "已实现",
+    MANUAL_VERIFIED: "已人工验证",
+    NOT_VERIFIED: "未验证",
+    NEEDS_MANUAL_VERIFICATION: "待人工验证",
+    "MANUAL VERIFIED": "已人工验证",
+    "NOT VERIFIED": "未验证",
+    "NEEDS MANUAL VERIFICATION": "待人工验证",
+    active: "已启用",
+    experimental: "实验版",
+  });
+
+  function skillDisplayName(skillId) {
+    return skillDisplayNames[skillId] || skillId || "手动 Skill";
+  }
+
+  function statusDisplayName(status) {
+    return statusDisplayNames[status] || "状态未知";
+  }
+
+  function userErrorMessage(error, fallback) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    return /[\u3400-\u9fff]/u.test(message) ? message : fallback;
+  }
+
   function setDiagnostic(message, kind) {
     elements.diagnostic.textContent = message || "";
     elements.diagnostic.className = `diagnostic${kind ? ` ${kind}` : ""}`;
@@ -90,21 +125,21 @@
   function setSiteStatus(status) {
     pageStatus = status;
     if (status && status.supported && status.mode === "project_ai") {
-      elements.siteStatus.textContent = "Project AI: Sync ready";
+      elements.siteStatus.textContent = "Project AI：可同步";
       elements.siteStatus.className = "status status-supported";
       elements.syncButton.disabled = false;
       updateActionAvailability();
       return;
     }
     if (status && status.supported && status.mode === "chat") {
-      elements.siteStatus.textContent = `${status.site}: Supported`;
+      elements.siteStatus.textContent = `${status.site}：已支持`;
       elements.siteStatus.className = "status status-supported";
       elements.syncButton.disabled = true;
       updateActionAvailability();
       return;
     }
 
-    elements.siteStatus.textContent = "Unsupported page";
+    elements.siteStatus.textContent = "当前页面暂不支持";
     elements.siteStatus.className = "status status-unsupported";
     elements.syncButton.disabled = true;
     updateActionAvailability();
@@ -113,7 +148,7 @@
   async function activeTab() {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tabs[0] || typeof tabs[0].id !== "number") {
-      throw new Error("No active browser tab is available.");
+      throw new Error("未找到可用的浏览器标签页。");
     }
     return tabs[0];
   }
@@ -129,8 +164,10 @@
 
   function responseError(response, fallback) {
     if (response && response.error) {
-      const code = response.error.code ? `[${response.error.code}] ` : "";
-      return `${code}${response.error.message || fallback}`;
+      const message = response.error.message || fallback;
+      return response.error.code
+        ? `错误：${message}\n错误代码：${response.error.code}`
+        : `错误：${message}`;
     }
     return fallback;
   }
@@ -140,11 +177,11 @@
     if (!skillCache) {
       const option = document.createElement("option");
       option.value = "";
-      option.textContent = "Sync from Project AI first";
+      option.textContent = "请先从 Project AI 同步";
       elements.skillSelect.append(option);
       elements.skillSelect.disabled = true;
-      elements.lastSynced.textContent = "Not synced in this browser session";
-      elements.skillMetadata.textContent = "No Project AI Skill selected";
+      elements.lastSynced.textContent = "本次浏览器会话尚未同步";
+      elements.skillMetadata.textContent = "请选择 Project AI Skill";
       updateActionAvailability();
       return;
     }
@@ -152,19 +189,19 @@
     for (const skill of skillCache.skills) {
       const option = document.createElement("option");
       option.value = skill.id;
-      option.textContent = `${skill.id} v${skill.version}`;
+      option.textContent = `${skillDisplayName(skill.id)} · v${skill.version}`;
       elements.skillSelect.append(option);
     }
     elements.skillSelect.value = skillCache.selectedSkillId;
     elements.skillSelect.disabled = false;
     const syncedAt = new Date(skillCache.syncedAt);
     elements.lastSynced.textContent = Number.isNaN(syncedAt.getTime())
-      ? `Last synced: ${skillCache.syncedAt}`
-      : `Last synced: ${syncedAt.toLocaleString()}`;
+      ? `上次同步：${skillCache.syncedAt}`
+      : `上次同步：${syncedAt.toLocaleString("zh-CN")}`;
     const selected = selectedSyncedSkill();
     elements.skillMetadata.textContent = selected
-      ? `${selected.name} · v${selected.version} · ${selected.status} · source = Project AI`
-      : "No Project AI Skill selected";
+      ? `${skillDisplayName(selected.id)} · v${selected.version} · ${statusDisplayName(selected.status)}\nSkill ID：${selected.id} · 来源：Project AI`
+      : "请选择 Project AI Skill";
     updateActionAvailability();
   }
 
@@ -184,19 +221,19 @@
       setSiteStatus(status);
       if (status && status.supported && status.mode === "project_ai") {
         setDiagnostic(
-          "Project AI Staging recognized. Confirm you are logged in, then click Sync Skills.",
+          "已识别 Project AI 测试环境。请确认已登录，然后同步 Skill。",
         );
       } else if (status && status.supported) {
         setDiagnostic(
           skillCache
-            ? `${status.site} adapter loaded. Select the synced Skill and inject when ready.`
-            : "No Skill is synced in this browser session. Open Project AI Staging, log in, and Sync first.",
+            ? `已加载 ${status.site} 适配器。请选择已同步的 Skill，然后注入当前对话。`
+            : "本次浏览器会话尚未同步 Skill。请先打开 Project AI 测试环境并完成登录，然后同步。",
         );
       }
     } catch {
       setSiteStatus(null);
       setDiagnostic(
-        "Open Project AI Staging, chatgpt.com, chat.deepseek.com, or chat.qwen.ai, then reopen the Extension.",
+        "请打开 Project AI 测试环境、ChatGPT、DeepSeek 或 Qwen 页面，然后重新打开浏览器插件。",
         "error",
       );
     }
@@ -205,22 +242,22 @@
   async function syncProjectAiSkills() {
     try {
       if (!sessionStorage) {
-        throw new Error("chrome.storage.session is unavailable in this Chrome version.");
+        throw new Error("当前浏览器版本不支持会话缓存。");
       }
       elements.syncButton.disabled = true;
-      setDiagnostic("Syncing official Skills through the current Project AI session…");
+      setDiagnostic("正在通过当前 Project AI 会话同步正式 Skill…");
       const response = await sendToActiveTab("SYNC_PROJECT_AI_SKILLS");
       if (!response || !response.ok) {
-        throw new Error(responseError(response, "Project AI Skill sync failed."));
+        throw new Error(responseError(response, "Project AI Skill 同步失败。"));
       }
       skillCache = await saveSkillSessionCache(sessionStorage, response);
       renderSkillCache();
       setDiagnostic(
-        `Synced ${skillCache.skills.length} official Skills from Project AI for this browser session.`,
+        `同步成功：本次浏览器会话已从 Project AI 同步 ${skillCache.skills.length} 个正式 Skill。`,
         "success",
       );
     } catch (error) {
-      setDiagnostic(error instanceof Error ? error.message : String(error), "error");
+      setDiagnostic(userErrorMessage(error, "同步失败，请确认已登录 Project AI 后重试。"), "error");
     } finally {
       elements.syncButton.disabled = !(
         pageStatus && pageStatus.supported && pageStatus.mode === "project_ai"
@@ -230,7 +267,7 @@
 
   async function changeSelectedSkill() {
     try {
-      if (!sessionStorage) throw new Error("Session cache is unavailable.");
+      if (!sessionStorage) throw new Error("浏览器会话缓存不可用。");
       skillCache = await selectSessionSkill(
         sessionStorage,
         elements.skillSelect.value,
@@ -239,12 +276,12 @@
       const selected = selectedSyncedSkill();
       if (selected) {
         setDiagnostic(
-          `Selected ${selected.id} v${selected.version} from Project AI.`,
+          `已选择 ${skillDisplayName(selected.id)}（${selected.id}，v${selected.version}）。`,
           "success",
         );
       }
     } catch (error) {
-      setDiagnostic(error instanceof Error ? error.message : String(error), "error");
+      setDiagnostic(userErrorMessage(error, "Skill 选择失败，请重新同步后重试。"), "error");
     }
   }
 
@@ -252,7 +289,7 @@
     try {
       const selection = currentSkillSelection();
       if (!selection) {
-        throw new Error("Sync and select a Project AI Skill, or enable the manual fallback.");
+        throw new Error("请同步并选择一个 Project AI Skill，或启用手动备用方案。");
       }
       const text = formatInjection(
         selection.skillMarkdown,
@@ -260,18 +297,18 @@
       );
       const response = await sendToActiveTab("INJECT_TEXT", { text });
       if (!response || !response.ok) {
-        throw new Error(responseError(response, "Injection failed."));
+        throw new Error(responseError(response, "注入失败。"));
       }
       pageStatus = response;
       const skillLabel = selection.id
-        ? `${selection.id}${selection.version ? ` v${selection.version}` : ""}`
-        : "manual Skill";
+        ? `${skillDisplayName(selection.id)}${selection.version ? ` v${selection.version}` : ""}`
+        : "手动 Skill";
       setDiagnostic(
-        `Injected ${skillLabel} (${response.injectedLength} characters) using ${response.composerSelector}. Review and send manually.`,
+        `已成功注入 ${skillLabel}，共 ${response.injectedLength} 个字符。请检查后手动发送。`,
         "success",
       );
     } catch (error) {
-      setDiagnostic(error instanceof Error ? error.message : String(error), "error");
+      setDiagnostic(userErrorMessage(error, "注入失败，请确认当前页面受支持后重试。"), "error");
     }
   }
 
@@ -288,29 +325,26 @@
     try {
       const response = await sendToActiveTab("EXTRACT_LATEST_RESPONSE");
       if (!response || !response.ok) {
-        throw new Error(responseError(response, "Response extraction failed."));
+        throw new Error(responseError(response, "读取最新回复失败。"));
       }
       setLatestResponse(response);
       pageStatus = response;
       setDiagnostic(
-        `Loaded ${response.text.length} characters from the newest non-empty assistant response.`,
+        `已读取最新 AI 回复，共 ${response.text.length} 个字符。`,
         "success",
       );
     } catch (error) {
       setLatestResponse(null);
-      setDiagnostic(error instanceof Error ? error.message : String(error), "error");
+      setDiagnostic(userErrorMessage(error, "读取最新回复失败，请确认当前对话中已有 AI 回复。"), "error");
     }
   }
 
   async function copyLatestResponse() {
     try {
       await navigator.clipboard.writeText(latestResponse.text);
-      setDiagnostic("Latest assistant response copied.", "success");
-    } catch (error) {
-      setDiagnostic(
-        `Copy failed: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
+      setDiagnostic("已复制最新 AI 回复。", "success");
+    } catch {
+      setDiagnostic("复制失败，请重试。", "error");
     }
   }
 
@@ -330,14 +364,12 @@
       downloadFilename(pageStatus.site, new Date().toISOString(), "md"),
       "text/markdown;charset=utf-8",
     );
-    setDiagnostic("Latest assistant response downloaded without rewriting.", "success");
+    setDiagnostic("已下载最新 AI 回复，内容保持原样。", "success");
   }
 
   async function updateSavedCount() {
     const results = await listUatResults(chrome.storage.local);
-    elements.savedCount.textContent = `${results.length} result${
-      results.length === 1 ? "" : "s"
-    } saved locally`;
+    elements.savedCount.textContent = `本地已保存 ${results.length} 条结果`;
     return results;
   }
 
@@ -345,7 +377,7 @@
     try {
       const selection = currentSkillSelection();
       if (!selection) {
-        throw new Error("The selected Skill is no longer available in this session.");
+        throw new Error("当前会话中已无法使用所选 Skill。");
       }
       const result = createUatResult({
         site: pageStatus.site,
@@ -359,13 +391,10 @@
         notes: elements.notes.value,
       });
       const count = await saveUatResult(chrome.storage.local, result);
-      elements.savedCount.textContent = `${count} result${count === 1 ? "" : "s"} saved locally`;
-      setDiagnostic(`Saved UAT Result ${result.id} locally.`, "success");
+      elements.savedCount.textContent = `本地已保存 ${count} 条结果`;
+      setDiagnostic(`已在本地保存 UAT 结果 ${result.id}。`, "success");
     } catch (error) {
-      setDiagnostic(
-        `Save failed: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
+      setDiagnostic(userErrorMessage(error, "保存失败，请重试。"), "error");
     }
   }
 
@@ -386,12 +415,9 @@
           "text/markdown;charset=utf-8",
         );
       }
-      setDiagnostic(`Exported ${results.length} saved UAT Result${results.length === 1 ? "" : "s"}.`, "success");
-    } catch (error) {
-      setDiagnostic(
-        `Export failed: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
+      setDiagnostic(`导出完成：共 ${results.length} 条已保存的 UAT 结果。`, "success");
+    } catch {
+      setDiagnostic("导出失败，请重试。", "error");
     }
   }
 
@@ -416,10 +442,7 @@
   updateManualFallback();
   Promise.all([loadSessionSkills(), updateSavedCount()])
     .then(refreshPageStatus)
-    .catch((error) => {
-      setDiagnostic(
-        `Extension initialization failed: ${error instanceof Error ? error.message : String(error)}`,
-        "error",
-      );
+    .catch(() => {
+      setDiagnostic("浏览器插件初始化失败，请关闭后重试。", "error");
     });
 })(globalThis);

@@ -164,6 +164,10 @@ test("Extension manifest is MV3 with exact chat hosts, the reviewed Staging path
     await readFile(path.join(extensionRoot, "manifest.json"), "utf8"),
   );
   assert.equal(manifest.manifest_version, 3);
+  assert.equal(manifest.name, "Project AI 助手");
+  assert.equal(manifest.version, "0.1.2");
+  assert.match(manifest.description, /同步 Skill/u);
+  assert.equal(manifest.action.default_title, "Project AI 助手");
   assert.deepEqual(manifest.permissions, ["activeTab", "storage"]);
   assert.deepEqual(manifest.host_permissions, [
     "https://chatgpt.com/*",
@@ -204,7 +208,38 @@ test("every configured manifest script exists", async () => {
   assert.match(popup, /src\/shared\/format\.js/);
   assert.match(popup, /src\/shared\/session-cache\.js/);
   assert.match(popup, /src\/shared\/uat-results\.js/);
+  assert.match(popup, /<html lang="zh-CN">/u);
+  assert.match(popup, /从 Project AI 同步 Skill/u);
+  assert.match(popup, /注入当前对话/u);
+  assert.match(popup, /最新 AI 回复/u);
+  assert.doesNotMatch(
+    popup,
+    /Sync Skills from Project AI|Inject into current chat|Latest assistant response|Saved UAT Results/u,
+  );
   assert.doesNotMatch(popup, /<script[^>]*>\s*[^<\s]/);
+});
+
+test("Extension UI keeps canonical values while displaying Chinese Skill names and statuses", async () => {
+  const popupSource = await readFile(
+    path.join(extensionRoot, "popup/popup.js"),
+    "utf8",
+  );
+  for (const [skillId, displayName] of [
+    ["project-weekly-report", "项目周报"],
+    ["project-timeline-maker", "项目时间线生成"],
+    ["project-requirement-analyst", "项目需求分析"],
+    ["project-feasibility-research", "项目可行性研究"],
+  ]) {
+    assert.match(popupSource, new RegExp(`"${skillId}": "${displayName}"`, "u"));
+  }
+  for (const displayStatus of ["通过", "失败", "阻塞", "已实现", "已人工验证", "未验证", "待人工验证"]) {
+    assert.match(popupSource, new RegExp(displayStatus, "u"));
+  }
+  assert.match(popupSource, /Skill ID：\$\{selected\.id\}/u);
+  assert.doesNotMatch(
+    popupSource,
+    /Unsupported page|Syncing official Skills|Response extraction failed|Extension initialization failed/u,
+  );
 });
 
 test("injection formatter preserves raw Skill content and omits wrappers when task is empty", async () => {
@@ -225,7 +260,7 @@ test("injection formatter rejects missing Skill content", async () => {
   const context = await loadScripts(["src/shared/format.js"]);
   assert.throws(
     () => context.ProjectAIUAT.format.formatInjection("  ", "task"),
-    /Skill Content is required/,
+    /请输入 Skill 内容/u,
   );
 });
 
@@ -262,7 +297,7 @@ test("Project AI source recognizes only the reviewed Staging deployment path", a
   );
   assert.throws(
     () => source.skillApiUrl(deployment, "/api/skills/../projects"),
-    /path is invalid/,
+    /路径无效/u,
   );
 });
 
@@ -321,7 +356,7 @@ test("Project AI content bridge returns the explicit login diagnostic for a 401"
   const response = await sendBridgeMessage(listener, "SYNC_PROJECT_AI_SKILLS");
   assert.equal(response.ok, false);
   assert.equal(response.error.code, "PROJECT_AI_UNAUTHENTICATED");
-  assert.match(response.error.message, /请先登录 Project AI/u);
+  assert.match(response.error.message, /请先打开 Project AI 并完成登录/u);
 });
 
 test("Skill session cache preserves the selected official Skill across popup reopen", async () => {
@@ -599,8 +634,8 @@ test("JSON export contains raw responses while Markdown export stays a concise s
 
   assert.equal(JSON.parse(json).results[0].rawResponse, "RAW-ONLY-CONTENT");
   assert.match(markdown, /project-feasibility-research v0\.1\.0/);
-  assert.match(markdown, /project_ai/);
-  assert.match(markdown, /Raw responses are included in the JSON export/);
+  assert.match(markdown, /Project AI/);
+  assert.match(markdown, /原始回复保存在 JSON 导出文件中/u);
   assert.doesNotMatch(markdown, /RAW-ONLY-CONTENT/);
 });
 

@@ -381,12 +381,12 @@ export function ScrollArea({ h, mah, className, m, mt, mb, ml, mr, mx, my, p, pt
 
 export function Modal({ opened, onClose, title, children, size, centered, ...props }: { opened: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; size?: string; centered?: boolean; [key: string]: unknown }) {
   void centered;
-  return <Dialog open={opened} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className={cn(size === "lg" ? "sm:max-w-[560px]" : size === "xl" ? "sm:max-w-4xl" : "sm:max-w-lg")} {...(props as ComponentProps<typeof DialogContent>)}><DialogHeader>{title ? <DialogTitle>{title}</DialogTitle> : null}<DialogDescription className="sr-only">ProjectAI 操作对话框</DialogDescription></DialogHeader>{children}</DialogContent></Dialog>;
+  return <Dialog open={opened} onOpenChange={(open) => { if (!open) onClose(); }}><DialogContent className={cn(size === "lg" ? "sm:max-w-[560px]" : size === "xl" ? "sm:max-w-4xl" : "sm:max-w-lg")} {...(props as ComponentProps<typeof DialogContent>)}><DialogHeader>{title ? <DialogTitle>{title}</DialogTitle> : null}<DialogDescription className="sr-only">Project AI 操作对话框</DialogDescription></DialogHeader>{children}</DialogContent></Dialog>;
 }
 
 export function Drawer({ opened, onClose, title, children, position = "right", size, ...props }: { opened: boolean; onClose: () => void; title?: ReactNode; children: ReactNode; position?: "left" | "right" | "top" | "bottom"; size?: string | number; [key: string]: unknown }) {
   void size;
-  return <Sheet open={opened} onOpenChange={(open) => { if (!open) onClose(); }}><SheetContent side={position} className={position === "bottom" ? "max-h-[85vh]" : "w-full sm:max-w-xl"} {...(props as ComponentProps<typeof SheetContent>)}><SheetHeader>{title ? <SheetTitle>{title}</SheetTitle> : null}<SheetDescription className="sr-only">ProjectAI 详情面板</SheetDescription></SheetHeader><div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div></SheetContent></Sheet>;
+  return <Sheet open={opened} onOpenChange={(open) => { if (!open) onClose(); }}><SheetContent side={position} className={position === "bottom" ? "max-h-[85vh]" : "w-full sm:max-w-xl"} {...(props as ComponentProps<typeof SheetContent>)}><SheetHeader>{title ? <SheetTitle>{title}</SheetTitle> : null}<SheetDescription className="sr-only">Project AI 详情面板</SheetDescription></SheetHeader><div className="min-h-0 flex-1 overflow-y-auto p-4">{children}</div></SheetContent></Sheet>;
 }
 
 export function Tooltip({ label, children, ...props }: { label: ReactNode; children: ReactNode; [key: string]: unknown }) {

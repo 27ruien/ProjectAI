@@ -6,7 +6,7 @@
 
   function formatInjection(rawSkill, taskInstruction) {
     if (typeof rawSkill !== "string" || rawSkill.trim().length === 0) {
-      throw new TypeError("Skill Content is required.");
+      throw new TypeError("请输入 Skill 内容。");
     }
 
     const task = typeof taskInstruction === "string" ? taskInstruction : "";

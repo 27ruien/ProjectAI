@@ -19,7 +19,7 @@ export function statusLabel(status: string): string {
     cancelled: "已取消",
     archived: "已归档",
     at_risk: "有风险",
-  } as Record<string, string>)[status] ?? status;
+  } as Record<string, string>)[status] ?? "未知状态";
 }
 
 export function initials(name: string): string {

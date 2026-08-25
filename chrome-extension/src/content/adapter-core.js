@@ -154,7 +154,7 @@
     if (typeof text !== "string" || text.length === 0) {
       throw new AdapterDiagnosticError(
         "EMPTY_INJECTION",
-        "There is no text to inject.",
+        "没有可注入的内容。",
       );
     }
 
@@ -172,7 +172,7 @@
 
     throw new AdapterDiagnosticError(
       "UNSUPPORTED_COMPOSER",
-      "The matched composer is not an editable text control.",
+      "匹配到的输入框不可编辑。",
       { tagName },
     );
   }
@@ -235,7 +235,7 @@
         if (!match) {
           throw new AdapterDiagnosticError(
             "COMPOSER_NOT_FOUND",
-            `${config.displayName} composer was not found. The site DOM may have changed.`,
+            `未找到 ${config.displayName} 输入框，页面结构可能已更新。`,
             { attemptedSelectors: config.composerSelectors },
           );
         }
@@ -278,7 +278,7 @@
 
         throw new AdapterDiagnosticError(
           "ASSISTANT_RESPONSE_NOT_FOUND",
-          `No non-empty ${config.displayName} assistant response was found.`,
+          `未找到 ${config.displayName} 的最新非空 AI 回复。`,
           { attemptedSelectors: config.assistantSelectors },
         );
       },

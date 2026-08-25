@@ -20,6 +20,10 @@ const appearanceOptions: Array<{ value: Appearance; label: string; icon: typeof 
   { value: "system", label: "跟随系统", icon: Monitor },
 ];
 
+const appearanceLabels: Record<Appearance, string> = Object.fromEntries(
+  appearanceOptions.map(({ value, label }) => [value, label]),
+) as Record<Appearance, string>;
+
 export function Topbar({ currentProject, currentPath, onMenuOpen }: { currentProject?: AuthorizedProjectSummary; currentPath: string; onMenuOpen: () => void }) {
   const { appearance, resolvedAppearance, setAppearance } = useAppearance();
   void currentProject;
@@ -32,7 +36,7 @@ export function Topbar({ currentProject, currentPath, onMenuOpen }: { currentPro
       <EnvironmentBadge />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label={`外观：${appearance}`} title="切换外观">
+          <Button variant="ghost" size="icon" aria-label={`外观：${appearanceLabels[appearance]}`} title="切换外观">
             {resolvedAppearance === "dark" ? <Moon /> : <Sun />}
           </Button>
         </DropdownMenuTrigger>

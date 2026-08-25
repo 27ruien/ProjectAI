@@ -78,7 +78,7 @@
       skills: syncPayload && syncPayload.skills,
     });
     if (!candidate) {
-      throw new TypeError("Project AI Skill sync payload is invalid.");
+      throw new TypeError("Project AI Skill 同步数据无效。");
     }
     await storageArea.set({ [STORAGE_KEY]: candidate });
     return candidate;
@@ -87,7 +87,7 @@
   async function selectSessionSkill(storageArea, skillId) {
     const cache = await getSkillSessionCache(storageArea);
     if (!cache || !cache.skills.some((skill) => skill.id === skillId)) {
-      throw new TypeError("Selected Project AI Skill is not in the session cache.");
+      throw new TypeError("所选 Project AI Skill 不在当前会话缓存中。");
     }
     const next = { ...cache, selectedSkillId: skillId };
     await storageArea.set({ [STORAGE_KEY]: next });

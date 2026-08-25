@@ -31,7 +31,7 @@ export function AppShell({ viewer, currentProject, currentPath, children }: AppS
 
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetContent side="left" className="w-72 gap-0 p-0" showCloseButton={false}>
-            <SheetTitle className="sr-only">ProjectAI 导航</SheetTitle>
+            <SheetTitle className="sr-only">Project AI 导航</SheetTitle>
             <SheetDescription className="sr-only">移动端主导航与账户菜单</SheetDescription>
             <Sidebar viewer={viewer} currentPath={currentPath} collapsed={false} onMobileClose={() => setMobileOpen(false)} />
           </SheetContent>

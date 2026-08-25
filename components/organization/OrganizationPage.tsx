@@ -43,6 +43,11 @@ type OrganizationPayload = {
   members: Member[];
 };
 
+function userFacingErrorMessage(message: string | undefined, fallback: string): string {
+  if (message === "No changes supplied") return "请至少修改一项部门信息";
+  return message ?? fallback;
+}
+
 async function request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", body?: unknown, suffix = ""): Promise<T> {
   const response = await fetch(withBasePath(`/api/organization/departments${suffix}`), {
     method,
@@ -56,7 +61,10 @@ async function request<T>(method: "GET" | "POST" | "PATCH" | "DELETE", body?: un
     | { error?: { message?: string } }
     | null;
   if (!response.ok) {
-    throw new Error((payload as { error?: { message?: string } } | null)?.error?.message ?? "组织架构操作失败");
+    throw new Error(userFacingErrorMessage(
+      (payload as { error?: { message?: string } } | null)?.error?.message,
+      "组织架构操作失败",
+    ));
   }
   return payload as T;
 }

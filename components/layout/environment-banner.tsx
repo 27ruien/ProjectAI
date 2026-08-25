@@ -8,7 +8,7 @@ export function EnvironmentBadge() {
     <span
       className="inline-flex shrink-0 items-center gap-1 rounded-md border border-warning/30 bg-warning-soft/60 px-2 py-1 text-[10px] font-semibold tracking-[0.1em] text-warning"
       data-testid="staging-badge"
-      title={`环境：${APP_RUNTIME.environment} · 版本：${APP_RUNTIME.version} · Commit：${APP_RUNTIME.commitSha} · 构建：${APP_RUNTIME.buildTime}`}
+      title={`环境：测试环境 · 版本：${APP_RUNTIME.version} · 提交：${APP_RUNTIME.commitSha} · 构建：${APP_RUNTIME.buildTime}`}
     >
       <FlaskConical aria-hidden="true" className="size-3" />
       测试环境

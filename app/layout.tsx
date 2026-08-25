@@ -70,7 +70,7 @@ export default function RootLayout({
         <AppearanceProvider>
           <TooltipProvider>
             {children}
-            <Toaster position="top-right" visibleToasts={4} />
+            <Toaster position="top-right" visibleToasts={4} containerAriaLabel="通知" />
           </TooltipProvider>
         </AppearanceProvider>
       </body>

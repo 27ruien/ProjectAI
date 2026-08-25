@@ -21,7 +21,7 @@
         ok: true,
         supported: false,
         mode: "project_ai",
-        site: "Unsupported",
+        site: "暂不支持",
       };
     }
     return {
@@ -59,14 +59,14 @@
     if (response.status === 401) {
       throw new ProjectAiSyncError(
         "PROJECT_AI_UNAUTHENTICATED",
-        "请先登录 Project AI，然后重试 Sync。",
+        "请先打开 Project AI 并完成登录，然后重试同步。",
       );
     }
     if (!response.ok) {
       const remoteCode = body && body.error && body.error.code;
       throw new ProjectAiSyncError(
         "PROJECT_AI_SKILL_API_FAILED",
-        "Project AI Skill 同步失败，请在 Staging 页面重试。",
+        "Project AI Skill 同步失败，请在测试环境页面重试。",
         { status: response.status, remoteCode: remoteCode || null },
       );
     }
@@ -91,7 +91,7 @@
     ) {
       throw new ProjectAiSyncError(
         "PROJECT_AI_RESPONSE_INVALID",
-        "Project AI 返回了无效的 Skill metadata。",
+        "Project AI 返回了无效的 Skill 元数据。",
       );
     }
     return {
@@ -109,7 +109,7 @@
     if (!deployment) {
       throw new ProjectAiSyncError(
         "UNSUPPORTED_PROJECT_AI_PAGE",
-        "请在当前 Project AI Staging 页面打开 Extension。",
+        "请在当前 Project AI 测试环境页面打开浏览器插件。",
       );
     }
 
@@ -192,7 +192,7 @@
       ok: false,
       error: {
         code: "UNKNOWN_MESSAGE",
-        message: "The Extension received an unknown Project AI operation.",
+        message: "浏览器插件收到了未知的 Project AI 操作。",
       },
     });
     return false;

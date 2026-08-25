@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Project AI Skill UAT Adapter",
-  "version": "0.1.1",
-  "description": "Syncs official Skills through the current Project AI Staging session, injects them into supported chats, and captures manual UAT results.",
+  "name": "Project AI 助手",
+  "version": "0.1.2",
+  "description": "从 Project AI 同步 Skill，并注入 ChatGPT、DeepSeek 和 Qwen 对话，支持 UAT 结果采集与导出。",
   "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "https://chatgpt.com/*",
@@ -10,7 +10,7 @@
     "https://chat.qwen.ai/*"
   ],
   "action": {
-    "default_title": "Project AI Skill UAT",
+    "default_title": "Project AI 助手",
     "default_popup": "popup/popup.html"
   },
   "content_scripts": [

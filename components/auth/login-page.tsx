@@ -92,7 +92,7 @@ export function LoginPage({
       navigateToAppPath(returnTo);
     } catch {
       setSubmitting(null);
-      setError("企业微信测试身份登录失败，请确认 Mock Provider 已启用并完成身份 Seed。" );
+      setError("企业微信测试身份登录失败，请确认模拟登录服务已启用，并已完成测试身份初始化。");
     }
   }, [returnTo, submitting]);
 
@@ -105,7 +105,7 @@ export function LoginPage({
       navigateToAppPath(returnTo);
     } catch {
       setSubmitting(null);
-      setError("Staging 测试登录失败，请确认受控测试身份与环境配置可用。");
+      setError("测试环境登录失败，请确认受控测试身份与环境配置可用。");
     }
   }, [returnTo, submitting]);
 
@@ -158,15 +158,15 @@ export function LoginPage({
               {credentialLoginEnabled
                 ? "请使用单独提供的 UAT 测试账号。"
                 : provider === "mock-wecom"
-                  ? "仅限 Local / Staging 的虚构身份，不需要账号或密码。"
-                  : "正式环境将通过企业微信 OAuth / 扫码完成身份认证。"}
+                  ? "仅限本地与测试环境的虚构身份，不需要账号或密码。"
+                  : "正式环境将通过企业微信授权或扫码完成身份认证。"}
             </p>
           </div>
 
           {stagingTestLoginEnabled ? (
             <div className="mb-5 rounded-xl border border-primary/20 bg-primary/[0.035] p-4">
               <p className="text-xs font-medium text-muted-foreground">
-                仅用于 Staging 产品验收
+                仅用于测试环境产品验收
               </p>
               <button
                 type="button"
@@ -256,10 +256,10 @@ export function LoginPage({
               type="button"
               disabled={!providerConfigured || !providerImplemented}
               className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground disabled:cursor-not-allowed disabled:opacity-55"
-              title={!providerConfigured ? "企业微信 OAuth 配置尚未提供" : !providerImplemented ? "等待企业微信 API 后接入 OAuth 适配器" : undefined}
+              title={!providerConfigured ? "企业微信授权配置尚未提供" : !providerImplemented ? "等待企业微信接口后接入授权适配器" : undefined}
             >
               <Building2 className="size-4" />
-              {!providerConfigured ? "等待企业微信 OAuth 配置" : !providerImplemented ? "配置已验证，等待 OAuth 适配器" : "使用企业微信扫码登录"}
+              {!providerConfigured ? "等待企业微信授权配置" : !providerImplemented ? "配置已验证，等待授权适配器" : "使用企业微信扫码登录"}
             </button>
           )}
 

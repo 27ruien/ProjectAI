@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Project AI Skill UAT</title>
+    <title>Project AI 助手</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
@@ -11,92 +11,92 @@
       <header>
         <div>
           <p class="eyebrow">Project AI</p>
-          <h1>Skill UAT Adapter</h1>
+          <h1>浏览器插件</h1>
         </div>
-        <span id="site-status" class="status status-pending">Checking…</span>
+        <span id="site-status" class="status status-pending">检查中…</span>
       </header>
 
       <section aria-labelledby="skill-source-heading">
-        <h2 id="skill-source-heading">Project AI Skill Source</h2>
-        <p class="muted">Open the logged-in Project AI Staging page in the current tab, then sync the official Skills.</p>
+        <h2 id="skill-source-heading">Project AI Skill 来源</h2>
+        <p class="muted">在当前标签页打开并登录 Project AI 测试环境，然后同步正式 Skill。</p>
         <button id="sync-button" class="primary" type="button" disabled>
-          Sync Skills from Project AI
+          从 Project AI 同步 Skill
         </button>
-        <p id="last-synced" class="muted">Not synced in this browser session</p>
+        <p id="last-synced" class="muted">本次浏览器会话尚未同步</p>
 
         <label for="skill-select">Skill</label>
         <select id="skill-select" disabled>
-          <option value="">Sync from Project AI first</option>
+          <option value="">请先从 Project AI 同步</option>
         </select>
-        <p id="skill-metadata" class="skill-metadata">No Project AI Skill selected</p>
+        <p id="skill-metadata" class="skill-metadata">请选择 Project AI Skill</p>
 
         <details id="manual-fallback">
-          <summary>Advanced / Manual fallback</summary>
+          <summary>高级设置 / 手动备用方案</summary>
           <label class="toggle-row" for="manual-fallback-toggle">
             <input id="manual-fallback-toggle" type="checkbox" />
-            Use a manually pasted Skill for troubleshooting
+            排查问题时使用手动粘贴的 Skill
           </label>
-          <label for="skill-content">Manual Skill Content</label>
+          <label for="skill-content">手动 Skill 内容</label>
           <textarea
             id="skill-content"
             rows="7"
             spellcheck="false"
-            placeholder="Paste the exact SKILL.md only when troubleshooting sync"
+            placeholder="仅在排查同步问题时粘贴完整的 SKILL.md"
             disabled
           ></textarea>
         </details>
       </section>
 
       <section aria-labelledby="injection-heading">
-        <h2 id="injection-heading">Inject into current chat</h2>
+        <h2 id="injection-heading">注入当前对话</h2>
 
-        <label for="task-instruction">Task Instruction <span class="optional">optional</span></label>
+        <label for="task-instruction">任务说明 <span class="optional">选填</span></label>
         <textarea
           id="task-instruction"
           rows="4"
-          placeholder="Add this UAT task without changing the Skill"
+          placeholder="添加本次 UAT 任务，不会修改 Skill"
         ></textarea>
 
         <button id="inject-button" class="primary" type="button" disabled>
-          Inject into current chat
+          注入当前对话
         </button>
-        <p class="safety-note">The Extension never sends the message. Review it in the chat and send manually.</p>
+        <p class="safety-note">浏览器插件不会自动发送消息。请在对话中检查后手动发送。</p>
       </section>
 
       <section aria-labelledby="response-heading">
         <div class="section-heading">
-          <h2 id="response-heading">Latest assistant response</h2>
+          <h2 id="response-heading">最新 AI 回复</h2>
           <button id="refresh-button" class="secondary compact" type="button" disabled>
-            Refresh
+            读取最新回复
           </button>
         </div>
         <textarea
           id="response-preview"
           rows="9"
           readonly
-          placeholder="After the Agent replies, click Refresh. Only the newest non-empty assistant response is read."
+          placeholder="AI 平台回复后，点击“读取最新回复”。只会读取最新一条非空 AI 回复。"
         ></textarea>
 
         <div class="button-grid">
-          <button id="copy-button" class="secondary" type="button" disabled>Copy Result</button>
-          <button id="download-button" class="secondary" type="button" disabled>Download .md</button>
+          <button id="copy-button" class="secondary" type="button" disabled>复制结果</button>
+          <button id="download-button" class="secondary" type="button" disabled>下载 Markdown</button>
         </div>
 
-        <label for="task-label">Task Label <span class="optional">optional</span></label>
-        <input id="task-label" type="text" maxlength="160" placeholder="e.g. Weekly UAT case 01" />
+        <label for="task-label">任务标签 <span class="optional">选填</span></label>
+        <input id="task-label" type="text" maxlength="160" placeholder="例如：周报 UAT 用例 01" />
 
-        <label for="notes">Notes <span class="optional">optional</span></label>
-        <textarea id="notes" rows="2" maxlength="1000" placeholder="Manual observations only"></textarea>
+        <label for="notes">备注 <span class="optional">选填</span></label>
+        <textarea id="notes" rows="2" maxlength="1000" placeholder="仅记录人工观察结果"></textarea>
 
-        <button id="save-button" class="primary" type="button" disabled>Save UAT Result locally</button>
+        <button id="save-button" class="primary" type="button" disabled>在本地保存 UAT 结果</button>
       </section>
 
       <section aria-labelledby="export-heading">
-        <h2 id="export-heading">Saved UAT Results</h2>
-        <p id="saved-count" class="muted">0 results saved locally</p>
+        <h2 id="export-heading">已保存的 UAT 结果</h2>
+        <p id="saved-count" class="muted">本地已保存 0 条结果</p>
         <div class="button-grid">
-          <button id="export-json-button" class="secondary" type="button">Export JSON</button>
-          <button id="export-markdown-button" class="secondary" type="button">Export Summary</button>
+          <button id="export-json-button" class="secondary" type="button">导出 JSON</button>
+          <button id="export-markdown-button" class="secondary" type="button">导出摘要</button>
         </div>
       </section>
 

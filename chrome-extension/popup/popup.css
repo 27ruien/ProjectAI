@@ -163,6 +163,7 @@ details[open] summary {
   background: #f4f7fb;
   font-size: 11px;
   line-height: 1.35;
+  white-space: pre-line;
 }
 
 button {
@@ -241,6 +242,7 @@ button:disabled {
 .diagnostic {
   min-height: 16px;
   color: #344054;
+  white-space: pre-line;
 }
 
 .diagnostic.error {

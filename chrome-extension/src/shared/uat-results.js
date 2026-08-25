@@ -38,7 +38,7 @@
       typeof source.rawResponse === "string" ? source.rawResponse : "";
 
     if (rawResponse.trim().length === 0) {
-      throw new TypeError("A latest assistant response is required.");
+      throw new TypeError("请先读取最新 AI 回复。");
     }
 
     return {
@@ -100,17 +100,18 @@
 
   function escapeMarkdownCell(value) {
     if (value === null || value === undefined || value === "") return "—";
-    return String(value).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const displayValue = value === "Unknown" ? "未知" : value;
+    return String(displayValue).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
   }
 
   function exportUatResultsMarkdown(results, exportedAt) {
     const lines = [
-      "# Project AI Cross-Agent UAT Results",
+      "# Project AI 跨 AI 平台 UAT 结果",
       "",
-      `Exported: ${exportedAt || new Date().toISOString()}`,
-      `Result count: ${results.length}`,
+      `导出时间：${exportedAt || new Date().toISOString()}`,
+      `结果数量：${results.length}`,
       "",
-      "| Timestamp | Site | Skill | Source | Task | Response length | Notes |",
+      "| 时间 | 站点 | Skill | 来源 | 任务 | 回复长度 | 备注 |",
       "|---|---|---|---|---|---:|---|",
     ];
 
@@ -118,11 +119,16 @@
       const skill = result.skillId
         ? `${result.skillId}${result.skillVersion ? ` v${result.skillVersion}` : ""}`
         : "—";
+      const source = result.skillSource === "project_ai"
+        ? "Project AI"
+        : result.skillSource === "manual"
+          ? "手动"
+          : result.skillSource;
       lines.push(
         `| ${escapeMarkdownCell(result.timestamp)} | ${escapeMarkdownCell(
           result.site,
         )} | ${escapeMarkdownCell(skill)} | ${escapeMarkdownCell(
-          result.skillSource,
+          source,
         )} | ${escapeMarkdownCell(
           result.taskLabel,
         )} | ${Number(result.responseLength) || 0} | ${escapeMarkdownCell(
@@ -131,7 +137,7 @@
       );
     }
 
-    lines.push("", "Raw responses are included in the JSON export.", "");
+    lines.push("", "原始回复保存在 JSON 导出文件中。", "");
     return lines.join("\n");
   }
 
