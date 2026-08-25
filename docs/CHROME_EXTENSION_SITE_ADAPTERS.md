@@ -8,19 +8,23 @@ Last Verified: 2026-08-25
   diagnostics exist and pass synthetic adapter tests.
 - **NEEDS_MANUAL_VERIFICATION**: the signed-in live page has not yet completed
   the manual steps in `CHROME_EXTENSION_UAT_GUIDE.md`.
+- **MANUAL VERIFIED**: a signed-in live page completed exact injection,
+  no-auto-send, native send, newest-response extraction, Copy, Download, Save,
+  and Export through Computer Use.
 - **BLOCKED**: a known prerequisite prevents testing or operation.
 
 ## Current status
 
 | Site | Authorized host | Implementation | Live DOM status | Evidence / condition |
 |---|---|---|---|---|
-| ChatGPT | `chatgpt.com` | **IMPLEMENTED** | **NEEDS_MANUAL_VERIFICATION** | Synthetic tests cover exact host, composer fallback, injection, newest valid assistant block, and diagnostics. Signed-in live DOM has not been exercised in this repository. |
-| DeepSeek | `chat.deepseek.com` | **IMPLEMENTED** | **NEEDS_MANUAL_VERIFICATION** | Same adapter contract and synthetic coverage. Signed-in live DOM has not been exercised in this repository. |
-| Qwen | `chat.qwen.ai` | **IMPLEMENTED** | **NEEDS_MANUAL_VERIFICATION** | The public Qwen Studio page at `https://chat.qwen.ai/` confirmed the current host on 2026-08-25. Signed-in live DOM and selectors remain unverified. |
+| ChatGPT | `chatgpt.com` | **IMPLEMENTED** | **MANUAL VERIFIED** | Signed-in live injection, no-auto-send, native send, newest-response extraction, Copy, Download, Save, and Export passed on 2026-08-25. |
+| DeepSeek | `chat.deepseek.com` | **IMPLEMENTED / REPAIRED IN v0.1.1** | **MANUAL VERIFIED AFTER FIX** | Initial live extraction omitted headings/matrix (`EXT-UAT-001`). The bounded full-assistant-block repair passed deterministic regression, exact-head branch/tag CI, and a fresh 11,531-character post-CI live rerun. |
+| Qwen | `chat.qwen.ai` | **IMPLEMENTED** | **MANUAL VERIFIED** | Signed-in live injection, no-auto-send, native send, newest-response extraction, Copy, Download, Save, and Export passed on 2026-08-25. |
 
 None of the sites is currently **BLOCKED** by repository evidence. A site may
-become blocked during UAT if login, rollout differences, CSP changes, or a DOM
-revision prevents a selector match.
+become blocked during future UAT if login, rollout differences, CSP changes, or
+a DOM revision prevents a selector match. The business user should stop that
+site and hand technical evidence capture to Codex/operator.
 
 ## Host policy
 

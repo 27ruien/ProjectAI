@@ -4,7 +4,10 @@ Last Verified: 2026-08-25
 
 Source of Truth: current working tree + tests + current repository docs/reports + exact-SHA live Staging validation
 
-Working Tree: corrected freeze target `staging-validation-v1.1` on `refactor/project-ai-slim`; immutable predecessor `staging-validation-v1` failed clean-checkout CI
+Working Tree: `refactor/project-ai-slim`; deployed server baseline
+`staging-validation-v1.2` at `9fe4eab20390a312c1f9300f18e8525e83fca60c`;
+Extension repair baseline `staging-validation-v1.2.1` at
+`9327c16e578f5ed63e9a54b5841553a05ad63d1e`
 
 Audit Result: **PASS WITH CONDITIONS**
 
@@ -12,11 +15,22 @@ This file describes the current working tree, not the legacy snapshot at HEAD an
 
 ### Current Staging validation
 
-- Staging baseline: **VERIFIED WITH CONDITIONS** at immutable tag
-  `staging-validation-v1.1`, SHA
+- Server Staging baseline: **VERIFIED** at immutable tag
+  `staging-validation-v1.2`, SHA
+  `9fe4eab20390a312c1f9300f18e8525e83fca60c`. The public health headers and
+  healthy running image report that exact revision.
+- Extension repair baseline: **VERIFIED** at immutable tag
+  `staging-validation-v1.2.1`, SHA
+  `9327c16e578f5ed63e9a54b5841553a05ad63d1e`. This was an Extension-only
+  change; the online Project AI server correctly remains v1.2 and was not
+  redeployed for v1.2.1.
+- Immutable predecessor `staging-validation-v1.1` remains unchanged at
   `62d06e7184df9b43d72ad6780566d774b6f7255d`.
-- Online provenance: **VERIFIED** by the public exact-SHA health headers and
-  running image fingerprint.
+- Full-chain Computer Use UAT: **PASS WITH CONDITIONS**. Authenticated Skill
+  list/read, unpacked Extension install, Project AI sync, session cache, and
+  signed-in ChatGPT/DeepSeek/Qwen injection, manual send, latest-response
+  extraction, Copy, Download, Save, and Export were verified. One DeepSeek
+  extraction defect was preserved, fixed, and re-verified after exact-head CI.
 - Real RAGFlow Staging chain: **VERIFIED** after the existing SSH tunnel target
   was updated from the stopped ECS address `47.116.3.32` to the operator-
   confirmed replacement address `8.133.185.111`. Dataset provision, retrieval,
@@ -24,14 +38,18 @@ This file describes the current working tree, not the legacy snapshot at HEAD an
 - Structured Timeline and Weekly Report context: **VERIFIED IN LIVE STAGING**
   for persistence/reload, Project permission, `timeline.source=structured`,
   PLAN/ACTUAL separation, confirmation gate, and unauthorized override.
-- Conditions: successful RAGFlow API-Key requests emit a non-blocking JWT parse
-  warning, and Nginx retains a pre-existing duplicate port-80 server-name
-  warning. No 5xx, restart, Health degradation, application code change, or
-  application redeployment occurred.
+- Conditions: this Extension pass did not re-execute the browser-inaccessible
+  Weekly Report multipart context endpoint; exact-head deterministic CI passed
+  and the v1.1 exact-SHA live report remains the latest live evidence for that
+  endpoint. Successful RAGFlow API-Key requests may emit the previously recorded
+  non-blocking JWT parse warning, and Nginx retains its pre-existing duplicate
+  port-80 server-name warning.
 - Production: **NOT TOUCHED**. A read-only fingerprint check remained unchanged,
   but Production behavior is not verified by this Staging result.
 
-Evidence: `docs/STAGING_VALIDATION_V1_1_REPORT.md`.
+Evidence: `docs/CHROME_EXTENSION_REAL_UAT_REPORT.md`,
+`docs/CHROME_EXTENSION_REAL_UAT_ISSUES.md`, and
+`docs/STAGING_VALIDATION_V1_1_REPORT.md`.
 
 ## 1. CONFIRMED CURRENT ARCHITECTURE
 
@@ -98,11 +116,11 @@ Evidence: `README.md`, `docs/ARCHITECTURE.md`, `lib/knowledge-slim/query.ts`, `l
 | Grounded knowledge Q&A | **IMPLEMENTED / VERIFIED** | Single/cross-Project bounded retrieval, LLM synthesis, citation validation/repair, and no-Evidence no-call behavior. The exact-SHA live Staging run verified real retrieval, Evidence Guard, Qwen answer, Citation, no-Evidence, and unauthorized-Project behavior. `lib/knowledge-slim/query.ts`, `docs/STAGING_VALIDATION_V1_1_REPORT.md`. |
 | Structured Timeline persistence/provider | **IMPLEMENTED / VERIFIED** | One current JSONB snapshot per Project, versioned optimistic conflict handling, audited `GET/PUT`, authorized read/write roles, database adapter to `StructuredTimelineRepository`, and Weekly Report structured-first selection. Fresh isolated integration passed 5/5; exact-SHA Staging verified save/reload, permission, and `timeline.source=structured`. `drizzle/0036_normal_sister_grimm.sql`, `lib/db/repositories/project-timeline-repository.ts`, `app/api/projects/[projectId]/timeline/route.ts`. |
 | Weekly Report backend/package | **IMPLEMENTED / VERIFIED** | CSV/XLSX parsing, deterministic Project matching/confirmation, alias persistence, bounded Timeline/Knowledge context, active Skill loading, and Execution Package output. Exact-SHA Staging verified finalized package construction, PLAN/ACTUAL separation, confirmation gate, and unauthorized override. It does not generate the report. `lib/weekly-report/`, `app/api/skills/project-weekly-report/`. |
-| Official Skill read API | **IMPLEMENTED / DETERMINISTICALLY VERIFIED / NOT YET DEPLOYED** | Authenticated read-only list/read routes distribute only the four fixed formal `SKILL.md` assets and their current frontmatter metadata. Unknown and traversal-shaped IDs return 404; unauthenticated access returns 401; no Project Knowledge, Documents, references directory, or arbitrary file path is exposed. `lib/skills/`, `app/api/skills/`, `tests/skill-distribution.test.ts`. |
+| Official Skill read API | **IMPLEMENTED / DEPLOYED / MANUAL VERIFIED** | The exact-v1.2 Staging routes returned the four fixed formal `SKILL.md` assets and repository metadata through the existing browser Session. Unauthenticated access returned 401; unknown, traversal-shaped, and Project-ID-shaped reads returned non-disclosing 404; no Project Knowledge, Documents, references directory, or arbitrary file path was exposed. `lib/skills/`, `app/api/skills/`, `tests/skill-distribution.test.ts`, `docs/CHROME_EXTENSION_REAL_UAT_REPORT.md`. |
 | Timeline Maker | **IMPLEMENTED AS PORTABLE EXPERIMENTAL SKILL / DETERMINISTICALLY VERIFIED** | Skill, Draft/schema validation, requirement checks, Workbench Snapshot adapter, Markdown render/parse. No Project AI connector, API, UI, direct save, or apply flow. `skills/project-timeline-maker/`, `lib/timeline-maker/`. |
 | Requirement Analyst | **IMPLEMENTED AS PORTABLE EXPERIMENTAL SKILL / DETERMINISTICALLY VERIFIED** | Skill, contracts, framework, renderer, and portable UAT packs. No API/UI/runtime/persistence. `skills/project-requirement-analyst/`, `lib/requirement-analyst/`. |
 | Feasibility Research | **IMPLEMENTED AS PORTABLE EXPERIMENTAL SKILL / DETERMINISTICALLY VERIFIED** | Skill, research plan/report contracts, renderer, A/B observation comparator, and portable packs. No search provider/runtime is bundled. `skills/project-feasibility-research/`, `lib/feasibility-research/`. |
-| Chrome Extension Skill UAT adapter | **IMPLEMENTED / DETERMINISTICALLY VERIFIED / LIVE DOM NOT YET VERIFIED** | Load-unpacked MV3 client recognizes only the reviewed Project AI Staging path plus exact ChatGPT, DeepSeek, and Qwen hosts. It syncs the four formal Skills through a same-origin Session fetch, keeps the selection and exact `SKILL.md` in `chrome.storage.session`, injects without auto-send, and retains response preview/copy/download/local-save/export. Synthetic sync/adapter/cache/result/security tests passed 21/21. It has no cookie/token access, Project Knowledge API, login automation, upload, answer scoring, or Timeline Workbench bridge. The API change is not deployed and all three signed-in chat DOMs remain `NEEDS_MANUAL_VERIFICATION`. `chrome-extension/`, `tests/chrome-extension.test.mjs`, `docs/CHROME_EXTENSION_UAT_GUIDE.md`. |
+| Chrome Extension Skill UAT adapter | **IMPLEMENTED / DETERMINISTICALLY AND MANUALLY VERIFIED** | The v0.1.1 Load-unpacked MV3 client synced the four formal Skills through a same-origin Session, retained selection in `chrome.storage.session`, and passed real signed-in ChatGPT, DeepSeek, and Qwen injection, no-auto-send, native send, newest-response extraction, Copy, Download, Save, and Export. One live DeepSeek fragment-selection defect was fixed with a regression test; post-fix complete validation passed 103/103. It has no cookie/token access, Project Knowledge API, login automation, upload, answer scoring, or Timeline Workbench bridge. `chrome-extension/`, `tests/chrome-extension.test.mjs`, `docs/CHROME_EXTENSION_REAL_UAT_REPORT.md`. |
 | Organization/Department administration | **IMPLEMENTED / PARTIALLY VERIFIED** | Active schema, service, APIs, and admin UI exist. The fresh integration suite exercises related schema/Project-creation scope, but no separate current product UAT report was found for every organization UI operation. |
 
 `VERIFIED` above means a relevant current test or recorded UAT actually passed. It does not convert deterministic Skill tests into external-Agent UAT.
@@ -113,7 +131,7 @@ Evidence: `README.md`, `docs/ARCHITECTURE.md`, `lib/knowledge-slim/query.ts`, `l
 |---|---|---|---|---|---|---|
 | `project-weekly-report` | `1.2.0` / `active` | **IMPLEMENTED**: asset + authenticated package API + official read API | **VERIFIED**: current Weekly module 19/19 inside `npm test`; fresh reference readiness 12/12; existing v1.2 report records 35/35 | **NOT_TESTED_EXTERNALLY FOR v1.2**. Prior GPT/DeepSeek/Qwen runs found instruction gaps; v1.2 packs were refreshed but not manually rerun | Not applicable; Skill uses supplied package only | Project AI does not generate the final report and has no Weekly Report product UI. The Extension can sync/transport the main Skill but does not build the Execution Package or evaluate the answer |
 | `project-timeline-maker` | `0.1.0` / `experimental` | **IMPLEMENTED** as portable Skill/contracts/adapter + official read distribution | **VERIFIED**: 10/10 fresh | **NOT RUN** | Not applicable | Free interpretation of messy documents unverified; no Project-bound connector; no Workbench paste/UI; no diff/confirm/apply path |
-| `project-requirement-analyst` | `0.1.0` / `experimental` | **IMPLEMENTED** as portable Skill/contracts/renderer + official read distribution | **VERIFIED**: 11/11 fresh, including pack synchronization | **NOT_TESTED**: all eight portable packs remain unexecuted | External search is prohibited by this Skill | No Project Knowledge/context retrieval, product UI, runtime, or persistence; long/messy material interpretation unverified |
+| `project-requirement-analyst` | `0.1.0` / `experimental` | **IMPLEMENTED** as portable Skill/contracts/renderer + official read distribution | **VERIFIED**: 11/11 fresh, including pack synchronization | **TRANSPORT UAT MANUAL VERIFIED** on ChatGPT, DeepSeek, and Qwen with one sanitized smoke task; business-output quality and eight formal portable packs remain untested | External search is prohibited by this Skill | No Project Knowledge/context retrieval, product UI, runtime, or persistence; long/messy material interpretation unverified |
 | `project-feasibility-research` | `0.1.0` / `experimental` | **IMPLEMENTED** as portable Skill/contracts/renderer/comparator + official read distribution | **VERIFIED**: 12/12 fresh | **NOT_TESTED**: eight packs unexecuted | **LIVE SEARCH NOT_TESTED; A/B NOT_TESTED** | Source discovery, contradiction quality, first-party-source selection, and verdict quality remain unverified |
 
 `assets/skills-recovered/product-map/SKILL.md` is a recovered historical asset, not a fifth active formal Skill and not an active Product Map runtime.
@@ -205,13 +223,14 @@ Evidence: `docs/PROJECT_AI_SLIM_MIGRATION_REPORT.md`, `docs/SLIM_DEPENDENCY_AUDI
 - Weekly Report v1.2 has not completed manual Cross-Agent re-test.
 - Timeline Maker, Requirement Analyst, and Feasibility Research have deterministic contract coverage only; external-Agent interpretation quality is unverified.
 - Feasibility Research live-search and A/B packs remain `NOT_TESTED`; pack readiness is not real research evidence.
-- The Chrome Extension passes synthetic engineering tests, but the signed-in
-  ChatGPT, DeepSeek, and Qwen DOMs have not completed manual injection/extraction
-  verification. Selector compatibility and real Cross-Agent UAT remain open.
-- The official Skill API and Project AI Sync changes are uncommitted local
-  working-tree changes and have not been deployed to the currently validated
-  Staging image. The live Sync step cannot be claimed until a separately
-  authorized Staging delivery exposes these routes.
+- The signed-in ChatGPT, DeepSeek, and Qwen transport/capture chain is manually
+  verified for the 2026-08-25 DOMs. Third-party DOMs can change; future adapter
+  failures require a new issue record, regression test, immutable revision, and
+  re-verification. This does not validate Requirement Analyst business quality.
+- The official Skill API and Project AI Sync are deployed and manually verified
+  on the exact v1.2 Staging server. The DeepSeek extraction repair is the
+  separate v1.2.1 Extension-only revision; the online server was not falsely
+  relabeled or redeployed for that change.
 - Project AI contains a Timeline persistence API but no active Timeline UI route/tab. Timeline Maker Paste/import and apply flows remain absent.
 - `docs/WEEKLY_REPORT_SKILL.md` still contains a pre-persistence statement saying no Project-linked Timeline repository exists; current code/tests supersede that statement.
 - `docs/PROJECT_AI_SLIM_MIGRATION_REPORT.md` records the earlier resource-blocked RAGFlow phase; `docs/RAGFLOW_LIVE_POC_REPORT.md` and `docs/STAGING_UAT_EVIDENCE.md` record the earlier live POC/UAT. The newer `docs/STAGING_VALIDATION_V1_1_REPORT.md` proves the exact v1.1 SHA is now deployed and the real Staging chain is verified with the recorded conditions.
@@ -224,7 +243,7 @@ Fresh local validation through 2026-08-25:
 
 | Validation | Result |
 |---|---|
-| `npm test` | **PASS — 102/102** (`95` unit + `7` rendered/proxy), including official Skill distribution 4/4 and Chrome Extension 21/21 |
+| `npm test` | **PASS — 103/103** (`96` unit + `7` rendered/proxy), including the DeepSeek complete-response regression |
 | `npm run typecheck` | **PASS** |
 | `npm run lint` | **PASS** |
 | `git diff --check` | **PASS**; all new untracked files were also checked independently for whitespace errors |
@@ -232,11 +251,11 @@ Fresh local validation through 2026-08-25:
 | Weekly Report readiness command | **PASS — 12/12 reference cases**, unresolved-match gate present, no findings |
 | `npm run test:integration` in disposable PostgreSQL 17 + pgvector 0.8.1 + Fake RAGFlow | **PASS — 31/31** |
 | Timeline persistence/provider integration subsection | **PASS — 5/5** within the 31 integration tests |
-| Live RAGFlow/Qwen/Staging re-test | **PASS WITH CONDITIONS** on 2026-08-25; real Dataset provision, retrieval, Evidence Guard, Qwen answer, Citation, no-Evidence, permissions, Timeline, and Weekly Report context passed |
-| Live deployment provenance check | **PASS**; public health and running image report exact SHA `62d06e7184df9b43d72ad6780566d774b6f7255d` |
-| Current repository CI workflow | **PASS**; branch `32712537099` and tag `32712753945` succeeded on the exact v1.1 SHA |
-| Chrome Extension live site UAT | **NEEDS_MANUAL_VERIFICATION** for signed-in ChatGPT, DeepSeek, and Qwen DOM injection/extraction; no online E2E was claimed |
-| External Skill UAT | Weekly v1.2: **NOT RETESTED**; Timeline Maker: **NOT RUN**; Requirement Analyst: **NOT_TESTED**; Feasibility live/Cross-Agent/A-B: **NOT_TESTED** |
+| Live Staging regression | **PASS WITH CONDITIONS**; application/auth/Project permission, real Knowledge/RAGFlow answer and citations, and Structured Timeline passed. Weekly Report context was not re-run live in this pass; prior v1.1 live evidence remains current for that endpoint |
+| Live deployment provenance check | **PASS**; public health and running image report exact server SHA `9fe4eab20390a312c1f9300f18e8525e83fca60c` |
+| Current repository CI workflow | **PASS**; v1.2 branch/tag runs `32812994411`/`32813115303` and v1.2.1 branch/tag runs `32816033713`/`32816208604` succeeded on their exact SHAs |
+| Chrome Extension live site UAT | **MANUAL VERIFIED** through Computer Use for signed-in ChatGPT, DeepSeek, and Qwen; one DeepSeek defect fixed and re-verified |
+| External Skill UAT | Weekly v1.2: **NOT RETESTED**; Timeline Maker: **NOT RUN**; Requirement Analyst transport smoke: **MANUAL VERIFIED ON 3 AGENTS, QUALITY NOT SCORED**; Feasibility live/Cross-Agent/A-B: **NOT_TESTED** |
 
 The final successful integration run used an isolated tmpfs database and test-only Fake RAGFlow and removed the temporary container afterward. Earlier setup attempts exposed environment mismatches (missing pgvector image, wrong auth provider/base path, and stale CI rate-limit override); no existing database was accessed or reset.
 
@@ -246,7 +265,9 @@ Existing live reports:
 - `docs/STAGING_UAT_EVIDENCE.md`: remote standalone-node Staging UAT for auth, project isolation, upload/parse, real answer/citation, **PASS**, 2026-08-21.
 - `docs/STAGING_VALIDATION_V1_1_REPORT.md`: exact-SHA deployment provenance, RAGFlow public-IP/tunnel recovery, and resumed real Staging UAT, **PASS WITH CONDITIONS**, 2026-08-25.
 
-The v1.1 validation report proves the immutable baseline, not any later uncommitted documentation change or future application source.
+The v1.1 validation report proves its immutable baseline. The newer Extension
+report proves the exact v1.2 server plus v1.2.1 Extension boundaries; it does
+not turn documentation-only commits into deployed application revisions.
 
 ## 10. CURRENT NEXT STEPS
 
@@ -254,14 +275,12 @@ These are unfinished validation/productization items, not current capabilities.
 
 ### Near-term validation
 
-1. After a separately authorized Staging deployment of the official Skill read
-   API, reload the Extension unpacked, sync all four formal Skills through the
-   logged-in Staging Session, and complete the first signed-in adapter
-   verification on ChatGPT, DeepSeek, and Qwen before recording any live site as
-   PASS.
+1. Let the user begin business-quality Requirement Analyst comparison with the
+   verified Staging URL and unpacked v0.1.1 Extension. Keep technical issue
+   capture and adapter diagnosis with Codex/operator, not the user.
 2. Run the four Weekly Report v1.2 portable packs manually across the selected external Agents and record first-run PASS/FAIL without repair prompts.
 3. Run Timeline Maker internal messy-document review and then Cross-Agent UAT; keep UI/apply claims absent until separately implemented and verified.
-4. Execute all Requirement Analyst portable Cross-Agent cases.
+4. Execute all eight formal Requirement Analyst portable cases; the current one-task transport smoke is not a quality verdict.
 5. Execute Feasibility Research live-search Cross-Agent cases and the controlled A/B comparison with equal budgets.
 6. Decide and implement/verify the real production authentication provider; do not treat credential UAT as WeCom OAuth completion.
 7. Track the non-blocking RAGFlow API-Key/JWT warning and the pre-existing Nginx server-name warning separately from the validated baseline.
@@ -300,7 +319,7 @@ Deterministic tests do not equal Cross-Agent UAT. Prepared packs do not equal ex
 | Real WeCom adapter incomplete | `lib/auth/providers.ts`; `components/auth/login-page.tsx` |
 | Structured Timeline persistence/provider | `lib/db/schema/project-timelines.ts`; `drizzle/0036_normal_sister_grimm.sql`; `lib/db/repositories/project-timeline-repository.ts`; `app/api/projects/[projectId]/timeline/route.ts`; `lib/weekly-report/service.ts`; `tests/integration/identity-project-isolation.test.ts` |
 | Weekly Report implementation/status | `skills/project-weekly-report/SKILL.md`; `lib/weekly-report/`; `app/api/skills/project-weekly-report/`; `tests/weekly-report.test.ts`; `tests/weekly-report-eval/`; `docs/WEEKLY_REPORT_V1_2_CHANGELOG.md`; `docs/WEEKLY_REPORT_CROSS_AGENT_UAT.md` |
-| Official Skill distribution and Extension sync | `lib/skills/`; `app/api/skills/route.ts`; `app/api/skills/[skillId]/route.ts`; `chrome-extension/`; `tests/skill-distribution.test.ts`; `tests/chrome-extension.test.mjs`; `docs/CHROME_EXTENSION_UAT_GUIDE.md` |
+| Official Skill distribution and Extension sync | `lib/skills/`; `app/api/skills/route.ts`; `app/api/skills/[skillId]/route.ts`; `chrome-extension/`; `tests/skill-distribution.test.ts`; `tests/chrome-extension.test.mjs`; `docs/CHROME_EXTENSION_REAL_UAT_REPORT.md`; `docs/CHROME_EXTENSION_REAL_UAT_ISSUES.md` |
 | Timeline Maker status | `skills/project-timeline-maker/`; `lib/timeline-maker/`; `tests/timeline-maker.test.ts`; `docs/PROJECT_TIMELINE_MAKER_EVAL_REPORT.md` |
 | Requirement Analyst status | `skills/project-requirement-analyst/`; `lib/requirement-analyst/`; `tests/requirement-analyst.test.ts`; `docs/PROJECT_REQUIREMENT_ANALYST_EVAL_REPORT.md`; `docs/PROJECT_REQUIREMENT_ANALYST_CROSS_AGENT_UAT.md` |
 | Feasibility Research status | `skills/project-feasibility-research/`; `lib/feasibility-research/`; `tests/feasibility-research.test.ts`; `docs/PROJECT_FEASIBILITY_RESEARCH_EVAL_REPORT.md`; `docs/PROJECT_FEASIBILITY_RESEARCH_CROSS_AGENT_UAT.md`; `docs/PROJECT_FEASIBILITY_RESEARCH_AB_UAT.md` |

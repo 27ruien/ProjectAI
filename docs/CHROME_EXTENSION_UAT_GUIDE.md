@@ -2,6 +2,29 @@
 
 Last Updated: 2026-08-25
 
+## START HERE — business-quality UAT
+
+The technical full chain is now manually verified with Computer Use. The user
+can focus on judging the business output and does not need to discover,
+reproduce, screenshot, or document adapter problems.
+
+1. Open `https://gridworks.cn/tool/projectai-slim-uat/` and use the normal
+   Staging login.
+2. Load or reload the unpacked Extension from
+   `/Users/ryan/Documents/ProjectAI-Focused-MVP/chrome-extension`.
+3. Sync Skills on the Project AI page and select
+   `project-requirement-analyst v0.1.0`.
+4. Use the same approved task/materials in fresh ChatGPT, DeepSeek, and Qwen
+   chats; inspect the injected content, then send through the site's native UI.
+5. Refresh, Save, and Export each result. Judge business quality only.
+
+If a technical step fails or a third-party page changes, stop that site and
+hand the task back to Codex/operator. Do not spend time finding selectors,
+collecting console logs, reproducing the issue, or writing the defect record.
+The preserved technical evidence and current issue history are in
+`docs/CHROME_EXTENSION_REAL_UAT_REPORT.md` and
+`docs/CHROME_EXTENSION_REAL_UAT_ISSUES.md`.
+
 ## Readiness boundary
 
 This guide covers the intended manual path:
@@ -15,11 +38,11 @@ Project AI authenticated Skill read
   -> explicit local save/export
 ```
 
-The source and deterministic tests implement this path. It is not evidence that
-the uncommitted API is already deployed to Staging, and it is not evidence that
-the signed-in ChatGPT, DeepSeek, or Qwen DOM currently matches the adapters.
-Before a real run, deploy an authorized Staging build containing this change,
-reload the unpacked Extension, and keep Production untouched.
+The exact v1.2 server and v0.1.1 Extension completed this path on signed-in
+ChatGPT, DeepSeek, and Qwen on 2026-08-25. This verifies the transport/capture
+chain, not Requirement Analyst answer quality. Third-party DOMs and login
+Sessions can change, so a future failure must be recorded as a new technical
+UAT issue rather than delegated to the business user.
 
 ## Install or reload the Extension
 
@@ -181,11 +204,11 @@ defect. A fallback success does not count as full-chain Project AI Sync UAT.
 
 | Site | Status | Project AI sync | Exact injection | Manual send only | Latest response exact | Copy | Download | Save metadata | Export | Diagnostic / notes |
 |---|---|---|---|---|---|---|---|---|---|---|
-| ChatGPT | NOT_RUN |  |  |  |  |  |  |  |  |  |
-| DeepSeek | NOT_RUN |  |  |  |  |  |  |  |  |  |
-| Qwen | NOT_RUN |  |  |  |  |  |  |  |  |  |
+| ChatGPT | MANUAL VERIFIED | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | Computer Use, signed-in live DOM, 2026-08-25 |
+| DeepSeek | MANUAL VERIFIED AFTER FIX | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | `EXT-UAT-001` fixed in v0.1.1; fresh post-CI rerun PASS |
+| Qwen | MANUAL VERIFIED | PASS | PASS | PASS | PASS | PASS | PASS | PASS | PASS | Computer Use, signed-in live DOM, 2026-08-25 |
 
-Use **PASS** only after the exact signed-in flow passes. Before the first live
-run, every chat adapter remains **IMPLEMENTED / NEEDS_MANUAL_VERIFICATION**.
-Use **BLOCKED** when login, missing Staging deployment, or a live DOM mismatch
-prevents the flow. Deterministic tests are not a substitute for this record.
+Use **PASS** only after the exact signed-in flow passes. Use **BLOCKED** when
+login, missing Staging deployment, or a live DOM mismatch prevents the flow.
+Deterministic tests are not a substitute for this record; the table above is
+backed by the real evidence report and screenshots.
